@@ -9,38 +9,97 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LandingRouteImport } from './routes/landing'
+import { Route as HomeRouteImport } from './routes/home'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MModuleRouteImport } from './routes/m.$module'
+import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 
+const LandingRoute = LandingRouteImport.update({
+  id: '/landing',
+  path: '/landing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeRoute = HomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MModuleRoute = MModuleRouteImport.update({
+  id: '/m/$module',
+  path: '/m/$module',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MModuleSubmoduleRoute = MModuleSubmoduleRouteImport.update({
+  id: '/$submodule',
+  path: '/$submodule',
+  getParentRoute: () => MModuleRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
+  '/landing': typeof LandingRoute
+  '/m/$module': typeof MModuleRouteWithChildren
+  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
+  '/landing': typeof LandingRoute
+  '/m/$module': typeof MModuleRouteWithChildren
+  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/home': typeof HomeRoute
+  '/landing': typeof LandingRoute
+  '/m/$module': typeof MModuleRouteWithChildren
+  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/home' | '/landing' | '/m/$module' | '/m/$module/$submodule'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/home' | '/landing' | '/m/$module' | '/m/$module/$submodule'
+  id:
+    | '__root__'
+    | '/'
+    | '/home'
+    | '/landing'
+    | '/m/$module'
+    | '/m/$module/$submodule'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HomeRoute: typeof HomeRoute
+  LandingRoute: typeof LandingRoute
+  MModuleRoute: typeof MModuleRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/landing': {
+      id: '/landing'
+      path: '/landing'
+      fullPath: '/landing'
+      preLoaderRoute: typeof LandingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home': {
+      id: '/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +107,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/m/$module': {
+      id: '/m/$module'
+      path: '/m/$module'
+      fullPath: '/m/$module'
+      preLoaderRoute: typeof MModuleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/m/$module/$submodule': {
+      id: '/m/$module/$submodule'
+      path: '/$submodule'
+      fullPath: '/m/$module/$submodule'
+      preLoaderRoute: typeof MModuleSubmoduleRouteImport
+      parentRoute: typeof MModuleRoute
+    }
   }
 }
 
+interface MModuleRouteChildren {
+  MModuleSubmoduleRoute: typeof MModuleSubmoduleRoute
+}
+
+const MModuleRouteChildren: MModuleRouteChildren = {
+  MModuleSubmoduleRoute: MModuleSubmoduleRoute,
+}
+
+const MModuleRouteWithChildren =
+  MModuleRoute._addFileChildren(MModuleRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HomeRoute: HomeRoute,
+  LandingRoute: LandingRoute,
+  MModuleRoute: MModuleRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
