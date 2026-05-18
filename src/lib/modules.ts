@@ -488,7 +488,308 @@ const ticketsMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, partsMod, ticketsMod];
+// --- Claims ---
+const CLAIM_STATUS = ["Submitted", "Review", "Approved", "Denied", "Paid"];
+const CLAIMANTS = CUSTOMERS;
+const claimsMod: ModuleDef = {
+  slug: "claims",
+  label: "Claims",
+  tagline: "Warranty & service claims pipeline",
+  accent: "#f59e0b",
+  submodules: [
+    {
+      slug: "claims-list",
+      title: "Claims List",
+      description: "All claims with filtering.",
+      fields: [
+        { key: "id", label: "Claim ID", filterable: true },
+        { key: "claimant", label: "Claimant", filterable: true },
+        { key: "amount", label: "Amount", type: "number" },
+        { key: "status", label: "Status", type: "select", options: CLAIM_STATUS, editable: true, filterable: true },
+        { key: "submitted", label: "Submitted", type: "date" },
+        { key: "assigned", label: "Assigned To", type: "select", options: TECHS, editable: true, filterable: true },
+      ],
+      count: 28,
+      seed: (i) => ({
+        id: "CL-" + pad(30000 + i),
+        claimant: pick(CLAIMANTS, i),
+        amount: 75 + (i * 37) % 2400,
+        status: pick(CLAIM_STATUS, i),
+        submitted: dateStr(-(i % 45)),
+        assigned: pick(TECHS, i),
+      }),
+    },
+    {
+      slug: "claims-detail",
+      title: "Claims Detail",
+      description: "Deep-dive on individual claims.",
+      fields: [
+        { key: "id", label: "Claim ID", filterable: true },
+        { key: "claimant", label: "Claimant", filterable: true },
+        { key: "appliance", label: "Appliance", type: "select", options: ["Washer","Dryer","Fridge","Range","Dishwasher","Microwave"], filterable: true },
+        { key: "issue", label: "Issue", editable: true },
+        { key: "resolution", label: "Resolution", editable: true },
+        { key: "status", label: "Status", type: "select", options: CLAIM_STATUS, editable: true, filterable: true },
+      ],
+      seed: (i) => ({
+        id: "CL-" + pad(30000 + i),
+        claimant: pick(CLAIMANTS, i),
+        appliance: pick(["Washer","Dryer","Fridge","Range","Dishwasher","Microwave"], i),
+        issue: ["Leak","No power","Loud noise","Won't cool","Door damage"][i%5],
+        resolution: ["Replace board","Refund","Reimburse part","Pending","Denied — out of warranty"][i%5],
+        status: pick(CLAIM_STATUS, i),
+      }),
+    },
+    {
+      slug: "claims-tracking",
+      title: "Claims Tracking",
+      description: "Pipeline stage tracking.",
+      fields: [
+        { key: "id", label: "Claim ID", filterable: true },
+        { key: "stage", label: "Stage", type: "select", options: CLAIM_STATUS, filterable: true },
+        { key: "ageDays", label: "Age (days)", type: "number" },
+        { key: "owner", label: "Owner", type: "select", options: TECHS, editable: true, filterable: true },
+        { key: "updated", label: "Updated", type: "date" },
+      ],
+      seed: (i) => ({
+        id: "CL-" + pad(30000 + i),
+        stage: pick(CLAIM_STATUS, i),
+        ageDays: (i*3) % 45,
+        owner: pick(TECHS, i),
+        updated: dateStr(-(i%14)),
+      }),
+    },
+    {
+      slug: "claims-approval",
+      title: "Claims Approval",
+      description: "Pending approval queue.",
+      fields: [
+        { key: "id", label: "Claim ID", filterable: true },
+        { key: "claimant", label: "Claimant", filterable: true },
+        { key: "amount", label: "Amount", type: "number" },
+        { key: "reviewer", label: "Reviewer", type: "select", options: TECHS, editable: true, filterable: true },
+        { key: "decision", label: "Decision", type: "select", options: ["Pending","Approved","Denied"], editable: true, filterable: true },
+        { key: "note", label: "Note", editable: true },
+      ],
+      seed: (i) => ({
+        id: "CL-" + pad(30000 + i),
+        claimant: pick(CLAIMANTS, i),
+        amount: 50 + (i*29) % 1500,
+        reviewer: pick(TECHS, i),
+        decision: pick(["Pending","Approved","Denied"], i),
+        note: ["Awaiting docs","Approved per warranty","Out of policy","Need photos",""][i%5],
+      }),
+    },
+  ],
+};
+
+// --- Reports ---
+const reportMod: ModuleDef = {
+  slug: "report",
+  label: "Report",
+  tagline: "Inventory, sales, KPI & export",
+  accent: "#34d399",
+  submodules: [
+    {
+      slug: "inventory-report",
+      title: "Inventory Report",
+      description: "Stock level analysis.",
+      fields: [
+        { key: "partNo", label: "Part #", filterable: true },
+        { key: "category", label: "Category", type: "select", options: ["Motor","Control","Hardware","Sensor","Seal"], filterable: true },
+        { key: "stock", label: "Current", type: "number" },
+        { key: "min", label: "Min", type: "number" },
+        { key: "max", label: "Max", type: "number" },
+        { key: "status", label: "Status", type: "select", options: ["OK","Low","Overstock"], filterable: true },
+      ],
+      count: 24,
+      seed: (i) => {
+        const stock = (i*7) % 60;
+        const min = 10, max = 50;
+        return {
+          partNo: "IR-" + pad(40000 + i),
+          category: pick(["Motor","Control","Hardware","Sensor","Seal"], i),
+          stock, min, max,
+          status: stock < min ? "Low" : stock > max ? "Overstock" : "OK",
+        };
+      },
+    },
+    {
+      slug: "sales-report",
+      title: "Sales Report",
+      description: "Sales performance metrics.",
+      fields: [
+        { key: "date", label: "Date", type: "date", filterable: true },
+        { key: "product", label: "Product", filterable: true },
+        { key: "qty", label: "Qty", type: "number" },
+        { key: "amount", label: "Amount", type: "number" },
+        { key: "salesperson", label: "Salesperson", type: "select", options: TECHS, filterable: true },
+        { key: "region", label: "Region", type: "select", options: CITIES, filterable: true },
+      ],
+      count: 30,
+      seed: (i) => ({
+        date: dateStr(-(i%30)),
+        product: pick(PARTS, i),
+        qty: (i%8) + 1,
+        amount: 80 + (i*23) % 1200,
+        salesperson: pick(TECHS, i),
+        region: pick(CITIES, i),
+      }),
+    },
+    {
+      slug: "performance-report",
+      title: "Performance Report",
+      description: "KPI dashboard.",
+      fields: [
+        { key: "kpi", label: "KPI", filterable: true },
+        { key: "actual", label: "Actual", type: "number" },
+        { key: "target", label: "Target", type: "number" },
+        { key: "variance", label: "Variance %", type: "number" },
+        { key: "owner", label: "Owner", type: "select", options: TECHS, filterable: true },
+      ],
+      count: 12,
+      seed: (i) => {
+        const actual = 60 + (i*9) % 50;
+        const target = 100;
+        return {
+          kpi: ["First-Visit Fix","Avg Repair Time","Tech Utilization","CSAT","On-Time Arrival","Revenue/Job","Callback Rate","Parts Cost %","Backorders","SLA %","Returns %","Warranty Claims"][i%12],
+          actual, target,
+          variance: Math.round(((actual - target)/target)*100),
+          owner: pick(TECHS, i),
+        };
+      },
+    },
+    {
+      slug: "export-report",
+      title: "Export Report",
+      description: "Export queue and history.",
+      fields: [
+        { key: "name", label: "Report", filterable: true },
+        { key: "format", label: "Format", type: "select", options: ["PDF","CSV","Excel"], editable: true, filterable: true },
+        { key: "range", label: "Range", filterable: true },
+        { key: "by", label: "Requested By", type: "select", options: TECHS, filterable: true },
+        { key: "status", label: "Status", type: "select", options: ["Queued","Running","Done","Failed"], editable: true, filterable: true },
+        { key: "when", label: "When", type: "date" },
+      ],
+      count: 18,
+      seed: (i) => ({
+        name: ["Inventory","Sales","Performance","Claims","Tickets","Returns"][i%6] + " Export #" + (i+1),
+        format: pick(["PDF","CSV","Excel"], i),
+        range: ["Last 7d","Last 30d","MTD","QTD","YTD"][i%5],
+        by: pick(TECHS, i),
+        status: pick(["Queued","Running","Done","Failed"], i),
+        when: dateStr(-(i%20)),
+      }),
+    },
+  ],
+};
+
+// --- Admin ---
+const ROLES = ["Admin","Manager","Supervisor","Technician","Viewer"];
+const DEPARTMENTS = ["Operations","Service","Parts","Sales","IT","Finance"];
+const adminMod: ModuleDef = {
+  slug: "admin",
+  label: "Admin",
+  tagline: "Users, roles, settings & audit",
+  accent: "#f472b6",
+  submodules: [
+    {
+      slug: "user-management",
+      title: "User Management",
+      description: "User accounts administration.",
+      fields: [
+        { key: "userId", label: "User ID", filterable: true },
+        { key: "name", label: "Name", filterable: true, editable: true },
+        { key: "email", label: "Email", editable: true },
+        { key: "role", label: "Role", type: "select", options: ROLES, editable: true, filterable: true },
+        { key: "department", label: "Department", type: "select", options: DEPARTMENTS, editable: true, filterable: true },
+        { key: "status", label: "Status", type: "select", options: ["Active","Inactive"], editable: true, filterable: true },
+        { key: "lastLogin", label: "Last Login", type: "date" },
+      ],
+      count: 24,
+      seed: (i) => {
+        const name = pick(CUSTOMERS, i);
+        return {
+          userId: "U-" + pad(100 + i, 3),
+          name,
+          email: name.toLowerCase().replace(/[^a-z]/g, ".") + "@adminhub.io",
+          role: pick(ROLES, i),
+          department: pick(DEPARTMENTS, i),
+          status: i % 5 === 0 ? "Inactive" : "Active",
+          lastLogin: dateStr(-(i%30)),
+        };
+      },
+    },
+    {
+      slug: "user-roles",
+      title: "User Roles",
+      description: "Role permission matrix.",
+      fields: [
+        { key: "role", label: "Role", type: "select", options: ROLES, filterable: true },
+        { key: "module", label: "Module", type: "select", options: ["Dashboard","Parts","Tickets","Claims","Report","Admin"], filterable: true },
+        { key: "view", label: "View", type: "select", options: ["Yes","No"], editable: true },
+        { key: "edit", label: "Edit", type: "select", options: ["Yes","No"], editable: true },
+        { key: "delete", label: "Delete", type: "select", options: ["Yes","No"], editable: true },
+      ],
+      count: 30,
+      seed: (i) => {
+        const role = pick(ROLES, i);
+        const isAdmin = role === "Admin";
+        return {
+          role,
+          module: pick(["Dashboard","Parts","Tickets","Claims","Report","Admin"], i),
+          view: "Yes",
+          edit: isAdmin || role === "Manager" ? "Yes" : "No",
+          delete: isAdmin ? "Yes" : "No",
+        };
+      },
+    },
+    {
+      slug: "system-settings",
+      title: "System Settings",
+      description: "Application configuration.",
+      fields: [
+        { key: "setting", label: "Setting", filterable: true },
+        { key: "category", label: "Category", type: "select", options: ["Company","Regional","Email","Backup","API"], filterable: true },
+        { key: "value", label: "Value", editable: true },
+        { key: "updated", label: "Updated", type: "date" },
+      ],
+      count: 18,
+      seed: (i) => ({
+        setting: ["Company Name","Logo URL","Timezone","Currency","Language","SMTP Host","SMTP Port","From Email","Backup Schedule","Backup Retention","API Key","Webhook URL","Date Format","Number Format","Session Timeout","Login Attempts","2FA Required","Audit Retention"][i%18],
+        category: pick(["Company","Regional","Email","Backup","API"], i),
+        value: ["Admin Hub","/logo.png","UTC-6","USD","en-US","smtp.mail.io","587","noreply@adminhub.io","Daily 02:00","30 days","••••••••","https://hooks.example.com","MM/DD/YYYY","1,234.56","30m","5","Yes","90 days"][i%18],
+        updated: dateStr(-(i%60)),
+      }),
+    },
+    {
+      slug: "audit-log",
+      title: "Audit Log",
+      description: "Activity audit trail.",
+      fields: [
+        { key: "timestamp", label: "Timestamp", type: "date", filterable: true },
+        { key: "user", label: "User", filterable: true },
+        { key: "action", label: "Action", type: "select", options: ["Create","Update","Delete","Login","Logout","Export"], filterable: true },
+        { key: "module", label: "Module", type: "select", options: ["Dashboard","Parts","Tickets","Claims","Report","Admin"], filterable: true },
+        { key: "details", label: "Details" },
+        { key: "ip", label: "IP Address" },
+        { key: "status", label: "Status", type: "select", options: ["Success","Failed"], filterable: true },
+      ],
+      count: 60,
+      seed: (i) => ({
+        timestamp: dateStr(-(i%30)),
+        user: pick(CUSTOMERS, i),
+        action: pick(["Create","Update","Delete","Login","Logout","Export"], i),
+        module: pick(["Dashboard","Parts","Tickets","Claims","Report","Admin"], i),
+        details: ["Updated record","Viewed report","Removed item","Session start","Session end","Generated export"][i%6] + " #" + (i+1),
+        ip: `10.0.${(i*7)%255}.${(i*13)%255}`,
+        status: i%9 === 0 ? "Failed" : "Success",
+      }),
+    },
+  ],
+};
+
+export const MODULES: ModuleDef[] = [dashboardMod, partsMod, ticketsMod, claimsMod, reportMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);
