@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Navigate, notFound } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
-import { getModule } from "@/lib/modules";
+import { getModule, type SubModuleDef } from "@/lib/modules";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
@@ -52,7 +52,7 @@ function ModuleIndex() {
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {m.submodules.map((s) => (
+          {m.submodules.map((s: SubModuleDef) => (
             <Link
               key={s.slug}
               to="/m/$module/$submodule"
