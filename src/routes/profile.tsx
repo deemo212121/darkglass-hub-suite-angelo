@@ -54,7 +54,6 @@ function ProfilePage() {
       return;
     }
     setPassword({ current: "", next: "", confirm: "" });
->>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)
     setSaved("Password updated.");
     setTimeout(() => setSaved(""), 2000);
   };

@@ -105,17 +105,4 @@ function TimecardPage() {
       </section>
     </AccountPageShell>
   );
-<<<<<<< HEAD
 }
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.04)] px-4 py-2 text-right">
-      <div className="text-[11px] text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`text-xl font-semibold ${accent ? "text-[var(--color-primary)]" : ""}`}>{value}</div>
-    </div>
-  );
-}
-=======
-}
->>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)

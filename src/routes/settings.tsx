@@ -58,7 +58,6 @@ function SettingsPage() {
 
   const save = () => {
     localStorage.setItem(KEY, JSON.stringify(settings));
->>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)
     setSaved("Settings saved.");
     setTimeout(() => setSaved(""), 2000);
   };

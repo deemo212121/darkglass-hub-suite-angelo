@@ -64,7 +64,6 @@ function PrivacyPage() {
 
   const save = () => {
     localStorage.setItem(KEY, JSON.stringify(privacy));
->>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)
     setSaved("Privacy preferences saved.");
     setTimeout(() => setSaved(""), 2000);
   };
