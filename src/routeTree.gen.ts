@@ -9,12 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LandingRoute = LandingRouteImport.update({
   id: '/landing',
   path: '/landing',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/profile': typeof ProfileRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/profile': typeof ProfileRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
@@ -60,19 +68,33 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/profile': typeof ProfileRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/home' | '/landing' | '/m/$module' | '/m/$module/$submodule'
+  fullPaths:
+    | '/'
+    | '/home'
+    | '/landing'
+    | '/profile'
+    | '/m/$module'
+    | '/m/$module/$submodule'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/home' | '/landing' | '/m/$module' | '/m/$module/$submodule'
+  to:
+    | '/'
+    | '/home'
+    | '/landing'
+    | '/profile'
+    | '/m/$module'
+    | '/m/$module/$submodule'
   id:
     | '__root__'
     | '/'
     | '/home'
     | '/landing'
+    | '/profile'
     | '/m/$module'
     | '/m/$module/$submodule'
   fileRoutesById: FileRoutesById
@@ -81,11 +103,19 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HomeRoute: typeof HomeRoute
   LandingRoute: typeof LandingRoute
+  ProfileRoute: typeof ProfileRoute
   MModuleRoute: typeof MModuleRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/landing': {
       id: '/landing'
       path: '/landing'
@@ -139,8 +169,19 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HomeRoute: HomeRoute,
   LandingRoute: LandingRoute,
+  ProfileRoute: ProfileRoute,
   MModuleRoute: MModuleRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
