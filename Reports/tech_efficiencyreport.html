@@ -1,0 +1,795 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tech Efficiency Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		html,
+		body {
+			height: 100%;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.report-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+			min-width: 0;
+		}
+
+		.report-panel + .report-panel {
+			margin-top: 0.9rem;
+		}
+
+		.report-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.2);
+		}
+
+		.button-group {
+			display: flex;
+			gap: 0.75rem;
+			margin-top: 0.8rem;
+		}
+
+		.search-btn,
+		.reset-btn {
+			padding: 0.65rem 1.25rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(30, 64, 175, 0.4);
+			color: #fff;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s ease;
+		}
+
+		.search-btn {
+			border-color: rgba(100, 181, 246, 0.4);
+			background: rgba(30, 64, 175, 0.5);
+		}
+
+		.search-btn:hover {
+			background: rgba(30, 64, 175, 0.7);
+			border-color: rgba(100, 181, 246, 0.6);
+		}
+
+		.reset-btn:hover {
+			background: rgba(255, 255, 255, 0.12);
+			border-color: rgba(255, 255, 255, 0.4);
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: flex-start;
+			align-items: center;
+			gap: 1.5rem;
+			margin: 1rem 0 0.8rem 0;
+			flex-wrap: wrap;
+		}
+
+		.meta-left {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.meta-left label {
+			font-weight: 600;
+			font-size: 0.84rem;
+			color: #bfdbfe;
+		}
+
+		.meta-left select {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.meta-left select:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.15);
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 600;
+			color: #bfdbfe;
+			min-width: auto;
+		}
+
+		.search-input {
+			min-width: 260px;
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.search-input::placeholder {
+			color: rgba(255, 255, 255, 0.5);
+		}
+
+		.search-input:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.15);
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			max-width: 100%;
+			min-width: 0;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			background: rgba(17, 24, 39, 0.6);
+			color: #fff;
+			border-radius: 8px;
+			overflow: hidden;
+			min-width: 1200px;
+		}
+
+		table th,
+		table td {
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			padding: 0.65rem 0.75rem;
+			font-size: 0.88rem;
+			text-align: left;
+			white-space: nowrap;
+		}
+
+		table th {
+			background: rgba(30, 64, 175, 0.3);
+			font-weight: 700;
+			color: #bfdbfe;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		table td {
+			color: #e0e0e0;
+		}
+
+		table tbody tr:hover {
+			background: rgba(100, 181, 246, 0.08);
+		}
+
+		.total-row {
+			background: rgba(100, 181, 246, 0.15);
+			font-weight: 600;
+			border-top: 2px solid rgba(100, 181, 246, 0.3);
+		}
+
+		.total-row td {
+			color: #bfdbfe;
+		}
+
+		.location-cell {
+			font-weight: 600;
+			color: #64b5f6;
+		}
+
+		.number-cell {
+			text-align: right;
+			font-family: 'Courier New', monospace;
+		}
+
+		.currency-cell {
+			text-align: right;
+			font-family: 'Courier New', monospace;
+			color: #a8d8ea;
+		}
+
+		.status-cell {
+			padding: 0.25rem 0.75rem;
+			border-radius: 0.25rem;
+			display: inline-block;
+			font-size: 0.85rem;
+			font-weight: 500;
+		}
+
+		.status-paid {
+			background: #d1fae5;
+			color: #065f46;
+		}
+
+		.status-review {
+			background: #fef3c7;
+			color: #92400e;
+		}
+
+		.status-claim {
+			background: #bfdbfe;
+			color: #1e40af;
+		}
+
+		.no-records {
+			text-align: center;
+			padding: 2rem;
+			color: #9ca3af;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		.search-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.search-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 220px;
+		}
+
+		.search-icon-btn {
+			display: none;
+		}
+
+		footer {
+			margin-top: auto;
+			flex-shrink: 0;
+			width: 100%;
+			padding: 2rem 1.5rem;
+			text-align: center;
+			color: #9ca3af;
+			font-size: 0.85rem;
+			background: transparent;
+		}
+
+		footer p {
+			margin: 0.5rem 0;
+			opacity: 0.9;
+		}
+
+		footer p:first-child {
+			margin-top: 0;
+		}
+
+		footer p:last-child {
+			margin-bottom: 0;
+			opacity: 0.7;
+		}
+
+		footer a {
+			color: #e0e0e0;
+			text-decoration: none;
+		}
+
+		footer a:hover {
+			text-decoration: underline;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Tech Efficiency Report</h2>
+		</div>
+
+		<div class="report-panel">
+			<div class="report-controls">
+				<div class="control-group">
+					<label>Location</label>
+					<select id="location" onchange="applyFilters()">
+						<option value="">All Locations</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Memphis">Memphis</option>
+					</select>
+				</div>
+
+				<div class="control-group">
+					<label>Schedule Date From</label>
+					<input type="date" id="fromDate" onchange="applyFilters()">
+				</div>
+
+				<div class="control-group">
+					<label>Schedule Date To</label>
+					<input type="date" id="toDate" onchange="applyFilters()">
+				</div>
+
+				<div class="control-group">
+					<label>Tech Name</label>
+					<input type="text" id="techName" placeholder="Search tech name..." onchange="applyFilters()">
+				</div>
+			</div>
+
+			<div class="button-group">
+				<button class="reset-btn" onclick="resetFilters()">Reset</button>
+			</div>
+		</div>
+
+		<div class="report-panel" style="margin-top: 1rem;">
+			<div class="meta-row">
+				<div class="record-count" id="recordsInfo">0 records found</div>
+				<div class="meta-left">
+					<label for="sortBy">Sort by:</label>
+					<select id="sortBy" onchange="renderTable()">
+						<option value="ticket">Ticket #</option>
+						<option value="date">Schedule Date</option>
+						<option value="tech">Tech Name</option>
+					</select>
+				</div>
+				<div class="search-inline">
+					<span>search in result</span>
+					<input type="text" id="searchInput" class="search-input" placeholder="Search in result" onkeyup="filterTable()">
+				</div>
+			</div>
+
+			<div class="table-wrap" id="tableContainer">
+				<table id="efficiencyTable">
+					<thead>
+						<tr>
+							<th>Ticket #</th>
+							<th>Location</th>
+							<th>Model Code</th>
+							<th>Serial No</th>
+							<th>Redo</th>
+							<th>Redo (L)</th>
+							<th>Account</th>
+							<th>Tech Name</th>
+							<th>Schedule Date</th>
+							<th>Note Internal</th>
+							<th>Symptom By Cx</th>
+							<th>Symptom By Tech</th>
+							<th>Diagnosis</th>
+							<th>Resolution</th>
+							<th>Claim Status</th>
+							<th>Claim To</th>
+							<th>Part Fee</th>
+							<th>Labor Fee</th>
+							<th>Diagnose Fee</th>
+							<th>Shipping Fee</th>
+							<th>X. Mile Fee</th>
+							<th>Mileage (round trip)</th>
+							<th>Other Fee</th>
+							<th>Tax Fee</th>
+							<th>Total Fee</th>
+							<th>Claim #</th>
+							<th>Claim Note</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody">
+						<tr>
+							<td colspan="14" class="no-records">No records found</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script>
+		let allData = [];
+		let filteredData = [];
+
+		function logout() {
+			localStorage.removeItem('userEmail');
+			localStorage.removeItem('userCompanyId');
+			window.location.href = '../../landing.html';
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function loadTechEfficiencyData() {
+			// Atlanta Tech Efficiency Report Data - 37 records (05/04/2026 to 05/19/2026)
+			allData = [
+				{ ticketNo: '003997074139', location: 'Atlanta', modelCode: 'C2S900P2M4S1', serialNo: 'LZ184602P', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/19/2026', noteInternal: '5/19 NN', symptomByCx: 'all burners are just clicking in the back, WHEN THE FRONT BURNER IS TURNED ON THE BACK CONTINUALLY TRIES TO IGNITE ALSO', symptomByTech: 'continuation of repair related to 016868974131', diagnosis: 'burners were still igniting after being on, needs bottom left and top left timers HARNESS SWITCHES WB18X28761', resolution: 'called tech support after replacing parts', claimStatus: 'Claim Submitted to Vendor', claimTo: 'SQUARE TRADE', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '003997074139', claimNote: 'Case# 23025211' },
+				{ ticketNo: '009684874136', location: 'Atlanta', modelCode: 'WDT730HAMZ1', serialNo: 'FD2329503', redo: '', redoL: '', account: 'SP', techName: 'Abel Severino', scheduleDate: '05/07/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Unit tested for drainage - working properly' },
+				{ ticketNo: '014987874134', location: 'Atlanta', modelCode: 'ELFE7637AT0', serialNo: '4D42513136', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/08/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced motor, belt, and pulley' },
+				{ ticketNo: '016868974131', location: 'Atlanta', modelCode: 'C2S900P2M4S1', serialNo: 'LZ184602P', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/12/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced spark module and harness' },
+				{ ticketNo: '019818074134', location: 'Atlanta', modelCode: 'WFW5605MC1', serialNo: 'CD2900558', redo: '', redoL: '', account: 'SP', techName: 'Abel Severino', scheduleDate: '05/14/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Door lock failure - mainboard ordered' },
+				{ ticketNo: '037152874135', location: 'Atlanta', modelCode: 'C2S900P2M4S1', serialNo: 'LZ184602P', redo: '', redoL: '', account: 'SP', techName: 'Erick Guzman Juarez', scheduleDate: '05/04/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 250.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 250.00, claimNum: '', claimNote: 'Replaced spark module and plugs' },
+				{ ticketNo: '1005871011-11', location: 'Atlanta', modelCode: 'FCFI3082BS', serialNo: 'VF51185228', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/12/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced UI, frame, and panel' },
+				{ ticketNo: '1006756211-10', location: 'Atlanta', modelCode: 'FRAE2024AW', serialNo: 'BA51311308', redo: '', redoL: '', account: 'SP', techName: 'Kevin Khaiphanliane', scheduleDate: '05/06/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced seal system components' },
+				{ ticketNo: '1006839328-10', location: 'Atlanta', modelCode: 'FRSS2623AS', serialNo: '4A53614410', redo: '', redoL: '', account: 'SP', techName: 'Abraham Im', scheduleDate: '05/05/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced evaporator fan' },
+				{ ticketNo: '1006848523-10', location: 'Atlanta', modelCode: 'EW23BC87SS7', serialNo: '4A02617478', redo: '', redoL: '', account: 'SP', techName: 'Kevin Khaiphanliane', scheduleDate: '05/14/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Adjusted evap panel, needs filter drier' },
+				{ ticketNo: '1006853500-10', location: 'Atlanta', modelCode: 'FCRE3062ASD', serialNo: 'VF50457880', redo: '', redoL: '', account: 'SP', techName: 'Gerrell Berg', scheduleDate: '05/11/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Customer not home at first arrival' },
+				{ ticketNo: '1006876567-11', location: 'Atlanta', modelCode: 'GRFS2853AF', serialNo: '4A53518408', redo: '', redoL: '', account: 'SP', techName: 'Abraham Im', scheduleDate: '05/05/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced ice dispenser solenoid' },
+				{ ticketNo: '1006883636-10', location: 'Atlanta', modelCode: 'FCRE3062AS', serialNo: 'VF53244198', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/06/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'ASC to Review', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced UI board - on hold for testing' },
+				{ ticketNo: '1006884790-10', location: 'Atlanta', modelCode: 'FDPH4316AS', serialNo: 'TH55031212', redo: '', redoL: '', account: 'SP', techName: 'Gerrell Berg', scheduleDate: '05/12/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced door assembly' },
+				{ ticketNo: '1006893157-10', location: 'Atlanta', modelCode: 'FFTR1835VW', serialNo: 'BA61501235', redo: '', redoL: '', account: 'SP', techName: 'Erick Guzman Juarez', scheduleDate: '05/07/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced compressor, dryer, and timer' },
+				{ ticketNo: '1006895036-11', location: 'Atlanta', modelCode: 'GRSN2620AF', serialNo: '4A52704753', redo: '', redoL: '', account: 'SP', techName: 'Jordan Brown', scheduleDate: '05/05/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced Evap Fan Motor' },
+				{ ticketNo: '1006928600-11', location: 'Atlanta', modelCode: 'FCRG3083AS', serialNo: 'VF52375968', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/06/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced bake burner - recall policy' },
+				{ ticketNo: '1006939545-10', location: 'Atlanta', modelCode: 'FFCD2413US', serialNo: 'TH51259480', redo: '', redoL: '', account: 'SP', techName: 'Jordan Brown', scheduleDate: '05/07/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced water valve on unit' },
+				{ ticketNo: '1006996058-10', location: 'Atlanta', modelCode: 'GRMS2773AF', serialNo: '1K35374295', redo: '', redoL: '', account: 'SP', techName: 'Jordan Brown', scheduleDate: '05/12/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Need to order cover assembly' },
+				{ ticketNo: '1006996837-10', location: 'Atlanta', modelCode: 'FCRG3062ASG', serialNo: 'VF52260263', redo: '', redoL: '', account: 'SP', techName: 'Kevin Khaiphanliane', scheduleDate: '05/08/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced burner and baffle' },
+				{ ticketNo: '1006996918-11', location: 'Atlanta', modelCode: 'PDSH4816BF0A', serialNo: 'KH53820746', redo: '', redoL: '', account: 'SP', techName: 'Gerrell Berg', scheduleDate: '05/13/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Part ETA 5/8' },
+				{ ticketNo: '1006998068-12', location: 'Atlanta', modelCode: 'GRFS2853AFM', serialNo: '4A60218362', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/11/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced motor and coupler' },
+				{ ticketNo: '1006999848-11', location: 'Atlanta', modelCode: 'GRFS2853AF', serialNo: '4A53406519', redo: '', redoL: '', account: 'SP', techName: 'Gerrell Berg', scheduleDate: '05/11/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Needs new water filter and manifold' },
+				{ ticketNo: '1007021539-10', location: 'Atlanta', modelCode: 'GRSS2652AF', serialNo: '4A53516232', redo: '', redoL: '', account: 'SP', techName: 'Abraham Im', scheduleDate: '05/14/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Claim Submitted to Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced fill tube heater' },
+				{ ticketNo: '1007026573-10', location: 'Atlanta', modelCode: 'FCRG3052BS', serialNo: 'VF53164021', redo: '', redoL: '', account: 'SP', techName: 'Abel Severino', scheduleDate: '05/04/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Exchange bake burner - recall policy' },
+				{ ticketNo: '1007028373-10', location: 'Atlanta', modelCode: 'GRSS2652AF', serialNo: '4A54404739', redo: '', redoL: '', account: 'SP', techName: 'Abel Severino', scheduleDate: '05/07/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced motor, drive bar, and ice tray' },
+				{ ticketNo: '1007038857-10', location: 'Atlanta', modelCode: 'FCRG3062ASG', serialNo: 'VF53079933', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/16/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced burner and igniter' },
+				{ ticketNo: '1007044858-10', location: 'Atlanta', modelCode: 'FFEC3025US', serialNo: '1F52497240', redo: '', redoL: '', account: 'SP', techName: 'Erick Guzman Juarez', scheduleDate: '05/04/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Fixed inverted knobs - unit working properly' },
+				{ ticketNo: '1007050101-10', location: 'Atlanta', modelCode: 'FCRC3012BS', serialNo: 'VF54078287', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/11/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'ASC to Review', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced switch and knob' },
+				{ ticketNo: '1007052330-10', location: 'Atlanta', modelCode: 'FRSS2623AS', serialNo: '4A53405157', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/13/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced water filter' },
+				{ ticketNo: '1007060426-10', location: 'Atlanta', modelCode: 'FPFU19F8WF', serialNo: 'BB52903403', redo: '', redoL: '', account: 'SP', techName: 'Abraham Im', scheduleDate: '05/15/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced door and gasket assembly' },
+				{ ticketNo: '1007081155-10', location: 'Atlanta', modelCode: 'FCRG3052BS', serialNo: 'VF54348678', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/15/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced bake burner - gas smell resolved' },
+				{ ticketNo: '1007083571-10', location: 'Atlanta', modelCode: 'FCRG3062AS', serialNo: 'VF52256417', redo: '', redoL: '', account: 'SP', techName: 'Jordan Brown', scheduleDate: '05/07/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Paid', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Unit working fine after burner replacement' },
+				{ ticketNo: '1007091626-10', location: 'Atlanta', modelCode: 'GCFG3060BF', serialNo: 'VF55067187', redo: '', redoL: '', account: 'SP', techName: 'Nathan Napora', scheduleDate: '05/11/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'ASC to Review', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Requires gas conversion - licensed installer needed' },
+				{ ticketNo: '1007100683-10', location: 'Atlanta', modelCode: 'FFTR2045VW', serialNo: 'BA51103235', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/08/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Needs seal system replacement' },
+				{ ticketNo: '1007121297-10', location: 'Atlanta', modelCode: 'FCRE306XASB', serialNo: 'VF51764068', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/16/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Replaced main board, elements, and sensor' },
+				{ ticketNo: '1007128362-10', location: 'Atlanta', modelCode: 'FRFC2323AS', serialNo: '4A51407618', redo: '', redoL: '', account: 'SP', techName: 'Abel Severino', scheduleDate: '05/13/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Review by Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Steamed gasket - no freezer opening for 24 hrs' },
+				{ ticketNo: '1007129578-12', location: 'Atlanta', modelCode: 'ELFW7637AT', serialNo: '4C50509420', redo: '', redoL: '', account: 'SP', techName: 'Joshua Silva', scheduleDate: '05/15/2026', noteInternal: '', symptomByCx: '', symptomByTech: '', diagnosis: '', resolution: '', claimStatus: 'Claim Submitted to Vendor', claimTo: '', partFee: 0.00, laborFee: 0.00, diagnoseFee: 0.00, shippingFee: 0.00, xMileFee: 0.00, mileage: '', otherFee: 0.00, taxFee: 0.00, totalFee: 0.00, claimNum: '', claimNote: 'Cleaned gasket - customer needs regular maintenance' }
+			];
+
+			filteredData = [...allData];
+			renderTable();
+			updateRecordsInfo();
+			queueEfficiencyScrollbarRefresh();
+		}
+
+		function renderTable() {
+			const tableBody = document.getElementById('tableBody');
+			const sortBy = document.getElementById('sortBy')?.value || 'ticket';
+			
+			// Apply sorting based on sortBy value
+			let sortedData = [...filteredData];
+			switch(sortBy) {
+				case 'date':
+					sortedData.sort((a, b) => new Date(a.scheduleDate) - new Date(b.scheduleDate));
+					break;
+				case 'tech':
+					sortedData.sort((a, b) => a.techName.localeCompare(b.techName));
+					break;
+				case 'ticket':
+				default:
+					sortedData.sort((a, b) => a.ticketNo.localeCompare(b.ticketNo));
+					break;
+			}
+
+			if (sortedData.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="27" class="no-records">No records found</td></tr>';
+				return;
+			}
+
+			tableBody.innerHTML = sortedData.map(record => `
+				<tr>
+					<td><a href="../Tickets/ticket_details.html?ticket=${record.ticketNo}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: none; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.textDecoration='underline'; this.style.color='#93c5fd';" onmouseout="this.style.textDecoration='none'; this.style.color='#60a5fa';">${record.ticketNo}</a></td>
+					<td>${record.location}</td>
+					<td>${record.modelCode}</td>
+					<td>${record.serialNo}</td>
+					<td><input type="checkbox" ${record.redo ? 'checked' : ''} disabled style="cursor: not-allowed;"></td>
+					<td><input type="checkbox" ${record.redoL ? 'checked' : ''} disabled style="cursor: not-allowed;"></td>
+					<td>${record.account}</td>
+					<td>${record.techName}</td>
+					<td>${record.scheduleDate}</td>
+					<td>${record.noteInternal || ''}</td>
+					<td>${record.symptomByCx || ''}</td>
+					<td>${record.symptomByTech || ''}</td>
+					<td>${record.diagnosis || ''}</td>
+					<td>${record.resolution || ''}</td>
+					<td><span class="status-cell ${getStatusClass(record.claimStatus)}">${record.claimStatus}</span></td>
+					<td>${record.claimTo || ''}</td>
+					<td class="currency-cell">$${record.partFee.toFixed(2)}</td>
+					<td class="currency-cell">$${record.laborFee.toFixed(2)}</td>
+					<td class="currency-cell">$${record.diagnoseFee ? record.diagnoseFee.toFixed(2) : '0.00'}</td>
+					<td class="currency-cell">$${record.shippingFee ? record.shippingFee.toFixed(2) : '0.00'}</td>
+					<td class="currency-cell">$${record.xMileFee ? record.xMileFee.toFixed(2) : '0.00'}</td>
+					<td>${record.mileage || ''}</td>
+					<td class="currency-cell">$${record.otherFee ? record.otherFee.toFixed(2) : '0.00'}</td>
+					<td class="currency-cell">$${record.taxFee ? record.taxFee.toFixed(2) : '0.00'}</td>
+					<td class="currency-cell">$${record.totalFee.toFixed(2)}</td>
+					<td>${record.claimNum || ''}</td>
+					<td>${record.claimNote || ''}</td>
+				</tr>
+			`).join('');
+		}
+
+		function getStatusClass(status) {
+			if (status === 'Paid') return 'status-paid';
+			if (status.includes('Review')) return 'status-review';
+			if (status.includes('Claim')) return 'status-claim';
+			return '';
+		}
+
+		function convertDateFormat(dateStr) {
+			// Convert MM/DD/YYYY to YYYY-MM-DD for comparison
+			if (!dateStr || dateStr.length !== 10) return dateStr;
+			const [month, day, year] = dateStr.split('/');
+			return `${year}-${month}-${day}`;
+		}
+
+		function applyFilters() {
+			const location = document.getElementById('location').value;
+			const fromDate = document.getElementById('fromDate').value; // YYYY-MM-DD format from input
+			const toDate = document.getElementById('toDate').value; // YYYY-MM-DD format from input
+			const techName = document.getElementById('techName').value.toLowerCase();
+
+			filteredData = allData.filter(record => {
+				let match = true;
+
+				if (location && record.location !== location) match = false;
+				if (techName && !record.techName.toLowerCase().includes(techName)) match = false;
+
+				// Convert record date from MM/DD/YYYY to YYYY-MM-DD for comparison
+				const recordDateConverted = convertDateFormat(record.scheduleDate);
+				
+				if (fromDate && recordDateConverted < fromDate) match = false;
+				if (toDate && recordDateConverted > toDate) match = false;
+
+				return match;
+			});
+
+			renderTable();
+			updateRecordsInfo();
+			queueEfficiencyScrollbarRefresh();
+		}
+
+		function filterTable() {
+			const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+			if (!searchTerm) {
+				applyFilters();
+				return;
+			}
+
+			const location = document.getElementById('location').value;
+			
+			filteredData = allData.filter(record => {
+				let match = true;
+
+				if (location && record.location !== location) match = false;
+
+				if (match && searchTerm) {
+					const searchText = `${record.ticketNo}${record.location}${record.modelCode}${record.serialNo}${record.techName}${record.product}${record.notes}`.toLowerCase();
+					match = searchText.includes(searchTerm);
+				}
+
+				return match;
+			});
+
+			renderTable();
+			updateRecordsInfo();
+			queueEfficiencyScrollbarRefresh();
+		}
+
+		function resetFilters() {
+			document.getElementById('location').value = '';
+			document.getElementById('fromDate').value = '';
+			document.getElementById('toDate').value = '';
+			document.getElementById('techName').value = '';
+			document.getElementById('searchInput').value = '';
+			filteredData = [...allData];
+			renderTable();
+			updateRecordsInfo();
+			queueEfficiencyScrollbarRefresh();
+		}
+
+		function updateRecordsInfo() {
+			const recordsInfo = document.getElementById('recordsInfo');
+			recordsInfo.textContent = `${filteredData.length} records found`;
+		}
+
+		function queueEfficiencyScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncEfficiencyScrollbarWidth();
+					updateEfficiencyScrollbarVisibility();
+				});
+			});
+		}
+
+		function syncEfficiencyScrollbarWidth() {
+			const tableWrap = document.getElementById('tableContainer');
+			const table = tableWrap ? tableWrap.querySelector('table') : null;
+			const floatingBar = document.getElementById('floatingScrollbar');
+			const floatingInner = document.getElementById('floatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateEfficiencyScrollbarVisibility() {
+			const tableWrap = document.getElementById('tableContainer');
+			const floatingBar = document.getElementById('floatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const nativeScrollbarVisible = rect.bottom <= window.innerHeight;
+			const shouldShow = hasHorizontalOverflow && !nativeScrollbarVisible;
+
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncEfficiencyScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupEfficiencyScrollbars() {
+			const floatingBar = document.getElementById('floatingScrollbar');
+			const tableWrap = document.getElementById('tableContainer');
+			if (!floatingBar || !tableWrap) return;
+
+			if (floatingBar.parentElement !== document.body) {
+				document.body.appendChild(floatingBar);
+			}
+
+			let syncingFromFloating = false;
+			let syncingFromBottom = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromBottom) {
+					syncingFromBottom = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromBottom = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateEfficiencyScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncEfficiencyScrollbarWidth();
+				updateEfficiencyScrollbarVisibility();
+			});
+
+			window.addEventListener('scroll', function () {
+				updateEfficiencyScrollbarVisibility();
+			});
+
+			queueEfficiencyScrollbarRefresh();
+		}
+
+		window.addEventListener('load', function () {
+			loadUserInfo();
+			loadTechEfficiencyData();
+			setupEfficiencyScrollbars();
+		});
+
+
+	</script>
+
+	<script src="../../routes.js"></script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

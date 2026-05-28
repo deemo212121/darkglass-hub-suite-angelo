@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>To-Do List - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../supabase.min.js"></script>
+	<style>
+		.todo-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.todo-meta {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1rem;
+			margin-bottom: 1rem;
+			color: #cbd5e1;
+			font-size: 0.88rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.todo-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.todo-table th,
+		.todo-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.75rem;
+			font-size: 0.85rem;
+			white-space: nowrap;
+		}
+
+		.todo-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+			text-align: center;
+		}
+
+		.todo-table td:first-child,
+		.todo-table td:nth-child(2) {
+			text-align: left;
+		}
+
+		.todo-table td {
+			text-align: center;
+		}
+
+		.status-pill {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0.25rem 0.65rem;
+			border-radius: 999px;
+			font-size: 0.75rem;
+			font-weight: 700;
+			background: #dbeafe;
+			color: #1d4ed8;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">TO-DO LIST</h2>
+		</div>
+
+		<div class="todo-panel">
+			<div class="todo-meta">
+				<div>Locations</div>
+				<div>In Progress</div>
+			</div>
+
+			<div class="table-wrap">
+				<table class="todo-table">
+					<thead>
+						<tr>
+							<th>Location</th>
+							<th>Task</th>
+							<th>Status</th>
+							<th>Priority</th>
+						</tr>
+						</thead>
+						<tbody id="todoTableBody"></tbody>
+					</table>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return { userEmail, userCompanyId };
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		async function getCompanyDbId(companyCode) {
+			if (!companyCode) return null;
+			const { data, error } = await supabaseClient
+				.from('companies')
+				.select('id')
+				.eq('company_id', companyCode)
+				.maybeSingle();
+			if (error) return null;
+			return data?.id || null;
+		}
+
+		function getPriority(count) {
+			if (count >= 15) return 'High';
+			if (count >= 6) return 'Medium';
+			return 'Low';
+		}
+
+		function renderTodoRows(rows) {
+			const body = document.getElementById('todoTableBody');
+			if (!rows || rows.length === 0) {
+				body.innerHTML = '<tr><td colspan="4">No open tickets found.</td></tr>';
+				return;
+			}
+
+			body.innerHTML = rows.map((row) => {
+				const location = row.location || 'Unassigned';
+				const task = `${row.openCount} open ticket(s) require follow-up`;
+				const priority = getPriority(row.openCount);
+				return `
+					<tr>
+						<td>${location}</td>
+						<td>${task}</td>
+						<td><span class="status-pill">In Progress</span></td>
+						<td>${priority}</td>
+					</tr>
+				`;
+			}).join('');
+		}
+
+		async function loadTodoFromDatabase(companyDbId) {
+			let query = supabaseClient
+				.from('tickets')
+				.select('assigned_area,repair_status');
+
+			if (companyDbId) {
+				query = query.eq('company_id', companyDbId);
+			}
+
+			const { data, error } = await query;
+			if (error) {
+				renderTodoRows([]);
+				return;
+			}
+
+			const openByLocation = new Map();
+			(data || []).forEach((row) => {
+				const status = (row.repair_status || '').toLowerCase();
+				if (status.includes('complete') || status.includes('closed') || status.includes('cancel')) {
+					return;
+				}
+				const location = (row.assigned_area || '').trim() || 'Unassigned';
+				openByLocation.set(location, (openByLocation.get(location) || 0) + 1);
+			});
+
+			const rows = Array.from(openByLocation.entries())
+				.map(([location, openCount]) => ({ location, openCount }))
+				.sort((a, b) => b.openCount - a.openCount);
+
+			renderTodoRows(rows);
+		}
+
+		window.addEventListener('load', async function () {
+	
+			applyPrettyUrl('todoList');
+			const context = loadUserInfo();
+			const companyDbId = await getCompanyDbId(context?.userCompanyId || '');
+			await loadTodoFromDatabase(companyDbId);
+		});
+	</script>
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>

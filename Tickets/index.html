@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tickets Module - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.module-shell {
+			min-height: 100vh;
+			display: flex;
+			flex-direction: column;
+		}
+
+		.module-page {
+			padding: 1.5rem;
+			flex: 1;
+		}
+
+		.module-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1rem;
+			margin-bottom: 1.25rem;
+		}
+
+		.module-title-wrap {
+			display: flex;
+			align-items: center;
+			gap: 0.85rem;
+		}
+
+		.module-title {
+			color: #fff;
+			margin: 0;
+			font-size: 1.35rem;
+			font-weight: 800;
+			letter-spacing: 0.02em;
+		}
+
+		.module-subtitle {
+			margin: 0.2rem 0 0;
+			color: #cbd5e1;
+			font-size: 0.92rem;
+		}
+
+		.hero-panel {
+			padding: 1.25rem;
+			border-radius: 16px;
+			background: linear-gradient(135deg, rgba(37, 99, 235, 0.22), rgba(15, 23, 42, 0.94));
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			color: #fff;
+			margin-bottom: 1.25rem;
+		}
+
+		.hero-panel h2 {
+			margin: 0 0 0.45rem 0;
+			font-size: 1.6rem;
+		}
+
+		.hero-panel p {
+			margin: 0;
+			max-width: 880px;
+			color: #dbeafe;
+			line-height: 1.55;
+		}
+
+		.sub-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+			gap: 1rem;
+		}
+
+		.sub-card {
+			padding: 1rem;
+			border-radius: 14px;
+			background: rgba(17, 24, 39, 0.84);
+			border: 1px solid rgba(148, 163, 184, 0.18);
+			cursor: pointer;
+			transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+			min-height: 150px;
+			display: flex;
+			flex-direction: column;
+			justify-content: space-between;
+		}
+
+		.sub-card:hover {
+			transform: translateY(-2px);
+			border-color: rgba(96, 165, 250, 0.42);
+			background: rgba(30, 41, 59, 0.92);
+		}
+
+		.sub-icon {
+			width: 44px;
+			height: 44px;
+			border-radius: 12px;
+			display: grid;
+			place-items: center;
+			background: rgba(37, 99, 235, 0.18);
+			border: 1px solid rgba(96, 165, 250, 0.22);
+			color: #bfdbfe;
+			margin-bottom: 0.85rem;
+		}
+
+		.sub-icon svg {
+			width: 22px;
+			height: 22px;
+		}
+
+		.sub-card h4 {
+			margin: 0;
+			color: #fff;
+			font-size: 0.98rem;
+		}
+
+		.sub-card p {
+			margin: 0.35rem 0 0;
+			color: #cbd5e1;
+			font-size: 0.86rem;
+			line-height: 1.45;
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-shell">
+		<div class="module-page">
+			<div class="module-header">
+				<div class="module-title-wrap">
+					<button class="back-btn" onclick="window.location.href='../../home.html'">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="19" y1="12" x2="5" y2="12"></line>
+							<polyline points="12 19 5 12 12 5"></polyline>
+						</svg>
+						Back to Dashboard
+					</button>
+					<div>
+						<h2 class="module-title">Tickets Module</h2>
+						<p class="module-subtitle">Choose a ticket workspace to continue</p>
+					</div>
+				</div>
+			</div>
+
+			<div class="hero-panel">
+				<h2>Ticket Workspaces</h2>
+				<p>Select one of the ticket sub modules below. These cards are the ticket-only navigation area, so the subpages can return here instead of going back to the home dashboard.</p>
+			</div>
+
+			<div class="sub-grid">
+				<div class="sub-card" onclick="window.location.href='todo_list.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+								<line x1="3" y1="10" x2="21" y2="10"></line>
+							</svg>
+						</div>
+						<h4>TO-DO LIST</h4>
+						<p>View and manage pending tasks</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='ticket_list.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+							</svg>
+						</div>
+						<h4>TICKET LIST</h4>
+						<p>Browse all support tickets</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='new_ticket.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="12" y1="5" x2="12" y2="19"></line>
+								<line x1="5" y1="12" x2="19" y2="12"></line>
+							</svg>
+						</div>
+						<h4>New Ticket</h4>
+						<p>Create a new support request</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='sms_list.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+							</svg>
+						</div>
+						<h4>SMS List</h4>
+						<p>Manage SMS communications</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='work_calendar.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+								<line x1="3" y1="10" x2="21" y2="10"></line>
+							</svg>
+						</div>
+						<h4>Work Calendar</h4>
+						<p>Monthly view of scheduled work</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='work_map.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="3"></circle>
+							</svg>
+						</div>
+						<h4>Work Map</h4>
+						<p>Geographic view of assigned jobs</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='work_planner.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M3 7h18"></path>
+								<path d="M8 7v13"></path>
+							</svg>
+						</div>
+						<h4>Work Planner</h4>
+						<p>Plan and assign technician schedules</p>
+					</div>
+				</div>
+
+				<div class="sub-card" onclick="window.location.href='report_tar.html'">
+					<div>
+						<div class="sub-icon">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M3 3h18v18H3z"></path>
+							</svg>
+						</div>
+						<h4>(R) Tech Activity Report</h4>
+						<p>Generate technician activity reports</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script>
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		window.addEventListener('load', loadUserInfo);
+	</script>
+</body>
+</html>

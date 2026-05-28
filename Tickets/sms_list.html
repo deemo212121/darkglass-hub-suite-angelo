@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>SMS List - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.sms-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.sms-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1rem;
+			margin-bottom: 0.9rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.55rem;
+			font-size: 0.9rem;
+			color: #e5e7eb;
+		}
+
+		.sms-meta {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 1rem;
+			margin: 0.75rem 0;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.9rem;
+			font-weight: 600;
+			color: #bfdbfe;
+		}
+
+		.search-result {
+			min-width: 220px;
+		}
+
+		.search-result input {
+			width: 100%;
+			padding: 0.6rem 0.7rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.86rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.sms-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.sms-table th,
+		.sms-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.6rem 0.7rem;
+			font-size: 0.8rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.sms-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.sms-table td:nth-child(1),
+		.sms-table td:nth-child(3),
+		.sms-table td:nth-child(7),
+		.sms-table td:nth-child(8),
+		.sms-table td:nth-child(9) {
+			text-align: left;
+		}
+
+		.no-data td {
+			text-align: center !important;
+			font-style: italic;
+			color: #64748b;
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.sms-controls {
+				grid-template-columns: 1fr;
+			}
+
+			table.sms-table {
+				min-width: 1200px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">SMS List</h2>
+		</div>
+
+		<div class="sms-panel">
+			<div class="sms-controls">
+				<div class="control-group">
+					<label for="receiveFrom">Receive Date</label>
+					<input id="receiveFrom" type="date" value="2026-05-07">
+				</div>
+				<div class="control-group">
+					<label for="receiveTo">~</label>
+					<input id="receiveTo" type="date" value="2026-05-14">
+				</div>
+				<div class="control-group">
+					<label for="location">Location</label>
+					<select id="location">
+						<option value="Atlanta" selected>Atlanta</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Dallas">Dallas</option>
+						<option value="Memphis">Memphis</option>
+						<option value="Tallahassee">Tallahassee</option>
+					</select>
+				</div>
+				<div class="control-group">
+					<label>Unread Only</label>
+					<div class="control-inline">
+						<input id="unreadOnly" type="checkbox">
+						<span>Unread Only</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="sms-meta">
+				<div id="recordCount" class="record-count">0 record found</div>
+				<div class="search-result">
+					<input id="searchResult" type="text" placeholder="search in result">
+				</div>
+			</div>
+
+			<div class="table-wrap">
+				<table class="sms-table">
+					<thead>
+						<tr>
+							<th>Received</th>
+							<th>Phone #</th>
+							<th>SMS Text</th>
+							<th>Ticket Type</th>
+							<th>Ticket #</th>
+							<th>Call Taken</th>
+							<th>Repair Status</th>
+							<th>Location</th>
+							<th>View by</th>
+							<th>Replied</th>
+							<th>Chat</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="smsTbody">
+						<tr class="no-data">
+							<td colspan="12">0 record found</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<div id="smsFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="smsFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		loadLocationDropdown('locationSelect', supabaseClient, userCompanyId);
+
+		let smsData = [];
+		let activeCompanyDbId = null;
+
+		const _userEmail = localStorage.getItem('userEmail');
+		const _userCompanyId = localStorage.getItem('userCompanyId');
+		if (!_userEmail || !_userCompanyId) window.location.href = '../../landing.html';
+
+		function loadUserInfo() {
+			document.getElementById('userDisplayName').textContent = _userEmail || '';
+			document.getElementById('companyDisplayId').textContent = `Company: ${_userCompanyId || ''}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		async function getCompanyDbId(cid) {
+			if (!cid) return null;
+			const { data } = await supabaseClient.from('companies').select('id').eq('company_id', cid).maybeSingle();
+			return data ? data.id : null;
+		}
+
+		async function loadSmsFromDatabase() {
+			activeCompanyDbId = await getCompanyDbId(_userCompanyId);
+			let query = supabaseClient.from('tickets')
+				.select('ticket_no, customer_cell_phone_1, customer_home_phone, repair_status, assigned_area, call_taken_date, source, technician_name')
+				.ilike('repair_status', '%sms%')
+				.order('call_taken_date', { ascending: false })
+				.limit(500);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			const { data, error } = await query;
+			if (error) { console.error('SMS fetch error:', error); }
+			smsData = (data || []).map((t) => ({
+				received: t.call_taken_date ? new Date(t.call_taken_date).toLocaleDateString() : '—',
+				phone: t.customer_cell_phone_1 || t.customer_home_phone || '—',
+				text: '—',
+				ticketType: t.source || '—',
+				ticketNo: t.ticket_no || '—',
+				callTaken: t.call_taken_date ? new Date(t.call_taken_date).toLocaleDateString() : '—',
+				repairStatus: t.repair_status || '—',
+				location: t.assigned_area || '—',
+				viewBy: t.technician_name || '—',
+				replied: '—',
+				chat: '—',
+				actions: ''
+			}));
+			renderRows();
+		}
+
+		function renderRows() {
+			const tbody = document.getElementById('smsTbody');
+			const count = smsData.length;
+			document.getElementById('recordCount').textContent = `${count} record found`;
+
+			if (count === 0) {
+				tbody.innerHTML = '<tr class="no-data"><td colspan="12">0 record found</td></tr>';
+				return;
+			}
+
+			tbody.innerHTML = smsData.map((row) => `
+				<tr>
+					<td>${row.received}</td>
+					<td>${row.phone}</td>
+					<td>${row.text}</td>
+					<td>${row.ticketType}</td>
+					<td>${row.ticketNo}</td>
+					<td>${row.callTaken}</td>
+					<td>${row.repairStatus}</td>
+					<td>${row.location}</td>
+					<td>${row.viewBy}</td>
+					<td>${row.replied}</td>
+					<td>${row.chat}</td>
+					<td>${row.actions}</td>
+				</tr>
+			`).join('');
+		}
+
+		window.addEventListener('load', async function () {
+			loadUserInfo();
+			await loadSmsFromDatabase();
+			setupSmsFloatingScrollbar();
+		});
+
+		function syncSmsFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const table = tableWrap ? tableWrap.querySelector('.sms-table') : null;
+			const floatingBar = document.getElementById('smsFloatingScrollbar');
+			const floatingInner = document.getElementById('smsFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateSmsFloatingScrollbarVisibility() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('smsFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncSmsFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupSmsFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('smsFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) { syncingFromTable = false; return; }
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) { syncingFromFloating = false; return; }
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateSmsFloatingScrollbarVisibility();
+			});
+			window.addEventListener('resize', function () {
+				syncSmsFloatingScrollbar();
+				updateSmsFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateSmsFloatingScrollbarVisibility, { passive: true });
+			syncSmsFloatingScrollbar();
+			updateSmsFloatingScrollbarVisibility();
+		}
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

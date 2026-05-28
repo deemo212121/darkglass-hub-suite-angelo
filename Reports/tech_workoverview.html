@@ -1,0 +1,813 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tech Work Overview - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		html,
+		body {
+			height: 100%;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.report-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+			min-width: 0;
+		}
+
+		.report-panel + .report-panel {
+			margin-top: 0.9rem;
+		}
+
+		.report-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.2);
+		}
+
+		.button-group {
+			display: flex;
+			gap: 0.75rem;
+			margin-top: 0.8rem;
+		}
+
+		.reset-btn {
+			padding: 0.65rem 1.25rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(30, 64, 175, 0.4);
+			color: #fff;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s ease;
+		}
+
+		.reset-btn:hover {
+			background: rgba(255, 255, 255, 0.12);
+			border-color: rgba(255, 255, 255, 0.4);
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: flex-start;
+			align-items: center;
+			gap: 1.5rem;
+			margin: 1rem 0 0.8rem 0;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 600;
+			color: #bfdbfe;
+			min-width: auto;
+		}
+
+		.search-input {
+			min-width: 260px;
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.search-input::placeholder {
+			color: rgba(255, 255, 255, 0.5);
+		}
+
+		.search-input:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.15);
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			max-width: 100%;
+			min-width: 0;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			background: rgba(17, 24, 39, 0.6);
+			color: #fff;
+			border-radius: 8px;
+			overflow: hidden;
+			min-width: 1200px;
+		}
+
+		table th,
+		table td {
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			padding: 0.65rem 0.75rem;
+			font-size: 0.88rem;
+			text-align: left;
+			white-space: nowrap;
+		}
+
+		table th {
+			background: rgba(30, 64, 175, 0.3);
+			font-weight: 700;
+			color: #bfdbfe;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		table th.group-header {
+			background: rgba(100, 181, 246, 0.2);
+			border-bottom: 2px solid rgba(100, 181, 246, 0.4);
+			color: #64b5f6;
+			text-align: center;
+		}
+
+		table td {
+			color: #e0e0e0;
+		}
+
+		table tbody tr:hover {
+			background: rgba(100, 181, 246, 0.08);
+		}
+
+		.total-row {
+			background: rgba(100, 181, 246, 0.15);
+			font-weight: 600;
+			border-top: 2px solid rgba(100, 181, 246, 0.3);
+		}
+
+		.total-row td {
+			color: #bfdbfe;
+		}
+
+		.location-cell {
+			font-weight: 600;
+			color: #64b5f6;
+		}
+
+		.number-cell {
+			text-align: right;
+			font-family: 'Courier New', monospace;
+		}
+
+		.no-records {
+			text-align: center;
+			padding: 2rem;
+			color: #9ca3af;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		.search-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.search-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 220px;
+		}
+
+
+
+		.meta-left {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.meta-left label {
+			font-weight: 600;
+			font-size: 0.84rem;
+			color: #bfdbfe;
+		}
+
+		.meta-left select {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.meta-left select:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.15);
+		}
+
+		.search-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.search-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 220px;
+		}
+
+		footer {
+			margin-top: auto;
+			flex-shrink: 0;
+			width: 100%;
+			padding: 2rem 1.5rem;
+			text-align: center;
+			color: #9ca3af;
+			font-size: 0.85rem;
+			background: transparent;
+		}
+
+		footer p {
+			margin: 0.5rem 0;
+			opacity: 0.9;
+		}
+
+		footer p:first-child {
+			margin-top: 0;
+		}
+
+		footer p:last-child {
+			margin-bottom: 0;
+			opacity: 0.7;
+		}
+
+		footer a {
+			color: #e0e0e0;
+			text-decoration: none;
+		}
+
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Tech Work Overview</h2>
+		</div>
+
+		<div class="report-panel">
+			<div class="report-controls">
+				<div class="control-group">
+					<label>Location</label>
+					<select id="location" onchange="applyFilters()">
+						<option value="">All Locations</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Atlanta" selected>Atlanta</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Cape Girardeau">Cape Girardeau</option>
+						<option value="Chattanooga">Chattanooga</option>
+						<option value="Columbus">Columbus</option>
+						<option value="Dallas">Dallas</option>
+						<option value="Destin">Destin</option>
+						<option value="Huntsville">Huntsville</option>
+						<option value="Jackson,MS">Jackson,MS</option>
+						<option value="Jackson, TN">Jackson, TN</option>
+						<option value="Jacksonville">Jacksonville</option>
+						<option value="Jonesboro">Jonesboro</option>
+						<option value="Knoxville">Knoxville</option>
+						<option value="Lake Charles">Lake Charles</option>
+						<option value="Little Rock">Little Rock</option>
+						<option value="Louisville">Louisville</option>
+						<option value="Memphis">Memphis</option>
+						<option value="Mobile">Mobile</option>
+						<option value="Montgomery">Montgomery</option>
+						<option value="Nashville">Nashville</option>
+						<option value="New Orleans">New Orleans</option>
+						<option value="Norfolk">Norfolk</option>
+						<option value="Philippines">Philippines</option>
+						<option value="Raleigh">Raleigh</option>
+						<option value="Richmond">Richmond</option>
+						<option value="San Antonio">San Antonio</option>
+						<option value="Savannah">Savannah</option>
+						<option value="St. Louis">St. Louis</option>
+						<option value="Tallanassee">Tallanassee</option>
+						<option value="Wilmington">Wilmington</option>
+					</select>
+				</div>
+
+				<div class="control-group">
+					<label>Date</label>
+					<input type="date" id="reportDate" value="2026-05-20" onchange="applyFilters()">
+				</div>
+			</div>
+
+			<div class="button-group">
+				<button class="reset-btn" onclick="resetFilters()">Reset</button>
+			</div>
+		</div>
+
+		<div class="report-panel" style="margin-top: 1rem;">
+			<div class="meta-row">
+				<div class="record-count" id="recordsInfo">0 records found</div>
+				<div class="search-inline">
+					<span>search in result</span>
+					<input type="text" id="searchInput" class="search-input" placeholder="Search in result" onkeyup="filterTable()">
+				</div>
+			</div>
+
+			<div class="table-wrap" id="tableContainer">
+				<table id="overviewTable">
+					<thead>
+						<tr>
+							<th style="min-width: 120px;">Location</th>
+							<th style="min-width: 180px;">Technician</th>
+							<th colspan="3" class="group-header">Last Month</th>
+							<th colspan="3" class="group-header">This Month</th>
+							<th colspan="2" class="group-header">Yesterday</th>
+							<th colspan="3" class="group-header">Today</th>
+							<th colspan="3" class="group-header">Scheduled</th>
+							<th colspan="2" class="group-header">Summary</th>
+						</tr>
+						<tr>
+							<th></th>
+							<th></th>
+							<th>Completed (IW)</th>
+							<th>Completed (OW)</th>
+							<th>Cancelled</th>
+							<th>Completed (IW)</th>
+							<th>Completed (OW)</th>
+							<th>Cancelled</th>
+							<th>Assigned</th>
+							<th>Cancelled</th>
+							<th>Scheduled</th>
+							<th>Completed (IW)</th>
+							<th>Completed (OW)</th>
+							<th>Completed (IW)</th>
+							<th>Completed (OW)</th>
+							<th>Open</th>
+							<th>Confirmed</th>
+							<th>Over 7 days</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody">
+						<tr>
+							<td colspan="18" class="no-records">No records found</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script>
+		let allData = [
+			{ location: 'Atlanta', technician: 'Abel Severino', lm_ciwc: 23, lm_cowc: 1, lm_canc: 1, tm_ciwc: 26, tm_cowc: 0, tm_canc: 0, y_asgn: '', y_canc: '', t_sched: 2, t_ciwc: 2, t_cowc: 0, s_ciwc: 3, s_cowc: '', s_open: 2, summary_conf: 10, summary_o7d: 4 },
+			{ location: 'Atlanta', technician: 'Abraham Im', lm_ciwc: 74, lm_cowc: 1, lm_canc: 8, tm_ciwc: 32, tm_cowc: 1, tm_canc: 0, y_asgn: '', y_canc: '', t_sched: 3, t_ciwc: 2, t_cowc: 0, s_ciwc: 4, s_cowc: '', s_open: 2, summary_conf: 12, summary_o7d: 6 },
+			{ location: 'Atlanta', technician: 'Gerrell Berg', lm_ciwc: 60, lm_cowc: 0, lm_canc: 2, tm_ciwc: 22, tm_cowc: 0, tm_canc: 0, y_asgn: 2, y_canc: '', t_sched: 2, t_ciwc: 1, t_cowc: 0, s_ciwc: 6, s_cowc: '', s_open: 1, summary_conf: 16, summary_o7d: 9 },
+			{ location: 'Atlanta', technician: 'Jordan Brown', lm_ciwc: 64, lm_cowc: 0, lm_canc: 2, tm_ciwc: 19, tm_cowc: 1, tm_canc: 1, y_asgn: '', y_canc: '', t_sched: 0, t_ciwc: '', t_cowc: '', s_ciwc: 2, s_cowc: '', s_open: '', summary_conf: 3, summary_o7d: 2 },
+			{ location: 'Atlanta', technician: 'Joshua Silva', lm_ciwc: 88, lm_cowc: 1, lm_canc: 1, tm_ciwc: 34, tm_cowc: 0, tm_canc: 1, y_asgn: '', y_canc: '', t_sched: 5, t_ciwc: 4, t_cowc: 0, s_ciwc: 7, s_cowc: '', s_open: 4, summary_conf: 13, summary_o7d: 8 },
+			{ location: 'Atlanta', technician: 'Kevin Khaiphanliane', lm_ciwc: 55, lm_cowc: 0, lm_canc: '', tm_ciwc: 20, tm_cowc: 0, tm_canc: '', y_asgn: '', y_canc: '', t_sched: 1, t_ciwc: '', t_cowc: '', s_ciwc: 1, s_cowc: '', s_open: '', summary_conf: 6, summary_o7d: 5 },
+			{ location: 'Atlanta', technician: 'Nathan Napora', lm_ciwc: 0, lm_cowc: 0, lm_canc: '', tm_ciwc: 19, tm_cowc: 0, tm_canc: '', y_asgn: '', y_canc: '', t_sched: 3, t_ciwc: 2, t_cowc: 0, s_ciwc: 3, s_cowc: '', s_open: 2, summary_conf: 7, summary_o7d: 4 },
+			{ location: 'Atlanta', technician: 'Oumar Sylla', lm_ciwc: 34, lm_cowc: 0, lm_canc: 1, tm_ciwc: 0, tm_cowc: 0, tm_canc: 0, y_asgn: '', y_canc: '', t_sched: '', t_ciwc: '', t_cowc: '', s_ciwc: '', s_cowc: '', s_open: '', summary_conf: '', summary_o7d: '' },
+			{ location: 'Atlanta', technician: 'William Godfrey', lm_ciwc: '', lm_cowc: '', lm_canc: '', tm_ciwc: 1, tm_cowc: '', tm_canc: 0, y_asgn: '', y_canc: '', t_sched: '', t_ciwc: '', t_cowc: '', s_ciwc: '', s_cowc: '', s_open: '', summary_conf: '', summary_o7d: '' }
+		];
+
+		let filteredData = [...allData];
+
+		function logout() {
+			localStorage.removeItem('userEmail');
+			localStorage.removeItem('userCompanyId');
+			window.location.href = '../../landing.html';
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail') || 'admin@adminhubsolutions.com';
+			const userCompanyId = localStorage.getItem('userCompanyId') || 'AHS001';
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function renderTable() {
+			const tableBody = document.getElementById('tableBody');
+			
+			let sortedData = [...filteredData];
+			// Sort by location first, then by technician
+			sortedData.sort((a, b) => a.location.localeCompare(b.location) || a.technician.localeCompare(b.technician));
+
+			if (sortedData.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="18" class="no-records">No records found</td></tr>';
+				return;
+			}
+
+			let html = sortedData.map(record => `
+				<tr>
+					<td class="location-cell">${record.location}</td>
+					<td class="location-cell">${record.technician}</td>
+					<td class="number-cell">${record.lm_ciwc || '-'}</td>
+					<td class="number-cell">${record.lm_cowc || '-'}</td>
+					<td class="number-cell">${record.lm_canc || '-'}</td>
+					<td class="number-cell">${record.tm_ciwc || '-'}</td>
+					<td class="number-cell">${record.tm_cowc || '-'}</td>
+					<td class="number-cell">${record.tm_canc || '-'}</td>
+					<td class="number-cell">${record.y_asgn || '-'}</td>
+					<td class="number-cell">${record.y_canc || '-'}</td>
+					<td class="number-cell">${record.t_sched || '-'}</td>
+					<td class="number-cell">${record.t_ciwc || '-'}</td>
+					<td class="number-cell">${record.t_cowc || '-'}</td>
+					<td class="number-cell">${record.s_ciwc || '-'}</td>
+					<td class="number-cell">${record.s_cowc || '-'}</td>
+					<td class="number-cell">${record.s_open || '-'}</td>
+					<td class="number-cell">${record.summary_conf || '-'}</td>
+					<td class="number-cell">${record.summary_o7d || '-'}</td>
+				</tr>
+			`).join('');
+
+			// Add totals row
+			const totals = {
+				lm_ciwc: sortedData.reduce((sum, r) => sum + (parseInt(r.lm_ciwc) || 0), 0),
+				lm_cowc: sortedData.reduce((sum, r) => sum + (parseInt(r.lm_cowc) || 0), 0),
+				lm_canc: sortedData.reduce((sum, r) => sum + (parseInt(r.lm_canc) || 0), 0),
+				tm_ciwc: sortedData.reduce((sum, r) => sum + (parseInt(r.tm_ciwc) || 0), 0),
+				tm_cowc: sortedData.reduce((sum, r) => sum + (parseInt(r.tm_cowc) || 0), 0),
+				tm_canc: sortedData.reduce((sum, r) => sum + (parseInt(r.tm_canc) || 0), 0),
+				y_asgn: sortedData.reduce((sum, r) => sum + (parseInt(r.y_asgn) || 0), 0),
+				y_canc: sortedData.reduce((sum, r) => sum + (parseInt(r.y_canc) || 0), 0),
+				t_sched: sortedData.reduce((sum, r) => sum + (parseInt(r.t_sched) || 0), 0),
+				t_ciwc: sortedData.reduce((sum, r) => sum + (parseInt(r.t_ciwc) || 0), 0),
+				t_cowc: sortedData.reduce((sum, r) => sum + (parseInt(r.t_cowc) || 0), 0),
+				s_ciwc: sortedData.reduce((sum, r) => sum + (parseInt(r.s_ciwc) || 0), 0),
+				s_cowc: sortedData.reduce((sum, r) => sum + (parseInt(r.s_cowc) || 0), 0),
+				s_open: sortedData.reduce((sum, r) => sum + (parseInt(r.s_open) || 0), 0),
+				summary_conf: sortedData.reduce((sum, r) => sum + (parseInt(r.summary_conf) || 0), 0),
+				summary_o7d: sortedData.reduce((sum, r) => sum + (parseInt(r.summary_o7d) || 0), 0)
+			};
+
+			html += `
+				<tr class="total-row">
+					<td colspan="2" style="text-align: right; padding-right: 0.75rem;"><strong>TOTALS</strong></td>
+					<td class="number-cell">${totals.lm_ciwc}</td>
+					<td class="number-cell">${totals.lm_cowc}</td>
+					<td class="number-cell">${totals.lm_canc}</td>
+					<td class="number-cell">${totals.tm_ciwc}</td>
+					<td class="number-cell">${totals.tm_cowc}</td>
+					<td class="number-cell">${totals.tm_canc}</td>
+					<td class="number-cell">${totals.y_asgn}</td>
+					<td class="number-cell">${totals.y_canc}</td>
+					<td class="number-cell">${totals.t_sched}</td>
+					<td class="number-cell">${totals.t_ciwc}</td>
+					<td class="number-cell">${totals.t_cowc}</td>
+					<td class="number-cell">${totals.s_ciwc}</td>
+					<td class="number-cell">${totals.s_cowc}</td>
+					<td class="number-cell">${totals.s_open}</td>
+					<td class="number-cell">${totals.summary_conf}</td>
+					<td class="number-cell">${totals.summary_o7d}</td>
+				</tr>
+			`;
+
+			tableBody.innerHTML = html;
+			updateRecordsInfo();
+			queueScrollbarRefresh();
+		}
+
+		function applyFilters() {
+			const location = document.getElementById('location').value;
+			
+			filteredData = allData.filter(record => {
+				if (location && record.location !== location) return false;
+				return true;
+			});
+
+			renderTable();
+		}
+
+		function filterTable() {
+			const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+			if (!searchTerm) {
+				applyFilters();
+				return;
+			}
+
+			const location = document.getElementById('location').value;
+			
+			filteredData = allData.filter(record => {
+				if (location && record.location !== location) return false;
+				
+				if (searchTerm) {
+					const searchText = `${record.location}${record.technician}`.toLowerCase();
+					return searchText.includes(searchTerm);
+				}
+				return true;
+			});
+
+			renderTable();
+		}
+
+		function resetFilters() {
+			document.getElementById('location').value = 'Atlanta';
+			document.getElementById('reportDate').value = '2026-05-20';
+			document.getElementById('searchInput').value = '';
+			filteredData = [...allData];
+			renderTable();
+		}
+
+		function updateRecordsInfo() {
+			document.getElementById('recordsInfo').textContent = `${filteredData.length} records found`;
+		}
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('tableContainer');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+
+			if (!tableContainer) return;
+
+			function updateScrollbarVisibility() {
+				const hasHorizontalOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasHorizontalOverflow) {
+					floatingScrollbar.classList.remove('is-visible');
+					return;
+				}
+
+				const rect = tableContainer.getBoundingClientRect();
+				// Table's own scrollbar is off-screen (scrolled below viewport bottom)
+				const tableScrollbarOffscreen = rect.bottom > window.innerHeight;
+
+				if (tableScrollbarOffscreen) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else {
+					floatingScrollbar.classList.remove('is-visible');
+				}
+			}
+
+			tableContainer.addEventListener('scroll', () => {
+				floatingScrollbar.scrollLeft = tableContainer.scrollLeft;
+			});
+
+			floatingScrollbar.addEventListener('scroll', () => {
+				tableContainer.scrollLeft = floatingScrollbar.scrollLeft;
+			});
+
+			updateScrollbarVisibility();
+			window.addEventListener('scroll', updateScrollbarVisibility);
+			window.addEventListener('resize', updateScrollbarVisibility);
+		}
+
+		function queueScrollbarRefresh() {
+			setTimeout(() => {
+				setupScrollbars();
+			}, 100);
+		}
+
+		// Initialize on load
+		function setupSearchIconButton() {
+			const userEmail = localStorage.getItem('userEmail') || 'admin@adminhubsolutions.com';
+			const userCompanyId = localStorage.getItem('userCompanyId') || 'AHS001';
+			
+			if (!userEmail || !userCompanyId) return;
+
+			if (document.getElementById('globalTicketLookup')) return;
+
+			// Create lookup panel wrapper
+			const wrap = document.createElement('div');
+			wrap.id = 'globalTicketLookup';
+			wrap.className = 'footer-ticket-lookup-wrap is-collapsed';
+			
+			// Create magnifying glass button
+			const fabBtn = document.createElement('button');
+			fabBtn.id = 'globalTicketFab';
+			fabBtn.className = 'lookup-fab';
+			fabBtn.type = 'button';
+			fabBtn.setAttribute('aria-label', 'Lookup Ticket');
+			fabBtn.setAttribute('title', 'Lookup Ticket');
+			fabBtn.innerHTML = `
+				<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<circle cx="11" cy="11" r="7"></circle>
+					<path d="M20 20l-3.5-3.5"></path>
+				</svg>
+			`;
+			wrap.appendChild(fabBtn);
+
+			// Create lookup panel
+			const lookupPanel = document.createElement('div');
+			lookupPanel.className = 'footer-ticket-lookup';
+			lookupPanel.innerHTML = `
+				<div class="lookup-field">
+					<label for="lookupTicketNumber">Ticket #</label>
+					<input id="lookupTicketNumber" type="text" placeholder="Enter ticket #" />
+				</div>
+				<div class="lookup-field">
+					<label for="lookupZipCode">Zip Code</label>
+					<input id="lookupZipCode" type="text" placeholder="Zip Code" class="lookup-zip-input" />
+				</div>
+				<button id="lookupViewBtn" type="button" class="lookup-view-btn">Lookup</button>
+			`;
+			wrap.appendChild(lookupPanel);
+
+			document.body.appendChild(wrap);
+
+			const ticketInput = wrap.querySelector('#lookupTicketNumber');
+			const zipInput = wrap.querySelector('#lookupZipCode');
+			const searchBtn = wrap.querySelector('#lookupViewBtn');
+			let collapseTimer = null;
+
+			function clearCollapseTimer() {
+				if (collapseTimer) {
+					clearTimeout(collapseTimer);
+					collapseTimer = null;
+				}
+			}
+
+			function collapseLookup() {
+				if (wrap.contains(document.activeElement)) {
+					scheduleCollapse();
+					return;
+				}
+				wrap.classList.add('is-collapsed');
+				wrap.classList.remove('is-expanded');
+			}
+
+			function scheduleCollapse() {
+				clearCollapseTimer();
+				collapseTimer = setTimeout(collapseLookup, 2000);
+			}
+
+			function expandLookup(focusTicketInput = false) {
+				clearCollapseTimer();
+				wrap.classList.remove('is-collapsed');
+				wrap.classList.add('is-expanded');
+				if (focusTicketInput) {
+					ticketInput.focus();
+				}
+				scheduleCollapse();
+			}
+
+			function performSearch() {
+				const ticket = ticketInput.value.trim();
+				const zip = zipInput.value.trim();
+
+				if (ticket || zip) {
+					console.log('Lookup ticket:', ticket, 'ZIP:', zip);
+					// Perform ticket lookup action
+				}
+				collapseLookup();
+			}
+
+			searchBtn.addEventListener('click', performSearch);
+			fabBtn.addEventListener('click', function () {
+				expandLookup(true);
+			});
+			wrap.addEventListener('focusin', function () {
+				clearCollapseTimer();
+				wrap.classList.remove('is-collapsed');
+				wrap.classList.add('is-expanded');
+			});
+			wrap.addEventListener('focusout', function () {
+				scheduleCollapse();
+			});
+			ticketInput.addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					performSearch();
+				}
+			});
+			zipInput.addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					performSearch();
+				}
+			});
+			scheduleCollapse();
+		}
+
+		window.addEventListener('load', function () {
+			loadUserInfo();
+			renderTable();
+			setupScrollbars();
+			setupSearchIconButton();
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

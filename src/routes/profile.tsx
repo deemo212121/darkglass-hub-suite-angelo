@@ -22,26 +22,39 @@ const KEY = "ahs:profile";
 
 function ProfilePage() {
   const { email } = useAuth();
-  const [p, setP] = useState<Profile>({
-    firstName: "", lastName: "", email: email ?? "", phone: "", department: "Service", title: "Technician",
+  const [profile, setProfile] = useState<Profile>({
+    firstName: "",
+    lastName: "",
+    email: email ?? "",
+    phone: "",
+    department: "Service",
+    title: "Technician",
   });
-  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saved, setSaved] = useState<string>("");
 
   useEffect(() => {
     const raw = localStorage.getItem(KEY);
-    if (raw) { try { setP({ ...p, ...JSON.parse(raw) }); } catch {} }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (raw) {
+      try {
+        setProfile((current) => ({ ...current, ...JSON.parse(raw) }));
+      } catch {}
+    }
   }, []);
 
   const save = () => {
-    localStorage.setItem(KEY, JSON.stringify(p));
+    localStorage.setItem(KEY, JSON.stringify(profile));
     setSaved("Profile saved.");
     setTimeout(() => setSaved(""), 2000);
   };
-  const changePw = () => {
-    if (!pw.next || pw.next !== pw.confirm) { setSaved("Passwords don't match."); return; }
-    setPw({ current: "", next: "", confirm: "" });
+
+  const changePassword = () => {
+    if (!password.next || password.next !== password.confirm) {
+      setSaved("Passwords don't match.");
+      return;
+    }
+    setPassword({ current: "", next: "", confirm: "" });
+>>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)
     setSaved("Password updated.");
     setTimeout(() => setSaved(""), 2000);
   };
@@ -52,8 +65,8 @@ function ProfilePage() {
       <input
         className="glass-input"
         type={type}
-        value={p[key]}
-        onChange={(e) => setP({ ...p, [key]: e.target.value })}
+        value={profile[key]}
+        onChange={(e) => setProfile({ ...profile, [key]: e.target.value })}
       />
     </label>
   );
@@ -81,19 +94,19 @@ function ProfilePage() {
           <div className="grid gap-4">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-muted-foreground">Current password</span>
-              <input className="glass-input" type="password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+              <input className="glass-input" type="password" value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} />
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-muted-foreground">New password</span>
-              <input className="glass-input" type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+              <input className="glass-input" type="password" value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} />
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-muted-foreground">Confirm new password</span>
-              <input className="glass-input" type="password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
+              <input className="glass-input" type="password" value={password.confirm} onChange={(e) => setPassword({ ...password, confirm: e.target.value })} />
             </label>
           </div>
           <div className="mt-5">
-            <button className="btn btn-primary" onClick={changePw}><Save className="h-4 w-4" />Update password</button>
+            <button className="btn btn-primary" onClick={changePassword}><Save className="h-4 w-4" />Update password</button>
           </div>
         </section>
       </div>

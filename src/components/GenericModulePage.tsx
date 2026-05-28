@@ -82,7 +82,7 @@ export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModule
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
           <ChevronLeft className="h-4 w-4" /> {mod.label}
         </Link>
-        <div className="ml-1">
+        <div>
           <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>
           <p className="text-sm text-muted-foreground">{sub.description}</p>
         </div>
@@ -101,6 +101,7 @@ export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModule
               {f.type === "select" ? (
                 <select
                   className="glass-input"
+                  title={`Filter by ${f.label}`}
                   value={filters[f.key] ?? ""}
                   onChange={(e) => setFilters({ ...filters, [f.key]: e.target.value })}
                 >
@@ -119,21 +120,30 @@ export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModule
           ))}
         </div>
         <div className="flex items-center gap-2 mt-4">
-          <button className="btn" onClick={resetFilters}><RefreshCw className="h-4 w-4" />Refresh</button>
-          <button className="btn" onClick={saveFilters}><Save className="h-4 w-4" />Save</button>
-          <button className="btn btn-primary" onClick={addRow}><Plus className="h-4 w-4" />Add {sub.title}</button>
+          <button className="btn" onClick={resetFilters} title="Clear all filters">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
+          <button className="btn" onClick={saveFilters} title="Save current filters">
+            <Save className="h-4 w-4" />
+            Save
+          </button>
+          <button className="btn btn-primary" onClick={addRow}>
+            <Plus className="h-4 w-4" />
+            Add {sub.title}
+          </button>
           <div className="ml-auto text-xs text-muted-foreground">
             {filtered.length} of {rows.length} records
           </div>
         </div>
       </div>
 
-      <div className="panel" style={{ overflowX: "auto" }}>
+      <div className="panel overflow-x-auto">
         <table className="data-table">
           <thead>
             <tr>
               {sub.fields.map((f) => <th key={f.key}>{f.label}</th>)}
-              <th style={{ width: 60 }}></th>
+              <th className="w-[60px]"></th>
             </tr>
           </thead>
           <tbody>
@@ -143,31 +153,47 @@ export function GenericModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModule
                   <td key={f.key}>
                     {f.editable ? (
                       f.type === "select" ? (
-                        <select value={r[f.key] ?? ""} onChange={(e) => updateRow(r.__id, f.key, e.target.value)}>
+                        <select
+                          value={r[f.key] ?? ""}
+                          title={`Edit ${f.label}`}
+                          onChange={(e) => updateRow(r.__id, f.key, e.target.value)}
+                          className="editable-cell"
+                        >
                           <option value="">—</option>
                           {f.options?.map((o) => <option key={o} value={o}>{o}</option>)}
                         </select>
                       ) : (
                         <input
                           type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                          placeholder={`Edit ${f.label}`}
                           value={r[f.key] ?? ""}
                           onChange={(e) => updateRow(r.__id, f.key, f.type === "number" ? Number(e.target.value) : e.target.value)}
+                          className="editable-cell"
                         />
                       )
                     ) : (
-                      <span>{String(r[f.key] ?? "")}</span>
+                      <span className="text-foreground/90">{String(r[f.key] ?? "")}</span>
                     )}
                   </td>
                 ))}
-                <td>
-                  <button className="text-destructive hover:opacity-80" onClick={() => deleteRow(r.__id)} aria-label="Delete">
+                <td className="text-center">
+                  <button
+                    className="text-destructive hover:opacity-80 p-1 rounded transition-colors"
+                    onClick={() => deleteRow(r.__id)}
+                    aria-label="Delete row"
+                    title="Delete this record"
+                  >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={sub.fields.length + 1} style={{ textAlign: "center", padding: "2rem", color: "#6b7280" }}>No records</td></tr>
+              <tr>
+                <td colSpan={sub.fields.length + 1} className="text-center py-12 text-muted-foreground">
+                  <p className="text-sm">No records</p>
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

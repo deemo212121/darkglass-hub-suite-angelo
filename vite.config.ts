@@ -12,4 +12,58 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  vite: {
+    build: {
+      chunkSizeWarningLimit: 800,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            const normalized = id.replace(/\\/g, "/");
+
+            if (normalized.includes("/node_modules/")) {
+              if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
+              if (normalized.includes("/node_modules/@radix-ui/")) return "radix-ui";
+              if (
+                normalized.includes("/node_modules/react-dom/") ||
+                normalized.includes("/node_modules/react/") ||
+                normalized.includes("/node_modules/scheduler/") ||
+                normalized.includes("/node_modules/loose-envify/") ||
+                normalized.includes("/node_modules/js-tokens/") ||
+                normalized.includes("/node_modules/use-sync-external-store/") ||
+                normalized.includes("/node_modules/object-assign/")
+              ) {
+                return "react";
+              }
+              if (normalized.includes("/node_modules/lucide-react/")) return "icons";
+              if (normalized.includes("/node_modules/recharts/")) return "charts";
+              if (normalized.includes("/node_modules/react-hook-form/") || normalized.includes("/node_modules/@hookform/resolvers/") || normalized.includes("/node_modules/zod/")) return "forms";
+              if (normalized.includes("/node_modules/date-fns/")) return "date-fns";
+              if (normalized.includes("/node_modules/dexie/")) return "dexie";
+              if (normalized.includes("/node_modules/sonner/")) return "sonner";
+              if (
+                normalized.includes("/node_modules/cmdk/") ||
+                normalized.includes("/node_modules/embla-carousel-react/") ||
+                normalized.includes("/node_modules/react-day-picker/") ||
+                normalized.includes("/node_modules/react-resizable-panels/") ||
+                normalized.includes("/node_modules/input-otp/") ||
+                normalized.includes("/node_modules/vaul/")
+              ) {
+                return "interactive";
+              }
+
+              return "vendor";
+            }
+
+            if (normalized.includes("/src/lib/modules.ts")) return "module-registry";
+            if (normalized.includes("/src/lib/")) return "app-lib";
+            if (normalized.includes("/src/components/ui/")) return "ui-kit";
+            if (normalized.includes("/src/components/")) return "app-components";
+            if (normalized.includes("/src/hooks/")) return "app-hooks";
+
+            return undefined;
+          },
+        },
+      },
+    },
+  },
 });

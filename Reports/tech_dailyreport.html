@@ -1,0 +1,1240 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tech Daily Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.report-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.report-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.2);
+		}
+
+		.button-group {
+			display: flex;
+			gap: 0.75rem;
+			margin-top: 0.8rem;
+		}
+
+		.search-btn,
+		.reset-btn {
+			padding: 0.65rem 1.25rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(30, 64, 175, 0.4);
+			color: #fff;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s ease;
+		}
+
+		.search-btn {
+			border-color: rgba(100, 181, 246, 0.4);
+			background: rgba(30, 64, 175, 0.5);
+		}
+
+		.search-btn:hover {
+			background: rgba(30, 64, 175, 0.7);
+			border-color: rgba(100, 181, 246, 0.6);
+		}
+
+		.reset-btn:hover {
+			background: rgba(255, 255, 255, 0.12);
+			border-color: rgba(255, 255, 255, 0.4);
+		}
+
+		.efficiency-btn {
+			padding: 0.65rem 1.25rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(16, 185, 129, 0.4);
+			color: #fff;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s ease;
+			border-color: rgba(167, 243, 208, 0.4);
+		}
+
+		.efficiency-btn:hover {
+			background: rgba(16, 185, 129, 0.6);
+			border-color: rgba(167, 243, 208, 0.6);
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.8rem;
+			margin: 1rem 0 0.8rem 0;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 600;
+			color: #bfdbfe;
+		}
+
+		.search-box {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+		}
+
+		.search-input {
+			min-width: 200px;
+			padding: 0.55rem 0.68rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.search-input::placeholder {
+			color: rgba(255, 255, 255, 0.5);
+		}
+
+		.search-input:focus {
+			outline: none;
+			border-color: rgba(100, 181, 246, 0.6);
+			box-shadow: 0 0 0 3px rgba(100, 181, 246, 0.15);
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			background: rgba(17, 24, 39, 0.6);
+			color: #fff;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		table th,
+		table td {
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			padding: 0.65rem 0.75rem;
+			font-size: 0.88rem;
+			text-align: left;
+			white-space: nowrap;
+		}
+
+		table th {
+			background: rgba(30, 64, 175, 0.3);
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		table td {
+			color: #e0e0e0;
+		}
+
+		table tbody tr:hover {
+			background: rgba(100, 181, 246, 0.08);
+		}
+
+		.total-row {
+			background: rgba(100, 181, 246, 0.15);
+			font-weight: 600;
+			border-top: 2px solid rgba(100, 181, 246, 0.3);
+		}
+
+		.total-row td {
+			color: #bfdbfe;
+		}
+
+		.location-cell {
+			font-weight: 600;
+			color: #64b5f6;
+		}
+
+		.number-cell {
+			text-align: right;
+			font-family: 'Courier New', monospace;
+		}
+
+		.ratio-cell {
+			text-align: center;
+			color: #bfdbfe;
+		}
+
+		.revenue-cell {
+			text-align: right;
+			font-family: 'Courier New', monospace;
+			color: #a8d8ea;
+		}
+
+		.note {
+			background: rgba(100, 181, 246, 0.15);
+			border: 1px solid rgba(100, 181, 246, 0.3);
+			border-radius: 8px;
+			padding: 1rem;
+			margin-top: 1.5rem;
+			font-size: 0.85rem;
+			color: #bfdbfe;
+			line-height: 1.6;
+		}
+
+		.note strong {
+			color: #fff;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+			right: 14px;
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		footer {
+			background: rgba(45, 52, 54, 0.95);
+			padding: 2rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+			text-align: center;
+			color: #e0e0e0;
+			font-size: 0.9rem;
+		}
+
+		footer a {
+			color: #64b5f6;
+			text-decoration: none;
+		}
+
+		footer a:hover {
+			text-decoration: underline;
+		}
+
+		/* Modal Styles */
+		.modal-overlay {
+			display: none;
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.7);
+			z-index: 2000;
+			overflow-y: auto;
+			padding: 2rem;
+		}
+
+		.modal-overlay.active {
+			display: flex;
+			align-items: flex-start;
+			justify-content: center;
+			padding-top: 2rem;
+		}
+
+		.modal-content {
+			background: rgba(45, 52, 54, 0.98);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 12px;
+			padding: 2rem;
+			max-width: 1200px;
+			width: 100%;
+			max-height: 85vh;
+			overflow-y: auto;
+			color: #e0e0e0;
+			backdrop-filter: blur(10px);
+		}
+
+		.modal-close {
+			background: none;
+			border: none;
+			font-size: 2rem;
+			cursor: pointer;
+			color: #64b5f6;
+			padding: 0;
+			width: 2.5rem;
+			height: 2.5rem;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			transition: all 0.3s ease;
+		}
+
+		.modal-close:hover {
+			color: #fff;
+			background: rgba(100, 181, 246, 0.1);
+			border-radius: 6px;
+		}
+
+		/* Clickable cells */
+		.clickable-cell {
+			cursor: pointer;
+			color: #64b5f6;
+			text-decoration: underline;
+			transition: all 0.2s ease;
+		}
+
+		.clickable-cell:hover {
+			color: #90caf9;
+			text-decoration: none;
+		}
+
+		@media (max-width: 1024px) {
+			.report-controls {
+				grid-template-columns: 1fr 1fr;
+			}
+
+			.button-group {
+				grid-column: 1 / -1;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.report-controls {
+				grid-template-columns: 1fr;
+			}
+
+			.meta-row {
+				flex-direction: column;
+				align-items: flex-start;
+			}
+
+			.search-box {
+				width: 100%;
+			}
+
+			.search-input {
+				min-width: 100%;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<div class="dashboard-logo-section">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</div>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex; flex-direction: column; padding: 2rem; max-width: 1400px; margin: 0 auto; width: 100%;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: #fff; margin: 0; font-size: 1.3rem;">Tech Daily Report</h2>
+		</div>
+
+		<div class="report-panel">
+				<div class="report-controls">
+					<div class="control-group">
+						<label for="location" class="required">Location</label>
+						<select id="location" onchange="applyFilters()">
+							<option value="">All Locations</option>
+							<option value="Asheville">Asheville</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Cape Girardeau">Cape Girardeau</option>
+							<option value="Chattanooga">Chattanooga</option>
+							<option value="Columbus">Columbus</option>
+							<option value="Dallas">Dallas</option>
+							<option value="Destin">Destin</option>
+							<option value="Huntsville">Huntsville</option>
+							<option value="Jackson,MS">Jackson,MS</option>
+							<option value="Jackson, TN">Jackson, TN</option>
+							<option value="Jacksonville">Jacksonville</option>
+							<option value="Jonesboro">Jonesboro</option>
+							<option value="Knoxville">Knoxville</option>
+							<option value="Lake Charles">Lake Charles</option>
+							<option value="Little Rock">Little Rock</option>
+							<option value="Louisville">Louisville</option>
+							<option value="Memphis">Memphis</option>
+							<option value="Mobile">Mobile</option>
+							<option value="Montgomery">Montgomery</option>
+							<option value="Nashville">Nashville</option>
+							<option value="New Orleans">New Orleans</option>
+							<option value="Norfolk">Norfolk</option>
+							<option value="Philippines">Philippines</option>
+							<option value="Raleigh">Raleigh</option>
+							<option value="Richmond">Richmond</option>
+							<option value="San Antonio">San Antonio</option>
+							<option value="Savannah">Savannah</option>
+							<option value="St. Louis">St. Louis</option>
+							<option value="Tallanassee">Tallanassee</option>
+							<option value="Wilmington">Wilmington</option>
+						</select>
+					</div>
+
+					<div class="control-group">
+						<label for="fromDate">From Date</label>
+						<input type="date" id="fromDate">
+					</div>
+
+					<div class="control-group">
+						<label for="toDate">To Date</label>
+						<input type="date" id="toDate">
+					</div>
+				</div>
+
+				<div class="button-group">
+					<button class="search-btn" onclick="applyFilters()">Search</button>
+					<button class="reset-btn" onclick="resetFilters()">Reset</button>
+					<button class="efficiency-btn" onclick="goToEfficiencyReport()">Analyze Technician Efficiency and Productivity</button>
+				</div>
+			</div>
+
+			<!-- Repair Activity Daily Summary -->
+			<div class="report-panel" style="margin-top: 1.5rem;">
+				<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+					<div>
+						<h3 style="color: #bfdbfe; font-size: 1.1rem; margin-bottom: 0.3rem;">Repair Activity Daily Summary</h3>
+						<div class="record-count" id="repairRecordsInfo">0 records found</div>
+					</div>
+					<div class="search-box">
+						<input type="text" id="repairSearchInput" class="search-input" placeholder="Search in result...">
+						<button class="search-btn" onclick="filterRepairTable()" style="padding: 0.55rem 0.85rem; font-size: 0.85rem;">Search</button>
+					</div>
+				</div>
+
+				<div class="table-wrap">
+					<table id="repairTable">
+						<thead>
+							<tr>
+								<th>Location</th>
+								<th>Technician</th>
+								<th>Assigned</th>
+								<th>Rescheduled (=Pending)</th>
+								<th>Cancelled</th>
+								<th>Completed (IW/OW)</th>
+								<th>Complete Ratio</th>
+							</tr>
+						</thead>
+						<tbody id="repairTableBody"></tbody>
+					</table>
+				</div>
+
+				<div class="note">
+					<strong>Reference: 1020501005001</strong><br><br>
+					<strong>Assigned:</strong> # of Technician Visit. If a technician visited 2 times for same ticket #, then the # of assigned is 2.<br>
+					<strong>Rescheduled (=Pending):</strong> Not completed and not cancelled at the visit<br>
+					<strong>Cancelled:</strong> Cancelled at the visit<br>
+					<strong>Completed:</strong> Completed at the visit
+				</div>
+			</div>
+
+			<!-- Revenue Summary -->
+			<div class="report-panel" style="margin-top: 1.5rem;">
+				<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+					<div>
+						<h3 style="color: #bfdbfe; font-size: 1.1rem; margin-bottom: 0.3rem;">Revenue Summary</h3>
+						<div class="record-count" id="revenueRecordsInfo">0 records found</div>
+					</div>
+					<div class="search-box">
+						<input type="text" id="revenueSearchInput" class="search-input" placeholder="Search in result...">
+						<button class="search-btn" onclick="filterRevenueTable()" style="padding: 0.55rem 0.85rem; font-size: 0.85rem;">Search</button>
+					</div>
+				</div>
+
+				<div class="table-wrap">
+					<table id="revenueTable">
+						<thead>
+							<tr>
+								<th>Location</th>
+								<th>Technician</th>
+								<th>Revenue</th>
+							</tr>
+						</thead>
+						<tbody id="revenueTableBody"></tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div id="receiveFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+		<div id="receiveFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+	</div>
+
+	<!-- Detail Records Modal -->
+	<div id="detailModal" class="modal-overlay">
+		<div class="modal-content">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+				<h2 id="modalTitle" style="color: #fff; margin: 0; font-size: 1.2rem;"></h2>
+				<button class="modal-close" onclick="closeDetailModal()">&times;</button>
+			</div>
+
+			<div id="detailSearch" style="margin-bottom: 1rem;">
+				<input type="text" id="detailSearchInput" class="search-input" placeholder="search in result" style="width: 100%; max-width: 300px;">
+			</div>
+
+			<div id="detailRecordsInfo" style="font-size: 0.9rem; color: #bfdbfe; margin-bottom: 1rem;"></div>
+
+			<div class="table-wrap" style="max-height: 500px; overflow-y: auto;">
+				<table id="detailTable" style="width: 100%; border-collapse: collapse;">
+					<thead>
+						<tr style="background: rgba(30, 64, 175, 0.3); position: sticky; top: 0;">
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">#</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Technician</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Ticket No</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Status</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Account No</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Asc No</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Posting Date</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Product</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Model Code</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Serial No</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Warranty</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Date</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Repair Type</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;">Non-Completion Reason</th>
+							<th style="padding: 0.65rem; text-align: left; color: #bfdbfe; font-weight: 600; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;"># of Parts</th>
+						</tr>
+					</thead>
+					<tbody id="detailTableBody">
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="../../routes.js"></script>
+	<script>
+		let repairData = [];
+		let revenueData = [];
+		let filteredRepairData = [];
+		let filteredRevenueData = [];
+		let detailRecordsByTechnician = {};
+		let currentDetailData = [];
+
+		// Detail records data by technician and type
+		const technicianDetailRecords = {
+			'Abel Severino': {
+				'assigned': [
+					{ num: 1, technician: 'Abel Severino', ticketNo: 'SA-3122339', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/23/2026', product: 'Dryer', modelCode: 'GTD58EBPV0DG', serialNo: 'SA722955C', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+					{ num: 2, technician: 'Abel Severino', ticketNo: '3846586E1', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/04/2026', product: 'Washer', modelCode: 'GTW220ACW0WW', serialNo: 'TZ931909G', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+					{ num: 3, technician: 'Abel Severino', ticketNo: '26000635951DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'WFW5620HW', serialNo: 'CA0901171', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 4, technician: 'Abel Severino', ticketNo: '26000636907DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'Dryer', modelCode: 'WTW4957PW0', serialNo: 'CD2205748', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 5, technician: 'Abel Severino', ticketNo: 'SA-3339493', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'Washer', modelCode: 'GTW538ASW0WS', serialNo: 'HA975912G', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 6, technician: 'Abel Severino', ticketNo: '26000640754DF', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'Dryer', modelCode: 'MVW6230HW3', serialNo: 'CD4000322', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 7, technician: 'Abel Severino', ticketNo: 'SA-3363019', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer Dryer', modelCode: 'GUD27ESSM1WW', serialNo: 'RA082953C', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 8, technician: 'Abel Severino', ticketNo: 'SA-3365917', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'HTW265ASW0WW', serialNo: 'GD924892G', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 9, technician: 'Abel Severino', ticketNo: '400495292', status: 'OP-Reschedule Follow up', accountNo: 'ER', ascNo: '', postingDate: '05/07/2026', product: 'Refrigerator', modelCode: 'MRU21C7BST', serialNo: '13431339', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 10, technician: 'Abel Severino', ticketNo: '26000638416DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'WT7005CW', serialNo: '105TWXD2V290', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 11, technician: 'Abel Severino', ticketNo: 'SA-3335786', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'Oven', modelCode: 'JVM3160RF9SS', serialNo: 'AA204238L', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 12, technician: 'Abel Severino', ticketNo: '1007128362-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'REFRIGERATOR', modelCode: 'FRFC2323AS', serialNo: '4A51407618', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 13, technician: 'Abel Severino', ticketNo: 'SA-3387683', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'PTW600BSR1WS', serialNo: 'ZA147438G', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 14, technician: 'Abel Severino', ticketNo: '019818074134', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'WFW5605MC1', serialNo: 'CD2900558', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 15, technician: 'Abel Severino', ticketNo: '1007169885-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR', modelCode: 'FRSC2333ASA', serialNo: '4A51111239', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 16, technician: 'Abel Severino', ticketNo: 'SA-2899645', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/07/2026', product: 'RANGE - ELECTRIC', modelCode: 'PTD70EBST1WS', serialNo: 'TA550882', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 6 },
+				{ num: 17, technician: 'Abel Severino', ticketNo: 'BZ48136REL31', status: 'OP-UPDATE HOLD', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'BI48SD/S/', serialNo: '4645660', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 18, technician: 'Abel Severino', ticketNo: 'SA-3363854', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'GTW538ASW0WS', serialNo: 'GD162399G', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 19, technician: 'Abel Severino', ticketNo: 'SA-3227241', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/30/2026', product: 'RANGE - GAS', modelCode: 'P2S930YP8FS', serialNo: 'MA383756', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 20, technician: 'Abel Severino', ticketNo: 'SA-3364349', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Dishwasher', modelCode: 'PDT715SYV6FS', serialNo: 'DD783981B', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 21, technician: 'Abel Severino', ticketNo: 'SA-3364657', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'PXD22BYPDFS', serialNo: 'ZA502479', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 22, technician: 'Abel Severino', ticketNo: '26000663669DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/13/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'MVW7232HW', serialNo: '', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 23, technician: 'Abel Severino', ticketNo: '3850106E1', status: 'OP-UPDATE HOLD', accountNo: 'GSL00002', ascNo: '', postingDate: '05/13/2026', product: 'DRYER - ELECTRIC', modelCode: 'GTX22EASK1WW', serialNo: 'RZ875388C', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 24, technician: 'Abel Severino', ticketNo: '26000671557HS', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/15/2026', product: 'Dryer', modelCode: 'WF53BB8700AVUS', serialNo: '01HR57AW700499T', warranty: 'IW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 25, technician: 'Abel Severino', ticketNo: '400495292', status: 'CL-Ready to Complete', accountNo: 'ER', ascNo: '', postingDate: '05/07/2026', product: 'Refrigerator', modelCode: 'MRU21C7BST', serialNo: '13431339', warranty: 'IW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 26, technician: 'Abel Severino', ticketNo: 'SA-3213002', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/29/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GFE28GYNFS', serialNo: 'LT553766', warranty: 'CLPW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 27, technician: 'Abel Severino', ticketNo: 'SA-3421759', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/14/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GFE28GELDS', serialNo: 'DT514628', warranty: 'CLPW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 }
+			],
+			'rescheduled': [
+				{ num: 1, technician: 'Abel Severino', ticketNo: '26000635951DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'WFW5620HW', serialNo: 'CA0901171', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 2, technician: 'Abel Severino', ticketNo: '26000636907DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'Dryer', modelCode: 'WTW4957PW0', serialNo: 'CD2205748', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 3, technician: 'Abel Severino', ticketNo: '400495292', status: 'OP-Reschedule Follow up', accountNo: 'ER', ascNo: '', postingDate: '05/07/2026', product: 'Refrigerator', modelCode: 'MRU21C7BST', serialNo: '13431339', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 4, technician: 'Abel Severino', ticketNo: '26000638416DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'WT7005CW', serialNo: '105TWXD2V290', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 5, technician: 'Abel Severino', ticketNo: 'SA-2899645', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/07/2026', product: 'RANGE - ELECTRIC', modelCode: 'PTD70EBST1WS', serialNo: 'TA550882', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 6 },
+				{ num: 6, technician: 'Abel Severino', ticketNo: 'BZ48136REL31', status: 'OP-UPDATE HOLD', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'BI48SD/S/', serialNo: '4645660', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 7, technician: 'Abel Severino', ticketNo: 'SA-3227241', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/30/2026', product: 'RANGE - GAS', modelCode: 'P2S930YP8FS', serialNo: 'MA383756', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 8, technician: 'Abel Severino', ticketNo: 'SA-3364349', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Dishwasher', modelCode: 'PDT715SYV6FS', serialNo: 'DD783981B', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 9, technician: 'Abel Severino', ticketNo: 'SA-3364657', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'PXD22BYPDFS', serialNo: 'ZA502479', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 10, technician: 'Abel Severino', ticketNo: '26000663669DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/13/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'MVW7232HW', serialNo: '', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 11, technician: 'Abel Severino', ticketNo: '3850106E1', status: 'OP-UPDATE HOLD', accountNo: 'GSL00002', ascNo: '', postingDate: '05/13/2026', product: 'DRYER - ELECTRIC', modelCode: 'GTX22EASK1WW', serialNo: 'RZ875388C', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 12, technician: 'Abel Severino', ticketNo: '400495292', status: 'CL-Ready to Complete', accountNo: 'ER', ascNo: '', postingDate: '05/07/2026', product: 'Refrigerator', modelCode: 'MRU21C7BST', serialNo: '13431339', warranty: 'IW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 13, technician: 'Abel Severino', ticketNo: 'SA-3213002', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '04/29/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GFE28GYNFS', serialNo: 'LT553766', warranty: 'CLPW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 14, technician: 'Abel Severino', ticketNo: 'SA-3421759', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/14/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GFE28GELDS', serialNo: 'DT514628', warranty: 'CLPW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 }
+			],
+			'cancelled': [],
+			'completed': [
+				{ num: 1, technician: 'Abel Severino', ticketNo: 'SA-3122339', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/23/2026', product: 'Dryer', modelCode: 'GTD58EBPV0DG', serialNo: 'SA722955C', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 2, technician: 'Abel Severino', ticketNo: '3846586E1', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/04/2026', product: 'Washer', modelCode: 'GTW220ACW0WW', serialNo: 'TZ931909G', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 3, technician: 'Abel Severino', ticketNo: 'SA-3339493', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'Washer', modelCode: 'GTW538ASW0WS', serialNo: 'HA975912G', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 4, technician: 'Abel Severino', ticketNo: '26000640754DF', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'Dryer', modelCode: 'MVW6230HW3', serialNo: 'CD4000322', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 5, technician: 'Abel Severino', ticketNo: 'SA-3363019', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer Dryer', modelCode: 'GUD27ESSM1WW', serialNo: 'RA082953C', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 6, technician: 'Abel Severino', ticketNo: 'SA-3365917', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'HTW265ASW0WW', serialNo: 'GD924892G', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 7, technician: 'Abel Severino', ticketNo: 'SA-3335786', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/07/2026', product: 'Oven', modelCode: 'JVM3160RF9SS', serialNo: 'AA204238L', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 8, technician: 'Abel Severino', ticketNo: '1007128362-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/08/2026', product: 'REFRIGERATOR', modelCode: 'FRFC2323AS', serialNo: '4A51407618', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 9, technician: 'Abel Severino', ticketNo: 'SA-3387683', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'PTW600BSR1WS', serialNo: 'ZA147438G', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 10, technician: 'Abel Severino', ticketNo: '019818074134', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'WFW5605MC1', serialNo: 'CD2900558', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 11, technician: 'Abel Severino', ticketNo: '1007169885-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR', modelCode: 'FRSC2333ASA', serialNo: '4A51111239', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 12, technician: 'Abel Severino', ticketNo: 'SA-3363854', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'GTW538ASW0WS', serialNo: 'GD162399G', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 13, technician: 'Abel Severino', ticketNo: '26000671557HS', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/15/2026', product: 'Dryer', modelCode: 'WF53BB8700AVUS', serialNo: '01HR57AW700499T', warranty: 'IW', date: '05/18/2026', repairType: '', nonCompletionReason: '', parts: 0 }
+			]
+		},
+		'Daven Hodge': {
+			'assigned': [
+				{ num: 1, technician: 'Daven Hodge', ticketNo: '1006835317-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/13/2026', product: 'REFRIGERATOR', modelCode: 'EI33AF80WS', serialNo: 'BB54617032', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 2, technician: 'Daven Hodge', ticketNo: '1006843971-11', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'HOME COOKING - ELECTRIC', modelCode: 'GCWM3067AF', serialNo: 'VF41329798', warranty: 'CLPW', date: '05/11/2026', repairType: 'Wall Oven', nonCompletionReason: '', parts: 6 },
+				{ num: 3, technician: 'Daven Hodge', ticketNo: '008719974131', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'TELEVISION 28" AND LARGER', modelCode: 'QN65Q72DDFXZA', serialNo: '0HB83CCX500065X-CA01', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 4, technician: 'Daven Hodge', ticketNo: '047619974131', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'Washer', modelCode: 'WTW5010LW0', serialNo: 'CB1100534', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 5, technician: 'Daven Hodge', ticketNo: 'SA-3132255', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/23/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GSE25GYPFCFS', serialNo: 'MV416510', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 6, technician: 'Daven Hodge', ticketNo: '26000615903DF', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/04/2026', product: 'Oven', modelCode: 'MER7700LZ3', serialNo: 'RD1917159', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 },
+				{ num: 7, technician: 'Daven Hodge', ticketNo: '26000632161DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/06/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'MED5630HC', serialNo: '', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 8, technician: 'Daven Hodge', ticketNo: '2412763', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/06/2026', product: 'WASHING MACHINE', modelCode: 'AWNE9RSN115TW01', serialNo: '1810003613', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 8 }
+			],
+			'rescheduled': [
+				{ num: 1, technician: 'Daven Hodge', ticketNo: '26000632161DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/06/2026', product: 'HOME LAUNDRY - ELECTRIC', modelCode: 'MED5630HC', serialNo: '', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 2, technician: 'Daven Hodge', ticketNo: '2412763', status: 'OP-Reschedule Follow up', accountNo: 'GSL00002', ascNo: '', postingDate: '05/06/2026', product: 'WASHING MACHINE', modelCode: 'AWNE9RSN115TW01', serialNo: '1810003613', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 8 }
+			],
+			'cancelled': [],
+			'completed': [
+				{ num: 1, technician: 'Daven Hodge', ticketNo: '1006835317-10', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/13/2026', product: 'REFRIGERATOR', modelCode: 'EI33AF80WS', serialNo: 'BB54617032', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 2, technician: 'Daven Hodge', ticketNo: '1006843971-11', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'HOME COOKING - ELECTRIC', modelCode: 'GCWM3067AF', serialNo: 'VF41329798', warranty: 'CLPW', date: '05/11/2026', repairType: 'Wall Oven', nonCompletionReason: '', parts: 6 },
+				{ num: 3, technician: 'Daven Hodge', ticketNo: '008719974131', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'TELEVISION 28" AND LARGER', modelCode: 'QN65Q72DDFXZA', serialNo: '0HB83CCX500065X-CA01', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 4, technician: 'Daven Hodge', ticketNo: '047619974131', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/05/2026', product: 'Washer', modelCode: 'WTW5010LW0', serialNo: 'CB1100534', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 5, technician: 'Daven Hodge', ticketNo: 'SA-3132255', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '04/23/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GSE25GYPFCFS', serialNo: 'MV416510', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 6, technician: 'Daven Hodge', ticketNo: '26000615903DF', status: 'CL-Claimed', accountNo: 'GSL00002', ascNo: '', postingDate: '05/04/2026', product: 'Oven', modelCode: 'MER7700LZ3', serialNo: 'RD1917159', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 0 }
+			]
+		},
+		'Jordan Koetsier': {
+			'assigned': [
+				{ num: 1, technician: 'Jordan Koetsier', ticketNo: 'SA-3140001', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CA0923445', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 2, technician: 'Jordan Koetsier', ticketNo: 'SA-3140002', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'GTW725BSNWS', serialNo: 'HA982334C', warranty: 'OW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 3, technician: 'Jordan Koetsier', ticketNo: 'SA-3140003', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dryer', modelCode: 'GTD72EBSNWS', serialNo: 'SA987234D', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 4, technician: 'Jordan Koetsier', ticketNo: '007123456789', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dishwasher', modelCode: 'GDT680SSNWS', serialNo: 'DD834532B', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 5, technician: 'Jordan Koetsier', ticketNo: 'SA-3140005', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GDE25GYGFFS', serialNo: 'LT554234', warranty: 'CLPW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 6, technician: 'Jordan Koetsier', ticketNo: '26000640001DF', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Range-Electric', modelCode: 'JES1657SN4WS', serialNo: 'TG456782', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 7, technician: 'Jordan Koetsier', ticketNo: 'SA-3140007', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'MICROWAVE', modelCode: 'TMH16GDCCSS', serialNo: 'ZA670234', warranty: 'OW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 8, technician: 'Jordan Koetsier', ticketNo: 'SA-3140008', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CD4123456', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 9, technician: 'Jordan Koetsier', ticketNo: 'SA-3140009', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'GTW840CPNDG', serialNo: 'HA945123G', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 10, technician: 'Jordan Koetsier', ticketNo: '026000641001DF', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Oven', modelCode: 'JES1745SHSS', serialNo: 'RD234567', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 11, technician: 'Jordan Koetsier', ticketNo: 'SA-3140011', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dishwasher', modelCode: 'GDF570SSNWS', serialNo: 'DD456234', warranty: 'OW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 12, technician: 'Jordan Koetsier', ticketNo: 'SA-3140012', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'GFE28GELDS', serialNo: 'DT987654', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 13, technician: 'Jordan Koetsier', ticketNo: 'SA-3140013', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Range-Gas', modelCode: 'JGBS66SEKHSS', serialNo: 'MA234567', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 14, technician: 'Jordan Koetsier', ticketNo: 'SA-3140014', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dryer', modelCode: 'GTD65EBSNWS', serialNo: 'SA345234', warranty: 'OW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 15, technician: 'Jordan Koetsier', ticketNo: 'SA-3140015', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'GTW728CPNDG', serialNo: 'HA234567', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 16, technician: 'Jordan Koetsier', ticketNo: '004000234567', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR', modelCode: 'FRFC2423AS', serialNo: '4A987234', warranty: 'CLPW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 17, technician: 'Jordan Koetsier', ticketNo: 'SA-3140017', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Microwave Oven', modelCode: 'JVM6175SKSS', serialNo: 'AA567234', warranty: 'OW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 18, technician: 'Jordan Koetsier', ticketNo: 'SA-3140018', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dishwasher', modelCode: 'GDWN4501J0SS', serialNo: 'DD234567', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 19, technician: 'Jordan Koetsier', ticketNo: 'SA-3140019', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dryer', modelCode: 'GTD87EBSN4WW', serialNo: 'SA456234', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 20, technician: 'Jordan Koetsier', ticketNo: 'SA-3140020', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'PXD22BYPDFS', serialNo: 'ZA876234', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 21, technician: 'Jordan Koetsier', ticketNo: 'SA-3140021', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'WASHING MACHINE', modelCode: 'MLNE3132FC', serialNo: 'CA234567', warranty: 'OW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 22, technician: 'Jordan Koetsier', ticketNo: '007234567890', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Range-Electric', modelCode: 'JGBS66SEKHSS', serialNo: 'TG123456', warranty: 'IW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 23, technician: 'Jordan Koetsier', ticketNo: 'SA-3140023', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Refrigerator', modelCode: 'GE_792GSSS', serialNo: 'CD234567', warranty: 'CLPW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 24, technician: 'Jordan Koetsier', ticketNo: 'SA-3140024', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Washer', modelCode: 'GTW725BSNWS', serialNo: 'HA567234', warranty: 'IW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 25, technician: 'Jordan Koetsier', ticketNo: 'SA-3140025', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Dryer', modelCode: 'GTD52EBSNWS', serialNo: 'SA123456', warranty: 'OW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 26, technician: 'Jordan Koetsier', ticketNo: 'SA-3140026', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'DISHWASHER', modelCode: 'GDT695SSNWS', serialNo: 'DD123456', warranty: 'IW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 27, technician: 'Jordan Koetsier', ticketNo: 'SA-3140027', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CA678234', warranty: 'IW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 28, technician: 'Jordan Koetsier', ticketNo: 'SA-3140028', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'RANGE - GAS', modelCode: 'P2S930YP8FS', serialNo: 'MA987234', warranty: 'IW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 29, technician: 'Jordan Koetsier', ticketNo: '005000456789', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'MLNE4000FC', serialNo: 'HA789234', warranty: 'OW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 30, technician: 'Jordan Koetsier', ticketNo: 'SA-3140030', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dryer', modelCode: 'DTD5001HW0', serialNo: 'SA234567', warranty: 'IW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 31, technician: 'Jordan Koetsier', ticketNo: 'SA-3140031', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GFE28GYNFS', serialNo: 'LT923234', warranty: 'CLPW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 32, technician: 'Jordan Koetsier', ticketNo: 'SA-3140032', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Home Refrigerator', modelCode: 'GTE18GCHSA', serialNo: 'CD923456', warranty: 'IW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 33, technician: 'Jordan Koetsier', ticketNo: 'SA-3140033', status: 'OP-New', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Range-Electric', modelCode: 'JGB735SPSS', serialNo: 'TG678234', warranty: 'OW', date: '05/17/2026', repairType: '', nonCompletionReason: '', parts: 1 }
+			],
+			'rescheduled': [
+				{ num: 1, technician: 'Jordan Koetsier', ticketNo: 'SA-3140034', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/09/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CA0923445', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 2, technician: 'Jordan Koetsier', ticketNo: 'SA-3140035', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Washer', modelCode: 'GTW725BSNWS', serialNo: 'HA982334C', warranty: 'OW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 3, technician: 'Jordan Koetsier', ticketNo: 'SA-3140036', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Dryer', modelCode: 'GTD72EBSNWS', serialNo: 'SA987234D', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 4, technician: 'Jordan Koetsier', ticketNo: '007123456790', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dishwasher', modelCode: 'GDT680SSNWS', serialNo: 'DD834532B', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 5, technician: 'Jordan Koetsier', ticketNo: 'SA-3140037', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GDE25GYGFFS', serialNo: 'LT554234', warranty: 'CLPW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 6, technician: 'Jordan Koetsier', ticketNo: '26000640001DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Range-Electric', modelCode: 'JES1657SN4WS', serialNo: 'TG456782', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 7, technician: 'Jordan Koetsier', ticketNo: 'SA-3140038', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'MICROWAVE', modelCode: 'TMH16GDCCSS', serialNo: 'ZA670234', warranty: 'OW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 8, technician: 'Jordan Koetsier', ticketNo: 'SA-3140039', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CD4123456', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 9, technician: 'Jordan Koetsier', ticketNo: 'SA-3140040', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Washer', modelCode: 'GTW840CPNDG', serialNo: 'HA945123G', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 10, technician: 'Jordan Koetsier', ticketNo: '026000641001DF', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Oven', modelCode: 'JES1745SHSS', serialNo: 'RD234567', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 11, technician: 'Jordan Koetsier', ticketNo: 'SA-3140041', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dishwasher', modelCode: 'GDF570SSNWS', serialNo: 'DD456234', warranty: 'OW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 12, technician: 'Jordan Koetsier', ticketNo: 'SA-3140042', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'GFE28GELDS', serialNo: 'DT987654', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 13, technician: 'Jordan Koetsier', ticketNo: 'SA-3140043', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Range-Gas', modelCode: 'JGBS66SEKHSS', serialNo: 'MA234567', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 14, technician: 'Jordan Koetsier', ticketNo: 'SA-3140044', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dryer', modelCode: 'GTD65EBSNWS', serialNo: 'SA345234', warranty: 'OW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 15, technician: 'Jordan Koetsier', ticketNo: 'SA-3140045', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Washer', modelCode: 'GTW728CPNDG', serialNo: 'HA234567', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 16, technician: 'Jordan Koetsier', ticketNo: '004000234568', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'REFRIGERATOR', modelCode: 'FRFC2423AS', serialNo: '4A987234', warranty: 'CLPW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 17, technician: 'Jordan Koetsier', ticketNo: 'SA-3140046', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Microwave Oven', modelCode: 'JVM6175SKSS', serialNo: 'AA567234', warranty: 'OW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 18, technician: 'Jordan Koetsier', ticketNo: 'SA-3140047', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Dishwasher', modelCode: 'GDWN4501J0SS', serialNo: 'DD234567', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 19, technician: 'Jordan Koetsier', ticketNo: 'SA-3140048', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/10/2026', product: 'Dryer', modelCode: 'GTD87EBSN4WW', serialNo: 'SA456234', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 20, technician: 'Jordan Koetsier', ticketNo: 'SA-3140049', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Refrigerator', modelCode: 'PXD22BYPDFS', serialNo: 'ZA876234', warranty: 'IW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 21, technician: 'Jordan Koetsier', ticketNo: 'SA-3140050', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'WASHING MACHINE', modelCode: 'MLNE3132FC', serialNo: 'CA234567', warranty: 'OW', date: '05/15/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 22, technician: 'Jordan Koetsier', ticketNo: '007234567891', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', product: 'Range-Electric', modelCode: 'JGBS66SEKHSS', serialNo: 'TG123456', warranty: 'IW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 23, technician: 'Jordan Koetsier', ticketNo: 'SA-3140051', status: 'OP-Reschedule Follow up', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', product: 'Refrigerator', modelCode: 'GE_792GSSS', serialNo: 'CD234567', warranty: 'CLPW', date: '05/16/2026', repairType: '', nonCompletionReason: '', parts: 2 }
+			],
+			'cancelled': [],
+			'completed': [
+				{ num: 1, technician: 'Jordan Koetsier', ticketNo: 'SA-3140100', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/01/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CA0923441', warranty: 'IW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 2, technician: 'Jordan Koetsier', ticketNo: 'SA-3140101', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/02/2026', product: 'Washer', modelCode: 'GTW725BSNWS', serialNo: 'HA982331C', warranty: 'OW', date: '05/11/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 3, technician: 'Jordan Koetsier', ticketNo: 'SA-3140102', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/03/2026', product: 'Dryer', modelCode: 'GTD72EBSNWS', serialNo: 'SA987231D', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 4, technician: 'Jordan Koetsier', ticketNo: '007123456780', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/02/2026', product: 'Dishwasher', modelCode: 'GDT680SSNWS', serialNo: 'DD834532A', warranty: 'IW', date: '05/12/2026', repairType: '', nonCompletionReason: '', parts: 4 },
+				{ num: 5, technician: 'Jordan Koetsier', ticketNo: 'SA-3140103', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/01/2026', product: 'REFRIGERATOR/TOP-FREEZER', modelCode: 'GDE25GYGFFS', serialNo: 'LT554231', warranty: 'CLPW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 5 },
+				{ num: 6, technician: 'Jordan Koetsier', ticketNo: '26000640000DF', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/04/2026', product: 'Range-Electric', modelCode: 'JES1657SN4WS', serialNo: 'TG456781', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 7, technician: 'Jordan Koetsier', ticketNo: 'SA-3140104', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/02/2026', product: 'MICROWAVE', modelCode: 'TMH16GDCCSS', serialNo: 'ZA670231', warranty: 'OW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 1 },
+				{ num: 8, technician: 'Jordan Koetsier', ticketNo: 'SA-3140105', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/03/2026', product: 'Refrigerator', modelCode: 'MRT618FFFH', serialNo: 'CD4123451', warranty: 'IW', date: '05/13/2026', repairType: '', nonCompletionReason: '', parts: 2 },
+				{ num: 9, technician: 'Jordan Koetsier', ticketNo: 'SA-3140106', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/01/2026', product: 'Washer', modelCode: 'GTW840CPNDG', serialNo: 'HA945121G', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 3 },
+				{ num: 10, technician: 'Jordan Koetsier', ticketNo: '026000641000DF', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/02/2026', product: 'Oven', modelCode: 'JES1745SHSS', serialNo: 'RD234561', warranty: 'IW', date: '05/14/2026', repairType: '', nonCompletionReason: '', parts: 2 }
+			],
+			'revenue': [
+				{ num: 1, technician: 'Jordan Koetsier', ticketNo: '26000650750DF', status: 'OP-Waiting for Part', accountNo: 'GSL00003', ascNo: '', postingDate: '05/11/2026', warranty: 'IW', revenue: 758.96 },
+				{ num: 2, technician: 'Jordan Koetsier', ticketNo: 'SA-3397033', status: 'CL-Claimed', accountNo: 'GSL00003', ascNo: '', postingDate: '05/12/2026', warranty: 'IW', revenue: 0.00 }
+			]
+		}
+		};
+
+		let currentModalType = ''; // 'assigned', 'rescheduled', 'cancelled', or 'completed'
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function loadTechReportData() {
+			// Sample Repair Activity Data
+			repairData = [
+				{ location: 'Atlanta', technician: 'Abel Severino', assigned: 27, rescheduled: 14, cancelled: 0, completed: 13, completedDetail: '13 / 0', ratio: 48.1 },
+				{ location: 'Atlanta', technician: 'Abraham Im', assigned: 32, rescheduled: 14, cancelled: 0, completed: 18, completedDetail: '17 / 1', ratio: 56.3 },
+				{ location: 'Atlanta', technician: 'Gerrell Berg', assigned: 30, rescheduled: 18, cancelled: 0, completed: 12, completedDetail: '12 / 0', ratio: 40.0 },
+				{ location: 'Atlanta', technician: 'Jordan Brown', assigned: 16, rescheduled: 12, cancelled: 1, completed: 3, completedDetail: '3 / 0', ratio: 18.8 },
+				{ location: 'Atlanta', technician: 'Joshua Silva', assigned: 33, rescheduled: 14, cancelled: 0, completed: 19, completedDetail: '19 / 0', ratio: 57.6 },
+				{ location: 'Atlanta', technician: 'Kevin Khaiphanliane', assigned: 14, rescheduled: 7, cancelled: 0, completed: 7, completedDetail: '7 / 0', ratio: 50.0 },
+				{ location: 'Atlanta', technician: 'Nathan Napora', assigned: 17, rescheduled: 7, cancelled: 0, completed: 10, completedDetail: '10 / 0', ratio: 58.8 },
+				{ location: 'Asheville', technician: 'Daven Hodge', assigned: 8, rescheduled: 2, cancelled: 0, completed: 6, completedDetail: '6 / 0', ratio: 75.0 },
+				{ location: 'Asheville', technician: 'Jordan Koetsier', assigned: 33, rescheduled: 23, cancelled: 0, completed: 10, completedDetail: '10 / 0', ratio: 30.3 }
+			];
+
+			// Sample Revenue Data
+			revenueData = [
+				{ location: 'Atlanta', technician: 'Abel Severino', revenue: 0.00 },
+				{ location: 'Atlanta', technician: 'Abraham Im', revenue: 0.00 },
+				{ location: 'Atlanta', technician: 'Gerrell Berg', revenue: 0.00 },
+				{ location: 'Atlanta', technician: 'Joshua Silva', revenue: 0.00 },
+				{ location: 'Atlanta', technician: 'Kevin Khaiphanliane', revenue: 0.00 },
+				{ location: 'Memphis', technician: 'Memphis Admin', revenue: 300.00 },
+				{ location: 'Atlanta', technician: 'Nathan Napora', revenue: 0.00 },
+				{ location: 'Asheville', technician: 'Daven Hodge', revenue: 0.00 },
+				{ location: 'Asheville', technician: 'Jordan Koetsier', revenue: 758.96 }
+			];
+
+			filteredRepairData = [...repairData];
+			filteredRevenueData = [...revenueData];
+			renderRepairTable();
+			renderRevenueTable();
+			syncFloatingScrollbar();
+		}
+
+		function renderRepairTable() {
+			const tableBody = document.getElementById('repairTableBody');
+			const recordsInfo = document.getElementById('repairRecordsInfo');
+
+			if (filteredRepairData.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem;">No records found</td></tr>';
+				recordsInfo.textContent = 'Showing 0 of ' + repairData.length + ' records';
+				return;
+			}
+
+			let totalAssigned = 0;
+			let totalRescheduled = 0;
+			let totalCancelled = 0;
+			let totalCompleted = 0;
+
+			filteredRepairData.forEach(row => {
+				totalAssigned += row.assigned;
+				totalRescheduled += row.rescheduled;
+				totalCancelled += row.cancelled;
+				totalCompleted += row.completed;
+			});
+
+			let totalRatio = totalAssigned > 0 ? ((totalCompleted / totalAssigned) * 100).toFixed(1) : 0;
+
+			tableBody.innerHTML = filteredRepairData.map(row => `
+				<tr>
+					<td class="location-cell">${row.location}</td>
+					<td>${row.technician}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('${row.technician}', 'assigned', ${row.assigned})">${row.assigned}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('${row.technician}', 'rescheduled', ${row.rescheduled})">${row.rescheduled}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('${row.technician}', 'cancelled', ${row.cancelled})">${row.cancelled}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('${row.technician}', 'completed', ${row.completed})">${row.completedDetail}</td>
+					<td class="ratio-cell">${row.ratio}%</td>
+				</tr>
+			`).join('') + `
+				<tr class="total-row">
+					<td colspan="2" style="text-align: right;">TOTAL</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('ALL', 'assigned', ${totalAssigned})">${totalAssigned}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('ALL', 'rescheduled', ${totalRescheduled})">${totalRescheduled}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('ALL', 'cancelled', ${totalCancelled})">${totalCancelled}</td>
+					<td class="number-cell clickable-cell" onclick="openDetailModal('ALL', 'completed', ${totalCompleted})">${totalCompleted}</td>
+					<td class="ratio-cell">${totalRatio}%</td>
+				</tr>
+			`;
+
+			recordsInfo.textContent = `Showing ${filteredRepairData.length} of ${repairData.length} records`;
+			updateFloatingScrollbarVisibility();
+		}
+
+		function renderRevenueTable() {
+			const tableBody = document.getElementById('revenueTableBody');
+			const recordsInfo = document.getElementById('revenueRecordsInfo');
+
+			if (filteredRevenueData.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 2rem;">No records found</td></tr>';
+				recordsInfo.textContent = 'Showing 0 of ' + revenueData.length + ' records';
+				return;
+			}
+
+			let totalRevenue = 0;
+			filteredRevenueData.forEach(row => {
+				totalRevenue += row.revenue;
+			});
+
+			tableBody.innerHTML = filteredRevenueData.map(row => `
+				<tr>
+					<td class="location-cell">${row.location}</td>
+					<td>${row.technician}</td>
+					<td class="revenue-cell clickable-cell" onclick="openRevenueModal('${row.technician}', ${row.revenue})" style="cursor: pointer;">$${row.revenue.toFixed(2)}</td>
+				</tr>
+			`).join('') + `
+				<tr class="total-row">
+					<td colspan="2" style="text-align: right;">TOTAL</td>
+					<td class="revenue-cell">$${totalRevenue.toFixed(2)}</td>
+				</tr>
+			`;
+
+			recordsInfo.textContent = `Showing ${filteredRevenueData.length} of ${revenueData.length} records`;
+			updateFloatingScrollbarVisibility();
+		}
+
+		function applyFilters() {
+			const location = document.getElementById('location').value;
+
+			// Filter repair data
+			filteredRepairData = repairData.filter(row => {
+				return !location || row.location === location;
+			});
+
+			// Filter revenue data
+			filteredRevenueData = revenueData.filter(row => {
+				return !location || row.location === location;
+			});
+
+			renderRepairTable();
+			renderRevenueTable();
+		}
+
+		function filterRepairTable() {
+			const searchTerm = document.getElementById('repairSearchInput').value.toLowerCase();
+
+			if (!searchTerm) {
+				applyFilters();
+				return;
+			}
+
+			const location = document.getElementById('location').value;
+
+			filteredRepairData = repairData.filter(row => {
+				let match = !location || row.location === location;
+
+				if (match && searchTerm) {
+					const searchText = `${row.location}${row.technician}${row.assigned}${row.rescheduled}${row.cancelled}${row.completed}`.toLowerCase();
+					match = searchText.includes(searchTerm);
+				}
+
+				return match;
+			});
+
+			renderRepairTable();
+		}
+
+		function filterRevenueTable() {
+			const searchTerm = document.getElementById('revenueSearchInput').value.toLowerCase();
+
+			if (!searchTerm) {
+				applyFilters();
+				return;
+			}
+
+			const location = document.getElementById('location').value;
+
+			filteredRevenueData = revenueData.filter(row => {
+				let match = !location || row.location === location;
+
+				if (match && searchTerm) {
+					const searchText = `${row.location}${row.technician}${row.revenue}`.toLowerCase();
+					match = searchText.includes(searchTerm);
+				}
+
+				return match;
+			});
+
+			renderRevenueTable();
+		}
+
+		function resetFilters() {
+			document.getElementById('location').value = '';
+			document.getElementById('fromDate').value = '';
+			document.getElementById('toDate').value = '';
+			document.getElementById('repairSearchInput').value = '';
+			document.getElementById('revenueSearchInput').value = '';
+			filteredRepairData = [...repairData];
+			filteredRevenueData = [...revenueData];
+			renderRepairTable();
+			renderRevenueTable();
+		}
+
+		function goToEfficiencyReport() {
+			window.location.href = 'tech_efficiencyreport.html';
+		}
+
+		function syncFloatingScrollbar() {
+			const repairTable = document.getElementById('repairTable');
+			const revenueTable = document.getElementById('revenueTable');
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			const floatingInner = document.getElementById('receiveFloatingScrollbarInner');
+			
+			if (!floatingBar || !floatingInner) return;
+			
+			const maxWidth = Math.max(
+				repairTable ? repairTable.scrollWidth : 0,
+				revenueTable ? revenueTable.scrollWidth : 0
+			);
+			
+			floatingInner.style.width = maxWidth + 'px';
+		}
+
+let _floatingActiveWrap = null;
+
+		function updateFloatingScrollbarVisibility() {
+			const repairTable = document.getElementById('repairTable');
+			const revenueTable = document.getElementById('revenueTable');
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			const floatingInner = document.getElementById('receiveFloatingScrollbarInner');
+			
+			if (!floatingBar) return;
+			
+			const tables = [repairTable, revenueTable].filter(Boolean);
+			let shouldShow = false;
+			
+			for (const table of tables) {
+				const wrap = table.closest('.table-wrap');
+				if (!wrap) continue;
+				const hasOverflow = wrap.scrollWidth > wrap.clientWidth;
+				if (!hasOverflow) continue;
+				const rect = wrap.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					shouldShow = true;
+					_floatingActiveWrap = wrap;
+					if (floatingInner) floatingInner.style.width = wrap.scrollWidth + 'px';
+					floatingBar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+					break;
+				}
+			}
+			
+			if (shouldShow) {
+				floatingBar.classList.add('is-visible');
+			} else {
+				floatingBar.classList.remove('is-visible');
+				_floatingActiveWrap = null;
+			}
+		}
+
+		window.addEventListener('load', function () {
+			applyPrettyUrl('reportTech');
+			loadUserInfo();
+			loadTechReportData();
+
+			// Set up scroll sync for floating scrollbar
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			if (floatingBar) {
+				floatingBar.addEventListener('scroll', () => {
+					if (_floatingActiveWrap) _floatingActiveWrap.scrollLeft = floatingBar.scrollLeft;
+				});
+				const repairWrap = document.getElementById('repairTable')?.closest('.table-wrap');
+				const revenueWrap = document.getElementById('revenueTable')?.closest('.table-wrap');
+				[repairWrap, revenueWrap].filter(Boolean).forEach(wrap => {
+					wrap.addEventListener('scroll', () => {
+						if (_floatingActiveWrap === wrap) floatingBar.scrollLeft = wrap.scrollLeft;
+					});
+				});
+			}
+		});
+
+		window.addEventListener('resize', function () {
+			syncFloatingScrollbar();
+			updateFloatingScrollbarVisibility();
+		});
+
+		window.addEventListener('scroll', updateFloatingScrollbarVisibility);
+
+		function aggregateDetailData(modalType) {
+			// Combine all tickets of the specified type across all technicians
+			let allData = [];
+			let recordNum = 1;
+			
+			for (const technician in technicianDetailRecords) {
+				const techData = technicianDetailRecords[technician] || {};
+				const typeData = techData[modalType] || [];
+				
+				typeData.forEach(record => {
+					allData.push({
+						...record,
+						num: recordNum++
+					});
+				});
+			}
+			
+			return allData;
+		}
+
+		function openDetailModal(technician, modalType, count) {
+			const modal = document.getElementById('detailModal');
+			const modalTitle = document.getElementById('modalTitle');
+			let data = [];
+			
+			if (technician === 'ALL') {
+				// Get aggregated data from all technicians
+				data = aggregateDetailData(modalType);
+				modalTitle.textContent = `${count} ${getTypeLabel(modalType)} tickets (Total)`;
+			} else {
+				// Get data for specific technician
+				const techData = technicianDetailRecords[technician] || {};
+				data = techData[modalType] || [];
+				modalTitle.textContent = `${count} ${getTypeLabel(modalType)} tickets found for ${technician}`;
+			}
+			
+			currentModalType = modalType;
+			currentDetailData = data;
+			
+			// Reset search input
+			document.getElementById('detailSearchInput').value = '';
+			
+			// Populate table
+			populateDetailTable(data);
+			
+			// Show modal
+			modal.classList.add('active');
+		}
+		
+		function getTypeLabel(modalType) {
+			const typeNames = {
+				'assigned': 'Assigned',
+				'rescheduled': 'Pending',
+				'cancelled': 'Cancelled',
+				'completed': 'Completed'
+			};
+			return typeNames[modalType] || modalType;
+		}
+
+		function closeDetailModal() {
+			const modal = document.getElementById('detailModal');
+			modal.classList.remove('active');
+		}
+
+		function openRevenueModal(technician, totalRevenue) {
+			const modal = document.getElementById('detailModal');
+			const modalTitle = document.getElementById('modalTitle');
+			let data = [];
+			
+			const techData = technicianDetailRecords[technician] || {};
+			data = techData['revenue'] || [];
+			
+			modalTitle.textContent = `Revenue for ${technician}`;
+			currentDetailData = data;
+			
+			// Reset search input
+			document.getElementById('detailSearchInput').value = '';
+			
+			// Populate table with revenue data
+			populateRevenueTable(data);
+			
+			// Show modal
+			modal.classList.add('active');
+		}
+
+		function populateRevenueTable(data) {
+			const tableBody = document.getElementById('detailTableBody');
+			const recordsInfo = document.getElementById('detailRecordsInfo');
+			
+			if (data.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: #bfdbfe;">No records found</td></tr>';
+				recordsInfo.textContent = '0 records found';
+				return;
+			}
+			
+			tableBody.innerHTML = data.map(record => `
+				<tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.num}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.technician}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.ticketNo}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.status}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.ascNo || ''}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.postingDate}</td>
+					<td style="padding: 0.5rem; border-right: 1px solid rgba(255, 255, 255, 0.1);">${record.warranty}</td>
+					<td style="padding: 0.5rem; text-align: right;">$${record.revenue.toFixed(2)}</td>
+				</tr>
+			`).join('');
+			
+			recordsInfo.textContent = `Showing ${data.length} records`;
+		}
+
+		function populateDetailTable(data) {
+			const tableBody = document.getElementById('detailTableBody');
+			const recordsInfo = document.getElementById('detailRecordsInfo');
+			
+			if (data.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="15" style="text-align: center; padding: 2rem; color: #bfdbfe;">No records found</td></tr>';
+				recordsInfo.textContent = '0 records found';
+				return;
+			}
+			
+			tableBody.innerHTML = data.map(record => `
+				<tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.num}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.technician}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.ticketNo}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.status}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.accountNo}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.ascNo}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.postingDate}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.product}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.modelCode}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.serialNo}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.warranty}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.date}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.repairType}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap;">${record.nonCompletionReason}</td>
+					<td style="padding: 0.65rem; color: #e0e0e0; white-space: nowrap; text-align: right;">${record.parts}</td>
+				</tr>
+			`).join('');
+			
+			recordsInfo.textContent = `Showing ${data.length} records`;
+		}
+
+		function filterDetailTable() {
+			const searchTerm = document.getElementById('detailSearchInput').value.toLowerCase();
+			
+			if (!searchTerm) {
+				populateDetailTable(currentDetailData);
+				return;
+			}
+			
+			const filtered = currentDetailData.filter(record => {
+				const searchText = `${record.num}${record.technician}${record.ticketNo}${record.status}${record.accountNo}${record.product}${record.modelCode}${record.serialNo}`.toLowerCase();
+				return searchText.includes(searchTerm);
+			});
+			
+			populateDetailTable(filtered);
+		}
+
+		// Add search event listener
+		document.addEventListener('DOMContentLoaded', function() {
+			const searchInput = document.getElementById('detailSearchInput');
+			if (searchInput) {
+				searchInput.addEventListener('keyup', filterDetailTable);
+			}
+		});
+
+		// Close modal when clicking outside
+		document.addEventListener('click', function(event) {
+			const modal = document.getElementById('detailModal');
+			if (event.target === modal) {
+				closeDetailModal();
+			}
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

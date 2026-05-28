@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Ticket List - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<!-- Supabase Client -->
+	<script src="../../supabase.min.js"></script>
+	<style>
+		.ticket-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.ticket-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.control-hint {
+			font-size: 0.78rem;
+			color: #cbd5e1;
+		}
+
+		.ticket-note {
+			margin: 0.7rem 0 1rem;
+			font-size: 0.84rem;
+			color: #cbd5e1;
+			line-height: 1.45;
+		}
+
+		.action-row {
+			display: flex;
+			gap: 0.75rem;
+			margin: 0.75rem 0 0.5rem;
+			flex-wrap: wrap;
+		}
+
+		.action-btn {
+			padding: 0.6rem 1rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.86rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.action-btn:hover {
+			border-color: rgba(96, 165, 250, 0.7);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.results-note {
+			margin: 0.4rem 0 0.8rem;
+			font-size: 0.82rem;
+			color: #cbd5e1;
+		}
+
+		.override-note {
+			margin: 0.8rem 0 1rem;
+			padding: 0.65rem 0.8rem;
+			border-radius: 6px;
+			background: rgba(191, 219, 254, 0.2);
+			border: 1px solid rgba(191, 219, 254, 0.35);
+			color: #dbeafe;
+			font-size: 0.84rem;
+			display: none;
+		}
+
+		.control-disabled {
+			opacity: 0.5;
+		}
+
+		.control-disabled input,
+		.control-disabled select {
+			pointer-events: none;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.ticket-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.ticket-table th,
+		.ticket-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.65rem 0.75rem;
+			font-size: 0.82rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.ticket-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.ticket-table td:first-child,
+		.ticket-table td:nth-child(2),
+		.ticket-table td:nth-child(3),
+		.ticket-table td:nth-child(6) {
+			text-align: left;
+		}
+
+		.ticket-link {
+			color: inherit;
+			font-weight: 700;
+			text-decoration: none;
+			cursor: pointer;
+		}
+
+		.ticket-link:hover {
+			text-decoration: underline;
+		}
+
+		@media (max-width: 1024px) {
+			.ticket-controls {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.ticket-panel {
+				padding: 1rem;
+			}
+
+			table.ticket-table {
+				min-width: 760px;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.module-header h2 {
+				font-size: 1.1rem;
+			}
+
+			.ticket-controls {
+				grid-template-columns: 1fr;
+			}
+
+			.ticket-note,
+			.override-note,
+			.control-hint,
+			.results-note {
+				font-size: 0.8rem;
+			}
+
+			.table-wrap {
+				margin: 0 -0.25rem;
+				padding-bottom: 0.25rem;
+				-webkit-overflow-scrolling: touch;
+			}
+
+			table.ticket-table {
+				min-width: 680px;
+			}
+
+			.ticket-table th,
+			.ticket-table td {
+				padding: 0.55rem 0.6rem;
+				font-size: 0.78rem;
+			}
+		}
+
+		@media (max-width: 480px) {
+			.ticket-panel {
+				padding: 0.85rem;
+			}
+
+			.control-group label {
+				font-size: 0.76rem;
+			}
+
+			.control-group input,
+			.control-group select {
+				padding: 0.6rem 0.65rem;
+				font-size: 0.85rem;
+			}
+
+			.back-btn {
+				width: 100%;
+				justify-content: center;
+			}
+
+			.action-row {
+				flex-direction: column;
+			}
+
+			.action-btn {
+				width: 100%;
+			}
+
+			.floating-table-scrollbar {
+				position: fixed;
+				left: 0;
+				bottom: 14px;
+				z-index: 1100;
+				overflow-x: auto;
+				overflow-y: hidden;
+				border: 1px solid rgba(148, 163, 184, 0.5);
+				border-radius: 8px;
+				background: rgba(255, 255, 255, 0.92);
+				box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+				display: none;
+				max-width: calc(100vw - 28px);
+			}
+
+			.floating-table-scrollbar.is-visible {
+				display: block;
+			}
+
+			.floating-table-scrollbar-inner {
+				height: 1px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+				<button class="back-btn" onclick="goToTicketHub()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">TICKET LIST</h2>
+		</div>
+
+		<div class="ticket-panel">
+			<div class="ticket-controls">
+				<div class="control-group">
+					<label for="ticketNo">Ticket No</label>
+					<input id="ticketNo" type="text" placeholder="26000123456DF,4184489234,ER113303">
+				</div>
+
+				<div class="control-group">
+					<label for="search">Search Name</label>
+					<input id="search" type="text" placeholder="Enter keyword">
+					<div class="control-hint">(5 letters for pattern search)</div>
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="overallStatus">Overall Status</label>
+					<select id="overallStatus">
+						<option value="" selected>All</option>
+						<option value="Open / Pending">Open / Pending</option>
+						<option value="Open">Open</option>
+						<option value="Pending">Pending</option>
+						<option value="Closed">Closed</option>
+					</select>
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="repairStatus">Repair Status</label>
+					<select id="repairStatus">
+						<option value="" selected>All</option>
+						<option value="CL-Need Cancel">CL-Need Cancel</option>
+						<option value="CL-Parts Back Ordered">CL-Parts Back Ordered</option>
+						<option value="CL-Ready to Complete">CL-Ready to Complete</option>
+						<option value="CSR-Acknowledged">CSR-Acknowledged</option>
+						<option value="CSR-Assigned to ASC">CSR-Assigned to ASC</option>
+						<option value="CSR-Left Message for Cx">CSR-Left Message for Cx</option>
+						<option value="CSR-Needs Scheduling">CSR-Needs Scheduling</option>
+						<option value="OP-Ready for Service">OP-Ready for Service</option>
+						<option value="OP-Reschedule Follow up">OP-Reschedule Follow up</option>
+						<option value="OP-UPDATE HOLD">OP-UPDATE HOLD</option>
+						<option value="OP-Waiting for Part">OP-Waiting for Part</option>
+						<option value="PT-Need PreAuthorization">PT-Need PreAuthorization</option>
+						<option value="TR-Need PO">TR-Need PO</option>
+						<option value="TR-Need Triage">TR-Need Triage</option>
+					</select>
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="scheduledFrom">Scheduled</label>
+					<input id="scheduledFrom" type="date">
+					<div class="control-hint">mm/dd/yyyy</div>
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="scheduledTo">~</label>
+					<input id="scheduledTo" type="date">
+					<div class="control-hint">mm/dd/yyyy</div>
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="technician">(technician)</label>
+					<input id="technician" type="text" placeholder="Technician name">
+				</div>
+
+				<div class="control-group filter-control">
+					<label for="location">Location</label>
+					<select id="location">
+						<option value="">All Locations</option>
+						<option value="Philippines">Philippines</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Dallas">Dallas</option>
+						<option value="Memphis">Memphis</option>
+						<option value="Tallahassee">Tallahassee</option>
+					</select>
+				</div>
+			</div>
+
+			<div class="ticket-note">
+				Ticket No: You can use [Ticket#1], [Ticket#2], ... , [Ticket#N] to search multiple tickets ex) 26000123456DF,4184489234,ER113303
+			</div>
+
+			<div id="overrideNote" class="override-note">
+				When there is entered value in [Ticket No] or [Search] window, other condition will be ignored.
+			</div>
+
+			<div class="action-row">
+				<button id="searchBtn" class="action-btn" type="button">Search</button>
+				<button id="resetBtn" class="action-btn" type="button">Reset Filters</button>
+			</div>
+
+			<div id="resultsNote" class="results-note">Showing 3 of 3 tickets</div>
+
+			<div class="table-wrap table-scroll-wrapper">
+				<table class="ticket-table">
+					<thead>
+						<tr>
+							<th>Ticket No</th>
+							<th>Customer</th>
+							<th>Overall Status</th>
+							<th>Repair Status</th>
+							<th>Scheduled</th>
+							<th>Technician</th>
+							<th>Location</th>
+						</tr>
+					</thead>
+					<tbody id="ticketTableBody"></tbody>
+				</table>
+			</div>
+
+			<div id="ticketFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="ticketFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script src="../../locations-loader.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		const userCompanyId = localStorage.getItem('userCompanyId');
+		if (userCompanyId) {
+			loadLocationDropdown('locationSelect', supabaseClient, userCompanyId);
+		}
+		let allTicketRows = [];
+		let activeCompanyDbId = null;
+		let activeCompanyCode = null;
+		const ER_COLUMNS = [
+			{ key: 'ticketNo', label: 'Ticket No' },
+			{ key: 'warranty', label: 'Wty' },
+			{ key: 'sourceBrand', label: 'Src/Brand' },
+			{ key: 'customer', label: 'Cx Name' },
+			{ key: 'city', label: 'City' },
+			{ key: 'location', label: 'Loc' },
+			{ key: 'zone', label: 'Zone' },
+			{ key: 'model', label: 'Model' },
+			{ key: 'internalNote', label: 'Internal Note' },
+			{ key: 'manufacturer', label: 'Manufact.' },
+			{ key: 'irKit', label: 'IR Kit' },
+			{ key: 'job', label: 'Job' },
+			{ key: 'repair', label: 'Repair' },
+			{ key: 'branch', label: 'Branch' },
+			{ key: 'technician', label: 'Technician' },
+			{ key: 'ss', label: 'SS' },
+			{ key: 'contact', label: 'Contact' },
+			{ key: 'cxPrefer', label: 'Cx Prefer' },
+			{ key: 'schedule', label: 'Schedule' },
+			{ key: 'status', label: 'Status' },
+			{ key: 'delay', label: 'Delay' },
+			{ key: 'claim', label: 'Claim' },
+			{ key: 'phone', label: 'Phone' },
+			{ key: 'redo', label: 'Redo' },
+			{ key: 'aging', label: 'Aging' },
+			{ key: 'calls', label: 'Calls' },
+			{ key: 'diag', label: 'Diag.' },
+			{ key: 'partOrder', label: 'Part Order' },
+			{ key: 'posting', label: 'Posting' },
+			{ key: 'call', label: 'Call' }
+		];
+
+		async function getCompanyDbId(companyCode) {
+			if (!companyCode) return null;
+			const { data, error } = await supabaseClient
+				.from('companies')
+				.select('id')
+				.eq('company_id', companyCode)
+				.maybeSingle();
+			if (error) {
+				return null;
+			}
+			return data?.id || null;
+		}
+
+		function formatScheduleDate(value) {
+			if (!value) return '';
+			const date = new Date(value);
+			if (Number.isNaN(date.getTime())) {
+				return String(value);
+			}
+			const month = String(date.getMonth() + 1).padStart(2, '0');
+			const day = String(date.getDate()).padStart(2, '0');
+			const year = date.getFullYear();
+			return `${month}/${day}/${year}`;
+		}
+
+		function inferOverallStatus(repairStatus) {
+			const status = (repairStatus || '').toLowerCase();
+			if (!status) return 'Open / Pending';
+			if (status.includes('complete') || status.includes('closed') || status.includes('done')) {
+				return 'Closed';
+			}
+			if (status.includes('pending') || status.includes('schedule') || status.includes('dispatch')) {
+				return 'Open / Pending';
+			}
+			return 'Open';
+		}
+
+		function mapTicketFromDb(row) {
+			let er = {};
+			try {
+				const parsed = JSON.parse(row.problem_description || '{}');
+				er = parsed && parsed.er ? parsed.er : {};
+			} catch (error) {
+				er = {};
+			}
+
+			return {
+				ticketNo: row.ticket_no || '',
+				warranty: er.warranty_type || row.warranty_type || '',
+				sourceBrand: er.source_brand || row.brand || row.source || '',
+				customer: row.customer_name || '',
+				city: er.customer_city || row.customer_city || '',
+				location: er.er_location || row.assigned_area || '',
+				zone: er.service_zone || '',
+				model: er.model || row.model || '',
+				internalNote: er.internal_note || row.customer_address_note || '',
+				manufacturer: er.manufacturer || '',
+				irKit: er.ir_kit || '',
+				job: er.job_type || '',
+				repair: er.repair_type || '',
+				branch: er.branch || '',
+				technician: er.technician_name || row.technician_name || '',
+				ss: er.ss_status || '',
+				contact: er.contact_status || '',
+				cxPrefer: er.cx_prefer || '',
+				schedule: er.schedule_datetime || formatScheduleDate(row.schedule_date),
+				status: row.repair_status || '',
+				delay: er.delay_reason || '',
+				claim: er.claim_status || row.claim_to || '',
+				phone: er.phone || row.customer_cell_phone_1 || row.customer_home_phone || '',
+				redo: er.redo_flag || '',
+				aging: er.aging_days ?? '',
+				calls: er.calls_count ?? '',
+				diag: er.diag_status || '',
+				partOrder: er.part_order_status || '',
+				posting: er.posting_date || '',
+				call: er.call_reference || ''
+			};
+		}
+
+		function initializeTicketTableColumns() {
+			const headerRow = document.querySelector('.ticket-table thead tr');
+			if (!headerRow) {
+				return;
+			}
+
+			headerRow.innerHTML = ER_COLUMNS.map((column) => `<th>${column.label}</th>`).join('');
+		}
+
+		async function loadTicketsViaLocalApi(companyCode) {
+			if (!companyCode) {
+				return [];
+			}
+
+			const endpoint = `http://127.0.0.1:3100/api/tickets?company_id=${encodeURIComponent(companyCode)}&limit=5000`;
+			const response = await fetch(endpoint, {
+				method: 'GET',
+				headers: { 'Accept': 'application/json' }
+			});
+
+			if (!response.ok) {
+				throw new Error(`Local API failed (${response.status})`);
+			}
+
+			const payload = await response.json();
+			const rows = Array.isArray(payload?.data) ? payload.data : [];
+			return rows.map(mapTicketFromDb);
+		}
+
+		async function loadTicketsFromDatabase() {
+			const tableBody = document.getElementById('ticketTableBody');
+			tableBody.innerHTML = `<tr><td colspan="${ER_COLUMNS.length}">Loading tickets from database...</td></tr>`;
+			document.getElementById('resultsNote').textContent = 'Loading tickets...';
+
+			let query = supabaseClient
+				.from('tickets')
+				.select('*')
+				.order('created_at', { ascending: false })
+				.limit(1000);
+
+			if (activeCompanyDbId) {
+				// Include company-scoped rows plus global rows created by sync jobs.
+				query = query.or(`company_id.eq.${activeCompanyDbId},company_id.is.null`);
+			}
+
+			const { data, error } = await query;
+
+			if (error) {
+				console.warn('Direct Supabase ticket query failed, trying local API fallback.', error);
+				try {
+					allTicketRows = await loadTicketsViaLocalApi(activeCompanyCode);
+					renderTicketRows(allTicketRows);
+					return;
+				} catch (apiError) {
+					tableBody.innerHTML = `<tr><td colspan="${ER_COLUMNS.length}">Failed to load tickets: ${apiError.message || error.message || 'Unknown error'}</td></tr>`;
+					document.getElementById('resultsNote').textContent = 'Showing 0 of 0 tickets';
+					allTicketRows = [];
+					return;
+				}
+			}
+
+			allTicketRows = Array.isArray(data) ? data.map(mapTicketFromDb) : [];
+
+			if (allTicketRows.length === 0) {
+				try {
+					const apiRows = await loadTicketsViaLocalApi(activeCompanyCode);
+					if (apiRows.length > 0) {
+						allTicketRows = apiRows;
+					}
+				} catch (apiError) {
+					console.warn('Local API fallback unavailable, keeping direct query result.', apiError);
+				}
+			}
+
+			renderTicketRows(allTicketRows);
+		}
+
+		async function ensureActiveSession() {
+			const { data, error } = await supabaseClient.auth.getSession();
+			if (error) {
+				return false;
+			}
+			return Boolean(data?.session);
+		}
+
+		function renderTicketRows(rows) {
+			const tableBody = document.getElementById('ticketTableBody');
+			if (!rows || rows.length === 0) {
+				tableBody.innerHTML = `<tr><td colspan="${ER_COLUMNS.length}">No tickets found in database.</td></tr>`;
+				document.getElementById('resultsNote').textContent = 'Showing 0 of 0 tickets';
+				return;
+			}
+
+			tableBody.innerHTML = rows.map((row) => {
+				const ticketNo = row.ticketNo || '';
+				return `<tr>${ER_COLUMNS.map((column) => {
+					if (column.key === 'ticketNo') {
+						return `<td><a class="ticket-link" href="ticket_details.html?ticket=${encodeURIComponent(ticketNo)}" target="_blank" rel="noopener noreferrer">${ticketNo}</a></td>`;
+					}
+					const value = row[column.key];
+					return `<td>${value == null ? '' : value}</td>`;
+				}).join('')}</tr>`;
+			}).join('');
+
+			document.getElementById('resultsNote').textContent = `Showing ${rows.length} of ${rows.length} tickets`;
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return { userEmail, userCompanyId };
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToTicketHub() {
+			window.location.href = 'index.html';
+		}
+
+		function updateOverrideState() {
+			const ticketNoValue = document.getElementById('ticketNo').value.trim();
+			const searchValue = document.getElementById('search').value.trim();
+			const hasPrimarySearch = ticketNoValue.length > 0 || searchValue.length > 0;
+			const filterControls = document.querySelectorAll('.filter-control');
+
+			filterControls.forEach((group) => {
+				group.classList.toggle('control-disabled', hasPrimarySearch);
+				group.querySelectorAll('input, select').forEach((el) => {
+					el.disabled = hasPrimarySearch;
+				});
+			});
+
+			document.getElementById('overrideNote').style.display = hasPrimarySearch ? 'block' : 'none';
+		}
+
+		function normalizeText(value) {
+			return value.trim().toLowerCase();
+		}
+
+		function parseTicketDate(value) {
+			const parts = value.split('/');
+			if (parts.length !== 3) {
+				return null;
+			}
+			const month = Number(parts[0]) - 1;
+			const day = Number(parts[1]);
+			const year = Number(parts[2]);
+			const parsedDate = new Date(year, month, day);
+			if (Number.isNaN(parsedDate.getTime())) {
+				return null;
+			}
+			return parsedDate;
+		}
+
+		function applyFilters() {
+			const ticketNoInput = normalizeText(document.getElementById('ticketNo').value);
+			const searchInput = normalizeText(document.getElementById('search').value);
+			const overallStatus = normalizeText(document.getElementById('overallStatus').value);
+			const repairStatus = normalizeText(document.getElementById('repairStatus').value);
+			const scheduledFrom = document.getElementById('scheduledFrom').value;
+			const scheduledTo = document.getElementById('scheduledTo').value;
+			const technician = normalizeText(document.getElementById('technician').value);
+			const location = normalizeText(document.getElementById('location').value);
+
+			const primarySearchMode = ticketNoInput.length > 0 || searchInput.length > 0;
+			const fromDate = scheduledFrom ? new Date(scheduledFrom + 'T00:00:00') : null;
+			const toDate = scheduledTo ? new Date(scheduledTo + 'T23:59:59') : null;
+
+			if (!allTicketRows || allTicketRows.length === 0) {
+				document.getElementById('resultsNote').textContent = 'Showing 0 of 0 tickets';
+				return;
+			}
+
+			const filtered = allTicketRows.filter((row) => {
+				const ticketNo = normalizeText(row.ticketNo || '');
+				const customer = normalizeText(row.customer || '');
+				const rowOverallStatus = normalizeText(inferOverallStatus(row.status || row.repairStatus || ''));
+				const rowRepairStatus = normalizeText(row.status || row.repairStatus || '');
+				const rowDate = parseTicketDate((row.schedule || '').split(' ')[0]);
+				const rowTechnician = normalizeText(row.technician || '');
+				const rowLocation = normalizeText(row.location || '');
+
+				let matched = true;
+
+				if (primarySearchMode) {
+					if (ticketNoInput) {
+						const tickets = ticketNoInput.split(',').map((item) => normalizeText(item)).filter(Boolean);
+						matched = tickets.length === 0 || tickets.some((ticket) => ticketNo.includes(ticket));
+					}
+					if (matched && searchInput) {
+						matched = ticketNo.includes(searchInput)
+							|| customer.includes(searchInput)
+							|| rowTechnician.includes(searchInput)
+							|| rowLocation.includes(searchInput)
+							|| normalizeText(row.model || '').includes(searchInput)
+							|| normalizeText(row.phone || '').includes(searchInput);
+					}
+				} else {
+					if (overallStatus && rowOverallStatus !== overallStatus) {
+						matched = false;
+					}
+					if (matched && repairStatus && rowRepairStatus !== repairStatus) {
+						matched = false;
+					}
+					if (matched && technician && !rowTechnician.includes(technician)) {
+						matched = false;
+					}
+					if (matched && location && rowLocation !== location) {
+						matched = false;
+					}
+					if (matched && (fromDate || toDate) && rowDate) {
+						if (fromDate && rowDate < fromDate) {
+							matched = false;
+						}
+						if (matched && toDate && rowDate > toDate) {
+							matched = false;
+						}
+					}
+				}
+
+				return matched;
+			});
+
+			renderTicketRows(filtered);
+			document.getElementById('resultsNote').textContent = `Showing ${filtered.length} of ${allTicketRows.length} tickets`;
+		}
+
+		function resetFilters() {
+			document.getElementById('ticketNo').value = '';
+			document.getElementById('search').value = '';
+			document.getElementById('overallStatus').value = '';
+			document.getElementById('repairStatus').value = '';
+			document.getElementById('scheduledFrom').value = '';
+			document.getElementById('scheduledTo').value = '';
+			document.getElementById('technician').value = '';
+			document.getElementById('location').value = '';
+			updateOverrideState();
+			applyFilters();
+		}
+
+		document.getElementById('ticketNo').addEventListener('input', updateOverrideState);
+		document.getElementById('search').addEventListener('input', updateOverrideState);
+		document.getElementById('ticketNo').addEventListener('input', applyFilters);
+		document.getElementById('search').addEventListener('input', applyFilters);
+		document.getElementById('overallStatus').addEventListener('change', applyFilters);
+		document.getElementById('repairStatus').addEventListener('change', applyFilters);
+		document.getElementById('scheduledFrom').addEventListener('change', applyFilters);
+		document.getElementById('scheduledTo').addEventListener('change', applyFilters);
+		document.getElementById('technician').addEventListener('input', applyFilters);
+		document.getElementById('location').addEventListener('change', applyFilters);
+		document.getElementById('searchBtn').addEventListener('click', applyFilters);
+		document.getElementById('resetBtn').addEventListener('click', resetFilters);
+
+		document.addEventListener('keydown', function (event) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				applyFilters();
+			}
+		});
+
+		window.addEventListener('load', async function () {
+	
+			applyPrettyUrl('ticketList');
+			initializeTicketTableColumns();
+			const context = loadUserInfo();
+			activeCompanyCode = context?.userCompanyId || null;
+			const hasSession = await ensureActiveSession();
+			if (!hasSession) {
+				const tableBody = document.getElementById('ticketTableBody');
+				tableBody.innerHTML = `<tr><td colspan="${ER_COLUMNS.length}">Session expired. Please log in again from Landing.</td></tr>`;
+				document.getElementById('resultsNote').textContent = 'Showing 0 of 0 tickets';
+				return;
+			}
+			activeCompanyDbId = await getCompanyDbId(context?.userCompanyId || '');
+			await loadTicketsFromDatabase();
+			updateOverrideState();
+			applyFilters();
+			setupTicketFloatingScrollbar();
+			highlightNewTicket();
+		});
+
+		function highlightNewTicket() {
+			const param = new URLSearchParams(window.location.search).get('ticket');
+			if (!param) return;
+			const target = decodeURIComponent(param).trim().toLowerCase();
+
+			// Find the row whose ticket link text matches
+			const links = document.querySelectorAll('#ticketTableBody .ticket-link');
+			let matchRow = null;
+			for (const link of links) {
+				if (link.textContent.trim().toLowerCase() === target) {
+					matchRow = link.closest('tr');
+					break;
+				}
+			}
+			if (!matchRow) return;
+
+			// Highlight style
+			matchRow.style.background = 'rgba(59,130,246,0.25)';
+			matchRow.style.outline = '2px solid #3b82f6';
+			matchRow.style.transition = 'background 1.5s ease, outline 1.5s ease';
+
+			matchRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+			// Fade out highlight after 3 seconds
+			setTimeout(() => {
+				matchRow.style.background = '';
+				matchRow.style.outline = '';
+			}, 3000);
+
+			// Clean up URL param without reloading
+			const url = new URL(window.location.href);
+			url.searchParams.delete('ticket');
+			window.history.replaceState({}, '', url.toString());
+		}
+
+		function syncTicketFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const table = tableWrap ? tableWrap.querySelector('.ticket-table') : null;
+			const floatingBar = document.getElementById('ticketFloatingScrollbar');
+			const floatingInner = document.getElementById('ticketFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateTicketFloatingScrollbarVisibility() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('ticketFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncTicketFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupTicketFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('ticketFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) { syncingFromTable = false; return; }
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) { syncingFromFloating = false; return; }
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateTicketFloatingScrollbarVisibility();
+			});
+			window.addEventListener('resize', function () {
+				syncTicketFloatingScrollbar();
+				updateTicketFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateTicketFloatingScrollbarVisibility, { passive: true });
+			syncTicketFloatingScrollbar();
+			updateTicketFloatingScrollbarVisibility();
+		}
+	</script>
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>

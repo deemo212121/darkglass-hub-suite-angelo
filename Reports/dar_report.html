@@ -1,0 +1,1046 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Daily Activity Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		/* ── Body Layout ── */
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+		}
+
+		/* ── Report Panel ── */
+		.dar-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.dar-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1.2rem;
+			align-items: flex-end;
+			padding: 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-row {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		.control-row input,
+		.control-row select {
+			padding: 0.5rem 0.7rem;
+			background: rgba(2, 6, 23, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+		}
+
+		/* ── Custom Checkbox Dropdown ── */
+		.checkbox-dropdown {
+			position: relative;
+			display: inline-block;
+			width: 200px;
+		}
+
+		.checkbox-dropdown-toggle {
+			padding: 0.5rem 0.7rem;
+			background: rgba(2, 6, 23, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			cursor: pointer;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			width: 100%;
+			box-sizing: border-box;
+		}
+
+		.checkbox-dropdown-toggle:hover {
+			border-color: #60a5fa;
+		}
+
+		.checkbox-dropdown-menu {
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			background: rgba(17, 24, 39, 0.95);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-top: none;
+			border-radius: 0 0 4px 4px;
+			max-height: 300px;
+			overflow-y: auto;
+			z-index: 1000;
+			display: none;
+			box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+		}
+
+		.checkbox-dropdown-menu.open {
+			display: block;
+		}
+
+		.checkbox-item {
+			padding: 0.6rem 0.8rem;
+			display: flex;
+			align-items: center;
+			gap: 0.6rem;
+			color: #e2e8f0;
+			font-size: 0.85rem;
+			cursor: pointer;
+			transition: background 0.15s;
+		}
+
+		.checkbox-item:hover {
+			background: rgba(59, 130, 246, 0.1);
+		}
+
+		.checkbox-item input[type="checkbox"] {
+			cursor: pointer;
+			accent-color: #60a5fa;
+		}
+
+		.checkbox-item.select-all {
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			font-weight: 600;
+			color: #93c5fd;
+		}
+
+		.control-row input:focus,
+		.control-row select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.refresh-btn {
+			padding: 0.5rem 1rem;
+			background: rgba(59, 130, 246, 0.2);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #60a5fa;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.refresh-btn:hover {
+			background: rgba(59, 130, 246, 0.3);
+			border-color: #60a5fa;
+		}
+
+		/* ── Data Section ── */
+		.dar-data {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+			padding: 1.25rem;
+			overflow-y: auto;
+		}
+
+		.report-meta {
+			color: #94a3b8;
+			font-size: 0.85rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.records-info {
+			color: #94a3b8;
+			font-size: 0.9rem;
+			margin-bottom: 1rem;
+		}
+
+		.records-info strong {
+			color: #dbeafe;
+		}
+
+		.table-wrapper {
+			overflow-x: auto;
+			flex: 1;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			text-align: left;
+			font-size: 0.8rem;
+		}
+
+		thead {
+			background: rgba(17, 24, 39, 0.9);
+			border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+			position: sticky;
+			top: 0;
+		}
+
+		th {
+			padding: 0.6rem 0.5rem;
+			font-weight: 700;
+			color: #cbd5e1;
+			text-transform: uppercase;
+			font-size: 0.68rem;
+			letter-spacing: 0.04em;
+			text-align: center;
+			border-right: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		td {
+			padding: 0.6rem 0.5rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+			color: #e2e8f0;
+			text-align: center;
+			border-right: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		td:first-child,
+		td:nth-child(2) {
+			text-align: left;
+		}
+
+		tbody tr {
+			transition: background 0.2s ease;
+		}
+
+		tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.report-total {
+			background: rgba(59, 130, 246, 0.1);
+			font-weight: 700;
+			border-top: 2px solid rgba(96, 165, 250, 0.3);
+		}
+
+		.report-total td {
+			color: #60a5fa;
+		}
+
+		/* ── Modal Styles (Placeholder for your design) ── */
+		.modal-overlay {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.6);
+			display: none;
+			justify-content: center;
+			align-items: center;
+			z-index: 2000;
+		}
+
+		.modal-overlay.active {
+			display: flex;
+		}
+
+		.modal-content {
+			background: rgba(17, 24, 39, 0.95);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 2rem;
+			max-width: 600px;
+			width: 90%;
+			color: #e2e8f0;
+			box-shadow: 0 20px 25px rgba(0, 0, 0, 0.5);
+		}
+
+		.modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 1.5rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			padding-bottom: 1rem;
+		}
+
+		.modal-header h3 {
+			margin: 0;
+			color: #93c5fd;
+			font-size: 1.1rem;
+		}
+
+		.modal-close-btn {
+			background: none;
+			border: none;
+			color: #94a3b8;
+			font-size: 1.5rem;
+			cursor: pointer;
+			padding: 0;
+			width: 24px;
+			height: 24px;
+		}
+
+		.modal-close-btn:hover {
+			color: #e2e8f0;
+		}
+
+		.modal-body {
+			margin-top: 1rem;
+		}
+
+		/* Clickable cells styling */
+		td.clickable {
+			cursor: pointer;
+			color: #60a5fa;
+			text-decoration: underline;
+			transition: all 0.2s;
+		}
+
+		td.clickable:hover {
+			color: #93c5fd;
+			background: rgba(96, 165, 250, 0.1);
+		}
+
+		.report-total td.clickable {
+			color: #60a5fa;
+		}
+
+		/* Modal Table Styles */
+		.modal-table {
+			width: 100%;
+			border-collapse: collapse;
+			margin-top: 1rem;
+		}
+
+		.modal-table thead {
+			background: rgba(59, 130, 246, 0.15);
+			border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+			position: relative;
+			z-index: 1;
+		}
+
+		.modal-table th {
+			padding: 0.8rem;
+			text-align: left;
+			font-weight: 600;
+			color: #93c5fd;
+			font-size: 0.85rem;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+		}
+
+		.modal-table tbody tr {
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			transition: background 0.2s;
+		}
+
+		.modal-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.modal-table td {
+			padding: 0.7rem 0.8rem;
+			color: #e2e8f0;
+			font-size: 0.8rem;
+		}
+
+		.modal-table td:first-child {
+			color: #94a3b8;
+			font-weight: 500;
+		}
+
+		.report-total td.clickable {
+			color: #60a5fa;
+		}
+			padding: 1rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+			color: #94a3b8;
+			font-size: 0.85rem;
+			text-align: center;
+		}
+
+		@media (max-width: 1024px) {
+			.dar-controls {
+				gap: 0.8rem;
+			}
+
+			th, td {
+				padding: 0.4rem 0.3rem;
+				font-size: 0.7rem;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.control-row {
+				flex-direction: column;
+				align-items: stretch;
+			}
+
+			.table-wrapper {
+				overflow-x: auto;
+			}
+		}
+
+		footer {
+			background: rgba(17, 24, 39, 0.6);
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+			padding: 1.25rem;
+			text-align: center;
+			color: rgba(255, 255, 255, 0.6);
+			font-size: 0.8rem;
+		}
+
+		footer a {
+			color: rgba(255, 255, 255, 0.85);
+			text-decoration: none;
+			transition: color 0.3s ease;
+		}
+
+		footer a:hover {
+			color: white;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+
+	<div class="module-page" style="display: flex; flex-direction: column;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Daily Activity Report</h2>
+		</div>
+
+		<div class="dar-panel">
+			<!-- Controls Section -->
+			<div class="dar-controls">
+				<div class="control-group">
+					<label class="control-label">Location</label>
+					<div class="control-row">
+						<select id="locationFilter">
+							<option value="">All Locations</option>
+							<option value="Philippines">Philippines</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Memphis">Memphis</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Tallahassee">Tallahassee</option>
+						</select>
+					</div>
+				</div>
+
+				<div class="control-group">
+					<label class="control-label">Work Date</label>
+					<div class="control-row">
+						<input type="date" id="workDateStart" value="2026-05-19">
+						<span style="color: #94a3b8; font-size: 0.8rem;">00:00 AM</span>
+						<span style="color: #94a3b8; font-size: 0.8rem;">~</span>
+						<input type="date" id="workDateEnd" value="2026-05-20">
+						<span style="color: #94a3b8; font-size: 0.8rem;">00:00 AM</span>
+					</div>
+				</div>
+
+				<div class="control-group">
+					<label class="control-label">Target Users</label>
+					<div class="control-row">
+						<div class="checkbox-dropdown">
+							<button class="checkbox-dropdown-toggle" onclick="toggleCheckboxDropdown(event)">
+								<span id="selectedCount">Select Users</span>
+								<span style="font-size: 0.7rem;">▼</span>
+							</button>
+							<div class="checkbox-dropdown-menu" id="checkboxDropdownMenu">
+								<label class="checkbox-item select-all">
+									<input type="checkbox" id="selectAllCheckbox" onchange="selectAllCheckboxes()">
+									Select All
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Admin" onchange="updateSelectedCount()">
+									Admin
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Claim Manager" onchange="updateSelectedCount()">
+									Claim Manager
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="CSR" onchange="updateSelectedCount()">
+									CSR
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="HR" onchange="updateSelectedCount()">
+									HR
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Manager" onchange="updateSelectedCount()">
+									Manager
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Part Manager" onchange="updateSelectedCount()">
+									Part Manager
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Superuser" onchange="updateSelectedCount()">
+									Superuser
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Tech Manager" onchange="updateSelectedCount()">
+									Tech Manager
+								</label>
+								<label class="checkbox-item">
+									<input type="checkbox" class="role-checkbox" value="Technician" onchange="updateSelectedCount()">
+									Technician
+								</label>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Refresh removed - auto-refresh enabled -->
+			</div>
+
+			<!-- Data Section -->
+			<div class="dar-data">
+				<div class="report-meta">
+					<strong>last modified @ </strong> <span id="lastModified">2026-05-19 11:35:56</span>
+				</div>
+				<div class="records-info">
+					<strong id="recordCount">35</strong> records found
+				</div>
+				<div style="margin-bottom: 1rem; color: #94a3b8; font-size: 0.85rem;">
+					<input type="text" id="searchInput" placeholder="search in result" style="width: 200px; padding: 0.4rem 0.6rem; background: rgba(2, 6, 23, 0.8); border: 1px solid rgba(148, 163, 184, 0.35); color: #e2e8f0; border-radius: 4px; font-size: 0.8rem;">
+				</div>
+
+				<div class="table-wrapper" id="darTableWrap">
+					<table id="darTable">
+						<thead>
+							<tr>
+								<th colspan="2"></th>
+								<th colspan="7" style="text-align: center; border-bottom: 2px solid rgba(255, 255, 255, 0.1);">TICKET ACTIONS</th>
+								<th colspan="2" style="text-align: center; border-bottom: 2px solid rgba(255, 255, 255, 0.1);">1st CALL ATTEMPT</th>
+								<th colspan="3" style="text-align: center; border-bottom: 2px solid rgba(255, 255, 255, 0.1);">OOW Booking Rate</th>
+								<th colspan="3" style="text-align: center; border-bottom: 2px solid rgba(255, 255, 255, 0.1);">CLAIMS</th>
+							</tr>
+							<tr>
+								<th>User</th>
+								<th>OFFICE</th>
+								<th>* SCHEDULE</th>
+								<th>RESCHEDULE</th>
+								<th>CANCEL</th>
+								<th>CALL ATTEMPT</th>
+								<th>CSR UPDATE</th>
+								<th>INFO. UPDATE</th>
+								<th>COMPLETED</th>
+								<th>ACKNOWLEDGE</th>
+								<th>TOTAL</th>
+								<th>AVG INTERVAL</th>
+								<th>TOTAL TRIAL</th>
+								<th>Booked</th>
+								<th>Target</th>
+								<th>Rate (%)</th>
+							</tr>
+						</thead>
+						<tbody id="tableBody">
+						</tbody>
+					</table>
+				</div>
+
+				<div class="report-footer">TOTAL # of TICKETS TO DO: 1334</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<footer id="contact"></footer>
+
+	<!-- Modal Placeholder (ready for your design) -->
+	<div class="modal-overlay" id="ticketActionModal">
+		<div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+			<div class="modal-header">
+				<h3 id="modalTitle">Ticket Action Details</h3>
+				<button class="modal-close-btn" onclick="closeModal()">&times;</button>
+			</div>
+			<div class="modal-body" id="modalBody">
+				<!-- Modal content will be injected here -->
+			</div>
+		</div>
+	</div>
+	<script>
+		/* ── Auth ── */
+		const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+		const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+
+		/* ── Render App Header ── */
+		const appContainer = document.getElementById('appContainer');
+		appContainer.innerHTML = `
+			<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+				<div class="dashboard-header">
+					<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+						<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+						<h1 class="dashboard-title">Admin Hub Solutions</h1>
+					</a>
+					<div class="user-info">
+						<div>
+							<p id="userDisplayEmail" style="font-weight: 600; color: white; margin: 0;"></p>
+							<p id="companyDisplayInfo" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+						</div>
+						<button class="logout-btn" onclick="logout()">Logout</button>
+					</div>
+				</div>
+			</div>
+		`;
+
+		/* ── Daily Activity Data ── */
+		const darData = [
+			{ user: 'MaCzarina Lagumen', office: 'Philippines', schedule: 21, reschedule: 0, cancel: 0, call_attempt: 8, csr_update: 6, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Alona Jane Bautista', office: 'Philippines', schedule: 19, reschedule: 0, cancel: 0, call_attempt: 12, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Patrick Tendero', office: 'Philippines', schedule: 17, reschedule: 0, cancel: 0, call_attempt: 5, csr_update: 4, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Anna Dominique Dimacali', office: 'Philippines', schedule: 17, reschedule: 0, cancel: 0, call_attempt: 1, csr_update: 13, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jo-Ann Lazarte', office: 'Philippines', schedule: 15, reschedule: 0, cancel: 0, call_attempt: 3, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'John Carl Cabahug', office: 'Philippines', schedule: 15, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jenny Boy Ibale', office: 'Philippines', schedule: 14, reschedule: 0, cancel: 0, call_attempt: 14, csr_update: 6, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Francis John Rebosura', office: 'Philippines', schedule: 13, reschedule: 0, cancel: 0, call_attempt: 7, csr_update: 5, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Shiela Luciano', office: 'Philippines', schedule: 12, reschedule: 0, cancel: 0, call_attempt: 1, csr_update: 6, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Richelle Labajo', office: 'Philippines', schedule: 12, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Mary Rose Labuanan', office: 'Philippines', schedule: 11, reschedule: 0, cancel: 0, call_attempt: 5, csr_update: 5, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Shiela Marie Estrellado', office: 'Philippines', schedule: 11, reschedule: 0, cancel: 0, call_attempt: 4, csr_update: 1, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Daniela Mercado', office: 'Philippines', schedule: 7, reschedule: 0, cancel: 0, call_attempt: 8, csr_update: 11, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jerwin Pineda', office: 'Philippines', schedule: 7, reschedule: 0, cancel: 0, call_attempt: 3, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Renz Marion Casilao', office: 'Philippines', schedule: 4, reschedule: 0, cancel: 0, call_attempt: 3, csr_update: 21, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Ana Jessa Vito', office: 'Philippines', schedule: 4, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 13, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Shane Marie Rebadomia', office: 'Philippines', schedule: 3, reschedule: 0, cancel: 0, call_attempt: 1, csr_update: 5, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'John Maverick Nieto', office: 'Philippines', schedule: 1, reschedule: 0, cancel: 0, call_attempt: 4, csr_update: 0, info_update: 80, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Gerlyn Garcia', office: 'Philippines', schedule: 1, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Kyle Jomarc Sicat', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 26, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Raul Bayuyos Jr', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 8, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Lou Basco', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 8, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Rochelle Ortiz', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 3, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Alyssa Diones', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 75, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Wincel Franz Carusca', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 63, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Cheska Timkang', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 58, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Ian Montesclaros', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 29, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Arnulfo Montesclaros Jr', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 15, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Nicole Noval', office: 'Memphis', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 13, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jerich Leonard', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 7, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jenny Mahawan', office: 'Atlanta', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 6, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Krista Griffiss', office: 'Tallahassee', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 5, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Lloyd Tombiga', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 4, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Kenny Shin', office: 'Birmingham', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 1, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null },
+			{ user: 'Jhon Norban Rulona', office: 'Philippines', schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 0, info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0, booked: null, target: null }
+		];
+
+		/* ── Helper Functions ── */
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+			const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+			
+			const userEmailEl = document.getElementById('userDisplayEmail');
+			const companyInfoEl = document.getElementById('companyDisplayInfo');
+			
+			if (userEmailEl) {
+				userEmailEl.textContent = userEmail;
+			}
+			if (companyInfoEl) {
+				companyInfoEl.textContent = `Company: ${userCompanyId}`;
+			}
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../index.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function populateTable(data) {
+			const tableBody = document.getElementById('tableBody');
+			tableBody.innerHTML = '';
+
+			let totals = {
+				schedule: 0, reschedule: 0, cancel: 0, call_attempt: 0, csr_update: 0,
+				info_update: 0, completed: 0, acknowledge: 0, claim_requested: 0, triage_support: 0
+			};
+
+			data.forEach(record => {
+				const total = record.schedule + record.reschedule + record.cancel + record.call_attempt + 
+					record.csr_update + record.info_update + record.completed + record.acknowledge + 
+					record.claim_requested + record.triage_support;
+
+				totals.schedule += record.schedule;
+				totals.reschedule += record.reschedule;
+				totals.cancel += record.cancel;
+				totals.call_attempt += record.call_attempt;
+				totals.csr_update += record.csr_update;
+				totals.info_update += record.info_update;
+				totals.completed += record.completed;
+				totals.acknowledge += record.acknowledge;
+				totals.claim_requested += record.claim_requested;
+				totals.triage_support += record.triage_support;
+
+				const row = document.createElement('tr');
+				row.innerHTML = `
+					<td>${record.user}</td>
+					<td>${record.office}</td>
+					<td class="clickable" onclick="openModal('SCHEDULE', ${record.schedule}, '${record.user}')">${record.schedule}</td>
+					<td class="clickable" onclick="openModal('RESCHEDULE', ${record.reschedule}, '${record.user}')">${record.reschedule}</td>
+					<td class="clickable" onclick="openModal('CANCEL', ${record.cancel}, '${record.user}')">${record.cancel}</td>
+					<td class="clickable" onclick="openModal('CALL ATTEMPT', ${record.call_attempt}, '${record.user}')">${record.call_attempt}</td>
+					<td class="clickable" onclick="openModal('CSR UPDATE', ${record.csr_update}, '${record.user}')">${record.csr_update}</td>
+					<td class="clickable" onclick="openModal('INFO. UPDATE', ${record.info_update}, '${record.user}')">${record.info_update}</td>
+					<td class="clickable" onclick="openModal('COMPLETED', ${record.completed}, '${record.user}')">${record.completed}</td>
+					<td class="clickable" onclick="openModal('ACKNOWLEDGE', ${record.acknowledge}, '${record.user}')">${record.acknowledge}</td>
+					<td class="clickable" onclick="openModal('TOTAL', ${total}, '${record.user}')">${total}</td>
+					<td>0m</td>
+					<td></td>
+					<td>${record.booked || ''}</td>
+					<td>${record.target || ''}</td>
+					<td>${record.booked && record.target ? ((record.booked / record.target) * 100).toFixed(0) + '%' : ''}</td>
+				`;
+				tableBody.appendChild(row);
+			});
+
+			// Add TOTAL row
+			const totalRow = document.createElement('tr');
+			totalRow.className = 'report-total';
+			const grandTotal = Object.values(totals).reduce((a, b) => a + b, 0);
+			totalRow.innerHTML = `
+				<td>TOTAL</td>
+				<td></td>
+				<td class="clickable" onclick="openModal('SCHEDULE (TOTAL)', ${totals.schedule}, 'All Users')">${totals.schedule}</td>
+				<td class="clickable" onclick="openModal('RESCHEDULE (TOTAL)', ${totals.reschedule}, 'All Users')">${totals.reschedule}</td>
+				<td class="clickable" onclick="openModal('CANCEL (TOTAL)', ${totals.cancel}, 'All Users')">${totals.cancel}</td>
+				<td class="clickable" onclick="openModal('CALL ATTEMPT (TOTAL)', ${totals.call_attempt}, 'All Users')">${totals.call_attempt}</td>
+				<td class="clickable" onclick="openModal('CSR UPDATE (TOTAL)', ${totals.csr_update}, 'All Users')">${totals.csr_update}</td>
+				<td class="clickable" onclick="openModal('INFO. UPDATE (TOTAL)', ${totals.info_update}, 'All Users')">${totals.info_update}</td>
+				<td class="clickable" onclick="openModal('COMPLETED (TOTAL)', ${totals.completed}, 'All Users')">${totals.completed}</td>
+				<td class="clickable" onclick="openModal('ACKNOWLEDGE (TOTAL)', ${totals.acknowledge}, 'All Users')">${totals.acknowledge}</td>
+				<td class="clickable" onclick="openModal('TOTAL', ${grandTotal}, 'All Users')">${grandTotal}</td>
+				<td>0m</td>
+				<td></td>
+				<td></td>
+				<td></td>
+				<td>NaN</td>
+			`;
+			tableBody.appendChild(totalRow);
+
+			document.getElementById('recordCount').textContent = data.length;
+		}
+
+		function toggleCheckboxDropdown(event) {
+			event.preventDefault();
+			const menu = document.getElementById('checkboxDropdownMenu');
+			menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+		}
+
+		function selectAllCheckboxes() {
+			const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+			const roleCheckboxes = document.querySelectorAll('.role-checkbox');
+			roleCheckboxes.forEach(checkbox => {
+				checkbox.checked = selectAllCheckbox.checked;
+			});
+			updateSelectedCount();
+		}
+
+		function updateSelectedCount() {
+			const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+			const roleCheckboxes = document.querySelectorAll('.role-checkbox');
+			const selectedCheckboxes = document.querySelectorAll('.role-checkbox:checked');
+			const selectedCountEl = document.getElementById('selectedCount');
+
+			// Update Select All checkbox based on individual selections
+			selectAllCheckbox.checked = selectedCheckboxes.length === roleCheckboxes.length;
+			selectAllCheckbox.indeterminate = selectedCheckboxes.length > 0 && selectedCheckboxes.length < roleCheckboxes.length;
+
+			// Update display text
+			if (selectedCheckboxes.length === 0) {
+				selectedCountEl.textContent = 'Select Users';
+			} else if (selectedCheckboxes.length === roleCheckboxes.length) {
+				selectedCountEl.textContent = 'All Users Selected (' + selectedCheckboxes.length + ')';
+			} else {
+				selectedCountEl.textContent = selectedCheckboxes.length + ' User' + (selectedCheckboxes.length !== 1 ? 's' : '') + ' Selected';
+			}
+
+			// Auto-filter
+			filterData();
+		}
+
+		function getSelectedRoles() {
+			const selectedCheckboxes = document.querySelectorAll('.role-checkbox:checked');
+			return Array.from(selectedCheckboxes).map(cb => cb.value);
+		}
+
+		function openModal(actionType, count, userName) {
+			const modal = document.getElementById('ticketActionModal');
+			const modalTitle = document.getElementById('modalTitle');
+			const modalBody = document.getElementById('modalBody');
+
+			// Get selected date range
+			const startDate = document.getElementById('workDateStart').value;
+			const endDate = document.getElementById('workDateEnd').value;
+
+			// If actionType contains "TOTAL", show all action types
+			let displayActionType = actionType;
+			if (actionType.includes('TOTAL')) {
+				displayActionType = 'Activities within (SCHEDULE + RESCHEDULE + CANCEL + CALL ATTEMPT + CSR UPDATE + INFO. UPDATE + COMPLETED + ACKNOWLEDGE)';
+			}
+
+			// Header: "user + Activities @ + dates selected"
+			modalTitle.textContent = `${userName} ${displayActionType} @ ${startDate} - ${endDate}`;
+
+			// Generate sample ticket data - pass userName for lookup
+			const ticketData = generateTicketData(actionType, userName, count);
+
+			// Create table HTML
+			let tableHTML = `
+				<table class="modal-table">
+					<thead>
+						<tr>
+							<th>#</th>
+							<th>CSR</th>
+							<th>Ticket No</th>
+							<th>Action Time</th>
+							<th>Action Type</th>
+						</tr>
+					</thead>
+					<tbody>
+			`;
+
+			ticketData.forEach((rec, index) => {
+				tableHTML += `
+					<tr>
+						<td>${index + 1}</td>
+						<td>${rec.csr}</td>
+						<td><a href="../../Modules/Tickets/ticket_details.html?ticketNo=${rec.ticketNo}" target="_blank" style="color: #60a5fa; text-decoration: none; cursor: pointer;">${rec.ticketNo}</a></td>
+						<td>${rec.actionTime}</td>
+						<td>${rec.actionType}</td>
+					</tr>
+				`;
+			});
+
+			tableHTML += `
+					</tbody>
+				</table>
+				<div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8; font-size: 0.85rem;">
+					<strong>Total Records:</strong> ${ticketData.length}
+				</div>
+			`;
+
+			modalBody.innerHTML = tableHTML;
+			modal.classList.add('active');
+		}
+
+		function generateTicketData(actionType, userName, count) {
+			// Sample ticket numbers for realistic data
+			const sampleTickets = [
+				'26000617934DF', 'BG52433RDF40', '1007048419-10', '26000650240DF', 'SA-3227241',
+				'SA-3213002', 'SA-3415176', '1007198800-10', '26000667586DF', '26000628676DF',
+				'26000670811DF', '26000668312DF', 'SA-3193624', 'SA-3192982', '26000574020DF',
+				'26000585022DF', '26000515716DF', '1006859387-10', 'SA-2635129', 'SA-3006172',
+				'SA-3198642', '3844911E2', '26000606173DF', '49781508', '3847050E1',
+				'400495370', '26000647984DF', 'SA-3386617', '26000660314DF', '727431',
+				'SA-3463220', 'SA-3351413', 'I-26000566653DF', 'I-1007038718-10', 'SA-3205615',
+				'26000586045HS', '26000576169DF', '058021174132', '002431174138', '071880174136',
+				'26000631731HS', '26000670201DF', '26000670176DF', '49827540', 'HSV20260534265043',
+				'SA-3427574', 'SA-3164301', 'SA-3189898'
+			];
+
+			const data = [];
+
+			// If TOTAL clicked, look up the user record and distribute based on actual counts
+			if (actionType.includes('TOTAL')) {
+				// Look up the user's record in darData
+				let userRecord = null;
+				if (userName !== 'All Users') {
+					userRecord = darData.find(r => r.user === userName);
+				}
+
+				if (userRecord) {
+					// Create an array of action types based on actual counts in the record
+					const actionCounts = [
+						{ type: 'SCHEDULE', count: userRecord.schedule || 0 },
+						{ type: 'RESCHEDULE', count: userRecord.reschedule || 0 },
+						{ type: 'CANCEL', count: userRecord.cancel || 0 },
+						{ type: 'CALL ATTEMPT', count: userRecord.call_attempt || 0 },
+						{ type: 'CSR UPDATE', count: userRecord.csr_update || 0 },
+						{ type: 'INFO. UPDATE', count: userRecord.info_update || 0 },
+						{ type: 'COMPLETED', count: userRecord.completed || 0 },
+						{ type: 'ACKNOWLEDGE', count: userRecord.acknowledge || 0 }
+					];
+
+					// Generate tickets proportional to actual counts
+					let ticketIndex = 0;
+					for (const actionCount of actionCounts) {
+						for (let i = 0; i < actionCount.count && data.length < count; i++) {
+							const hour = Math.floor(Math.random() * 24);
+							const minute = Math.floor(Math.random() * 60);
+							const second = Math.floor(Math.random() * 60);
+							const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+
+							data.push({
+								csr: userName,
+								ticketNo: sampleTickets[ticketIndex % sampleTickets.length],
+								actionTime: `05/19/2026 ${timeStr}`,
+								actionType: actionCount.type
+							});
+							ticketIndex++;
+						}
+					}
+				}
+			} else {
+				// For non-TOTAL actions, generate records with just that action type
+				for (let i = 0; i < Math.min(count, 50); i++) {
+					const hour = Math.floor(Math.random() * 24);
+					const minute = Math.floor(Math.random() * 60);
+					const second = Math.floor(Math.random() * 60);
+					const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+
+					data.push({
+						csr: userName,
+						ticketNo: sampleTickets[i % sampleTickets.length],
+						actionTime: `05/19/2026 ${timeStr}`,
+						actionType: actionType
+					});
+				}
+			}
+
+			return data;
+		}
+
+		function closeModal() {
+			const modal = document.getElementById('ticketActionModal');
+			modal.classList.remove('active');
+		}
+
+		// Close modal when clicking outside of it
+		document.addEventListener('click', function(event) {
+			const modal = document.getElementById('ticketActionModal');
+			if (event.target === modal) {
+				closeModal();
+			}
+		});
+
+		function filterData() {
+			const locationFilter = document.getElementById('locationFilter');
+			const location = locationFilter ? locationFilter.value : '';
+			const searchInput = document.getElementById('searchInput');
+			const search = searchInput ? searchInput.value.toLowerCase() : '';
+			const selectedRoles = getSelectedRoles();
+			
+			const filtered = darData.filter(record => {
+				// Location filter: empty string means show all locations
+				const locationMatch = location === '' || record.office === location;
+				const searchMatch = !search || record.user.toLowerCase().includes(search) || record.office.toLowerCase().includes(search);
+				// If no roles selected, show all. Otherwise, filter by selected roles
+				const roleMatch = selectedRoles.length === 0 || true; // Show all users regardless of role selection for now
+				return locationMatch && searchMatch && roleMatch;
+			});
+			
+			// Update last modified timestamp
+			const now = new Date();
+			const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+			document.getElementById('lastModified').textContent = timestamp;
+			
+			populateTable(filtered);
+		}
+
+		// Close dropdown when clicking outside
+		document.addEventListener('click', function(event) {
+			const dropdown = document.querySelector('.checkbox-dropdown');
+			if (dropdown && !dropdown.contains(event.target)) {
+				const menu = document.getElementById('checkboxDropdownMenu');
+				if (menu) menu.style.display = 'none';
+			}
+		});
+
+		document.addEventListener('DOMContentLoaded', function() {
+			loadUserInfo();
+			if (typeof applyPrettyUrl === 'function') {
+				applyPrettyUrl('darReport');
+			}
+			populateTable(darData);
+			setupScrollbars();
+
+			// Add event listeners for auto-refresh
+			document.getElementById('locationFilter').addEventListener('change', filterData);
+			document.getElementById('searchInput').addEventListener('input', filterData);
+		});
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('darTableWrap');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!tableContainer || !floatingScrollbar) return;
+			function update() {
+				const hasOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasOverflow) { floatingScrollbar.classList.remove('is-visible'); return; }
+				const rect = tableContainer.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else { floatingScrollbar.classList.remove('is-visible'); }
+			}
+			tableContainer.addEventListener('scroll', () => { floatingScrollbar.scrollLeft = tableContainer.scrollLeft; });
+			floatingScrollbar.addEventListener('scroll', () => { tableContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

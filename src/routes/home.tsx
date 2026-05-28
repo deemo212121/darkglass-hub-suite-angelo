@@ -1,10 +1,12 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
 
 export const Route = createFileRoute("/home")({
+  ssr: false,
   head: () => ({ meta: [{ title: "Home — Admin Hub Solutions" }] }),
   component: Home,
 });
@@ -25,7 +27,7 @@ function Home() {
           {MODULES.map((m) => (
             <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
               <div className="flex items-center gap-3 mb-3">
-                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: m.accent }} />
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: m.accent }} />
                 <h2 className="text-xl font-semibold">{m.label}</h2>
                 <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
               </div>
@@ -42,6 +44,7 @@ function Home() {
           ))}
         </div>
       </main>
+      <Footer />
     </>
   );
 }

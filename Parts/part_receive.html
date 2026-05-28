@@ -1,0 +1,972 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Receive - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.receive-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.2rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: 220px 220px 1fr;
+			gap: 0.9rem;
+			align-items: end;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #e5e7eb;
+		}
+
+		.required::after {
+			content: " *";
+			color: #ef4444;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.6rem 0.72rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.88rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.date-range {
+			display: grid;
+			grid-template-columns: 1fr auto 1fr;
+			gap: 0.45rem;
+			align-items: center;
+		}
+
+		.date-sep {
+			font-size: 0.95rem;
+			font-weight: 700;
+			color: #94a3b8;
+		}
+
+		.filter-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.8rem;
+			margin-top: 0.9rem;
+			flex-wrap: wrap;
+		}
+
+		.radio-inline {
+			display: flex;
+			gap: 1rem;
+			flex-wrap: wrap;
+			font-size: 0.85rem;
+		}
+
+		.radio-inline label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			cursor: pointer;
+			color: #dbeafe;
+		}
+
+		.scan-row {
+			display: grid;
+			grid-template-columns: 1fr auto;
+			gap: 0.75rem;
+			margin-top: 0.8rem;
+		}
+
+		.add-part-section {
+			display: none;
+		}
+
+		.add-part-title {
+			margin: 0 0 0.85rem;
+			font-size: 0.95rem;
+			font-weight: 700;
+			color: #e2e8f0;
+		}
+
+		.add-part-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+			gap: 0.75rem;
+		}
+
+		.add-part-grid .control-group input,
+		.add-part-grid .control-group select {
+			font-size: 0.82rem;
+		}
+
+		.add-part-actions {
+			display: flex;
+			justify-content: flex-end;
+			gap: 0.75rem;
+			margin-top: 0.9rem;
+		}
+
+		.add-part-btn {
+			padding: 0.7rem 1rem;
+			border-radius: 6px;
+			border: 1px solid rgba(96, 165, 250, 0.45);
+			background: linear-gradient(135deg, rgba(37, 99, 235, 0.9), rgba(29, 78, 216, 0.9));
+			color: #fff;
+			font-size: 0.85rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.add-part-btn:hover {
+			filter: brightness(1.05);
+		}
+
+		.add-part-modal-overlay {
+			position: fixed;
+			inset: 0;
+			z-index: 2500;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+			background: rgba(2, 6, 23, 0.72);
+			backdrop-filter: blur(6px);
+		}
+
+		.add-part-modal-overlay.open {
+			display: flex;
+		}
+
+		.add-part-modal {
+			width: min(1200px, 100%);
+			max-height: min(90vh, 920px);
+			overflow: auto;
+			border-radius: 14px;
+			border: 1px solid rgba(255, 255, 255, 0.14);
+			background: rgba(15, 23, 42, 0.98);
+			box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+			padding: 1rem;
+		}
+
+		.add-part-modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 1rem;
+			margin-bottom: 0.85rem;
+		}
+
+		.add-part-modal-title {
+			margin: 0;
+			font-size: 1rem;
+			font-weight: 800;
+			color: #e2e8f0;
+		}
+
+		.add-part-modal-close,
+		.add-part-secondary-btn {
+			padding: 0.45rem 0.8rem;
+			border-radius: 6px;
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			background: rgba(30, 41, 59, 0.8);
+			color: #e2e8f0;
+			cursor: pointer;
+		}
+
+		.add-part-modal-footer {
+			display: flex;
+			justify-content: flex-end;
+			gap: 0.75rem;
+			margin-top: 1rem;
+		}
+
+		.scan-input {
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.88rem;
+		}
+
+		.add-btn,
+		.action-btn {
+			padding: 0.6rem 0.95rem;
+			border-radius: 6px;
+			border: 1px solid rgba(96, 165, 250, 0.35);
+			background: rgba(30, 64, 175, 0.4);
+			color: #fff;
+			font-size: 0.85rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.add-btn:hover,
+		.action-btn:hover {
+			background: rgba(30, 64, 175, 0.6);
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.8rem;
+			margin: 0.85rem 0;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 600;
+			color: #bfdbfe;
+		}
+
+		.meta-row input {
+			min-width: 220px;
+			padding: 0.55rem 0.68rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.receive-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.receive-table th,
+		.receive-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.45rem 0.55rem;
+			font-size: 0.76rem;
+			white-space: nowrap;
+			vertical-align: top;
+		}
+
+		.receive-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+			text-align: center;
+		}
+
+		.receive-table td {
+			text-align: left;
+		}
+
+		.status-pill {
+			display: inline-block;
+			padding: 0.18rem 0.5rem;
+			border-radius: 999px;
+			font-size: 0.72rem;
+			font-weight: 700;
+		}
+
+		.status-waiting {
+			background: #fef3c7;
+			color: #92400e;
+		}
+
+		.status-claimed {
+			background: #dbeafe;
+			color: #1d4ed8;
+		}
+
+		.status-reschedule {
+			background: #ffedd5;
+			color: #9a3412;
+		}
+
+		@media (max-width: 1024px) {
+			.controls-grid {
+				grid-template-columns: 1fr 1fr;
+			}
+
+			.controls-grid .control-group:last-child {
+				grid-column: 1 / -1;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.scan-row {
+				grid-template-columns: 1fr;
+			}
+
+			table.receive-table {
+				min-width: 1900px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Receive</h2>
+		</div>
+
+			<div class="scan-row">
+				<input id="scanInput" class="scan-input" type="text" placeholder="Scan Unique ID / Invoice / PO / Part / Delivery / Ticket # / Tracking # Here">
+				<button id="scanSearchBtn" class="add-btn" type="button">Search</button>
+				<button id="openAddPartModalBtn" class="add-btn" type="button">Add Part</button>
+			</div>
+
+			<div class="meta-row">
+				<div id="recordCount" class="record-count">0 records found</div>
+				<input id="searchInResult" type="text" placeholder="search in result">
+			</div>
+
+			<div class="table-wrap">
+				<table class="receive-table">
+					<thead>
+						<tr>
+							<th>Comp*</th>
+							<th>G/R</th>
+							<th>Unique ID*</th>
+							<th>PO Number</th>
+							<th>P/O Date</th>
+							<th>Order No</th>
+							<th>Invoice #</th>
+							<th>Invoice Date</th>
+							<th>Part Number*</th>
+							<th>Part Desc*</th>
+							<th>ETA</th>
+							<th>Receive Date</th>
+							<th>Tracking</th>
+							<th>Ticket</th>
+							<th>Total Rcvd*</th>
+							<th>$ Part</th>
+							<th>$ Retail</th>
+							<th>$ Core</th>
+							<th>Lot #</th>
+							<th>Actions</th>
+							<th>Ticket No</th>
+							<th>Status</th>
+							<th>Tech</th>
+							<th>Schedule</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody"></tbody>
+				</table>
+			</div>
+
+			<div id="receiveFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="receiveFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<div id="addPartModalOverlay" class="add-part-modal-overlay" aria-hidden="true">
+		<div class="add-part-modal" role="dialog" aria-modal="true" aria-labelledby="addPartModalTitle">
+			<div class="add-part-modal-header">
+				<h3 id="addPartModalTitle" class="add-part-modal-title">Add Part</h3>
+				<button id="closeAddPartModalBtn" class="add-part-modal-close" type="button">Close</button>
+			</div>
+			<div class="add-part-section" style="display: block; margin-top: 0; padding: 0; border: 0; background: transparent;">
+				<div class="add-part-grid">
+					<div class="control-group">
+						<label class="required" for="addComp">Comp*</label>
+						<input id="addComp" type="text" placeholder="Comp">
+					</div>
+					<div class="control-group">
+						<label for="addGR">G/R</label>
+						<input id="addGR" type="text" placeholder="G/R">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addUniqueId">Unique ID*</label>
+						<input id="addUniqueId" type="text" placeholder="Unique ID">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addShipTo">Ship To*</label>
+						<select id="addShipTo">
+							<option value="">Select ship to</option>
+							<option value="Asheville">Asheville</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Dallas">Dallas</option>
+							<option value="Memphis">Memphis</option>
+							<option value="Tallahassee">Tallahassee</option>
+						</select>
+					</div>
+					<div class="control-group">
+						<label class="required" for="addPoNumber">PO Number</label>
+						<input id="addPoNumber" type="text" placeholder="PO Number">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addPoDate">P/O Date</label>
+						<input id="addPoDate" type="date">
+					</div>
+					<div class="control-group">
+						<label for="addOrderNo">Order No</label>
+						<input id="addOrderNo" type="text" placeholder="Order No">
+					</div>
+					<div class="control-group">
+						<label for="addInvoiceNo">Invoice #</label>
+						<input id="addInvoiceNo" type="text" placeholder="Invoice #">
+					</div>
+					<div class="control-group">
+						<label for="addInvoiceDate">Invoice Date</label>
+						<input id="addInvoiceDate" type="date">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addPartNumber">Part Number*</label>
+						<input id="addPartNumber" type="text" placeholder="Part Number">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addPartDesc">Part Desc*</label>
+						<input id="addPartDesc" type="text" placeholder="Part Description">
+					</div>
+					<div class="control-group">
+						<label for="addEta">ETA</label>
+						<input id="addEta" type="date">
+					</div>
+					<div class="control-group">
+						<label for="addReceiveDate">Receive Date</label>
+						<input id="addReceiveDate" type="date">
+					</div>
+					<div class="control-group">
+						<label for="addTicket">Ticket</label>
+						<input id="addTicket" type="text" placeholder="Ticket">
+					</div>
+					<div class="control-group">
+						<label class="required" for="addTotalRcvd">Total Rcvd*</label>
+						<input id="addTotalRcvd" type="text" placeholder="0/1" value="0/1">
+					</div>
+					<div class="control-group">
+						<label for="addPartCost">$ Part</label>
+						<input id="addPartCost" type="text" placeholder="0.00">
+					</div>
+					<div class="control-group">
+						<label for="addRetailCost">$ Retail</label>
+						<input id="addRetailCost" type="text" placeholder="0.00">
+					</div>
+					<div class="control-group">
+						<label for="addCoreCost">$ Core</label>
+						<input id="addCoreCost" type="text" placeholder="0.00">
+					</div>
+					<div class="control-group">
+						<label for="addLotNo">Lot #</label>
+						<input id="addLotNo" type="text" placeholder="Lot #">
+					</div>
+					<div class="control-group">
+						<label for="addTicketNo">Ticket No</label>
+						<input id="addTicketNo" type="text" placeholder="Ticket No">
+					</div>
+					<div class="control-group">
+						<label for="addStatus">Status</label>
+						<select id="addStatus">
+							<option value="OP-Waiting for Part">OP-Waiting for Part</option>
+							<option value="CL-Claimed">CL-Claimed</option>
+							<option value="OP-Reschedule Follow up">OP-Reschedule Follow up</option>
+							<option value="OP-Ready for Service">OP-Ready for Service</option>
+							<option value="PT-Need PreAuthorization">PT-Need PreAuthorization</option>
+						</select>
+					</div>
+					<div class="control-group">
+						<label for="addTech">Tech</label>
+						<input id="addTech" type="text" placeholder="Technician">
+					</div>
+					<div class="control-group">
+						<label for="addSchedule">Schedule</label>
+						<input id="addSchedule" type="text" placeholder="Schedule">
+					</div>
+				</div>
+				<div class="add-part-modal-footer">
+					<button id="cancelAddPartBtn" class="add-part-secondary-btn" type="button">Cancel</button>
+					<button id="modalAddPartBtn" class="add-part-btn" type="button">Add Part</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const records = [
+			{ comp: 'Electrolux', gr: '', uniqueId: '', poNumber: '1006772961-10', poDate: '2026-05-06', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '5304530680', partDesc: 'EVAPORATOR ASSEMBLY', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1006772961-10', totalRcvd: '0/1', partCost: 80.75, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1006772961-10', status: 'OP-Waiting for Part', tech: 'Daven Hodge', schedule: '', location: 'Asheville', partFrom: 'Electrolux' },
+			{ comp: 'Electrolux', gr: '', uniqueId: '', poNumber: '1006835317-10-AV', poDate: '2026-04-21', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '5304524741', partDesc: 'DOOR ASSEMBLY,LH SWING,STAINLE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1006835317-10', totalRcvd: '0/1', partCost: 392.7, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1006835317-10', status: 'CL-Claimed', tech: 'Daven Hodge', schedule: '05/11', location: 'Asheville', partFrom: 'Electrolux' },
+			{ comp: 'SS', gr: '', uniqueId: '7345617346000010', poNumber: '26000573183DF-JS', poDate: '2026-05-12', orderNo: '3229340361', invoiceNo: '7345617346', invoiceDate: '2026-05-12', partNumber: 'DC62-30314K', partDesc: 'WATER VALVE', eta: '', receiveDate: '', tracking: '', ticket: '26000573183DF', totalRcvd: '0/1', partCost: 58.04, retailCost: 63.86, coreCost: 0, lotNo: '', ticketNo: '26000573183DF', status: 'OP-Waiting for Part', tech: 'Terry Davis', schedule: '', location: 'Asheville', partFrom: 'SS' },
+			{ comp: 'SS', gr: '', uniqueId: '7345617346000020', poNumber: '26000573183DF-JS', poDate: '2026-05-12', orderNo: '3229340361', invoiceNo: '7345617346', invoiceDate: '2026-05-12', partNumber: 'DC62-30312J', partDesc: 'WATER VALVE', eta: '', receiveDate: '', tracking: '', ticket: '26000573183DF', totalRcvd: '0/1', partCost: 76.2, retailCost: 83.86, coreCost: 0, lotNo: '', ticketNo: '26000573183DF', status: 'OP-Waiting for Part', tech: 'Terry Davis', schedule: '', location: 'Asheville', partFrom: 'SS' },
+			{ comp: 'OW', gr: '', uniqueId: '', poNumber: '26000615451DF-AV', poDate: '2026-05-08', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'WH10X35297', partDesc: 'GLASS FRAME LID TL WASHER WHITE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '26000615451DF', totalRcvd: '0/1', partCost: 167.65, retailCost: '', coreCost: '', lotNo: '', ticketNo: '26000615451DF', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '05/15', location: 'Asheville', partFrom: 'OW' },
+			{ comp: 'OW', gr: '', uniqueId: '', poNumber: '26000632974DF-AV', poDate: '2026-05-13', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'W11047722', partDesc: 'SURFACE ELEMENT', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '26000632974DF', totalRcvd: '0/1', partCost: 58.22, retailCost: '', coreCost: '', lotNo: '', ticketNo: '26000632974DF', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'OW' },
+			{ comp: 'Midea', gr: '', uniqueId: '', poNumber: '400492130', poDate: '2026-04-27', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '12131000104910', partDesc: 'AIR DUCT ASSEMBLY OF FREEZER', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '400492130', totalRcvd: '0/1', partCost: 72.21, retailCost: '', coreCost: '', lotNo: '', ticketNo: '400492130', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '04/28', location: 'Asheville', partFrom: 'Midea' },
+			{ comp: 'Midea', gr: '', uniqueId: '', poNumber: '400492130', poDate: '2026-04-27', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '12131000000986', partDesc: 'LEVELLING-FEET', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '400492130', totalRcvd: '0/1', partCost: 7.98, retailCost: '', coreCost: '', lotNo: '', ticketNo: '400492130', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '04/28', location: 'Asheville', partFrom: 'Midea' },
+			{ comp: 'Midea', gr: '', uniqueId: '', poNumber: '400493597', poDate: '2026-05-06', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '11001011002369', partDesc: 'PERMANENT MAGNET SYNCHRONOUS PUMP', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '400493597', totalRcvd: '0/1', partCost: 30.94, retailCost: '', coreCost: '', lotNo: '', ticketNo: '400493597', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '05/07', location: 'Asheville', partFrom: 'Midea' },
+			{ comp: 'Midea', gr: '', uniqueId: '', poNumber: '400493597', poDate: '2026-05-06', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '17476000001137', partDesc: 'MICROSWITCH 674010030006 ROHS', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '400493597', totalRcvd: '0/1', partCost: 4.76, retailCost: '', coreCost: '', lotNo: '', ticketNo: '400493597', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '05/07', location: 'Asheville', partFrom: 'Midea' },
+			{ comp: 'Midea', gr: '', uniqueId: '', poNumber: '400493597', poDate: '2026-05-06', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '17476000A09876', partDesc: 'INDUCTION PUMP', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '400493597', totalRcvd: '0/1', partCost: 72.98, retailCost: '', coreCost: '', lotNo: '', ticketNo: '400493597', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '05/07', location: 'Asheville', partFrom: 'Midea' },
+			{ comp: 'Encompass', gr: '', uniqueId: '1-328120-0526-1', poNumber: '26000632974DF-AV', poDate: '2026-05-13', orderNo: '1-87137', invoiceNo: '1-328120-0526', invoiceDate: '2026-05-13', partNumber: 'WPW10434452', partDesc: 'SWITCH-INFINITE,DUAL,QC', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '26000632974DF', totalRcvd: '0/1', partCost: 50.99, retailCost: '', coreCost: '', lotNo: '', ticketNo: '26000632974DF', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Encompass' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73538310-4', poNumber: '1006772961-10-AV', poDate: '2026-04-27', orderNo: '73538310', invoiceNo: '73538310', invoiceDate: '2026-04-27', partNumber: '5304530680', partDesc: 'EVAPORATOR ASSEMBLY,COMPLETE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1006772961-10', totalRcvd: '0/1', partCost: 79.24, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1006772961-10', status: 'OP-Waiting for Part', tech: 'Daven Hodge', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73692047-1', poNumber: '1006772961-10-AV-2', poDate: '2026-05-01', orderNo: '73692047', invoiceNo: '73692047', invoiceDate: '2026-05-01', partNumber: '5304530680', partDesc: 'EVAPORATOR ASSEMBLY', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1006772961-10', totalRcvd: '0/1', partCost: 79.24, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1006772961-10', status: 'OP-Waiting for Part', tech: 'Daven Hodge', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73930363-2', poNumber: '1006772961-10-AV', poDate: '2026-04-27', orderNo: '73538310', invoiceNo: '73930363', invoiceDate: '2026-05-12', partNumber: '140068083108', partDesc: 'EVAPORATOR ASSEMBLY,COMPLETE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1006772961-10', totalRcvd: '0/1', partCost: 79.24, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1006772961-10', status: 'OP-Waiting for Part', tech: 'Daven Hodge', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970124-1', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970124', invoiceNo: '73970124', invoiceDate: '2026-05-13', partNumber: '5304536666', partDesc: 'STARTER', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 13.66, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970124-4', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970124', invoiceNo: '73970124', invoiceDate: '2026-05-13', partNumber: '5304539722', partDesc: 'COMPRESSOR', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 102.3, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970129-1', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970129', invoiceNo: '73970129', invoiceDate: '2026-05-13', partNumber: '297286812', partDesc: 'CAPACITOR-RUN NGM 1', eta: '', receiveDate: '2026-05-14', tracking: '871773630969', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 6.28, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970129-3', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970129', invoiceNo: '73970129', invoiceDate: '2026-05-13', partNumber: '5304519649', partDesc: 'HARNESS', eta: '', receiveDate: '2026-05-14', tracking: '871773630969', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 56.36, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970129-5', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970129', invoiceNo: '73970129', invoiceDate: '2026-05-13', partNumber: '5304529495', partDesc: 'ASSY-EVAPORATOR & COMPTS BR', eta: '', receiveDate: '2026-05-14', tracking: '871773630969', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 82.72, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970129-7', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970129', invoiceNo: '73970129', invoiceDate: '2026-05-13', partNumber: '5304530007', partDesc: 'CONDENSER', eta: '', receiveDate: '2026-05-14', tracking: '871773630969', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 41.27, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'Marcone-162468', gr: '', uniqueId: '73970129-9', poNumber: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970129', invoiceNo: '73970129', invoiceDate: '2026-05-13', partNumber: 'A19676501', partDesc: 'DRIER FILTER', eta: '', receiveDate: '2026-05-14', tracking: '871773630969', ticket: '1007067554-10', totalRcvd: '0/1', partCost: 44.94, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007067554-10', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'Marcone-162468' },
+			{ comp: 'NSA', gr: '', uniqueId: '', poNumber: 'HSV20260433579870', poDate: '2026-05-06', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: '241798224', partDesc: 'ICE MAKER', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'HSV20260433579870', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'HSV20260433579870', status: 'OP-Waiting for Part', tech: 'Jordan Koetsier', schedule: '', location: 'Asheville', partFrom: 'NSA' },
+			{ comp: 'GE', gr: '', uniqueId: '', poNumber: 'SA-3024557-AV', poDate: '2026-04-17', orderNo: 'PNT04172686589', invoiceNo: '', invoiceDate: '', partNumber: 'WD01X33078', partDesc: 'PULLEYCABLE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-3024557', totalRcvd: '0/2', partCost: 10.11, retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-3024557', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '04/16', location: 'Asheville', partFrom: 'GE' },
+			{ comp: 'GE', gr: '', uniqueId: '', poNumber: 'SA-3024557-AV', poDate: '2026-04-17', orderNo: 'PNT04172686589', invoiceNo: '', invoiceDate: '', partNumber: 'WD03X20445', partDesc: 'SPRING DOOR', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-3024557', totalRcvd: '0/2', partCost: 4.95, retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-3024557', status: 'CL-Claimed', tech: 'Jordan Koetsier', schedule: '04/16', location: 'Asheville', partFrom: 'GE' },
+			{ comp: 'GE', gr: '', uniqueId: '', poNumber: 'SA-3277155-AV', poDate: '2026-05-07', orderNo: 'PNT05072648158', invoiceNo: '', invoiceDate: '', partNumber: 'WR55X48849', partDesc: 'PERSONALITY CLIP PROFILE CD', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-3277155', totalRcvd: '0/1', partCost: 40.9, retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-3277155', status: 'OP-Waiting for Part', tech: 'Memphis Admin', schedule: '05/20', location: 'Asheville', partFrom: 'GE' },
+			{ comp: 'GE', gr: '', uniqueId: '', poNumber: 'SA-3277155-AV', poDate: '2026-05-07', orderNo: 'PNT05072648158', invoiceNo: '', invoiceDate: '', partNumber: 'WR55X48792', partDesc: 'SERVICE MAIN CONTROL BOARD', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-3277155', totalRcvd: '0/1', partCost: 105.6, retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-3277155', status: 'OP-Waiting for Part', tech: 'Memphis Admin', schedule: '05/20', location: 'Asheville', partFrom: 'GE' },
+			{ comp: 'NSA', gr: '', uniqueId: '', poNumber: '00192455-2', poDate: '2026-05-14', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'QSW-MA169WRZZ', partDesc: 'MONITOR SWITCH (INTERCHANGEABLE)', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SMO20260433840533', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SMO20260433840533', status: 'OP-Reschedule Follow up', tech: 'Jordan Koetsier', schedule: 'TODAY', location: 'Asheville', partFrom: 'NSA' },
+			{ comp: 'NSA', gr: '', uniqueId: '787972', poNumber: '00194210-1', poDate: '2026-05-05', orderNo: '787972', invoiceNo: '', invoiceDate: '', partNumber: 'CPNLCB988MRK1', partDesc: 'CONTROL PANEL ASSEMBLY 24', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SMO20260534038214', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SMO20260534038214', status: 'OP-Waiting for Part', tech: '', schedule: '', location: 'Asheville', partFrom: 'NSA' },
+			{ comp: 'NSA', gr: '', uniqueId: '', poNumber: '00194210-1', poDate: '2026-05-05', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'DPWB-B836DRKZ', partDesc: 'Power Supply Unit Drawer', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SMO20260534038214', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SMO20260534038214', status: 'OP-Waiting for Part', tech: '', schedule: '', location: 'Asheville', partFrom: 'NSA' },
+			{ comp: 'NSA', gr: '', uniqueId: '787991', poNumber: '00194210-1', poDate: '2026-05-05', orderNo: '787991', invoiceNo: '', invoiceDate: '', partNumber: 'FDTCTA272WRKZ', partDesc: 'SENSOR ASSY', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SMO20260534038214', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SMO20260534038214', status: 'OP-Waiting for Part', tech: '', schedule: '', location: 'Asheville', partFrom: 'NSA' },
+			{ comp: 'NSA', gr: '', uniqueId: '', poNumber: '00194210-1', poDate: '2026-05-05', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'DPWB-B836DRKZ1', partDesc: 'PSU UNIT - Standby Power Update', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SMO20260534038214', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SMO20260534038214', status: 'OP-Waiting for Part', tech: '', schedule: '', location: 'Asheville', partFrom: 'NSA' }
+		];
+
+		const birminghamRecords = [
+			{ comp: 'SS', gr: '', uniqueId: '7345617346000010', poNumber: '26000573183DF-JS', poDate: '2026-05-12', orderNo: '3229340361', invoiceNo: '7345617346', invoiceDate: '2026-05-12', partNumber: 'DC62-30314K', partDesc: 'WATER VALVE', eta: '', receiveDate: '', tracking: '', ticket: '26000573183DF', totalRcvd: '0/1', partCost: 58.04, retailCost: 63.86, coreCost: 0, lotNo: '', ticketNo: '26000573183DF', status: 'OP-Waiting for Part', tech: 'Terry Davis', schedule: '', location: 'Birmingham', partFrom: 'SS' },
+			{ comp: 'SS', gr: '', uniqueId: '7345617346000020', poNumber: '26000573183DF-JS', poDate: '2026-05-12', orderNo: '3229340361', invoiceNo: '7345617346', invoiceDate: '2026-05-12', partNumber: 'DC62-30312J', partDesc: 'WATER VALVE', eta: '', receiveDate: '', tracking: '', ticket: '26000573183DF', totalRcvd: '0/1', partCost: 76.2, retailCost: 83.86, coreCost: 0, lotNo: '', ticketNo: '26000573183DF', status: 'OP-Waiting for Part', tech: 'Terry Davis', schedule: '', location: 'Birmingham', partFrom: 'SS' },
+			{ comp: 'OW', gr: '', uniqueId: '', poNumber: '49763696', poDate: '2026-05-12', orderNo: '', invoiceNo: '', invoiceDate: '', partNumber: 'WR49X10252', partDesc: 'COVER ASM FF INLET', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '49763696', totalRcvd: '0/1', partCost: 116.37, retailCost: '', coreCost: '', lotNo: '', ticketNo: '49763696', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'OW' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-258285-0426-1', poNumber: '1006838091-10-BM', poDate: '2026-04-23', orderNo: '1-258285-0426', invoiceNo: '', invoiceDate: '2026-04-27', partNumber: '140134075039', partDesc: 'HARNESS,WIRING,AIR HANDLER', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '', totalRcvd: '0/1', partCost: 19.16, retailCost: '', coreCost: '', lotNo: '', ticketNo: '', status: 'OP-Waiting for Part', tech: '', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-323042-0526-1', poNumber: '49789009-BM', poDate: '2026-05-12', orderNo: '1-323042-0526', invoiceNo: '1-323042-0526', invoiceDate: '2026-05-12', partNumber: 'W11513248', partDesc: 'LID LOCK ROLD 120V JOURNEY UL', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '49789009', totalRcvd: '0/1', partCost: 38.35, retailCost: '', coreCost: '', lotNo: '', ticketNo: '49789009', status: 'OP-Waiting for Part', tech: 'Memphis Admin', schedule: '05/18', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-323069-0526-1', poNumber: '9944315-BM', poDate: '2026-05-12', orderNo: '1-323069-0526', invoiceNo: '1-323069-0526', invoiceDate: '2026-05-12', partNumber: 'W11637581', partDesc: 'CTRL-Y2G-N75-05PFDN-12KXX-OV', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '9944315', totalRcvd: '0/1', partCost: 113.69, retailCost: '', coreCost: 60, lotNo: '', ticketNo: '9944315', status: 'PT-Need PreAuthorization', tech: 'David Sims', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-323920-0526-1', poNumber: '49763696-BM', poDate: '2026-05-12', orderNo: '1-323920-0526', invoiceNo: '1-323920-0526', invoiceDate: '2026-05-12', partNumber: 'WR24X20456', partDesc: 'GASKET', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '49763696', totalRcvd: '0/1', partCost: 55.89, retailCost: '', coreCost: '', lotNo: '', ticketNo: '49763696', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-323920-0526-2', poNumber: '49763696-BM', poDate: '2026-05-12', orderNo: '1-323920-0526', invoiceNo: '1-323920-0526', invoiceDate: '2026-05-12', partNumber: 'WR13X10159', partDesc: 'HINGE BTM BLACK', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '49763696', totalRcvd: '0/1', partCost: 23.15, retailCost: '', coreCost: '', lotNo: '', ticketNo: '49763696', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-329353-0526-1', poNumber: '1007132659-10-BM', poDate: '2026-05-13', orderNo: '1-329353-0526', invoiceNo: '1-329353-0526', invoiceDate: '2026-05-13', partNumber: '242095406', partDesc: 'GASKET', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1007132659-10', totalRcvd: '0/2', partCost: 9.73, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007132659-10', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '1-334217-0526-1', poNumber: '1007085180-11-BM', poDate: '2026-05-12', orderNo: '1-334217-0526', invoiceNo: '1-334217-0526', invoiceDate: '2026-05-14', partNumber: '4056053871', partDesc: 'FILL TUBE & HEATER ASMY', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '1007085180-11', totalRcvd: '0/1', partCost: 34.61, retailCost: '', coreCost: '', lotNo: '', ticketNo: '1007085180-11', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '17-804650-0526-1', poNumber: '4184769698-BM-2', poDate: '2026-05-06', orderNo: '17-804650-0526', invoiceNo: '17-804650-0526', invoiceDate: '2026-05-06', partNumber: 'DD81-02737A', partDesc: 'SVC-THERMISTOR', eta: '', receiveDate: '2026-05-14', tracking: '381098291700', ticket: '4184769698', totalRcvd: '0/1', partCost: 74.89, retailCost: 82.42, coreCost: '', lotNo: '', ticketNo: '4184769698', status: 'OP-Reschedule Follow up', tech: 'Zonate Grant', schedule: 'TODAY', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '29-050424-0526-1', poNumber: '49763696-BM', poDate: '2026-05-12', orderNo: '29-050424-0526', invoiceNo: '29-050424-0526', invoiceDate: '2026-05-12', partNumber: 'WR13X24863', partDesc: 'HINGE TOP & PIN ASSEMBLY FF', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '49763696', totalRcvd: '0/1', partCost: 24.64, retailCost: '', coreCost: '', lotNo: '', ticketNo: '49763696', status: 'OP-Waiting for Part', tech: 'Zonate Grant', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '6-333183-0526-1', poNumber: '9944315-BM', poDate: '2026-05-12', orderNo: '6-333183-0526', invoiceNo: '6-333183-0526', invoiceDate: '2026-05-12', partNumber: 'W11697034', partDesc: 'HARNS-WIRE', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: '9944315', totalRcvd: '0/1', partCost: 38.39, retailCost: '', coreCost: '', lotNo: '', ticketNo: '9944315', status: 'PT-Need PreAuthorization', tech: 'David Sims', schedule: '', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'Encompass-Birmingham / Montgomery', gr: '', uniqueId: '8-258510-0526-1', poNumber: 'SA-3289299-BM', poDate: '2026-05-11', orderNo: '8-258510-0526', invoiceNo: '8-258510-0526', invoiceDate: '2026-05-11', partNumber: 'WD08X22095', partDesc: 'GASKET TUB SS', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-3289299', totalRcvd: '0/1', partCost: 9.21, retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-3289299', status: 'OP-Waiting for Part', tech: 'Memphis Admin', schedule: '05/19', location: 'Birmingham', partFrom: 'Encompass-Birmingham / Montgomery' },
+			{ comp: 'GE', gr: '', uniqueId: '', poNumber: 'SA-2986951-BM', poDate: '2026-05-14', orderNo: 'PNT05142613865', invoiceNo: '', invoiceDate: '', partNumber: 'WB62X44569', partDesc: 'MAINTOP GLASS & FRAME', eta: '', receiveDate: '2026-05-14', tracking: '', ticket: 'SA-2986951', totalRcvd: '0/1', partCost: '', retailCost: '', coreCost: '', lotNo: '', ticketNo: 'SA-2986951', status: 'OP-Waiting for Part', tech: 'David Sims', schedule: '', location: 'Birmingham', partFrom: 'GE' }
+		];
+
+		function uniqueRowKey(row) {
+			return [
+				row.uniqueId || '',
+				row.poNumber || '',
+				row.partNumber || '',
+				row.ticketNo || '',
+				row.invoiceNo || ''
+			].join('|').toLowerCase();
+		}
+
+		function appendUniqueRows(target, incoming) {
+			const existing = new Set(target.map(uniqueRowKey));
+			incoming.forEach((row) => {
+				const key = uniqueRowKey(row);
+				if (existing.has(key)) return;
+				target.push(row);
+				existing.add(key);
+			});
+		}
+
+		appendUniqueRows(records, birminghamRecords);
+
+		const tableBody = document.getElementById('tableBody');
+		const recordCount = document.getElementById('recordCount');
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function fmtDate(iso) {
+			if (!iso) return 'mm/dd/yyyy';
+			const dt = new Date(iso + 'T00:00:00');
+			if (Number.isNaN(dt.getTime())) return iso;
+			const mm = String(dt.getMonth() + 1).padStart(2, '0');
+			const dd = String(dt.getDate()).padStart(2, '0');
+			const yyyy = dt.getFullYear();
+			return `${mm}/${dd}/${yyyy}`;
+		}
+
+		function parseDate(iso) {
+			if (!iso) return null;
+			const d = new Date(iso + 'T00:00:00');
+			return Number.isNaN(d.getTime()) ? null : d;
+		}
+
+		function statusClass(status) {
+			if ((status || '').includes('CL-Claimed')) return 'status-claimed';
+			if ((status || '').includes('Reschedule')) return 'status-reschedule';
+			return 'status-waiting';
+		}
+
+		function getInputValue(id) {
+			const element = document.getElementById(id);
+			return element ? element.value.trim() : '';
+		}
+
+		function rowMatchesKeyword(row, keyword) {
+			if (!keyword) return true;
+			const haystack = [
+				row.uniqueId, row.invoiceNo, row.poNumber, row.partNumber, row.partDesc,
+				row.ticket, row.tracking, row.ticketNo, row.orderNo, row.comp
+			].join(' ').toLowerCase();
+			return haystack.includes(keyword.toLowerCase());
+		}
+
+		function getFilteredRows() {
+			const locationFilter = document.getElementById('locationFilter');
+			const partFromFilter = document.getElementById('partFromFilter');
+			const dateFrom = document.getElementById('dateFrom');
+			const dateTo = document.getElementById('dateTo');
+			const scanInput = document.getElementById('scanInput');
+			const searchInResult = document.getElementById('searchInResult');
+			const selectedReceiveMode = document.querySelector('input[name="receiveMode"]:checked');
+			const location = locationFilter ? locationFilter.value : '';
+			const partFrom = partFromFilter ? partFromFilter.value : '';
+			const from = parseDate(dateFrom ? dateFrom.value : '');
+			const to = parseDate(dateTo ? dateTo.value : '');
+			const receiveMode = selectedReceiveMode ? selectedReceiveMode.value : 'any';
+			const scanKey = scanInput ? scanInput.value.trim() : '';
+			const searchKey = searchInResult ? searchInResult.value.trim() : '';
+
+			return records.filter((row) => {
+				if (location && row.location !== location) return false;
+				if (partFrom && row.partFrom !== partFrom) return false;
+
+				const poDate = parseDate(row.poDate);
+				if (from && poDate && poDate < from) return false;
+				if (to && poDate && poDate > to) return false;
+
+				const hasReceiveDate = Boolean(row.receiveDate);
+				if (receiveMode === 'received' && !hasReceiveDate) return false;
+				if (receiveMode === 'not-received' && hasReceiveDate) return false;
+
+				if (!rowMatchesKeyword(row, scanKey)) return false;
+				if (!rowMatchesKeyword(row, searchKey)) return false;
+
+				return true;
+			});
+		}
+
+		function renderTable() {
+			const rows = getFilteredRows();
+			recordCount.textContent = `${rows.length} records found`;
+
+			tableBody.innerHTML = rows.map((row, index) => {
+				const fullIndex = records.indexOf(row);
+				const totalCell = row.totalRcvd || '0/1';
+				const actionText = row.receiveDate ? 'Edit' : 'Add';
+				return `
+					<tr>
+						<td>${row.comp || ''}</td>
+						<td>${row.gr || ''}</td>
+						<td>${row.uniqueId || ''}</td>
+						<td>${row.poNumber || ''}</td>
+						<td>${fmtDate(row.poDate)}</td>
+						<td>${row.orderNo || ''}</td>
+						<td>${row.invoiceNo || ''}</td>
+						<td>${fmtDate(row.invoiceDate)}</td>
+						<td>${row.partNumber || ''}</td>
+						<td>${row.partDesc || ''}</td>
+						<td>${fmtDate(row.eta)}</td>
+						<td>${fmtDate(row.receiveDate)}</td>
+						<td>${row.tracking || ''}</td>
+						<td>${row.ticket || ''}</td>
+						<td>${totalCell}</td>
+						<td>${row.partCost === '' ? '' : row.partCost}</td>
+						<td>${row.retailCost === '' ? '' : row.retailCost}</td>
+						<td>${row.coreCost === '' ? '' : row.coreCost}</td>
+						<td>${row.lotNo || ''}</td>
+						<td><button class="action-btn" type="button" data-index="${fullIndex}">${actionText}</button></td>
+						<td>${row.ticketNo || ''}</td>
+						<td><span class="status-pill ${statusClass(row.status)}">${row.status || ''}</span></td>
+						<td>${row.tech || ''}</td>
+						<td>${row.schedule || ''}</td>
+					</tr>
+				`;
+			}).join('');
+
+			document.querySelectorAll('.action-btn').forEach((btn) => {
+				btn.addEventListener('click', () => {
+					const idx = Number(btn.getAttribute('data-index'));
+					if (Number.isNaN(idx) || !records[idx]) return;
+
+					if (!records[idx].receiveDate) {
+						const dateTo = document.getElementById('dateTo');
+						records[idx].receiveDate = (dateTo && dateTo.value) || '2026-05-14';
+						records[idx].totalRcvd = '1/1';
+					}
+
+					const lot = prompt('Lot # (optional):', records[idx].lotNo || '');
+					if (lot !== null) records[idx].lotNo = lot;
+					renderTable();
+				});
+			});
+		}
+
+		function addPart() {
+			const comp = getInputValue('addComp');
+			const uniqueId = getInputValue('addUniqueId');
+			const shipTo = getInputValue('addShipTo');
+			const poNumber = getInputValue('addPoNumber');
+			const poDate = getInputValue('addPoDate');
+			const partNumber = getInputValue('addPartNumber');
+			const partDesc = getInputValue('addPartDesc');
+			const totalRcvd = getInputValue('addTotalRcvd') || '0/1';
+
+			if (!comp || !uniqueId || !shipTo || !poNumber || !poDate || !partNumber || !partDesc) {
+				alert('Please fill the required fields: Comp, Unique ID, Ship To, PO Number, P/O Date, Part Number, and Part Desc.');
+				return;
+			}
+
+			const ticket = getInputValue('addTicket') || poNumber;
+
+			records.unshift({
+				comp,
+				gr: getInputValue('addGR'),
+				uniqueId,
+				poNumber,
+				poDate,
+				orderNo: getInputValue('addOrderNo'),
+				invoiceNo: getInputValue('addInvoiceNo'),
+				invoiceDate: getInputValue('addInvoiceDate'),
+				partNumber,
+				partDesc,
+				eta: getInputValue('addEta'),
+				receiveDate: getInputValue('addReceiveDate') || getInputValue('dateTo'),
+				tracking: '',
+				ticket,
+				totalRcvd,
+				partCost: getInputValue('addPartCost'),
+				retailCost: getInputValue('addRetailCost'),
+				coreCost: getInputValue('addCoreCost'),
+				lotNo: getInputValue('addLotNo'),
+				ticketNo: getInputValue('addTicketNo') || ticket,
+				status: getInputValue('addStatus') || 'OP-Waiting for Part',
+				tech: getInputValue('addTech'),
+				schedule: getInputValue('addSchedule'),
+				location: shipTo,
+				partFrom: comp
+			});
+
+			renderTable();
+			closeAddPartModal();
+		}
+
+		function openAddPartModal() {
+			const overlay = document.getElementById('addPartModalOverlay');
+			if (!overlay) return;
+			overlay.classList.add('open');
+			overlay.setAttribute('aria-hidden', 'false');
+			const focusTarget = document.getElementById('addComp');
+			if (focusTarget) focusTarget.focus();
+		}
+
+		function closeAddPartModal() {
+			const overlay = document.getElementById('addPartModalOverlay');
+			if (!overlay) return;
+			overlay.classList.remove('open');
+			overlay.setAttribute('aria-hidden', 'true');
+		}
+
+		function syncReceiveFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const table = tableWrap ? tableWrap.querySelector('.receive-table') : null;
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			const floatingInner = document.getElementById('receiveFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateReceiveFloatingScrollbarVisibility() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncReceiveFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupReceiveFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('receiveFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) { syncingFromTable = false; return; }
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) { syncingFromFloating = false; return; }
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateReceiveFloatingScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncReceiveFloatingScrollbar();
+				updateReceiveFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateReceiveFloatingScrollbarVisibility, { passive: true });
+			syncReceiveFloatingScrollbar();
+			updateReceiveFloatingScrollbarVisibility();
+		}
+
+		const locationFilter = document.getElementById('locationFilter');
+		if (locationFilter) locationFilter.addEventListener('change', renderTable);
+		const partFromFilter = document.getElementById('partFromFilter');
+		if (partFromFilter) partFromFilter.addEventListener('change', renderTable);
+		const dateFrom = document.getElementById('dateFrom');
+		if (dateFrom) dateFrom.addEventListener('change', renderTable);
+		const dateTo = document.getElementById('dateTo');
+		if (dateTo) dateTo.addEventListener('change', renderTable);
+		document.querySelectorAll('input[name="receiveMode"]').forEach((el) => el.addEventListener('change', renderTable));
+		const scanInput = document.getElementById('scanInput');
+		if (scanInput) scanInput.addEventListener('input', renderTable);
+		const scanSearchBtn = document.getElementById('scanSearchBtn');
+		if (scanSearchBtn) scanSearchBtn.addEventListener('click', renderTable);
+		const searchInResult = document.getElementById('searchInResult');
+		if (searchInResult) searchInResult.addEventListener('input', renderTable);
+		const openAddPartModalBtn = document.getElementById('openAddPartModalBtn');
+		if (openAddPartModalBtn) openAddPartModalBtn.addEventListener('click', openAddPartModal);
+		const modalAddPartBtn = document.getElementById('modalAddPartBtn');
+		if (modalAddPartBtn) modalAddPartBtn.addEventListener('click', addPart);
+		const closeAddPartModalBtn = document.getElementById('closeAddPartModalBtn');
+		if (closeAddPartModalBtn) closeAddPartModalBtn.addEventListener('click', closeAddPartModal);
+		const cancelAddPartBtn = document.getElementById('cancelAddPartBtn');
+		if (cancelAddPartBtn) cancelAddPartBtn.addEventListener('click', closeAddPartModal);
+		const addPartModalOverlay = document.getElementById('addPartModalOverlay');
+		if (addPartModalOverlay) {
+			addPartModalOverlay.addEventListener('click', (event) => {
+				if (event.target && event.target.id === 'addPartModalOverlay') closeAddPartModal();
+			});
+		}
+		document.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape') closeAddPartModal();
+		});
+
+		window.addEventListener('load', () => {
+			loadUserInfo();
+			const dateTo = document.getElementById('dateTo');
+			const locationFilter = document.getElementById('locationFilter');
+			const today = (dateTo && dateTo.value) || '2026-05-14';
+			const addPoDate = document.getElementById('addPoDate');
+			const addReceiveDate = document.getElementById('addReceiveDate');
+			const addShipTo = document.getElementById('addShipTo');
+			const addStatus = document.getElementById('addStatus');
+			const addComp = document.getElementById('addComp');
+			if (addPoDate && !addPoDate.value) addPoDate.value = today;
+			if (addReceiveDate && !addReceiveDate.value) addReceiveDate.value = today;
+			if (addShipTo && !addShipTo.value && locationFilter) addShipTo.value = locationFilter.value;
+			if (addStatus && !addStatus.value) addStatus.value = 'OP-Waiting for Part';
+			if (addComp && !addComp.value) addComp.focus();
+			closeAddPartModal();
+			renderTable();
+			setupReceiveFloatingScrollbar();
+		});
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

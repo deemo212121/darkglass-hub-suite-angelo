@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Long Time Period Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../config.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+	<style>
+		/* ── FTF Report Panel ── */
+		.ltp-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.ltp-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1.2rem;
+			align-items: center;
+			padding: 1.25rem 1.25rem 0 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-row {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		/* ── Buttons ── */
+		.filter-btn {
+			padding: 0.35rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.filter-btn:hover,
+		.filter-btn.active {
+			background: rgba(96, 165, 250, 0.2);
+			border-color: #60a5fa;
+			color: #e0e7ff;
+		}
+
+		/* ── Checkboxes ── */
+		.checkbox-group {
+			display: flex;
+			gap: 1rem;
+			flex-wrap: wrap;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+			cursor: pointer;
+			user-select: none;
+			color: #e2e8f0;
+			font-size: 0.85rem;
+			font-weight: 500;
+		}
+
+		.checkbox-label input[type="checkbox"] {
+			width: 16px;
+			height: 16px;
+			cursor: pointer;
+			accent-color: #3b82f6;
+		}
+
+		.checkbox-label:hover input[type="checkbox"] {
+			accent-color: #60a5fa;
+		}
+
+		.select-field {
+			width: 200px;
+			padding: 0.5rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+		}
+
+		.select-field option {
+			background: #1e293b;
+			color: #e2e8f0;
+		}
+
+		/* ── Modal ── */
+		.modal {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.6);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 1000;
+		}
+
+		.modal.open {
+			display: flex;
+		}
+
+		.modal-content {
+			background: #1e293b;
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			border-radius: 8px;
+			width: 90%;
+			max-width: 600px;
+			display: flex;
+			flex-direction: column;
+			box-shadow: 0 20px 25px rgba(0, 0, 0, 0.3);
+		}
+
+		.modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 1.25rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		.modal-header h3 {
+			color: #e2e8f0;
+			margin: 0;
+			font-size: 1.1rem;
+			font-weight: 600;
+		}
+
+		.modal-close {
+			background: none;
+			border: none;
+			color: #94a3b8;
+			font-size: 1.5rem;
+			cursor: pointer;
+		}
+
+		.modal-close:hover {
+			color: #e2e8f0;
+		}
+
+		.modal-body {
+			padding: 1.25rem;
+			display: flex;
+			flex-direction: column;
+			gap: 1rem;
+		}
+
+		.input-field {
+			padding: 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.95rem;
+		}
+
+		.input-field::placeholder {
+			color: #64748b;
+		}
+
+		.input-field:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+		}
+
+		.modal-buttons {
+			display: flex;
+			gap: 1rem;
+			justify-content: flex-end;
+		}
+
+		.btn-primary {
+			padding: 0.5rem 1.5rem;
+			background: #3b82f6;
+			border: none;
+			color: white;
+			border-radius: 4px;
+			cursor: pointer;
+			font-weight: 600;
+			transition: all 0.2s;
+		}
+
+		.btn-primary:hover {
+			background: #2563eb;
+		}
+
+		.btn-secondary {
+			padding: 0.5rem 1.5rem;
+			background: rgba(96, 165, 250, 0.1);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			cursor: pointer;
+			font-weight: 600;
+			transition: all 0.2s;
+		}
+
+		.btn-secondary:hover {
+			background: rgba(96, 165, 250, 0.2);
+		}
+
+		/* ── Global lookup styles imported from styles.css ── */
+
+		/* ── Charts & Table ── */
+		.charts-section {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+			gap: 1.25rem;
+			padding: 1.25rem;
+		}
+
+		.chart-card {
+			background: rgba(255, 255, 255, 0.05);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 8px;
+			padding: 1.25rem;
+			min-height: 400px;
+		}
+
+		.chart-card h3 {
+			color: #60a5fa;
+			margin: 0 0 1rem 0;
+			font-size: 0.9rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			font-weight: 600;
+		}
+
+		canvas {
+			max-height: 350px;
+		}
+
+		/* ── Stats Cards ── */
+		.stats-section {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+			gap: 1rem;
+			padding: 1.25rem;
+			padding-bottom: 0;
+		}
+
+		.stat-card {
+			background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(72, 209, 204, 0.15));
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			padding: 1.25rem;
+			border-radius: 8px;
+		}
+
+		.stat-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.stat-value {
+			font-size: 1.75rem;
+			font-weight: 700;
+			color: #60a5fa;
+			margin-top: 0.5rem;
+		}
+
+		/* ── Table ── */
+		.table-section {
+			background: rgba(255, 255, 255, 0.05);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 8px;
+			padding: 1.25rem;
+			margin: 1.25rem;
+			overflow-x: auto;
+		}
+
+		.table-section h3 {
+			color: #60a5fa;
+			margin: 0 0 0.5rem 0;
+			font-size: 0.9rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			font-weight: 600;
+		}
+
+		.table-section > p {
+			color: #94a3b8;
+			font-size: 0.85rem;
+			margin: 0.5rem 0 1rem 0;
+		}
+
+		.search-box {
+			margin-bottom: 1rem;
+		}
+
+		.search-box input {
+			width: 100%;
+			max-width: 400px;
+			padding: 0.5rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.85rem;
+		}
+
+		.search-box input::placeholder {
+			color: #64748b;
+		}
+
+		.search-box input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.85rem;
+		}
+
+		table thead {
+			background: rgba(59, 130, 246, 0.1);
+		}
+
+		table th,
+		table td {
+			padding: 0.75rem;
+			text-align: right;
+			border-bottom: 1px solid rgba(96, 165, 250, 0.1);
+			color: #e2e8f0;
+		}
+
+		table th {
+			font-weight: 600;
+			color: #60a5fa;
+		}
+
+		table th:first-child,
+		table td:first-child {
+			text-align: left;
+		}
+
+		table tbody tr:hover {
+			background: rgba(59, 130, 246, 0.05);
+		}
+
+		.ltp-value {
+			color: #60a5fa;
+			font-weight: 600;
+		}
+
+		.ltp-low {
+			color: #4ade80;
+		}
+
+		.ltp-medium {
+			color: #facc15;
+		}
+
+		.ltp-high {
+			color: #f87171;
+		}
+
+		/* ── Module header search button ── */
+		.module-header-btn {
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			color: #cbd5e1;
+			padding: 0.4rem 0.65rem;
+			border-radius: 4px;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			transition: all 0.15s;
+		}
+
+		.module-header-btn:hover {
+			background: rgba(96, 165, 250, 0.15);
+			border-color: #60a5fa;
+			color: #60a5fa;
+		}
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+
+	<!-- Search Modal -->
+	<div class="modal" id="searchModal">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h3>Search Tickets</h3>
+				<button class="modal-close" onclick="closeSearchModal()">×</button>
+			</div>
+			<div class="modal-body">
+				<input type="text" class="input-field" id="ticketInput" placeholder="Enter Ticket #" autofocus>
+				<input type="text" class="input-field" id="zipInput" placeholder="Enter Zip Code">
+				<div class="modal-buttons">
+					<button class="btn-secondary" onclick="closeSearchModal()">Cancel</button>
+					<button class="btn-primary" onclick="performSearch()">Search</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Global ticket lookup will be injected by routes.js -->
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../js/app-config.js"></script>
+	<script src="../../js/app-data.js"></script>
+	<script src="../../js/report-builders.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		/* ── LTP Data ── */
+		let LTP_DATA = [
+			{ location: 'Asheville', data: [1, 0, 1, 4, 2, 2, 3, 6, 0, 0, 7, 2, 4, 1, 3, 4, 5, 1], total: 46, ltp: 58.70 },
+			{ location: 'Atlanta', data: [0, 2, 0, 5, 7, 13, 4, 10, 0, 0, 3, 7, 3, 5, 3, 8, 2, 2], total: 74, ltp: 44.59 },
+			{ location: 'Birmingham', data: [0, 0, 1, 5, 5, 4, 10, 3, 0, 1, 3, 2, 6, 4, 6, 7, 11, 8], total: 76, ltp: 63.16 },
+			{ location: 'Cape Girardeau', data: [0, 0, 0, 5, 2, 2, 5, 6, 1, 0, 2, 1, 2, 0, 2, 3, 5, 2], total: 38, ltp: 44.74 },
+			{ location: 'Chattanooga', data: [0, 0, 1, 3, 5, 6, 10, 7, 3, 1, 6, 1, 1, 2, 1, 3, 3, 1], total: 54, ltp: 35.19 },
+			{ location: 'Columbus', data: [0, 2, 0, 4, 8, 3, 12, 3, 1, 0, 3, 5, 3, 5, 4, 11, 8, 0], total: 72, ltp: 54.17 },
+			{ location: 'Dallas', data: [1, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], total: 7, ltp: 0.00 },
+			{ location: 'Destin', data: [0, 1, 0, 1, 4, 5, 5, 6, 1, 1, 6, 3, 1, 3, 4, 3, 0, 2], total: 46, ltp: 50.00 },
+			{ location: 'Huntsville', data: [4, 2, 4, 5, 6, 11, 9, 9, 0, 1, 13, 4, 4, 10, 5, 16, 7, 5], total: 115, ltp: 56.52 },
+			{ location: 'Jackson,MS', data: [0, 1, 2, 7, 12, 10, 12, 13, 1, 1, 7, 3, 11, 2, 3, 5, 15, 4], total: 109, ltp: 46.79 },
+			{ location: 'Jackson,TN', data: [0, 0, 0, 1, 5, 5, 6, 3, 1, 1, 2, 10, 6, 1, 2, 5, 3, 2], total: 53, ltp: 60.38 },
+			{ location: 'Jacksonville', data: [2, 1, 0, 3, 5, 14, 7, 2, 0, 0, 2, 3, 4, 2, 0, 5, 0, 3], total: 53, ltp: 35.85 },
+			{ location: 'Jonesboro', data: [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 2, 0, 4, 2, 1, 0, 1], total: 12, ltp: 91.67 },
+			{ location: 'Knoxville', data: [0, 0, 1, 8, 1, 5, 7, 8, 2, 0, 3, 5, 2, 2, 6, 12, 6, 6], total: 74, ltp: 56.76 },
+			{ location: 'Lake Charles', data: [0, 0, 0, 1, 5, 2, 3, 5, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0], total: 19, ltp: 10.53 },
+			{ location: 'Little Rock', data: [0, 0, 0, 3, 4, 2, 5, 6, 0, 0, 2, 5, 3, 4, 2, 5, 5, 0], total: 46, ltp: 56.52 },
+			{ location: 'Memphis', data: [42, 26, 23, 85, 77, 51, 54, 47, 3, 9, 29, 30, 26, 27, 32, 64, 46, 34], total: 705, ltp: 42.13 },
+			{ location: 'Mobile', data: [1, 0, 0, 1, 5, 6, 3, 5, 1, 1, 4, 4, 2, 6, 2, 13, 11, 1], total: 66, ltp: 66.67 },
+			{ location: 'Montgomery', data: [0, 0, 0, 0, 2, 0, 3, 2, 0, 0, 0, 3, 0, 1, 5, 2, 3, 1], total: 22, ltp: 68.18 },
+			{ location: 'Nashville', data: [2, 1, 0, 6, 11, 7, 8, 11, 2, 0, 5, 0, 2, 4, 3, 6, 5, 3], total: 76, ltp: 36.84 },
+			{ location: 'New Orleans', data: [0, 0, 0, 4, 9, 9, 18, 9, 0, 1, 8, 6, 3, 4, 2, 8, 12, 3], total: 96, ltp: 48.96 },
+			{ location: 'Norfolk', data: [0, 0, 0, 2, 2, 5, 5, 3, 1, 0, 6, 4, 1, 0, 1, 1, 0, 0], total: 31, ltp: 41.94 },
+			{ location: 'Raleigh', data: [0, 0, 0, 7, 4, 4, 8, 9, 2, 2, 4, 6, 4, 6, 5, 7, 3, 4], total: 75, ltp: 54.67 },
+			{ location: 'Richmond', data: [0, 0, 0, 0, 1, 0, 4, 4, 0, 0, 1, 4, 1, 1, 3, 4, 0, 0], total: 23, ltp: 60.87 },
+			{ location: 'San Antonio', data: [0, 0, 0, 4, 2, 2, 3, 2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], total: 14, ltp: 7.14 },
+			{ location: 'Savannah', data: [0, 0, 0, 3, 5, 7, 6, 4, 0, 1, 2, 6, 3, 2, 1, 5, 2, 0], total: 47, ltp: 46.81 },
+			{ location: 'St. Louis', data: [0, 0, 1, 7, 6, 11, 12, 12, 2, 0, 7, 6, 5, 9, 8, 18, 13, 6], total: 123, ltp: 58.54 },
+			{ location: 'Tallahassee', data: [0, 0, 0, 0, 0, 3, 8, 6, 0, 1, 2, 3, 3, 3, 3, 3, 8, 2], total: 45, ltp: 62.22 },
+			{ location: 'Wilmington', data: [0, 0, 0, 1, 1, 3, 4, 12, 2, 3, 10, 10, 8, 10, 6, 13, 7, 6], total: 96, ltp: 76.04 }
+		];
+
+		const agingLabels = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15~20', '21~30', '30+'];
+
+		/* ── Chart Configuration ── */
+		let ltpByLocationChart, ticketsPerLocationChart, agingDistributionChart, agingSegmentChart;
+
+		/* ── Page Initialization ── */
+		function initpage() {
+			const appContainer = document.getElementById('appContainer');
+			appContainer.innerHTML = `
+				<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+					<div class="dashboard-header">
+						<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none;">
+							<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img" style="height: 40px;">
+							<h1 class="dashboard-title">Admin Hub Solutions</h1>
+						</a>
+						<div class="user-info">
+							<div>
+								<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+								<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+							</div>
+							<button class="logout-btn" onclick="logout()">Logout</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="module-page" style="display: flex; flex-direction: column;">
+					<div class="module-header">
+						<button class="back-btn" onclick="goToDashboard()">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="19" y1="12" x2="5" y2="12"></line>
+								<polyline points="12 19 5 12 12 5"></polyline>
+							</svg>
+							Back to Dashboard
+						</button>
+						<h2 style="color: white; margin: 0;">Long Time Period Report</h2>
+					</div>
+					<div class="ltp-panel">
+						<div class="ltp-controls">
+							<div class="control-group">
+								<div class="control-label">Data Level</div>
+								<div class="control-row">
+									<label class="checkbox-label">
+										<input type="checkbox" id="locationCheckbox" value="location" checked>
+										Location
+									</label>
+									<label class="checkbox-label">
+										<input type="checkbox" id="technicianCheckbox" value="technician">
+										Technician
+									</label>
+									<label class="checkbox-label">
+										<input type="checkbox" id="branchCheckbox" value="branch">
+										Branch
+									</label>
+								</div>
+							</div>
+
+							<div class="control-group">
+								<div class="control-label">Warranty Type</div>
+								<div class="control-row">
+									<label class="checkbox-label">
+										<input type="checkbox" id="warrantyAllCheckbox" value="all" checked>
+										All
+									</label>
+									<label class="checkbox-label">
+										<input type="checkbox" id="warrantyInCheckbox" value="inwarranty">
+										In-warranty
+									</label>
+									<label class="checkbox-label">
+										<input type="checkbox" id="warrantyOutCheckbox" value="outofwarranty">
+										Out-of-warranty
+									</label>
+								</div>
+							</div>
+
+							<div class="control-group">
+								<div class="control-label">Aging Threshold</div>
+								<select id="agingThreshold" class="select-field">
+									<option value="8">Max 8 day(s)</option>
+									<option value="5">Max 5 day(s)</option>
+									<option value="10">Max 10 day(s)</option>
+									<option value="14">Max 14 day(s)</option>
+								</select>
+							</div>
+						</div>
+
+						<div class="stats-section">
+							<div class="stat-card">
+								<div class="stat-label">Total Records</div>
+								<div class="stat-value" id="totalRecords">2,313</div>
+							</div>
+							<div class="stat-card">
+								<div class="stat-label">Overall LTP %</div>
+								<div class="stat-value" id="overallLtp">49.68%</div>
+							</div>
+							<div class="stat-card">
+								<div class="stat-label">Avg Days Aging</div>
+								<div class="stat-value" id="avgDays">7.2</div>
+							</div>
+							<div class="stat-card">
+								<div class="stat-label">Locations Analyzed</div>
+								<div class="stat-value" id="locCount">29</div>
+							</div>
+						</div>
+
+						<div class="charts-section">
+							<div class="chart-card">
+								<h3>LTP % by Location</h3>
+								<canvas id="ltpByLocationChart"></canvas>
+							</div>
+							<div class="chart-card">
+								<h3>Total Tickets by Location</h3>
+								<canvas id="ticketsPerLocationChart"></canvas>
+							</div>
+							<div class="chart-card">
+								<h3>Aging Distribution</h3>
+								<canvas id="agingDistributionChart"></canvas>
+							</div>
+							<div class="chart-card">
+								<h3>Days 0-5 vs 6+ Distribution</h3>
+								<canvas id="agingSegmentChart"></canvas>
+							</div>
+						</div>
+
+						<div class="table-section">
+							<h3>LTP Statistics (Monthly)</h3>
+							<p id="ltpDataSource" style="font-size: 0.85rem; color: #93c5fd; margin: 0.25rem 0;"></p>
+							<p id="ltpRecordCount">29 records found</p>
+							<div class="search-box">
+								<input type="text" id="searchInput" placeholder="search in result">
+							</div>
+							<div class="table-scroll-wrapper">
+							<table id="ltpTable">
+								<thead>
+									<tr>
+										<th>Location</th>
+										<th>0</th>
+										<th>1</th>
+										<th>2</th>
+										<th>3</th>
+										<th>4</th>
+										<th>5</th>
+										<th>6</th>
+										<th>7</th>
+										<th>8</th>
+										<th>9</th>
+										<th>10</th>
+										<th>11</th>
+										<th>12</th>
+										<th>13</th>
+										<th>14</th>
+										<th>15~20</th>
+										<th>21~30</th>
+										<th>30+</th>
+										<th>TOTAL</th>
+										<th>LTP %</th>
+									</tr>
+								</thead>
+								<tbody id="tableBody">
+								</tbody>
+							</table>
+							</div>
+						</div>
+					</div>
+				</div>
+			`;
+		}
+
+		async function initLtpReportData() {
+			const companyId = localStorage.getItem('userCompanyId') || '';
+			let msg = 'Displaying built-in sample data.';
+			if (window.AdminHubData && window.AdminHubReportBuilders) {
+				try {
+					const snap = await AdminHubData.fetchJsonSetting(companyId, 'ltp_report_snapshot');
+					if (Array.isArray(snap?.ltpData) && snap.ltpData.length) {
+						LTP_DATA = snap.ltpData;
+						msg = `Loaded ${LTP_DATA.length} locations from saved LTP snapshot.`;
+					} else {
+						const tickets = await AdminHubData.loadTicketsForReports(companyId);
+						const built = AdminHubReportBuilders.buildLtpDataFromTickets(tickets);
+						if (built.length) {
+							LTP_DATA = built;
+							msg = `Built ${LTP_DATA.length} location rows from ${tickets.length} synced tickets.`;
+						} else if (snap?.syncedAt) {
+							msg = `Last ER sync: ${new Date(snap.syncedAt).toLocaleString()} (${(snap.rows || []).length} raw rows). Using sample chart data.`;
+						}
+					}
+				} catch (error) {
+					msg = `Using sample data: ${error.message}`;
+				}
+			}
+			const el = document.getElementById('ltpDataSource');
+			if (el) el.textContent = msg;
+			const countEl = document.getElementById('ltpRecordCount');
+			if (countEl) countEl.textContent = `${LTP_DATA.length} records found`;
+		}
+
+		function initCharts() {
+			const ctx1 = document.getElementById('ltpByLocationChart').getContext('2d');
+			const ctx2 = document.getElementById('ticketsPerLocationChart').getContext('2d');
+			const ctx3 = document.getElementById('agingDistributionChart').getContext('2d');
+			const ctx4 = document.getElementById('agingSegmentChart').getContext('2d');
+
+			// Chart 1: LTP % by Location (sorted by LTP)
+			const sortedLocations = [...LTP_DATA].sort((a, b) => b.ltp - a.ltp);
+			ltpByLocationChart = new Chart(ctx1, {
+				type: 'bar',
+				data: {
+					labels: sortedLocations.map(loc => loc.location),
+					datasets: [{
+						label: 'LTP %',
+						data: sortedLocations.map(loc => loc.ltp),
+						backgroundColor: sortedLocations.map(loc => {
+							if (loc.ltp >= 60) return 'rgba(244, 67, 54, 0.7)';
+							if (loc.ltp >= 45) return 'rgba(255, 152, 0, 0.7)';
+							return 'rgba(76, 175, 80, 0.7)';
+						}),
+						borderColor: sortedLocations.map(loc => {
+							if (loc.ltp >= 60) return 'rgba(244, 67, 54, 1)';
+							if (loc.ltp >= 45) return 'rgba(255, 152, 0, 1)';
+							return 'rgba(76, 175, 80, 1)';
+						}),
+						borderWidth: 1
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					indexAxis: 'y',
+					plugins: {
+						legend: { display: false }
+					},
+					scales: {
+						x: {
+							ticks: { color: '#999' },
+							grid: { color: 'rgba(65, 105, 225, 0.1)' }
+						},
+						y: {
+							ticks: { color: '#999' }
+						}
+					}
+				}
+			});
+
+			// Chart 2: Total Tickets per Location
+			ticketsPerLocationChart = new Chart(ctx2, {
+				type: 'bar',
+				data: {
+					labels: LTP_DATA.map(loc => loc.location),
+					datasets: [{
+						label: 'Total Tickets',
+						data: LTP_DATA.map(loc => loc.total),
+						backgroundColor: 'rgba(65, 105, 225, 0.6)',
+						borderColor: 'rgba(65, 105, 225, 1)',
+						borderWidth: 1
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: {
+						legend: { display: false }
+					},
+					scales: {
+						y: {
+							ticks: { color: '#999' },
+							grid: { color: 'rgba(65, 105, 225, 0.1)' }
+						},
+						x: {
+							ticks: { color: '#999' }
+						}
+					}
+				}
+			});
+
+			// Chart 3: Aging Distribution (stacked bar)
+			const agingTotals = agingLabels.map((_, idx) => 
+				LTP_DATA.reduce((sum, loc) => sum + loc.data[idx], 0)
+			);
+			agingDistributionChart = new Chart(ctx3, {
+				type: 'bar',
+				data: {
+					labels: agingLabels,
+					datasets: [{
+						label: 'Total Tickets by Age',
+						data: agingTotals,
+						backgroundColor: 'rgba(72, 209, 204, 0.7)',
+						borderColor: 'rgba(72, 209, 204, 1)',
+						borderWidth: 1
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: {
+						legend: { display: false }
+					},
+					scales: {
+						y: {
+							ticks: { color: '#999' },
+							grid: { color: 'rgba(65, 105, 225, 0.1)' }
+						},
+						x: {
+							ticks: { color: '#999' }
+						}
+					}
+				}
+			});
+
+			// Chart 4: Days 0-5 vs 6-14 vs 15+ Distribution
+			const days0to5 = LTP_DATA.map(loc => loc.data.slice(0, 6).reduce((a, b) => a + b, 0));
+			const days6to14 = LTP_DATA.map(loc => loc.data.slice(6, 15).reduce((a, b) => a + b, 0));
+			const days15plus = LTP_DATA.map(loc => loc.data.slice(15).reduce((a, b) => a + b, 0));
+
+			agingSegmentChart = new Chart(ctx4, {
+				type: 'doughnut',
+				data: {
+					labels: ['Days 0-5', 'Days 6-14', 'Days 15+'],
+					datasets: [{
+						data: [
+							days0to5.reduce((a, b) => a + b, 0),
+							days6to14.reduce((a, b) => a + b, 0),
+							days15plus.reduce((a, b) => a + b, 0)
+						],
+						backgroundColor: [
+							'rgba(76, 175, 80, 0.7)',
+							'rgba(255, 152, 0, 0.7)',
+							'rgba(244, 67, 54, 0.7)'
+						],
+						borderColor: [
+							'rgba(76, 175, 80, 1)',
+							'rgba(255, 152, 0, 1)',
+							'rgba(244, 67, 54, 1)'
+						],
+						borderWidth: 2
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					plugins: {
+						legend: {
+							position: 'bottom',
+							labels: { color: '#999' }
+						}
+					}
+				}
+			});
+		}
+
+		/* ── Table Rendering ── */
+		function renderTable() {
+			const tbody = document.getElementById('tableBody');
+			tbody.innerHTML = '';
+
+			LTP_DATA.forEach(row => {
+				const tr = document.createElement('tr');
+				const ltpColor = row.ltp >= 60 ? 'ltp-high' : (row.ltp >= 45 ? 'ltp-medium' : 'ltp-low');
+				
+				let html = `<td><strong>${row.location}</strong></td>`;
+				row.data.forEach(val => {
+					html += `<td>${val}</td>`;
+				});
+				html += `<td>${row.total}</td>`;
+				html += `<td class="ltp-value ${ltpColor}">${row.ltp.toFixed(2)}%</td>`;
+				
+				tr.innerHTML = html;
+				tbody.appendChild(tr);
+			});
+
+			// Add TOTAL row
+			const totalRow = document.createElement('tr');
+			totalRow.style.fontWeight = 'bold';
+			totalRow.style.background = 'rgba(65, 105, 225, 0.15)';
+			
+			let totalHtml = '<td>TOTAL</td>';
+			for (let i = 0; i < 18; i++) {
+				const sum = LTP_DATA.reduce((a, b) => a + b.data[i], 0);
+				totalHtml += `<td>${sum}</td>`;
+			}
+			const allTotal = LTP_DATA.reduce((a, b) => a + b.total, 0);
+			totalHtml += `<td>${allTotal}</td>`;
+			totalHtml += '<td class="ltp-value">49.68%</td>';
+			totalRow.innerHTML = totalHtml;
+			tbody.appendChild(totalRow);
+		}
+
+		/* ── Global lookup managed by routes.js ── */
+
+		/* ── Navigation Functions ── */
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		/* ── Search Table Functionality ── */
+		function setupTableSearch() {
+			const searchInput = document.getElementById('searchInput');
+			if (searchInput) {
+				searchInput.addEventListener('input', function(e) {
+					const query = e.target.value.toLowerCase();
+					const rows = document.querySelectorAll('#tableBody tr');
+					
+					rows.forEach(row => {
+						const text = row.textContent.toLowerCase();
+						row.style.display = text.includes(query) ? '' : 'none';
+					});
+				});
+			}
+		}
+
+		/* ── Modal Event Listeners ── */
+		function setupModalEvents() {
+			const modal = document.getElementById('searchModal');
+			
+			// Close on Escape key
+			document.addEventListener('keydown', function(e) {
+				if (e.key === 'Escape') {
+					closeSearchModal();
+				}
+			});
+			
+			// Close on click outside modal
+			modal.addEventListener('click', function(e) {
+				if (e.target === modal) {
+					closeSearchModal();
+				}
+			});
+		}
+
+		/* ── Initialize ── */
+		document.addEventListener('DOMContentLoaded', function() {
+			initpage();
+			setTimeout(async () => {
+				if (typeof loadUserInfo === 'function') {
+					loadUserInfo();
+				}
+				await initLtpReportData();
+				initCharts();
+				renderTable();
+				setupTableSearch();
+			}, 100);
+		});
+	</script>
+	<footer id="contact"></footer>
+</body>
+</html>

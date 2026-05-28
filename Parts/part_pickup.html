@@ -1,0 +1,1189 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Daily Pickup - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.pickup-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+			min-width: 0;
+		}
+
+		.pickup-panel + .pickup-panel {
+			margin-top: 0.9rem;
+		}
+
+		html,
+		body {
+			height: 100%;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(170px, 1fr));
+			gap: 0.75rem;
+			margin-bottom: 0.7rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 700;
+			color: #e5e7eb;
+		}
+
+		.field input,
+		.field select {
+			width: 100%;
+			padding: 0.55rem 0.65rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.85rem;
+		}
+
+		.toggle-row,
+		.actions-row,
+		.meta-row,
+		.search-row {
+			display: flex;
+			align-items: flex-start;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+			margin-bottom: 0.7rem;
+		}
+
+		.actions-row {
+			justify-content: space-between;
+			align-items: flex-start;
+		}
+
+		.labeled-input-row {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.input-label {
+			font-size: 0.84rem;
+			font-weight: 600;
+			color: #dbeafe;
+			white-space: nowrap;
+		}
+
+		.toggle-row label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			font-size: 0.84rem;
+			font-weight: 600;
+			color: #dbeafe;
+		}
+
+		.actions-row button,
+		.action-btn {
+			padding: 0.45rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(147, 197, 253, 0.7);
+			background: rgba(37, 99, 235, 0.88);
+			color: #fff;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.actions-row button,
+		.actions-row .scan-input,
+		.actions-row .invoice-input,
+		.actions-row .pickup-action {
+			height: 34px;
+			box-sizing: border-box;
+		}
+
+		.pickup-action {
+			width: 170px;
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.scan-stack {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			align-self: flex-start;
+		}
+
+		.inline-action-stack {
+			display: flex;
+			align-items: flex-start;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+		}
+
+		.right-controls {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-end;
+			gap: 0.35rem;
+			margin-top: 1.35rem;
+			min-width: 320px;
+		}
+
+		.pickup-btn {
+			padding: 0.5rem 0.9rem;
+			border-radius: 8px;
+			border: 1px solid rgba(147, 197, 253, 0.8);
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			color: #fff;
+			font-weight: 800;
+			letter-spacing: 0.02em;
+			cursor: pointer;
+			box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28);
+			transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+		}
+
+		.pickup-btn:hover {
+			transform: translateY(-1px);
+			box-shadow: 0 10px 20px rgba(37, 99, 235, 0.36);
+			background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+		}
+
+		.pickup-btn:active {
+			transform: translateY(0);
+			box-shadow: 0 4px 10px rgba(37, 99, 235, 0.24);
+		}
+
+		.actions-row .scan-input,
+		.actions-row .invoice-input,
+		.search-input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.actions-row .scan-input {
+			min-width: 220px;
+			width: 220px;
+		}
+
+		.actions-row .invoice-input {
+			min-width: 170px;
+			width: 170px;
+		}
+
+		.meta-row {
+			justify-content: flex-start;
+			gap: 0.75rem;
+		}
+
+		.pick-summary {
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.meta-right {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.meta-right label {
+			font-weight: 600;
+			font-size: 0.84rem;
+		}
+
+		.meta-right select {
+			padding: 0.42rem 0.55rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+		}
+
+		.search-row {
+			justify-content: flex-start;
+		}
+
+		.search-input {
+			min-width: 260px;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			background: #fff;
+			max-width: 100%;
+			min-width: 0;
+		}
+
+		table.pickup-table {
+			width: 100%;
+			min-width: 2200px;
+			border-collapse: collapse;
+			font-size: 0.75rem;
+			color: #111827;
+		}
+
+		.pickup-table th,
+		.pickup-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.42rem;
+			vertical-align: top;
+			white-space: nowrap;
+		}
+
+		.pickup-table th {
+			background: #1f2937;
+			color: #f9fafb;
+			text-align: left;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.pickup-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.qty,
+		.money {
+			text-align: right;
+		}
+
+		.ticket-link {
+			color: #111827;
+			font-weight: 700;
+			text-decoration: none;
+		}
+
+		.ticket-link:hover {
+			text-decoration: underline;
+		}
+
+		.part-link-btn {
+			border: 0;
+			background: transparent;
+			padding: 0;
+			margin: 0;
+			font: inherit;
+			color: #111827;
+			font-weight: 700;
+			text-decoration: none;
+			cursor: pointer;
+		}
+
+		.part-link-btn:hover {
+			text-decoration: underline;
+		}
+
+		.part-info-modal-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(15, 23, 42, 0.45);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 2200;
+			padding: 1rem;
+		}
+
+		.part-info-modal-overlay.is-open {
+			display: flex;
+		}
+
+		.part-info-modal {
+			width: min(980px, calc(100vw - 2rem));
+			max-height: calc(100vh - 2rem);
+			overflow: auto;
+			background: #ffffff;
+			border: 1px solid #d1d5db;
+			border-radius: 12px;
+			box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3);
+		}
+
+		.part-info-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1rem;
+			padding: 0.9rem 1rem;
+			border-bottom: 1px solid #e5e7eb;
+			background: #f8fafc;
+		}
+
+		.part-info-title {
+			font-size: 1rem;
+			font-weight: 700;
+			color: #111827;
+		}
+
+		.part-info-close {
+			border: 1px solid #cbd5e1;
+			background: #ffffff;
+			color: #111827;
+			border-radius: 8px;
+			padding: 0.32rem 0.6rem;
+			cursor: pointer;
+		}
+
+		.part-info-tabs {
+			display: flex;
+			gap: 0.45rem;
+			padding: 0.75rem 1rem 0;
+		}
+
+		.part-info-tab-btn {
+			border: 1px solid #cbd5e1;
+			background: #ffffff;
+			color: #1f2937;
+			padding: 0.4rem 0.85rem;
+			border-radius: 999px;
+			cursor: pointer;
+			font-size: 0.82rem;
+			font-weight: 600;
+		}
+
+		.part-info-tab-btn.active {
+			background: #0f172a;
+			color: #ffffff;
+			border-color: #0f172a;
+		}
+
+		.part-info-body {
+			padding: 0.8rem 1rem 1rem;
+		}
+
+		.part-info-pane {
+			display: none;
+		}
+
+		.part-info-pane.active {
+			display: block;
+		}
+
+		.part-info-matrix {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.79rem;
+			margin-bottom: 0.85rem;
+		}
+
+		.part-info-matrix th,
+		.part-info-matrix td {
+			border: 1px solid #d1d5db;
+			padding: 0.45rem;
+			text-align: left;
+		}
+
+		.part-info-matrix thead th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.part-info-section-title {
+			font-size: 0.82rem;
+			font-weight: 700;
+			color: #111827;
+			margin: 0.2rem 0 0.4rem;
+		}
+
+		.part-info-section-subtitle {
+			font-size: 0.76rem;
+			color: #4b5563;
+			margin-bottom: 0.35rem;
+		}
+
+		.part-info-empty {
+			padding: 0.7rem;
+			border: 1px dashed #d1d5db;
+			border-radius: 8px;
+			font-size: 0.78rem;
+			color: #6b7280;
+		}
+
+		#partInfoModalOverlay .part-info-modal,
+		#partInfoModalOverlay .part-info-modal th,
+		#partInfoModalOverlay .part-info-modal td,
+		#partInfoModalOverlay .part-info-title,
+		#partInfoModalOverlay .part-info-close,
+		#partInfoModalOverlay .part-info-section-title,
+		#partInfoModalOverlay .part-info-section-subtitle,
+		#partInfoModalOverlay .part-info-empty,
+		#partInfoModalOverlay .part-info-tab-btn {
+			color: #111827 !important;
+		}
+
+		#partInfoModalOverlay .part-info-tab-btn.active {
+			color: #ffffff !important;
+		}
+
+		.picked {
+			color: #047857;
+			font-weight: 700;
+		}
+
+		.group-row td {
+			background: #e5e7eb;
+			font-weight: 700;
+			color: #111827;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 0;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: 100vw;
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		#contact {
+			margin-top: auto;
+			flex-shrink: 0;
+			width: 100%;
+		}
+
+		@media (max-width: 1100px) {
+			.controls-grid {
+				grid-template-columns: repeat(2, minmax(160px, 1fr));
+			}
+		}
+
+		@media (max-width: 700px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.meta-row {
+				justify-content: flex-start;
+			}
+
+			.search-row {
+				justify-content: flex-start;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Daily Pickup</h2>
+		</div>
+
+		<div class="pickup-panel">
+			<div class="controls-grid">
+				<div class="field">
+					<label for="locationFilter">Location*</label>
+					<select id="locationFilter">
+						<option value="" selected>Select Location</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Atlanta">Atlanta</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="technicianFilter">Technician</label>
+					<input id="technicianFilter" type="text" value="Jordan Koetsier" placeholder="Technician">
+				</div>
+				<div class="field">
+					<label for="pickupDate">Pickup Date*</label>
+					<input id="pickupDate" type="date" value="2026-05-15">
+				</div>
+			</div>
+
+			<div class="toggle-row">
+				<label><input id="showNotPicked" type="checkbox" checked> Not Picked up</label>
+				<label><input id="showPicked" type="checkbox" checked> Picked up</label>
+			</div>
+		</div>
+
+		<div id="pickupResultsPanel" class="pickup-panel">
+			<div class="actions-row">
+				<div class="scan-stack">
+					<span class="input-label">Scan Parts Here</span>
+					<div class="labeled-input-row">
+						<input id="scanInput" class="scan-input" type="text" placeholder="Invoice + (Item) #">
+						<button type="button" id="addPartBtn">Add Part</button>
+					</div>
+					<select id="pickupAction" class="pickup-action">
+						<option value="Pickup">Pickup</option>
+						<option value="In-Transit">In-Transit</option>
+					</select>
+					<div id="pickedSummary" class="pick-summary" style="display:none;">picked 0 out of 0 parts</div>
+				</div>
+				<div class="right-controls">
+					<div class="meta-right">
+						<label for="sortBy">Sort by:</label>
+						<select id="sortBy">
+							<option value="ticket">Ticket #</option>
+							<option value="schedule">Schedule Time</option>
+						</select>
+					</div>
+					<input id="resultSearch" class="search-input" type="text" placeholder="search in result">
+				</div>
+			</div>
+
+			<div id="pickupTableWrap" class="table-wrap">
+				<table class="pickup-table">
+					<thead>
+						<tr>
+							<th>Technician</th>
+							<th>Ticket #</th>
+							<th>Repair Status</th>
+							<th>Part No</th>
+							<th>Description</th>
+							<th>P/O No</th>
+							<th>ETA</th>
+							<th>Unique ID</th>
+							<th>Qty</th>
+							<th>Part Status</th>
+							<th>Comment</th>
+							<th>Picked up</th>
+							<th>CoreValue</th>
+							<th>Actions</th>
+							<th>CxAddress1</th>
+							<th>In-transit</th>
+						</tr>
+					</thead>
+					<tbody id="pickupBody"></tbody>
+				</table>
+			</div>
+
+			<div id="pickupFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="pickupFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<div id="partInfoModalOverlay" class="part-info-modal-overlay" aria-hidden="true">
+		<div class="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
+			<div class="part-info-header">
+				<div id="partInfoTitle" class="part-info-title">Part Info. of ()</div>
+				<button id="partInfoCloseBtn" type="button" class="part-info-close">Close</button>
+			</div>
+
+			<div class="part-info-tabs" role="tablist" aria-label="Part vendor tabs">
+				<button type="button" class="part-info-tab-btn" data-part-tab="encompass" aria-selected="false">Encompass</button>
+				<button type="button" class="part-info-tab-btn active" data-part-tab="marcone" aria-selected="true">Marcone</button>
+			</div>
+
+			<div class="part-info-body">
+				<div class="part-info-pane" data-part-pane="encompass">
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>Field</th>
+								<th>Value</th>
+								<th>Field</th>
+								<th>Value</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoFieldBodyEncompass"></tbody>
+					</table>
+					<div class="part-info-section-title">Availability (Encompass)</div>
+					<div class="part-info-empty">No availability records found.</div>
+				</div>
+
+				<div class="part-info-pane active" data-part-pane="marcone">
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>Field</th>
+								<th>Value</th>
+								<th>Field</th>
+								<th>Value</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoFieldBodyMarcone"></tbody>
+					</table>
+
+					<div class="part-info-section-title">Availability (Marcone)</div>
+					<div id="partInfoAvailabilityCount" class="part-info-section-subtitle">0 records found</div>
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>ID</th>
+								<th>W/H Name</th>
+								<th>Available Qty</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoAvailabilityBody"></tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script>
+		const partInfoByPart = {
+			DEFAULT: {
+				rows: [
+					{ leftLabel: 'Make', leftValue: 'GEH', rightLabel: 'Part #', rightValue: '' },
+					{ leftLabel: 'Price', leftValue: '31.56', rightLabel: 'Dealer Price', rightValue: '42.83' },
+					{ leftLabel: 'Retail Price', leftValue: '0', rightLabel: 'List Price', rightValue: '66.84' },
+					{ leftLabel: 'Core Price', leftValue: '', rightLabel: 'Core?', rightValue: '' },
+					{ leftLabel: 'Description', leftValue: 'DOOR LOCK', rightLabel: 'Discontinue?', rightValue: 'false' },
+					{ leftLabel: 'Drop Shop only?', leftValue: '', rightLabel: 'Hazmat?', rightValue: '' },
+					{ leftLabel: 'Refrigerant?', leftValue: 'false', rightLabel: 'Oversize?', rightValue: 'false' }
+				],
+				availability: [
+					{ id: '301', name: 'LOUISVILLE', qty: 100 },
+					{ id: '1230', name: 'CHARLOTTE', qty: 100 },
+					{ id: '1260', name: 'ALBANY', qty: 100 },
+					{ id: '7200', name: 'FRESNO', qty: 89 },
+					{ id: '7910', name: 'APPLIANCE DENVER', qty: 76 },
+					{ id: '1010', name: 'BYRON CENTER', qty: 73 },
+					{ id: '601', name: 'DENTON', qty: 51 },
+					{ id: '5300', name: 'JACKSONVILLE', qty: 41 },
+					{ id: '7930', name: 'VANCOUVER WA', qty: 39 },
+					{ id: '401', name: 'PEORIA', qty: 36 },
+					{ id: '201', name: 'APPLIANCE LENEXA', qty: 0 },
+					{ id: '302', name: 'LOUISVILLE 2', qty: 0 },
+					{ id: '1280', name: 'GLEN MILLS', qty: 0 }
+				]
+			},
+			WE04X25194: {
+				rows: [
+					{ leftLabel: 'Make', leftValue: 'GEH', rightLabel: 'Part #', rightValue: '' },
+					{ leftLabel: 'Price', leftValue: '13.18', rightLabel: 'Dealer Price', rightValue: '19.46' },
+					{ leftLabel: 'Retail Price', leftValue: '0', rightLabel: 'List Price', rightValue: '31.86' },
+					{ leftLabel: 'Core Price', leftValue: '', rightLabel: 'Core?', rightValue: '' },
+					{ leftLabel: 'Description', leftValue: 'DRYER THERMOSTAT', rightLabel: 'Discontinue?', rightValue: 'false' },
+					{ leftLabel: 'Drop Shop only?', leftValue: '', rightLabel: 'Hazmat?', rightValue: '' },
+					{ leftLabel: 'Refrigerant?', leftValue: 'false', rightLabel: 'Oversize?', rightValue: 'false' }
+				],
+				availability: [
+					{ id: '1230', name: 'CHARLOTTE', qty: 39 },
+					{ id: '7930', name: 'VANCOUVER WA', qty: 29 },
+					{ id: '1010', name: 'BYRON CENTER', qty: 20 },
+					{ id: '1260', name: 'ALBANY', qty: 11 },
+					{ id: '201', name: 'APPLIANCE LENEXA', qty: 9 },
+					{ id: '301', name: 'LOUISVILLE', qty: 9 },
+					{ id: '7200', name: 'FRESNO', qty: 9 },
+					{ id: '7910', name: 'APPLIANCE DENVER', qty: 6 },
+					{ id: '401', name: 'PEORIA', qty: 1 },
+					{ id: '601', name: 'DENTON', qty: 1 },
+					{ id: '302', name: 'LOUISVILLE 2', qty: 0 },
+					{ id: '1280', name: 'GLEN MILLS', qty: 0 },
+					{ id: '5300', name: 'JACKSONVILLE', qty: 0 }
+				]
+			}
+		};
+
+		function getPartInfoData(partNo) {
+			const key = String(partNo || '').trim().toUpperCase();
+			return partInfoByPart[key] || partInfoByPart.DEFAULT;
+		}
+
+		function escapeHtml(value) {
+			return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+				return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+			});
+		}
+
+		function renderPartInfoFields(targetId, partNo) {
+			const body = document.getElementById(targetId);
+			if (!body) return;
+			const partData = getPartInfoData(partNo);
+			body.innerHTML = partData.rows.map(function (row) {
+				const rightValue = row.rightLabel === 'Part #'
+					? escapeHtml(partNo)
+					: escapeHtml(row.rightValue);
+				return `<tr><td>${escapeHtml(row.leftLabel)}</td><td>${escapeHtml(row.leftValue)}</td><td>${escapeHtml(row.rightLabel)}</td><td>${rightValue}</td></tr>`;
+			}).join('');
+		}
+
+		function renderPartInfoAvailability(partNo) {
+			const count = document.getElementById('partInfoAvailabilityCount');
+			const body = document.getElementById('partInfoAvailabilityBody');
+			if (!count || !body) return;
+			const partData = getPartInfoData(partNo);
+			count.textContent = `${partData.availability.length} records found`;
+			body.innerHTML = partData.availability.map(function (row) {
+				return `<tr><td>${escapeHtml(row.id)}</td><td>${escapeHtml(row.name)}</td><td class="qty">${escapeHtml(row.qty)}</td></tr>`;
+			}).join('');
+		}
+
+		function switchPartInfoTab(tabName) {
+			document.querySelectorAll('.part-info-tab-btn').forEach(function (btn) {
+				const isActive = btn.getAttribute('data-part-tab') === tabName;
+				btn.classList.toggle('active', isActive);
+				btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+			});
+			document.querySelectorAll('.part-info-pane').forEach(function (pane) {
+				pane.classList.toggle('active', pane.getAttribute('data-part-pane') === tabName);
+			});
+		}
+
+		function openPartInfoModal(encodedPartNo) {
+			const partNo = decodeURIComponent(encodedPartNo || '').trim();
+			if (!partNo) return;
+			const overlay = document.getElementById('partInfoModalOverlay');
+			const title = document.getElementById('partInfoTitle');
+			if (!overlay || !title) return;
+
+			title.textContent = `Part Info. of (${partNo})`;
+			renderPartInfoFields('partInfoFieldBodyEncompass', partNo);
+			renderPartInfoFields('partInfoFieldBodyMarcone', partNo);
+			renderPartInfoAvailability(partNo);
+			switchPartInfoTab('marcone');
+
+			overlay.classList.add('is-open');
+			overlay.setAttribute('aria-hidden', 'false');
+		}
+
+		function closePartInfoModal() {
+			const overlay = document.getElementById('partInfoModalOverlay');
+			if (!overlay) return;
+			overlay.classList.remove('is-open');
+			overlay.setAttribute('aria-hidden', 'true');
+		}
+
+		window.openPartInfoModal = openPartInfoModal;
+
+		const pickupRows = [
+			{ technician: 'Jordan Koetsier', ticketNo: '26000649835DF', repairStatus: 'OP-UPDATE HOLD', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '220 HARVEY GOSNELL RD', transit: 'N/A', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'HSV20260433878814', repairStatus: 'CL-Ready to Complete', partNo: '316415900', description: 'ELEMENT,BAKE,3500W,6 PASS', poNo: 'HSV20260433878814-AV', eta: '', uniqueId: '1-305987-0526-1', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1531 RIDGEWOOD BLVD', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'SA-3128687', repairStatus: 'OP-Ready for Service', partNo: 'WR49X10251', description: 'COVER ASM FF INLET', poNo: 'SA-3128687-AV', eta: '', uniqueId: '1-280686-0526-1', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WE21X28957', description: 'DRUM ASM 27', poNo: 'SA-3128973-AV', eta: '', uniqueId: '184387787-WE21X28957', qty: 1, partStatus: 'Part Ready', comment: 'GE WE21M41', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH16X27179', description: 'ROD ASSEMBLY 27"', poNo: 'SA-3128973-AV', eta: '', uniqueId: '184467023-WH16X27179', qty: 2, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH16X27180', description: 'ROD ASSEMBLY 27"', poNo: 'SA-3128973-AV', eta: '05/11', uniqueId: '1-279743-0526-1', qty: 2, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH49X27319', description: 'KIT WASHER MOTOR AND PULLEY AS', poNo: 'SA-3128973-AV', eta: '05/11', uniqueId: '1-279743-0526-3', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH49X27322', description: 'KIT TRANSMISSION PLATFORM ASM', poNo: 'SA-3128973-AV', eta: '05/11', uniqueId: '1-279743-0526-2', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH49X27327', description: 'KIT BASKET 27, HUB NUT, WASHERS & AGITAT', poNo: 'SA-3128973-AV', eta: '', uniqueId: '184467023-WH49X27327', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3128973', repairStatus: 'OP-Ready for Service', partNo: 'WH49X27329', description: 'KIT TUB 27, HUB NUT, WASHERS & WASHER AGITATOR', poNo: 'SA-3128973-AV', eta: '', uniqueId: '184387787-WH49X27329', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '146 ROBERTS ST', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: '26000615451DF', repairStatus: 'OP-Waiting for Part', partNo: 'WH10X35297', description: 'GLASS FRAME LID TL WASHER WHITE', poNo: '26000615451DF-AV', eta: '', uniqueId: '', qty: 1, partStatus: 'PO Made', comment: 'CB_TS', pickedUp: '', coreValue: 0, action: '', cxAddress: '191 HICKORYNUT ST', transit: 'N/A', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH01X29528', description: 'DOOR LOCK', poNo: 'SA-3179696-AV', eta: '', uniqueId: '1-293400-0526-1', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: '', coreValue: 0, action: 'Undo', cxAddress: '162 S WILLOW BROOK DR', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH01X32580', description: 'DOOR LATCH', poNo: 'SA-3179696-AV', eta: '', uniqueId: '1-293400-0526-2', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: '', coreValue: 0, action: 'Undo', cxAddress: '162 S WILLOW BROOK DR', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH03X29524', description: 'MOTOR', poNo: '26000554229DF-JS-2', eta: '', uniqueId: '1-270461-0426-1', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '162 S WILLOW BROOK DR', transit: 'Used', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH08X29513', description: 'MAIN HARNESS', poNo: 'SA-3179696-AV', eta: '', uniqueId: '1-293400-0526-5', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: '', coreValue: 0, action: 'Undo', cxAddress: '162 S WILLOW BROOK DR', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH13X29611', description: 'DOOR STRIKE SUPPORT', poNo: 'SA-3179696-AV', eta: '', uniqueId: '1-293400-0526-3', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: '', coreValue: 0, action: 'Undo', cxAddress: '162 S WILLOW BROOK DR', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3179696', repairStatus: 'OP-Ready for Service', partNo: 'WH22X38697', description: 'MAIN CONTROL BOARD FL WASHER', poNo: 'SA-3179696-AV', eta: '', uniqueId: '1-293400-0526-4', qty: 1, partStatus: 'Tech Pickup', comment: 'GE WH22X36858', pickedUp: '', coreValue: 0, action: 'Undo', cxAddress: '162 S WILLOW BROOK DR', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'SA-3218910', repairStatus: 'OP-Ready for Service', partNo: 'WR57X24979', description: 'VALVE DUAL WATER W FM', poNo: 'SA-3218910-AV', eta: '05/11', uniqueId: '1-298990-0526-1', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '17 FAIRMONT RD', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Jordan Koetsier', ticketNo: 'SA-3153278', repairStatus: 'OP-Ready for Service', partNo: 'WH11X39237', description: 'DRAIN PUMP & FILTER', poNo: 'SA-3153278-AV', eta: '05/11', uniqueId: '1-298413-0526-1', qty: 1, partStatus: 'Part Ready', comment: 'GE WH11X29539', pickedUp: '', coreValue: 0, action: '', cxAddress: '83 SPOOKS BRANCH RD', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'SA-3153278', repairStatus: 'OP-Ready for Service', partNo: 'WH16X29509', description: 'DAMPER VENT', poNo: 'SA-3153278-AV', eta: '05/11', uniqueId: '1-298413-0526-2', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '83 SPOOKS BRANCH RD', transit: 'In-transit', zone: 'Asheville', location: 'Asheville' },
+			{ technician: '', ticketNo: 'TOTAL', repairStatus: '', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 21, partStatus: '', comment: '1020501005001', pickedUp: '', coreValue: 0, action: '', cxAddress: '', transit: '', zone: 'Asheville', location: 'Asheville' },
+			{ technician: 'Andy Oh', ticketNo: '1007096430-10', repairStatus: 'CL-Ready to Complete', partNo: '140217719099', description: 'PCB,MAIN ELECTRONIC BOARD', poNo: '1007096430-10-MG', eta: '', uniqueId: '1-323730-0526-1', qty: 1, partStatus: 'Used', comment: 'Electrolux 5304535629', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '375 RIDGEDALE LN', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1007096430-10', repairStatus: 'CL-Ready to Complete', partNo: '5304535645', description: 'PC BOARD', poNo: '1007096430-10-MG', eta: '', uniqueId: '1-323730-0526-2', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '375 RIDGEDALE LN', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'Andy Oh', ticketNo: '3344144392BL', repairStatus: 'OP-Ready for Service', partNo: 'WB16X24722', description: 'BURNER XL V2', poNo: '3344144392BL-MG', eta: '', uniqueId: '184553454-WB16X24722', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '9018 MARSTON WAY', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '3344144392BL', repairStatus: 'OP-Ready for Service', partNo: 'WB18X46238', description: 'SWITCH HARNESS ASM', poNo: '3344144392BL-MG', eta: '', uniqueId: '184553454-WB18X46238', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '9018 MARSTON WAY', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '3344144392BL', repairStatus: 'OP-Ready for Service', partNo: 'WB21X46236', description: 'GAS VALVE LF', poNo: '3344144392BL-MG', eta: '', uniqueId: '184525314-WB21X46236', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '9018 MARSTON WAY', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'Andy Oh', ticketNo: '49770008', repairStatus: 'CL-Ready to Complete', partNo: 'WH12X27614', description: 'KIT BRACKET CAPACITOR', poNo: '49770008-MG', eta: '', uniqueId: '1-305031-0526-3', qty: 1, partStatus: 'Used', comment: 'GE WH12X29017', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '5129 E LINDA CIR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '49770008', repairStatus: 'CL-Ready to Complete', partNo: 'WH22X33178', description: 'MAIN CONTROL BOARD W/INSTRUCTIONS', poNo: '49770008-MG', eta: '', uniqueId: '1-305031-0526-1', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '5129 E LINDA CIR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '49770008', repairStatus: 'CL-Ready to Complete', partNo: 'WH22X35537', description: 'USER INTERFACE BOARD', poNo: '49770008-MG', eta: '', uniqueId: '1-305031-0526-2', qty: 1, partStatus: 'Used', comment: 'GE WH22X32885', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '5129 E LINDA CIR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1006802374-10', repairStatus: 'CL-Ready to Complete', partNo: '140172164018', description: 'VALVE', poNo: '1006802374-10-BM', eta: '04/17', uniqueId: '1-211985-0426-2', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '622 FISH CAMP RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006802374-10', repairStatus: 'CL-Ready to Complete', partNo: '5304534663', description: 'IGNITOR,BAKE', poNo: '1006802374-10-BM', eta: '04/17', uniqueId: '1-211985-0426-1', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '622 FISH CAMP RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006802374-10', repairStatus: 'CL-Ready to Complete', partNo: '5304534804', description: 'OVERLAY,CONTROL,BLACK', poNo: '1006802374-10-BM-2', eta: '', uniqueId: '1-264305-0426-2', qty: 1, partStatus: 'Used', comment: 'DS REQ 04/28/2026', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '622 FISH CAMP RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006802374-10', repairStatus: 'CL-Ready to Complete', partNo: '5304534808', description: 'HARNESS,WIRING,MAIN', poNo: '1006802374-10-BM', eta: '04/22', uniqueId: '1-226290-0426-1', qty: 1, partStatus: 'Used', comment: 'dropship request 4/16/26', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '622 FISH CAMP RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006802374-10', repairStatus: 'CL-Ready to Complete', partNo: '5304536448', description: 'CONTROLLER,ELECTRONIC,OVEN', poNo: '1006802374-10-BM-2', eta: '04/29', uniqueId: '1-264305-0426-1', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '622 FISH CAMP RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1006855775-10', repairStatus: 'OP-Ready for Service', partNo: '5304531521', description: 'DOOR ASSEMBLY,FREEZER,WHITE', poNo: '1006855775-10-BM', eta: '', uniqueId: '1-257956-0426-1', qty: 1, partStatus: 'Tech Pickup', comment: 'DS REQ 04/21/2026', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '11317 HIGHLAND LAKES POINTE', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: 'HIS20260534001002', repairStatus: 'CL-Ready to Complete', partNo: 'T345612', description: 'R/C\\EN3AH34H\\HU-RCRUS-25\\ROH', poNo: 'HIS20260534001002_1', eta: '05/11', uniqueId: '0083473355-T345612', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '810 BROOKLINE RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'HIS20260534001002', repairStatus: 'CL-Ready to Complete', partNo: 'T401682', description: 'MAINBOARDASSEMBLYLARGE COMPONENT\\58A51LU', poNo: 'HIS20260534001002_1', eta: '05/11', uniqueId: '0083473355-T401682', qty: 1, partStatus: 'Used', comment: '', pickedUp: 'PICKED UP (Used)', coreValue: 0, action: '', cxAddress: '810 BROOKLINE RD', transit: 'Used', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: 'SA-3386371', repairStatus: 'OP-Ready for Service', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '1628 SKYE PASS', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1007083918-10', repairStatus: 'OP-Ready for Service', partNo: '5304538549', description: 'PUMP,SYNCHRONOUS', poNo: '1007083918-10-BM', eta: '', uniqueId: '', qty: 1, partStatus: 'CX Home', comment: 'delivered to cx home', pickedUp: '', coreValue: 0, action: '', cxAddress: '11580 McCord Ln', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1007168989-10', repairStatus: 'OP-Reschedule Follow up', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '1227 TARA DR', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1007180137-10', repairStatus: 'OP-Ready for Service', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '1235 JOHNSON ST', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '2058727336BL', repairStatus: 'OP-Ready for Service', partNo: '140195757129', description: 'ELEMENT,BROIL', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: 'Need PO', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '10407 CALEB CT', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '2058727336BL', repairStatus: 'OP-Ready for Service', partNo: '140195760081', description: 'ELEMENT HEATING-PUR', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: 'Need PO', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '10407 CALEB CT', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '2058727336BL', repairStatus: 'OP-Ready for Service', partNo: '5304526310', description: 'PROBE,OVEN SENSOR', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: 'Need PO', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '10407 CALEB CT', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '2058727336BL', repairStatus: 'OP-Ready for Service', partNo: '5304534821', description: 'OVERLAY,OVEN CONTROL,BLACK', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: 'Need PO', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '10407 CALEB CT', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '2058727336BL', repairStatus: 'OP-Ready for Service', partNo: '5304536671', description: 'CONTROL-ELEC OVEN,UI305', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: 'Need PO', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '10407 CALEB CT', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: 'SA-3091204', repairStatus: 'OP-Ready for Service', partNo: 'WE03X25275', description: 'TRAP DUCT ASM', poNo: 'SA-3091204-BM', eta: '05/06', uniqueId: '1-294304-0526-1', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '12431 MCMATH TRL', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'SA-3091204', repairStatus: 'OP-Ready for Service', partNo: 'WE03X25314', description: 'BEARING TOP ASM', poNo: 'SA-3091204-BM', eta: '05/06', uniqueId: '1-294304-0526-2', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '12431 MCMATH TRL', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: 'SA-3331006', repairStatus: 'OP-Ready for Service', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '657 LIMBAUGH RD', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'David Sims', ticketNo: '1006836710-10', repairStatus: 'OP-Ready for Service', partNo: '140282033103', description: 'MOTOR,EVAPORATOR FAN,W/HARNESS', poNo: '1006836710-10-BM', eta: '05/08', uniqueId: '1-300254-0526-1', qty: 1, partStatus: 'Part Ready', comment: '809069206, DS REQ 04/27/2026', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '14095 ROCKY HILLS DR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006836710-10', repairStatus: 'OP-Ready for Service', partNo: '5303305677', description: 'DRYER-FILTER', poNo: '1006836710-10-BM', eta: '04/28', uniqueId: '1-256846-0426-2', qty: 1, partStatus: 'Part Ready', comment: 'Electrolux 242047604', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '14095 ROCKY HILLS DR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006836710-10', repairStatus: 'OP-Ready for Service', partNo: '5304530136', description: 'COMPRESSOR,ASSEMBLY,VTH1111Y', poNo: '1006836710-10-BM', eta: '04/28', uniqueId: '1-256846-0426-1', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '14095 ROCKY HILLS DR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: '1006836710-10', repairStatus: 'OP-Ready for Service', partNo: '5304531506', description: 'INVERTER, FLEXDRIVE 2.2', poNo: '1006836710-10-BM', eta: '04/28', uniqueId: '1-256846-0426-3', qty: 1, partStatus: 'Part Ready', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: '', cxAddress: '14095 ROCKY HILLS DR', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'Memphis Admin', ticketNo: 'SA-3167623', repairStatus: 'OP-Ready for Service', partNo: 'WH03X30517', description: 'MODE SHIFTER', poNo: 'SA-3167623-JB', eta: '', uniqueId: '17-804077-0526-2', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1107 EASTWOOD ST', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'SA-3167623', repairStatus: 'OP-Ready for Service', partNo: 'WH03X32097', description: 'TRANSMISSION PULLEY & NUT', poNo: 'SA-3167623-JB', eta: '', uniqueId: '17-804077-0526-4', qty: 1, partStatus: 'Tech Pickup', comment: 'GE WH03X28859', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1107 EASTWOOD ST', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'SA-3167623', repairStatus: 'OP-Ready for Service', partNo: 'WH03X33733', description: 'PLATFORM BEARING RETAINER & FASTENERS', poNo: 'SA-3167623-JB', eta: '', uniqueId: '17-804077-0526-1', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1107 EASTWOOD ST', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'SA-3167623', repairStatus: 'OP-Ready for Service', partNo: 'WH05X24185', description: 'CLUTCH', poNo: 'SA-3167623-JB', eta: '', uniqueId: '17-804077-0526-3', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1107 EASTWOOD ST', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'SA-3167623', repairStatus: 'OP-Ready for Service', partNo: 'WH23X28418', description: 'PUMP DRAIN ASSEMBLY', poNo: 'SA-3167623-JB', eta: '', uniqueId: '17-804077-0526-5', qty: 1, partStatus: 'Tech Pickup', comment: '', pickedUp: 'PICKED UP', coreValue: 0, action: 'Undo', cxAddress: '1107 EASTWOOD ST', transit: 'In-transit', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: 'Zonate Grant', ticketNo: '1007098673-11', repairStatus: 'OP-Ready for Service', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 1, partStatus: '[Part not diagnosed]', comment: '', pickedUp: '', coreValue: 0, action: '', cxAddress: '20537 EASTE', transit: 'N/A', zone: 'Birmingham', location: 'Birmingham' },
+			{ technician: '', ticketNo: 'TOTAL', repairStatus: '', partNo: '', description: '', poNo: '', eta: '', uniqueId: '', qty: 38, partStatus: '', comment: '1020501005001', pickedUp: '', coreValue: 0, action: '', cxAddress: '', transit: '', zone: 'Birmingham', location: 'Birmingham' }
+		];
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return false;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return true;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function getRows() {
+			const location = document.getElementById('locationFilter').value.trim();
+			const tech = document.getElementById('technicianFilter').value.trim().toLowerCase();
+			const search = document.getElementById('resultSearch').value.trim().toLowerCase();
+			const showNotPicked = document.getElementById('showNotPicked').checked;
+			const showPicked = document.getElementById('showPicked').checked;
+
+			return pickupRows.filter((row) => {
+				if (row.ticketNo === 'TOTAL') return false;
+				if (location && row.location && row.location !== location) return false;
+				if (tech && !String(row.technician || '').toLowerCase().includes(tech)) return false;
+				const isPicked = String(row.pickedUp || '').toUpperCase().includes('PICKED UP');
+				if (!showPicked && isPicked) return false;
+				if (!showNotPicked && !isPicked) return false;
+				if (search) {
+					const blob = [
+						row.technician, row.ticketNo, row.repairStatus, row.partNo, row.description,
+						row.poNo, row.uniqueId, row.partStatus, row.comment, row.cxAddress, row.transit
+					].join(' ').toLowerCase();
+					if (!blob.includes(search)) return false;
+				}
+				return true;
+			});
+		}
+
+		function renderRows() {
+			const body = document.getElementById('pickupBody');
+			const selectedLocation = document.getElementById('locationFilter').value.trim();
+			const resultsPanel = document.getElementById('pickupResultsPanel');
+			const sortBy = document.getElementById('sortBy').value;
+			let rows = getRows();
+
+			if (!selectedLocation) {
+				body.innerHTML = '<tr><td colspan="16">Select a location to view pickup details.</td></tr>';
+				const summaryEl = document.getElementById('pickedSummary');
+				summaryEl.textContent = 'picked 0 out of 0 parts';
+				summaryEl.style.display = 'none';
+				queuePickupScrollbarRefresh();
+				return;
+			}
+
+			rows.sort((a, b) => {
+				if (sortBy === 'schedule') {
+					return String(a.eta || '').localeCompare(String(b.eta || ''));
+				}
+				return String(a.ticketNo || '').localeCompare(String(b.ticketNo || ''));
+			});
+
+			const totalRow = pickupRows.find((row) => row.ticketNo === 'TOTAL' && row.location === selectedLocation);
+			const totalParts = Number(totalRow && totalRow.qty ? totalRow.qty : rows.length);
+			const pickedCount = rows.filter((row) => String(row.pickedUp || '').toUpperCase().includes('PICKED UP')).length;
+			const summaryEl2 = document.getElementById('pickedSummary');
+			summaryEl2.textContent = `picked ${pickedCount} out of ${totalParts} parts`;
+			const searchVal = document.getElementById('resultSearch').value.trim();
+			summaryEl2.style.display = (selectedLocation || searchVal) ? '' : 'none';
+
+			const html = [];
+			rows.forEach((row) => {
+				const partCell = row.partNo
+					? `<button type="button" class="part-link-btn" onclick="openPartInfoModal('${encodeURIComponent(row.partNo)}')">${row.partNo}</button>`
+					: '';
+				const uniqueIdCell = row.uniqueId
+					? `<a class="ticket-link" href="part_history.html?uniqueId=${encodeURIComponent(row.uniqueId)}" target="_blank" rel="noopener noreferrer">${row.uniqueId}</a>`
+					: '';
+				const ticketCell = row.ticketNo
+					? `<a class="ticket-link" href="../Tickets/ticket_details.html?ticket=${encodeURIComponent(row.ticketNo)}" target="_blank" rel="noopener noreferrer">${row.ticketNo}</a>`
+					: '';
+				const pickedClass = String(row.pickedUp || '').toUpperCase().includes('PICKED UP') ? 'picked' : '';
+				html.push(`
+					<tr>
+						<td>${row.technician || ''}</td>
+						<td>${ticketCell}</td>
+						<td>${row.repairStatus || ''}</td>
+						<td>${partCell}</td>
+						<td>${row.description || ''}</td>
+						<td>${row.poNo || ''}</td>
+						<td>${row.eta || ''}</td>
+						<td>${uniqueIdCell}</td>
+						<td class="qty">${row.qty || 0}</td>
+						<td>${row.partStatus || ''}</td>
+						<td>${row.comment || ''}</td>
+						<td class="${pickedClass}">${row.pickedUp || ''}</td>
+						<td class="money">${row.coreValue || 0}</td>
+						<td>${row.action ? `<button class="action-btn" onclick="undoPickup('${encodeURIComponent(row.uniqueId || row.ticketNo || '')}')">${row.action}</button>` : ''}</td>
+						<td>${row.cxAddress || ''}</td>
+						<td>${row.transit || ''}</td>
+					</tr>
+				`);
+			});
+
+			if (totalRow) {
+				html.push(`
+					<tr class="group-row">
+						<td>TOTAL</td>
+						<td colspan="7"></td>
+						<td class="qty">${totalParts}</td>
+						<td colspan="6">${totalRow.comment || ''}</td>
+						<td></td>
+					</tr>
+				`);
+			}
+
+			body.innerHTML = html.join('');
+			queuePickupScrollbarRefresh();
+		}
+
+		function undoPickup(key) {
+			const decoded = decodeURIComponent(key || '');
+			const row = pickupRows.find((item) => (item.uniqueId || item.ticketNo || '') === decoded);
+			if (!row) return;
+			row.pickedUp = '';
+			if (row.transit === 'Used') {
+				row.transit = 'In-transit';
+			}
+			renderRows();
+		}
+
+		function markPickupByScan() {
+			const scanned = document.getElementById('scanInput').value.trim();
+			if (!scanned) return;
+			const pickupAction = document.getElementById('pickupAction').value;
+			const row = pickupRows.find((item) => String(item.uniqueId || '').toLowerCase() === scanned.toLowerCase());
+			if (!row) return;
+			row.pickedUp = pickupAction === 'In-Transit' ? 'IN-TRANSIT' : 'PICKED UP';
+			row.transit = pickupAction === 'In-Transit' ? 'In-transit' : (row.transit || 'In-transit');
+			document.getElementById('scanInput').value = '';
+			renderRows();
+		}
+
+		function addPart() {
+			const invoice = document.getElementById('scanInput').value.trim();
+			if (!invoice) return;
+			pickupRows.push({
+				technician: document.getElementById('technicianFilter').value.trim(),
+				ticketNo: invoice,
+				repairStatus: 'OP-Ready for Service',
+				partNo: '',
+				description: 'Added manually',
+				poNo: invoice,
+				eta: '',
+				uniqueId: '',
+				qty: 1,
+				partStatus: 'Part Ready',
+				comment: '',
+				pickedUp: '',
+				coreValue: 0,
+				action: '',
+				cxAddress: '',
+				transit: 'N/A',
+				location: document.getElementById('locationFilter').value
+			});
+			document.getElementById('scanInput').value = '';
+			renderRows();
+		}
+
+		function queuePickupScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncPickupScrollbarWidth();
+					updatePickupScrollbarVisibility();
+				});
+			});
+		}
+
+		function syncPickupScrollbarWidth() {
+			const tableWrap = document.getElementById('pickupTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.pickup-table') : null;
+			const floatingBar = document.getElementById('pickupFloatingScrollbar');
+			const floatingInner = document.getElementById('pickupFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(0, Math.floor(rect.left)) + 'px';
+			floatingBar.style.bottom = '0px';
+		}
+
+		function updatePickupScrollbarVisibility() {
+			const tableWrap = document.getElementById('pickupTableWrap');
+			const floatingBar = document.getElementById('pickupFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const viewportBottom = window.innerHeight;
+			const scrollbarInViewport = rect.bottom <= viewportBottom && rect.bottom >= 0;
+			const tableIntersectsViewport = rect.top < viewportBottom && rect.bottom > 0;
+			const shouldShow = hasHorizontalOverflow && tableIntersectsViewport && !scrollbarInViewport;
+
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncPickupScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupPickupScrollbars() {
+			const floatingBar = document.getElementById('pickupFloatingScrollbar');
+			const tableWrap = document.getElementById('pickupTableWrap');
+			if (!floatingBar || !tableWrap) return;
+
+			if (floatingBar.parentElement !== document.body) {
+				document.body.appendChild(floatingBar);
+			}
+
+			let syncingFromFloating = false;
+			let syncingFromBottom = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromBottom) {
+					syncingFromBottom = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromBottom = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updatePickupScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncPickupScrollbarWidth();
+				updatePickupScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updatePickupScrollbarVisibility, { passive: true });
+			queuePickupScrollbarRefresh();
+		}
+
+		document.addEventListener('DOMContentLoaded', function () {
+			if (!loadUserInfo()) return;
+			applyPrettyUrl('partPickup');
+			setupPickupScrollbars();
+			renderRows();
+
+			const modalOverlay = document.getElementById('partInfoModalOverlay');
+			const modalClose = document.getElementById('partInfoCloseBtn');
+			document.querySelectorAll('.part-info-tab-btn').forEach(function (btn) {
+				btn.addEventListener('click', function () {
+					switchPartInfoTab(btn.getAttribute('data-part-tab'));
+				});
+			});
+			if (modalClose) {
+				modalClose.addEventListener('click', closePartInfoModal);
+			}
+			if (modalOverlay) {
+				modalOverlay.addEventListener('click', function (event) {
+					if (event.target === modalOverlay) {
+						closePartInfoModal();
+					}
+				});
+			}
+			document.addEventListener('keydown', function (event) {
+				if (event.key === 'Escape') {
+					closePartInfoModal();
+				}
+			});
+
+			document.getElementById('pickupAction').addEventListener('change', renderRows);
+			document.getElementById('addPartBtn').addEventListener('click', addPart);
+
+			document.getElementById('scanInput').addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					markPickupByScan();
+				}
+			});
+
+			[
+				'locationFilter',
+				'technicianFilter',
+				'showNotPicked',
+				'showPicked',
+				'sortBy',
+				'resultSearch'
+			].forEach(function (id) {
+				document.getElementById(id).addEventListener('input', renderRows);
+				document.getElementById(id).addEventListener('change', renderRows);
+			});
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

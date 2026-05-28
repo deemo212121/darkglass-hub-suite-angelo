@@ -1,0 +1,844 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Daily Collection - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.collection-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+			min-width: 0;
+		}
+
+		.collection-panel + .collection-panel {
+			margin-top: 0.9rem;
+		}
+
+		.collection-panel.is-hidden {
+			display: none;
+		}
+
+		html,
+		body {
+			height: 100%;
+		}
+
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(180px, 1fr));
+			gap: 0.75rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.status-tech-row {
+			display: flex;
+			align-items: center;
+			gap: 0.9rem;
+			flex-wrap: nowrap;
+			margin-bottom: 0.7rem;
+		}
+
+		.status-tech-row label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			font-size: 0.84rem;
+			font-weight: 600;
+			color: #dbeafe;
+			white-space: nowrap;
+		}
+
+		.status-tech-row .technician-inline {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.45rem;
+			white-space: nowrap;
+		}
+
+		.status-tech-row .technician-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 200px;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 700;
+			color: #e5e7eb;
+		}
+
+		.field input,
+		.field select {
+			width: 100%;
+			padding: 0.55rem 0.65rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.85rem;
+		}
+
+		.date-range {
+			display: grid;
+			grid-template-columns: 1fr auto 1fr;
+			gap: 0.35rem;
+			align-items: center;
+		}
+
+		.date-range span {
+			text-align: center;
+			font-weight: 700;
+		}
+
+		.action-row,
+		.filter-row,
+		.meta-row {
+			display: flex;
+			align-items: center;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+			margin-bottom: 0.7rem;
+		}
+
+		.action-row {
+			justify-content: flex-end;
+		}
+
+		.collection-status-row {
+			display: flex;
+			align-items: center;
+			gap: 0.9rem;
+			flex-wrap: wrap;
+			justify-content: space-between;
+			margin-bottom: 0.7rem;
+		}
+
+		.collection-status-row .status-left,
+		.collection-status-row .status-right {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.9rem;
+			flex-wrap: wrap;
+		}
+
+		.collection-status-row .status-left label,
+		.collection-status-row .status-right label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			font-size: 0.84rem;
+			font-weight: 600;
+			color: #dbeafe;
+			white-space: nowrap;
+		}
+
+		.collection-status-row .status-right {
+			margin-left: auto;
+		}
+
+		.collection-status-row .action-row {
+			margin-bottom: 0;
+		}
+
+		.action-row button,
+		.filter-row button,
+		.action-btn {
+			padding: 0.45rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(147, 197, 253, 0.7);
+			background: rgba(37, 99, 235, 0.88);
+			color: #fff;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.collect-btn {
+			padding: 0.5rem 0.9rem;
+			border-radius: 8px;
+			border: 1px solid rgba(147, 197, 253, 0.8);
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			color: #fff;
+			font-weight: 800;
+			letter-spacing: 0.02em;
+			cursor: pointer;
+			box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28);
+			transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+		}
+
+		.collect-btn:hover {
+			transform: translateY(-1px);
+			box-shadow: 0 10px 20px rgba(37, 99, 235, 0.36);
+			background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+		}
+
+		.collect-btn:active {
+			transform: translateY(0);
+			box-shadow: 0 4px 10px rgba(37, 99, 235, 0.24);
+		}
+
+		.filter-row label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			font-size: 0.84rem;
+			font-weight: 600;
+		}
+
+		.filter-row-right {
+			margin-left: auto;
+			display: inline-flex;
+			align-items: center;
+			gap: 0.6rem;
+		}
+
+		.collection-search-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.8rem;
+			margin-bottom: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.collection-search-row .search-left,
+		.collection-search-row .search-right {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+		}
+
+		.collection-search-row .search-left {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.45rem;
+		}
+
+		.collection-search-row .search-left-top {
+			display: inline-flex;
+			align-items: flex-end;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+		}
+
+		.scan-input {
+			min-width: 260px;
+		}
+
+		.search-input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 220px;
+		}
+
+		.record-count {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.ticket-link {
+			color: #111827;
+			font-weight: 700;
+			text-decoration: none;
+		}
+
+		.ticket-link:hover {
+			color: #111827;
+			text-decoration: underline;
+		}
+
+		.ticket-count {
+			color: #0b3b8f;
+			background: #bfdbfe;
+			border: 1px solid #60a5fa;
+			border-radius: 999px;
+			padding: 0.05rem 0.4rem;
+			font-weight: 700;
+			font-size: 0.78rem;
+			margin-left: 0.35rem;
+			cursor: help;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			background: #fff;
+			max-width: 100%;
+			min-width: 0;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 0;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: 100vw;
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.collection-table {
+			width: 100%;
+			min-width: 2300px;
+			border-collapse: collapse;
+			font-size: 0.75rem;
+			color: #111827;
+		}
+
+		.collection-table th,
+		.collection-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.42rem;
+			vertical-align: top;
+			white-space: nowrap;
+		}
+
+		.collection-table th {
+			background: #1f2937;
+			color: #f9fafb;
+			text-align: left;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.collection-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.money,
+		.num {
+			text-align: right;
+		}
+
+		.comment-cell {
+			max-width: 270px;
+			white-space: normal;
+			line-height: 1.25;
+		}
+
+		@media (max-width: 1000px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.collection-status-row {
+				justify-content: flex-start;
+			}
+		}
+
+		@media (max-width: 700px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		#contact {
+			margin-top: auto;
+			flex-shrink: 0;
+			width: 100%;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Daily Collection</h2>
+		</div>
+
+		<div class="collection-panel">
+			<div class="controls-grid">
+				<div class="field">
+					<label for="locationFilter">Location*</label>
+					<select id="locationFilter">
+						<option value="" selected>Select Location</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Atlanta">Atlanta</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="technicianFilter">Technician</label>
+					<input id="technicianFilter" type="text" placeholder="Technician">
+				</div>
+				<div class="field">
+					<label>Pickup Date</label>
+					<div class="date-range">
+						<input id="pickupDateFrom" type="date" value="2026-05-14">
+						<span>~</span>
+						<input id="pickupDateTo" type="date" value="2026-05-14">
+					</div>
+				</div>
+			</div>
+
+			<div class="collection-status-row">
+				<div class="status-left">
+					<label><input id="showNotCollected" type="checkbox" checked> Not-Collected</label>
+					<label><input id="showCollected" type="checkbox" checked> Collected</label>
+				</div>
+				<div class="status-right">
+					<div class="action-row">
+						<button type="button" id="saveBtn">Save</button>
+						<button type="button" id="printBtn">Print</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div id="collectionResultsPanel" class="collection-panel is-hidden">
+			<div class="collection-search-row">
+				<div class="search-left">
+					<div class="search-left-top">
+						<div class="field" style="max-width: 180px;">
+							<label for="ticketSearch">Ticket No</label>
+							<input id="ticketSearch" type="text" placeholder="Ticket No">
+						</div>
+						<div class="field" style="max-width: 180px;">
+							<label for="collectTypeFilter">Collect Type</label>
+							<select id="collectTypeFilter">
+								<option value="">All</option>
+								<option value="Used">Used</option>
+								<option value="Restock">Restock</option>
+							</select>
+						</div>
+					</div>
+					<div class="record-count"><span id="recordCount">0</span> records found</div>
+				</div>
+				<div class="search-right">
+					<input id="resultSearch" class="search-input" type="text" placeholder="search in result">
+					<input id="scanUniqueId" class="search-input scan-input" type="text" placeholder="Scan Parts Here (Unique ID)">
+					<button type="button" id="collectBtn" class="collect-btn">Collect</button>
+				</div>
+			</div>
+
+			<div id="collectionTableWrap" class="table-wrap">
+				<table class="collection-table">
+					<thead>
+						<tr>
+							<th>Technician</th>
+							<th>Picked up</th>
+							<th>Collected</th>
+							<th>PartNo</th>
+							<th>Description</th>
+							<th>Unique ID</th>
+							<th>Core Value</th>
+							<th>Ticket #</th>
+							<th>Repair Status</th>
+							<th>Qty</th>
+							<th>Used Qty</th>
+							<th>Restock Qty</th>
+							<th>Collect Type</th>
+							<th>Lot #</th>
+							<th>Comment</th>
+							<th>Actions</th>
+							<th>PartStatusDesc</th>
+						</tr>
+					</thead>
+					<tbody id="collectionBody"></tbody>
+				</table>
+			</div>
+
+			<div id="collectionFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="collectionFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="../../routes.js"></script>
+	<script>
+		const PART_COLLECTION_STORAGE_KEY = 'partDailyCollectionRows';
+		const defaultRows = [
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: '140173679014', description: 'SWITCH', uniqueId: '069749074130-1-140173679014', coreValue: 0, ticketNo: '069749074130', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: 'If used during repair requires return: No Shipping Provider: FedEx', partStatusDesc: 'Used' },
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: '5304522966', description: 'RANGE INFINITE SWITCH', uniqueId: '069749074130-2-5304522966', coreValue: 0, ticketNo: '069749074130', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: 'If used during repair requires return: No Shipping Provider: FedEx', partStatusDesc: 'Used' },
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: '5304533520', description: 'DUAL ELEMENT', uniqueId: '069749074130-3-5304533520', coreValue: 0, ticketNo: '069749074130', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: 'If used during repair requires return: No Shipping Provider: FedEx', partStatusDesc: 'Used' },
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: '5304537946', description: 'CROWN,BURNER,XTRA LARGE', uniqueId: '73766675-1', coreValue: 0, ticketNo: '1007010900-10', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: '', partStatusDesc: 'Claimed' },
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: '5304537947', description: 'CROWN,BURNER,LARGE', uniqueId: '73766675-3', coreValue: 0, ticketNo: '1007010900-10', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: '', partStatusDesc: 'Claimed' },
+			{ technician: 'Jordan Koetsier', pickedUp: '05/14/2026', collected: '05/15/2026', partNo: 'GRLP5', description: 'LP CONVERSION KIT', uniqueId: '73766675-5', coreValue: 0, ticketNo: '1007010900-10', repairStatus: 'CL-Claimed', qty: 1, usedQty: 1, restockQty: 0, collectType: 'Used', lotNo: '', comment: '', partStatusDesc: 'Claimed' }
+		];
+
+		let collectionRows = [];
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return false;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return true;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function formatMoney(value) {
+			return '$' + Number(value || 0).toFixed(2);
+		}
+
+		function loadRows() {
+			const raw = localStorage.getItem(PART_COLLECTION_STORAGE_KEY);
+			if (!raw) {
+				collectionRows = defaultRows.map((row) => ({ ...row }));
+				return;
+			}
+			try {
+				const parsed = JSON.parse(raw);
+				collectionRows = Array.isArray(parsed) && parsed.length ? parsed : defaultRows.map((row) => ({ ...row }));
+			} catch (_err) {
+				collectionRows = defaultRows.map((row) => ({ ...row }));
+			}
+		}
+
+		function saveRows() {
+			localStorage.setItem(PART_COLLECTION_STORAGE_KEY, JSON.stringify(collectionRows));
+		}
+
+		function rowBlob(row) {
+			return [
+				row.technician,
+				row.pickedUp,
+				row.collected,
+				row.partNo,
+				row.description,
+				row.uniqueId,
+				row.ticketNo,
+				row.repairStatus,
+				row.collectType,
+				row.comment,
+				row.partStatusDesc
+			].join(' ').toLowerCase();
+		}
+
+		function getFilteredRows() {
+			const location = document.getElementById('locationFilter').value.trim();
+			const technician = document.getElementById('technicianFilter').value.trim().toLowerCase();
+			const ticket = document.getElementById('ticketSearch').value.trim().toLowerCase();
+			const collectType = document.getElementById('collectTypeFilter').value.trim().toLowerCase();
+			const search = document.getElementById('resultSearch').value.trim().toLowerCase();
+			const showCollected = document.getElementById('showCollected').checked;
+			const showNotCollected = document.getElementById('showNotCollected').checked;
+			const hasRealLocationData = collectionRows.some((row) => String(row.location || '').trim().length > 0);
+
+			if (!location) return [];
+
+			return collectionRows.filter((row) => {
+				if (hasRealLocationData) {
+					const rowLocation = String(row.location || '').trim();
+					if (rowLocation !== location) return false;
+				}
+				const isCollected = String(row.collected || '').trim() !== '';
+				if (!showCollected && isCollected) return false;
+				if (!showNotCollected && !isCollected) return false;
+				if (technician && !String(row.technician || '').toLowerCase().includes(technician)) return false;
+				if (ticket && !String(row.ticketNo || '').toLowerCase().includes(ticket)) return false;
+				if (collectType && String(row.collectType || '').toLowerCase() !== collectType) return false;
+				if (search && !rowBlob(row).includes(search)) return false;
+				return true;
+			});
+		}
+
+		function getTicketTransactionCounts(selectedLocation) {
+			const counts = Object.create(null);
+			if (!selectedLocation) return counts;
+
+			const hasRealLocationData = collectionRows.some((row) => String(row.location || '').trim().length > 0);
+			collectionRows.forEach((row) => {
+				if (hasRealLocationData) {
+					const rowLocation = String(row.location || '').trim();
+					if (rowLocation !== selectedLocation) return;
+				}
+				const ticketNo = String(row.ticketNo || '').trim();
+				if (!ticketNo) return;
+				counts[ticketNo] = (counts[ticketNo] || 0) + 1;
+			});
+
+			return counts;
+		}
+
+		function renderTable() {
+			const recordCountEl = document.getElementById('recordCount');
+			const collectionBodyEl = document.getElementById('collectionBody');
+			if (!recordCountEl || !collectionBodyEl) return;
+
+			const selectedLocation = document.getElementById('locationFilter').value.trim();
+			const resultsPanel = document.getElementById('collectionResultsPanel');
+			const floatingBar = document.getElementById('collectionFloatingScrollbar');
+			if (resultsPanel) {
+				resultsPanel.classList.toggle('is-hidden', !selectedLocation);
+			}
+			if (floatingBar && !selectedLocation) {
+				floatingBar.classList.remove('is-visible');
+			}
+
+			if (!selectedLocation) {
+				recordCountEl.textContent = '0';
+				collectionBodyEl.innerHTML = '';
+				queueCollectionScrollbarRefresh();
+				return;
+			}
+
+			const rows = getFilteredRows();
+			const ticketCounts = getTicketTransactionCounts(selectedLocation);
+			recordCountEl.textContent = rows.length;
+			collectionBodyEl.innerHTML = rows.map((row) => {
+				const encodedId = encodeURIComponent(row.uniqueId || '');
+				const ticketNo = String(row.ticketNo || '');
+				const ticketCount = ticketCounts[ticketNo] || 0;
+				const ticketCell = ticketNo
+					? `<a class="ticket-link" href="../Tickets/ticket_details.html?ticket=${encodeURIComponent(ticketNo)}" target="_blank" rel="noopener noreferrer">${ticketNo}</a><span class="ticket-count" title="Number of repair transactions for this ticket" aria-label="Number of repair transactions for this ticket">(${ticketCount})</span>`
+					: '';
+				return `
+					<tr>
+						<td>${row.technician || ''}</td>
+						<td>${row.pickedUp || ''}</td>
+						<td>${row.collected || ''}</td>
+						<td>${row.partNo || ''}</td>
+						<td>${row.description || ''}</td>
+						<td>${row.uniqueId || ''}</td>
+						<td class="money">${formatMoney(row.coreValue)}</td>
+						<td>${ticketCell}</td>
+						<td>${row.repairStatus || ''}</td>
+						<td class="num">${row.qty || 0}</td>
+						<td class="num">${row.usedQty || 0}</td>
+						<td class="num">${row.restockQty || 0}</td>
+						<td>${row.collectType || ''}</td>
+						<td>${row.lotNo || ''}</td>
+						<td class="comment-cell">${row.comment || ''}</td>
+						<td><button class="action-btn" type="button" onclick="revertRow('${encodedId}')">Revert</button></td>
+						<td>${row.partStatusDesc || ''}</td>
+					</tr>
+				`;
+			}).join('');
+
+			queueCollectionScrollbarRefresh();
+		}
+
+		function queueCollectionScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncCollectionScrollbarWidth();
+					updateCollectionScrollbarVisibility();
+				});
+			});
+		}
+
+		function syncCollectionScrollbarWidth() {
+			const tableWrap = document.getElementById('collectionTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.collection-table') : null;
+			const floatingBar = document.getElementById('collectionFloatingScrollbar');
+			const floatingInner = document.getElementById('collectionFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(0, Math.floor(rect.left)) + 'px';
+			floatingBar.style.bottom = '0px';
+		}
+
+		function updateCollectionScrollbarVisibility() {
+			const tableWrap = document.getElementById('collectionTableWrap');
+			const floatingBar = document.getElementById('collectionFloatingScrollbar');
+			const resultsPanel = document.getElementById('collectionResultsPanel');
+			const selectedLocation = document.getElementById('locationFilter') ? document.getElementById('locationFilter').value.trim() : '';
+			if (!tableWrap || !floatingBar) return;
+			if (!selectedLocation || !resultsPanel || resultsPanel.classList.contains('is-hidden')) {
+				floatingBar.classList.remove('is-visible');
+				return;
+			}
+
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const viewportBottom = window.innerHeight;
+			const scrollbarInViewport = rect.bottom <= viewportBottom && rect.bottom >= 0;
+			const tableIntersectsViewport = rect.top < viewportBottom && rect.bottom > 0;
+			const shouldShow = hasHorizontalOverflow && tableIntersectsViewport && !scrollbarInViewport;
+
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncCollectionScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupCollectionScrollbars() {
+			const floatingBar = document.getElementById('collectionFloatingScrollbar');
+			const tableWrap = document.getElementById('collectionTableWrap');
+			if (!floatingBar || !tableWrap) return;
+
+			if (floatingBar.parentElement !== document.body) {
+				document.body.appendChild(floatingBar);
+			}
+
+			let syncingFromFloating = false;
+			let syncingFromBottom = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromBottom) {
+					syncingFromBottom = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromBottom = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateCollectionScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncCollectionScrollbarWidth();
+				updateCollectionScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateCollectionScrollbarVisibility, { passive: true });
+			if (document.fonts && document.fonts.ready) {
+				document.fonts.ready.then(queueCollectionScrollbarRefresh);
+			}
+			queueCollectionScrollbarRefresh();
+		}
+
+		function collectByScan() {
+			const uniqueId = document.getElementById('scanUniqueId').value.trim();
+			if (!uniqueId) return;
+			const row = collectionRows.find((item) => String(item.uniqueId || '').toLowerCase() === uniqueId.toLowerCase());
+			if (!row) return;
+			row.collected = '05/15/2026';
+			row.collectType = row.collectType || 'Used';
+			saveRows();
+			renderTable();
+			document.getElementById('scanUniqueId').value = '';
+		}
+
+		function revertRow(encodedUniqueId) {
+			const uniqueId = decodeURIComponent(encodedUniqueId || '');
+			const row = collectionRows.find((item) => (item.uniqueId || '') === uniqueId);
+			if (!row) return;
+			row.collected = '';
+			row.collectType = '';
+			saveRows();
+			renderTable();
+		}
+
+		document.addEventListener('DOMContentLoaded', function () {
+			if (!loadUserInfo()) return;
+			applyPrettyUrl('partCollection');
+			loadRows();
+			setupCollectionScrollbars();
+			renderTable();
+
+			document.getElementById('saveBtn').addEventListener('click', saveRows);
+			document.getElementById('printBtn').addEventListener('click', function () {
+				window.print();
+			});
+			document.getElementById('collectBtn').addEventListener('click', collectByScan);
+
+			[
+				'locationFilter',
+				'technicianFilter',
+				'ticketSearch',
+				'collectTypeFilter',
+				'showCollected',
+				'showNotCollected',
+				'resultSearch'
+			].forEach(function (id) {
+				document.getElementById(id).addEventListener('input', renderTable);
+				document.getElementById(id).addEventListener('change', renderTable);
+			});
+
+			setInterval(renderTable, 5000);
+
+			document.getElementById('scanUniqueId').addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					collectByScan();
+				}
+			});
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

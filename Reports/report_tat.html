@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Turnaround Time Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../config.js"></script>
+	<style>
+		/* ── TAT Report Panel ── */
+		.tat-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.tat-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1.2rem;
+			align-items: center;
+			padding: 1.25rem 1.25rem 0 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-row {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		/* ── Buttons ── */
+		.filter-btn {
+			padding: 0.35rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.filter-btn:hover,
+		.filter-btn.active {
+			background: rgba(96, 165, 250, 0.2);
+			border-color: #60a5fa;
+			color: #e0e7ff;
+		}
+
+		/* ── Checkboxes ── */
+		.checkbox-group {
+			display: flex;
+			gap: 1rem;
+			flex-wrap: wrap;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+			cursor: pointer;
+			user-select: none;
+			color: #e2e8f0;
+			font-size: 0.85rem;
+			font-weight: 500;
+		}
+
+		.checkbox-label input[type="checkbox"] {
+			width: 16px;
+			height: 16px;
+			cursor: pointer;
+			accent-color: #3b82f6;
+		}
+
+		.checkbox-label:hover input[type="checkbox"] {
+			accent-color: #60a5fa;
+		}
+
+		/* ── Date inputs ── */
+		.date-input {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+		}
+
+		.date-input:focus {
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.date-sep {
+			color: #64748b;
+			font-size: 0.8rem;
+		}
+
+		/* ── Select dropdown ── */
+		.tat-select {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+			cursor: pointer;
+		}
+
+		.tat-select:focus {
+			border-color: #60a5fa;
+		}
+
+		.tat-select option {
+			background: #1e293b;
+			color: #e2e8f0;
+		}
+
+		/* ── Search ── */
+		.tat-search-box {
+			flex: 1;
+			min-width: 200px;
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.tat-search-input {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+			flex: 1;
+		}
+
+		.tat-search-input:focus {
+			border-color: #60a5fa;
+		}
+
+		.tat-search-input::placeholder {
+			color: #64748b;
+		}
+
+		/* ── Table container ── */
+		.tat-table-container {
+			flex: 1;
+			overflow-x: auto;
+			overflow-y: auto;
+			padding: 1.25rem;
+			background: rgba(15, 23, 42, 0.5);
+		}
+
+		.tat-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.75rem;
+		}
+
+		.tat-table thead {
+			position: sticky;
+			top: 0;
+			background: rgba(30, 41, 59, 0.95);
+			z-index: 2;
+		}
+
+		.tat-table th {
+			padding: 0.4rem 0.5rem;
+			text-align: center;
+			font-weight: 700;
+			color: #94a3b8;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			white-space: nowrap;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+			min-width: 40px;
+		}
+
+		.tat-table td {
+			padding: 0.4rem 0.5rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			color: #cbd5e1;
+			text-align: center;
+		}
+
+		.tat-location-cell {
+			text-align: left;
+			font-weight: 600;
+			color: #e2e8f0;
+			white-space: nowrap;
+			min-width: 100px;
+		}
+
+		.tat-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.tat-value {
+			text-align: center;
+			font-weight: 500;
+			min-width: 35px;
+		}
+
+		.tat-value.high {
+			color: #22c55e;
+		}
+
+		.tat-value.medium {
+			color: #fbbf24;
+		}
+
+		.tat-value.low {
+			color: #ef4444;
+		}
+
+		.tat-value.empty {
+			color: #64748b;
+		}
+
+		/* ── Info bar ── */
+		.tat-info {
+			padding: 0.65rem 1.25rem;
+			background: rgba(30, 41, 59, 0.6);
+			border-top: 1px solid rgba(255, 255, 255, 0.05);
+			font-size: 0.8rem;
+			color: #cbd5e1;
+		}
+
+		.tat-info strong {
+			color: #e0e7ff;
+		}
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+	<script src="../../supabase.min.js"></script>
+	<script src="../../js/app-config.js"></script>
+	<script src="../../js/app-data.js"></script>
+	<script src="../../js/report-builders.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		/* ── Auth ── */
+		const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+		const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+
+		/* ── Render app ── */
+		const appContainer = document.getElementById('appContainer');
+		appContainer.innerHTML = `
+			<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+				<div class="dashboard-header">
+					<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+						<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+						<h1 class="dashboard-title">Admin Hub Solutions</h1>
+					</a>
+					<div class="user-info">
+						<div>
+							<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+							<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+						</div>
+						<button class="logout-btn" onclick="logout()">Logout</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="module-page" style="display: flex; flex-direction: column;">
+				<div class="module-header">
+					<button class="back-btn" onclick="goToDashboard()">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="19" y1="12" x2="5" y2="12"></line>
+							<polyline points="12 19 5 12 12 5"></polyline>
+						</svg>
+						Back to Dashboard
+					</button>
+					<h2 style="color: white; margin: 0;">Turnaround Time Report</h2>
+				</div>
+
+				<div class="tat-panel">
+					<!-- Controls bar -->
+					<div class="tat-controls">
+						<!-- Data Level -->
+						<div class="control-group">
+							<span class="control-label">Data Level</span>
+							<div class="control-row checkbox-group">
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="location" value="location" checked>
+									<span>Location</span>
+								</label>
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="technician" value="technician">
+									<span>Technician</span>
+								</label>
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="branch" value="branch">
+									<span>Branch</span>
+								</label>
+							</div>
+						</div>
+
+						<!-- Warranty Type -->
+						<div class="control-group">
+							<span class="control-label">Warranty Type</span>
+							<div class="control-row">
+								<button class="filter-btn active" data-warranty="all">All</button>
+								<button class="filter-btn" data-warranty="in">In-warranty</button>
+								<button class="filter-btn" data-warranty="out">Out-of-warranty</button>
+							</div>
+						</div>
+
+						<!-- Date Range -->
+						<div class="control-group">
+							<span class="control-label">Dates</span>
+							<div class="control-row" style="gap: 0.25rem;">
+								<select class="tat-select" id="dateRangeSelect">
+									<option value="monthly">Monthly</option>
+									<option value="weekly">Weekly</option>
+									<option value="daily" selected>Daily</option>
+								</select>
+								<span class="date-sep">~</span>
+								<input type="date" class="date-input" id="startDate" value="2026-05-11">
+								<span class="date-sep">~</span>
+								<input type="date" class="date-input" id="endDate" value="2026-05-18">
+							</div>
+						</div>
+					</div>
+
+					<!-- Search box -->
+					<div style="padding: 0.65rem 1.25rem; background: rgba(30, 41, 59, 0.4); border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+						<div class="tat-search-box">
+							<input type="text" class="tat-search-input" id="searchInput" placeholder="search in result">
+						</div>
+					</div>
+
+					<!-- Table -->
+					<div class="tat-table-container table-scroll-wrapper">
+						<table class="tat-table" id="tatTable">
+							<thead id="tatTableHead"></thead>
+							<tbody id="tatTableBody"></tbody>
+						</table>
+					</div>
+
+					<!-- Info bar -->
+					<div class="tat-info" id="tatInfo">
+						<p id="tatDataSource" style="margin: 0 0 0.35rem 0; font-size: 0.85rem; color: #93c5fd;"></p>
+						<strong id="recordCount">0</strong> records found
+					</div>
+				</div>
+			</div>
+		</div>
+		`;
+
+		/* ── User display ── */
+		document.getElementById('userDisplayName').textContent = userEmail || '';
+		document.getElementById('companyDisplayId').textContent = userCompanyId || '';
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		/* ── TAT Data with Branch, Location, Technician ── */
+		const TAT_DATA_SAMPLE = [
+			// *SERVICE POWER
+			{ branch: '*SERVICE POWER', location: 'Destin', technician: 'Garrett McCarley', data: { '05/11': [13.0, 18.0, 13.0], '05/12': [18.0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '*SERVICE POWER', location: 'Huntsville', technician: 'Jordan Stanley', data: { '05/11': [13.0, 22.0, 32.0], '05/12': [13.0, 22.0, 32.0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '*SERVICE POWER', location: 'New Orleans', technician: 'Cooper Shaffett', data: { '05/11': [5.0, 13.0, 5.0], '05/12': [13.0, 22.0, 5.0], '05/13': [13.0, 22.0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '*SERVICE POWER', location: 'Savannah', technician: 'Lance Novak', data: { '05/11': [10.0, 14.0, 10.0], '05/12': [14.0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '*SERVICE POWER', location: 'Wilmington', technician: 'Josh Malloch', data: { '05/11': [1.0, 1.0, 15.0], '05/12': [1.0, 15.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			// *SPPN
+			{ branch: '*SPPN', location: 'Cape Girardeau', technician: 'Matthew Nichols', data: { '05/11': [11.0, 11.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '4930403', location: 'Birmingham', technician: 'Zonate Grant', data: { '05/11': [1.0, 1.0, 8.0], '05/12': [1.0, 8.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '4930403', location: 'Huntsville', technician: 'Jordan Stanley', data: { '05/11': [2.0, 1.0, 2.0], '05/12': [1.0, 15.0, 2.0], '05/13': [1.0, 15.0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '6488757', location: 'Atlanta', technician: 'Kevin Khaiphanliane', data: { '05/11': [1.0, 1.0, 7.0], '05/12': [1.0, 7.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: '6488757', location: 'St. Louis', technician: 'Derious Nichols', data: { '05/11': [0, 0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			// AIG WARRANTY
+			{ branch: 'AIG WARRANTY', location: 'Atlanta', technician: 'Abel Severino', data: { '05/11': [2.0, 7.0, 2.0], '05/12': [7.0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Atlanta', technician: 'Abraham Im', data: { '05/11': [1.0, 1.0, 7.0], '05/12': [1.0, 7.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Atlanta', technician: 'Gerrell Berg', data: { '05/11': [14.0, 14.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Atlanta', technician: 'Joshua Silva', data: { '05/11': [2.0, 6.0, 2.0], '05/12': [2.0, 2.0, 1.0], '05/13': [2.0, 4.0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Columbus', technician: 'A\'Dejaun Tyson', data: { '05/11': [2.0, 2.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Dallas', technician: 'Lashamus Dowell', data: { '05/11': [1.0, 1.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Huntsville', technician: 'Jordan Stanley', data: { '05/11': [8.0, 8.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Jacksonville', technician: 'Bradley Hollowell', data: { '05/11': [3.0, 5.0, 3.0], '05/12': [5.0, 11.0, 3.0], '05/13': [5.0, 11.0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Jacksonville', technician: 'Zakarya Moradi', data: { '05/11': [1.0, 7.0, 1.0], '05/12': [7.0, 10.0, 1.0], '05/13': [7.0, 10.0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Nashville', technician: 'John Godfrey', data: { '05/11': [6.0, 18.0, 0.5], '05/12': [4.0, 11.0, 1.0], '05/13': [2.0, 7.0, 0.3], '05/14': [4.0, 12.0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Nashville', technician: 'Justin Robertson', data: { '05/11': [2.0, 2.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Nashville', technician: 'Steven Kurvink', data: { '05/11': [2.0, 2.0, 7.0], '05/12': [3.0, 6.0, 3.0], '05/13': [6.0, 13.0, 1.5], '05/14': [4.0, 10.0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Raleigh', technician: 'Alexxis Henry', data: { '05/11': [3.0, 3.0, 8.0], '05/12': [3.0, 8.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Raleigh', technician: 'Marc James', data: { '05/11': [3.0, 3.0, 5.0], '05/12': [3.0, 5.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'San Antonio', technician: 'Erick Guzman Juarez', data: { '05/11': [3.0, 3.0, 0], '05/12': [0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'Savannah', technician: 'Lance Novak', data: { '05/11': [3.0, 21.0, 3.0], '05/12': [21.0, 0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } },
+			{ branch: 'AIG WARRANTY', location: 'St. Louis', technician: 'Derious Nichols', data: { '05/11': [1.0, 1.0, 11.0], '05/12': [1.0, 11.0, 0], '05/13': [0, 0, 0], '05/14': [0, 0, 0], '05/15': [0, 0, 0], '05/16': [0, 0, 0], '05/17': [0, 0, 0], '05/18': [0, 0, 0] } }
+		];
+
+		let TAT_DATA = TAT_DATA_SAMPLE.slice();
+		let tatDataSourceLabel = 'sample';
+
+		async function hydrateTatData() {
+			const companyId = localStorage.getItem('userCompanyId') || '';
+			let msg = 'Built-in sample data.';
+			if (window.AdminHubData && window.AdminHubReportBuilders) {
+				try {
+					const snap = await AdminHubData.fetchJsonSetting(companyId, 'tat_report_snapshot');
+					if (Array.isArray(snap?.tatData) && snap.tatData.length) {
+						TAT_DATA = snap.tatData;
+						tatDataSourceLabel = 'snapshot';
+						msg = `Loaded ${TAT_DATA.length} rows from saved TAT snapshot (${snap.syncedAt || 'unknown'}).`;
+					} else {
+						const tickets = await AdminHubData.loadTicketsForReports(companyId);
+						const built = AdminHubReportBuilders.buildTatDataFromTickets(tickets);
+						if (built.length) {
+							TAT_DATA = built;
+							tatDataSourceLabel = 'tickets';
+							msg = `Built ${TAT_DATA.length} rows from ${tickets.length} synced tickets.`;
+						}
+					}
+				} catch (error) {
+					msg = `Using sample data: ${error.message}`;
+				}
+			}
+			const el = document.getElementById('tatDataSource');
+			if (el) el.textContent = msg;
+		}
+
+		/* ── Filter state ── */
+		let filterState = {
+			location: true,
+			technician: false,
+			branch: false,
+			warranty: 'all',
+			searchTerm: '',
+			dateRange: 'daily'
+		};
+
+		/* ── Date utilities ── */
+		function getWeekNumber(date) {
+			const d = new Date(date);
+			d.setHours(0, 0, 0, 0);
+			d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+			const yearStart = new Date(d.getFullYear(), 0, 1);
+			const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+			return `W${weekNum}`;
+		}
+
+		function getMonthLabel(dateStr) {
+			const [month, day] = dateStr.split('/');
+			const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+			return monthNames[parseInt(month)];
+		}
+
+		function getDateRange(startStr, endStr, rangeType) {
+			const dates = ['05/11', '05/12', '05/13', '05/14', '05/15', '05/16', '05/17', '05/18'];
+			
+			if (rangeType === 'daily') {
+				return dates;
+			} else if (rangeType === 'weekly') {
+				// Group by week
+				const weeks = {};
+				dates.forEach(date => {
+					const week = getWeekNumber(date);
+					if (!weeks[week]) weeks[week] = [];
+					weeks[week].push(date);
+				});
+				return Object.keys(weeks).sort();
+			} else if (rangeType === 'monthly') {
+				// Group by month
+				const months = {};
+				dates.forEach(date => {
+					const month = getMonthLabel(date);
+					if (!months[month]) months[month] = [];
+					months[month].push(date);
+				});
+				return Object.keys(months);
+			}
+			return dates;
+		}
+
+		function aggregateDateData(data, dates, rangeType) {
+			if (rangeType === 'daily') {
+				return data;
+			}
+
+			const aggregated = {};
+			
+			if (rangeType === 'weekly') {
+				dates.forEach(dateKey => {
+					const week = getWeekNumber(dateKey);
+					if (!aggregated[week]) aggregated[week] = [0, 0, 0];
+					const vals = data[dateKey] || [0, 0, 0];
+					aggregated[week][0] += vals[0];
+					aggregated[week][1] += vals[1];
+					aggregated[week][2] += vals[2];
+				});
+			} else if (rangeType === 'monthly') {
+				dates.forEach(dateKey => {
+					const month = getMonthLabel(dateKey);
+					if (!aggregated[month]) aggregated[month] = [0, 0, 0];
+					const vals = data[dateKey] || [0, 0, 0];
+					aggregated[month][0] += vals[0];
+					aggregated[month][1] += vals[1];
+					aggregated[month][2] += vals[2];
+				});
+			}
+
+			return aggregated;
+		}
+
+		/* ── Get filtered data based on selections ── */
+		function getFilteredData() {
+			const selectedLevels = [];
+			if (filterState.location) selectedLevels.push('location');
+			if (filterState.technician) selectedLevels.push('technician');
+			if (filterState.branch) selectedLevels.push('branch');
+
+			// If no levels selected, default to location
+			if (selectedLevels.length === 0) {
+				selectedLevels.push('location');
+				filterState.location = true;
+			}
+
+			// Group data by selected dimensions
+			const grouped = {};
+			
+			TAT_DATA.forEach(record => {
+				// Build composite key based on selected levels
+				const keyParts = [];
+				if (filterState.location) keyParts.push(record.location);
+				if (filterState.technician) keyParts.push(record.technician);
+				if (filterState.branch) keyParts.push(record.branch);
+				
+				const key = keyParts.join(' | ');
+				
+				if (!grouped[key]) {
+					grouped[key] = {
+						location: record.location,
+						technician: record.technician,
+						branch: record.branch,
+						data: {}
+					};
+				}
+				
+				// Aggregate data for this key
+				Object.keys(record.data).forEach(date => {
+					if (!grouped[key].data[date]) {
+						grouped[key].data[date] = [0, 0, 0];
+					}
+					const vals = record.data[date];
+					grouped[key].data[date][0] += vals[0];
+					grouped[key].data[date][1] += vals[1];
+					grouped[key].data[date][2] += vals[2];
+				});
+			});
+
+			return Object.values(grouped);
+		}
+
+		/* ── Render table header with 3 sub-columns per date ── */
+		function renderTableHeader() {
+			const allDates = ['05/11', '05/12', '05/13', '05/14', '05/15', '05/16', '05/17', '05/18'];
+			const dates = getDateRange('05/11', '05/18', filterState.dateRange);
+			const thead = document.getElementById('tatTableHead');
+			
+			// Build header label based on selected dimensions
+			let headerLabel = 'Location';
+			if (filterState.technician) headerLabel += ' / Technician';
+			if (filterState.branch) headerLabel += ' / Branch';
+			
+			// First row: Location + Date headers
+			let headerRow1 = '<tr>';
+			headerRow1 += `<th rowspan="2">${headerLabel}</th>`;
+			dates.forEach(date => {
+				headerRow1 += `<th colspan="3">${date}</th>`;
+			});
+			headerRow1 += '</tr>';
+			
+			// Second row: Sub-column headers
+			let headerRow2 = '<tr>';
+			dates.forEach(date => {
+				headerRow2 += '<th>Sche-<br>duled</th>';
+				headerRow2 += '<th>Part<br>Ordered</th>';
+				headerRow2 += '<th>Comp-<br>leted</th>';
+			});
+			headerRow2 += '</tr>';
+			
+			thead.innerHTML = headerRow1 + headerRow2;
+		}
+
+		/* ── Render table body ── */
+		function renderTable() {
+			const tbody = document.getElementById('tatTableBody');
+			const allDates = ['05/11', '05/12', '05/13', '05/14', '05/15', '05/16', '05/17', '05/18'];
+			const dates = getDateRange('05/11', '05/18', filterState.dateRange);
+			
+			tbody.innerHTML = '';
+			
+			const filteredData = getFilteredData();
+			let visibleCount = 0;
+			
+			filteredData.forEach(row => {
+				// Build display name based on selected dimensions
+				let displayName = row.location;
+				if (filterState.technician) displayName += ` / ${row.technician}`;
+				if (filterState.branch) displayName += ` / ${row.branch}`;
+				
+				// Apply search filter
+				if (filterState.searchTerm && !displayName.toLowerCase().includes(filterState.searchTerm.toLowerCase())) {
+					return;
+				}
+				
+				visibleCount++;
+				const tr = document.createElement('tr');
+				
+				// Name cell
+				const nameCell = document.createElement('td');
+				nameCell.className = 'tat-location-cell';
+				nameCell.textContent = displayName;
+				tr.appendChild(nameCell);
+				
+				// Aggregate data based on date range
+				const aggregatedData = aggregateDateData(row.data, allDates, filterState.dateRange);
+				
+				// Data cells for each date
+				dates.forEach(dateKey => {
+					const values = aggregatedData[dateKey] || [0, 0, 0];
+					
+					values.forEach(val => {
+						const td = document.createElement('td');
+						td.className = 'tat-value';
+						
+						// Color coding based on value
+						if (val === 0) {
+							td.className += ' empty';
+							td.textContent = '-';
+						} else if (val < 5) {
+							td.className += ' high';
+							td.textContent = val.toFixed(1);
+						} else if (val < 10) {
+							td.className += ' medium';
+							td.textContent = val.toFixed(1);
+						} else {
+							td.className += ' low';
+							td.textContent = val.toFixed(1);
+						}
+						
+						tr.appendChild(td);
+					});
+				});
+				
+				tbody.appendChild(tr);
+			});
+			
+			// Update record count
+			document.getElementById('recordCount').textContent = visibleCount;
+		}
+
+		/* ── Event listeners for filters ── */
+		document.querySelectorAll('.data-level-checkbox').forEach(checkbox => {
+			checkbox.addEventListener('change', (e) => {
+				filterState[e.target.value] = e.target.checked;
+				renderTableHeader();
+				renderTable();
+			});
+		});
+
+		document.querySelectorAll('[data-warranty]').forEach(btn => {
+			btn.addEventListener('click', (e) => {
+				document.querySelectorAll('[data-warranty]').forEach(b => b.classList.remove('active'));
+				e.target.classList.add('active');
+				filterState.warranty = e.target.dataset.warranty;
+				renderTable();
+			});
+		});
+
+		document.getElementById('searchInput').addEventListener('input', (e) => {
+			filterState.searchTerm = e.target.value;
+			renderTable();
+		});
+
+		document.getElementById('dateRangeSelect').addEventListener('change', (e) => {
+			filterState.dateRange = e.target.value;
+			renderTableHeader();
+			renderTable();
+		});
+
+		/* ── Initialize ── */
+		async function initializeTatPage() {
+			await hydrateTatData();
+			renderTableHeader();
+			renderTable();
+		}
+
+		initializeTatPage();
+	</script>
+	<footer id="contact"></footer>
+</body>
+</html>

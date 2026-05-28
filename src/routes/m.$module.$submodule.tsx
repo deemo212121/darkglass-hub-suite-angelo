@@ -1,11 +1,18 @@
 import { createFileRoute, Link, Navigate, notFound } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
+import { Footer } from "@/components/Footer";
+import { OverallStatusPage } from "@/components/OverallStatusPage";
+import { RepairForecastPage } from "@/components/RepairForecastPage";
+import { DailyActivityPage } from "@/components/DailyActivityPage";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
 import { PartReturnStatusPage } from "@/components/PartReturnStatus";
+import { ClaimsPipeline } from "@/components/ClaimsPipeline";
+import { TicketsMap } from "@/components/TicketsMap";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
+  ssr: false,
   head: ({ params }) => ({
     meta: [{
       title: `${getSubModule(params.module, params.submodule)?.title ?? "Sub-module"} — Admin Hub Solutions`,
@@ -37,16 +44,27 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 });
 
 function SubModule() {
-  const { ready, email } = useAuth();
+  const { ready, email, companyId } = useAuth();
   const { mod, sub } = Route.useLoaderData();
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" />;
   return (
     <>
       <AppHeader />
-      {sub.custom === "part-return-status"
+      {sub.slug === "overall-status"
+        ? <OverallStatusPage mod={mod} sub={sub} companyId={companyId} />
+        : sub.slug === "repair-forecast"
+        ? <RepairForecastPage mod={mod} sub={sub} companyId={companyId} />
+        : sub.slug === "daily-activity"
+        ? <DailyActivityPage mod={mod} sub={sub} companyId={companyId} />
+        : sub.custom === "part-return-status"
         ? <PartReturnStatusPage />
+        : sub.custom === "claims-pipeline"
+        ? <ClaimsPipeline mod={mod} sub={sub} />
+        : sub.custom === "work-map"
+        ? <TicketsMap mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
+      <Footer />
     </>
   );
 }

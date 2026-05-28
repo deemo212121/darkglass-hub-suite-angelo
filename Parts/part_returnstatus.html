@@ -1,0 +1,1358 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Return Status - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			backdrop-filter: blur(10px);
+			color: #fff;
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: repeat(4, minmax(160px, 1fr));
+			grid-auto-rows: max-content;
+			gap: 0.75rem;
+			margin-bottom: 1rem;
+		}
+
+		.controls-grid .field:nth-child(5) {
+			grid-column: 2;
+		}
+
+		.controls-grid .field:nth-child(6) {
+			grid-column: 3;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.3rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 700;
+			color: #e5e7eb;
+		}
+
+		.field input,
+		.field select {
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.controls-row {
+			display: flex;
+			align-items: flex-end;
+			justify-content: space-between;
+			gap: 0.75rem;
+			flex-wrap: wrap;
+		}
+
+		.left-controls,
+		.right-controls {
+			display: flex;
+			gap: 0.6rem;
+			align-items: flex-end;
+			flex-wrap: wrap;
+		}
+
+		.date-range {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.date-range input {
+			flex: 1;
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.date-range span {
+			color: #e5e7eb;
+		}
+
+		.btn {
+			height: 34px;
+			padding: 0 0.85rem;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			border-radius: 6px;
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.78rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.btn.primary {
+			background: #1d4ed8;
+			border-color: #1d4ed8;
+		}
+
+		.tab-buttons {
+			display: flex;
+			gap: 0.5rem;
+			margin-top: 1.5rem;
+			margin-bottom: 1rem;
+			padding: 0;
+		}
+
+		.tab-btn {
+			padding: 0.6rem 1.2rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(255, 255, 255, 0.05);
+			color: #fff;
+			border-radius: 6px;
+			cursor: pointer;
+			font-size: 0.85rem;
+			font-weight: 600;
+			transition: all 0.2s ease;
+		}
+
+		.tab-btn.active {
+			background: #1d4ed8;
+			border-color: #1d4ed8;
+		}
+
+		.tab-content {
+			display: none;
+		}
+
+		.tab-content.active {
+			display: block;
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.75rem;
+			margin-bottom: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.result-info {
+			font-size: 0.8rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.search-input {
+			width: 260px;
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.table-wrap {
+			overflow: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 10px;
+			background: #fff;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 0;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: 100vw;
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.return-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.74rem;
+			color: #111827;
+		}
+
+		.return-table th,
+		.return-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.4rem;
+			white-space: nowrap;
+			vertical-align: top;
+		}
+
+		.return-table th {
+			background: #1f2937;
+			color: #f8fafc;
+			text-align: left;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.return-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.return-table tbody tr.totals-row {
+			background: #e5e7eb;
+			font-weight: 700;
+		}
+
+		.return-table tbody tr.no-data td {
+			text-align: center;
+			color: #64748b;
+		}
+
+		.return-table tbody tr.no-data td {
+			text-align: center;
+			color: #64748b;
+		}
+
+		.money {
+			text-align: right;
+		}
+
+		.qty {
+			text-align: center;
+		}
+
+		.table-input,
+		.table-select {
+			width: 100%;
+			padding: 0.25rem 0.35rem;
+			border: 1px solid rgba(255, 255, 255, 0.3);
+			border-radius: 4px;
+			background: rgba(17, 24, 39, 0.8);
+			color: #111827;
+			font-size: 0.72rem;
+		}
+
+		.table-select {
+			color: #111827;
+			background: rgba(255, 255, 255, 0.9);
+		}
+
+		.table-input {
+			background: rgba(255, 255, 255, 0.9);
+		}
+
+		.clickable-part-no {
+			color: #1d4ed8;
+			text-decoration: underline;
+			cursor: pointer;
+			font-weight: 500;
+		}
+
+		.clickable-part-no:hover {
+			color: #1e40af;
+		}
+
+		.part-info-modal-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(15, 23, 42, 0.45);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 2200;
+			padding: 1rem;
+		}
+
+		.part-info-modal-overlay.is-open {
+			display: flex;
+		}
+
+		.part-info-modal {
+			width: min(980px, calc(100vw - 2rem));
+			max-height: calc(100vh - 2rem);
+			overflow: auto;
+			background: #ffffff;
+			border: 1px solid #d1d5db;
+			border-radius: 12px;
+			box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3);
+		}
+
+		.part-info-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1rem;
+			padding: 0.9rem 1rem;
+			border-bottom: 1px solid #e5e7eb;
+			background: #f8fafc;
+		}
+
+		.part-info-title {
+			font-size: 1rem;
+			font-weight: 700;
+			color: #111827;
+		}
+
+		.part-info-close {
+			border: 1px solid #cbd5e1;
+			background: #ffffff;
+			color: #111827;
+			border-radius: 8px;
+			padding: 0.32rem 0.6rem;
+			cursor: pointer;
+		}
+
+		.part-info-tabs {
+			display: flex;
+			gap: 0.45rem;
+			padding: 0.75rem 1rem 0;
+		}
+
+		.part-info-tab-btn {
+			border: 1px solid #cbd5e1;
+			background: #ffffff;
+			color: #1f2937;
+			padding: 0.4rem 0.85rem;
+			border-radius: 999px;
+			cursor: pointer;
+			font-size: 0.82rem;
+			font-weight: 600;
+		}
+
+		.part-info-tab-btn.active {
+			background: #0f172a;
+			color: #ffffff;
+			border-color: #0f172a;
+		}
+
+		.part-info-body {
+			padding: 0.8rem 1rem 1rem;
+		}
+
+		.part-info-pane {
+			display: none;
+		}
+
+		.part-info-pane.active {
+			display: block;
+		}
+
+		.part-info-matrix {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.79rem;
+			margin-bottom: 0.85rem;
+		}
+
+		.part-info-matrix th,
+		.part-info-matrix td {
+			border: 1px solid #d1d5db;
+			padding: 0.45rem;
+			text-align: left;
+		}
+
+		.part-info-matrix thead th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.part-info-section-title {
+			font-size: 0.82rem;
+			font-weight: 700;
+			color: #111827;
+			margin: 0.2rem 0 0.4rem;
+		}
+
+		.part-info-section-subtitle {
+			font-size: 0.76rem;
+			color: #4b5563;
+			margin-bottom: 0.35rem;
+		}
+
+		.part-info-empty {
+			padding: 0.7rem;
+			border: 1px dashed #d1d5db;
+			border-radius: 8px;
+			font-size: 0.78rem;
+			color: #6b7280;
+		}
+
+		#partInfoModalOverlay .part-info-modal,
+		#partInfoModalOverlay .part-info-modal th,
+		#partInfoModalOverlay .part-info-modal td,
+		#partInfoModalOverlay .part-info-title,
+		#partInfoModalOverlay .part-info-close,
+		#partInfoModalOverlay .part-info-section-title,
+		#partInfoModalOverlay .part-info-section-subtitle,
+		#partInfoModalOverlay .part-info-empty,
+		#partInfoModalOverlay .part-info-tab-btn {
+			color: #111827 !important;
+		}
+
+		#partInfoModalOverlay .part-info-tab-btn.active {
+			color: #ffffff !important;
+		}
+
+		@media (max-width: 1100px) {
+			.controls-grid {
+				grid-template-columns: repeat(2, minmax(160px, 1fr));
+			}
+		}
+
+		@media (max-width: 700px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.search-input {
+				width: 100%;
+			}
+
+			.tab-buttons {
+				padding: 0;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Return Status</h2>
+		</div>
+
+		<div class="panel">
+				<div class="controls-grid">
+					<div class="field">
+						<label for="locationFilter">Location</label>
+						<select id="locationFilter">
+							<option value="">All</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Asheville">Asheville</option>
+							<option value="Birmingham">Birmingham</option>
+						</select>
+					</div>
+					<div class="field">
+						<label for="vendorFilter">Vendor*</label>
+						<select id="vendorFilter">
+							<option value="">All</option>
+							<option value="Encompass">Encompass</option>
+							<option value="Marcone">Marcone</option>
+							<option value="OW">OW</option>
+						</select>
+					</div>
+					<div class="field">
+						<label for="accountFilter">Account</label>
+						<select id="accountFilter">
+							<option value="">All</option>
+							<option value="SB">SB</option>
+							<option value="Midea-104268">Midea-104268</option>
+							<option value="SB-Miele">SB-Miele</option>
+							<option value="SB-1276506820">SB-1276506820</option>
+							<option value="M2-162468">M2-162468</option>
+							<option value="MCN-162468">MCN-162468</option>
+							<option value="MCN-162468bp">MCN-162468bp</option>
+							<option value="encompass">encompass</option>
+							<option value="Encompass-Birmingham">Encompass-Birmingham</option>
+							<option value="LG">LG</option>
+							<option value="SS">SS</option>
+							<option value="SS-6488757">SS-6488757</option>
+							<option value="SP">SP</option>
+							<option value="NSA GSLEE">NSA GSLEE</option>
+							<option value="NSA MEMPHIS">NSA MEMPHIS</option>
+							<option value="SP1">SP1</option>
+						</select>
+					</div>
+					<div class="field">
+						<label for="shipToFilter">Ship To (SS)</label>
+						<input id="shipToFilter" type="text" placeholder="Ship To">
+					</div>
+
+					<div class="field" style="grid-column: 1;">
+						<label for="fromDate">Return Date</label>
+						<div class="date-range">
+							<input id="fromDate" type="date" value="2026-05-08">
+							<span>~</span>
+							<input id="toDate" type="date" value="2026-05-15">
+						</div>
+					</div>
+					<div class="field" style="grid-column: 2;">
+						<label for="raFilter">RA #</label>
+						<input id="raFilter" type="text" placeholder="RA #">
+					</div>
+					<div class="field" style="grid-column: 3;">
+						<label for="uniqueIdFilter">Unique ID</label>
+						<input id="uniqueIdFilter" type="text" placeholder="Unique ID">
+					</div>
+				</div>
+			</div>
+
+			<div class="tab-buttons">
+				<button class="tab-btn active" data-tab="regular">Regular Part Return</button>
+				<button class="tab-btn" data-tab="core">Core Part Return</button>
+			</div>
+
+			<div id="regularTab" class="tab-content active">
+				<div class="panel">
+					<div class="meta-row">
+						<div id="recordInfo" class="result-info">25 records found</div>
+						<input id="resultSearch" class="search-input" type="text" placeholder="search in result">
+					</div>
+
+					<div id="regularTableWrap" class="table-wrap">
+						<table class="return-table">
+							<thead>
+								<tr>
+									<th>RA No</th>
+									<th>PO No</th>
+									<th>Unique ID</th>
+									<th>Part No</th>
+									<th>Description</th>
+									<th>Return Type</th>
+									<th>Return Reason</th>
+									<th>Status</th>
+									<th>Return Date</th>
+									<th>Returned by</th>
+									<th>Qty</th>
+									<th>Unit Price</th>
+									<th>Core Value</th>
+									<th>Return Label</th>
+								</tr>
+							</thead>
+							<tbody id="regularBody"></tbody>
+						</table>
+					</div>
+
+					<div id="regularFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+						<div id="regularFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+					</div>
+				</div>
+			</div>
+
+			<div id="coreTab" class="tab-content">
+				<div class="panel">
+					<div class="meta-row">
+						<div id="coreRecordInfo" class="result-info">0 records found</div>
+						<input id="coreResultSearch" class="search-input" type="text" placeholder="search in result">
+					</div>
+
+					<div id="coreTableWrap" class="table-wrap">
+						<table class="return-table">
+							<thead>
+								<tr>
+									<th>RA No</th>
+									<th>PO No</th>
+									<th>Unique ID</th>
+									<th>Part No</th>
+									<th>Description</th>
+									<th>Return Type</th>
+									<th>Return Reason</th>
+									<th>Status</th>
+									<th>Return Date</th>
+									<th>Returned by</th>
+									<th>Qty</th>
+									<th>Unit Price</th>
+									<th>Core Value</th>
+									<th>Return Label</th>
+								</tr>
+							</thead>
+							<tbody id="coreBody"></tbody>
+						</table>
+					</div>
+
+					<div id="coreFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+						<div id="coreFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<div id="partInfoModalOverlay" class="part-info-modal-overlay" aria-hidden="true">
+		<div class="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
+			<div class="part-info-header">
+				<div id="partInfoTitle" class="part-info-title">Part Info. of ()</div>
+				<button id="partInfoCloseBtn" type="button" class="part-info-close">Close</button>
+			</div>
+
+			<div class="part-info-tabs" role="tablist" aria-label="Part vendor tabs">
+				<button type="button" class="part-info-tab-btn" data-part-tab="encompass" aria-selected="false">Encompass</button>
+				<button type="button" class="part-info-tab-btn active" data-part-tab="marcone" aria-selected="true">Marcone</button>
+			</div>
+
+			<div class="part-info-body">
+				<div class="part-info-pane" data-part-pane="encompass">
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>Field</th>
+								<th>Value</th>
+								<th>Field</th>
+								<th>Value</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoFieldBodyEncompass"></tbody>
+					</table>
+					<div class="part-info-section-title">Availability (Encompass)</div>
+					<div class="part-info-empty">No availability records found.</div>
+				</div>
+
+				<div class="part-info-pane active" data-part-pane="marcone">
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>Field</th>
+								<th>Value</th>
+								<th>Field</th>
+								<th>Value</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoFieldBodyMarcone"></tbody>
+					</table>
+
+					<div class="part-info-section-title">Availability (Marcone)</div>
+					<div id="partInfoAvailabilityCount" class="part-info-section-subtitle">0 records found</div>
+					<table class="part-info-matrix">
+						<thead>
+							<tr>
+								<th>ID</th>
+								<th>W/H Name</th>
+								<th>Available Qty</th>
+							</tr>
+						</thead>
+						<tbody id="partInfoAvailabilityBody"></tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script>
+		const regularReturnData = [
+			{ raNo: '1-66384', poNo: '3846784E1-ATL-1', uniqueId: '1-304196-0526-2', partNo: 'WH01X24180', description: 'DRIVE BELT', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-08', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 10.90, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SB' },
+			{ raNo: '1-67075', poNo: 'SA-3268869-ATL-1', uniqueId: '1-304225-0526-1', partNo: 'WR60X10307', description: 'MOTOR DC EVAP FAN ASM', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-08', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 105.95, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'Midea-104268' },
+			{ raNo: '1-67076', poNo: 'SA-3268869-ATL-1', uniqueId: '1-304225-0526-2', partNo: 'WR60X30922', description: 'EVAPORATOR FAN BLADE', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-08', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 50.25, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SB-Miele' },
+			{ raNo: '1-74783', poNo: 'SA-2998427-ATL', uniqueId: '1-219418-0426-1', partNo: 'WD22X33499', description: 'LOWER SPRAY ARM', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 12.28, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'M2-162468' },
+			{ raNo: '1-74784', poNo: 'SA-2998427-ATL', uniqueId: '1-219418-0426-2', partNo: 'WD05X35098', description: 'HEATING ELEMENT', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 19.82, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'MCN-162468' },
+			{ raNo: '1-75075', poNo: 'SA-3213002-ATL', uniqueId: '1-293399-0526-2', partNo: 'WR55X46805', description: 'MAIN CONTROL BOARD', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 179.99, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'LG' },
+			{ raNo: '1-75076', poNo: 'SA-3213002-ATL', uniqueId: '1-293399-0526-3', partNo: 'WR02X13684', description: 'FILTER MANIFOLD', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 30.65, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SS' },
+			{ raNo: '1-75251', poNo: '4044292471BL-ATL', uniqueId: '1-279226-0526-1', partNo: '5304530853', description: 'MULLION ASSEMBLY,FLIPPER,GRAY', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 57.89, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SP' },
+			{ raNo: '1-75633', poNo: 'SA-3064113-ATL', uniqueId: '27-070576-0526-1', partNo: 'WB28X28781', description: 'IGNITER GLOWBAR', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 54.07, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'NSA GSLEE' },
+			{ raNo: '1-75643', poNo: 'SA-3223622-ATL', uniqueId: '1-288579-0526-4', partNo: 'WB26X25118', description: 'MOTOR PSC CONV', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 86.42, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'NSA MEMPHIS' },
+			{ raNo: '1-75738', poNo: 'SA-3064113-ATL', uniqueId: '1-280669-0526-1', partNo: 'WB13X25633', description: 'OVEN IGNITOR', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 59.74, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SP1' },
+			{ raNo: '1-75754', poNo: 'SA-3223622-ATL', uniqueId: '1-288579-0526-3', partNo: 'WB20T10024', description: 'PROBE THERMISTOR', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 34.63, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'encompass' },
+			{ raNo: '1-80720', poNo: 'SA-3309888-ATL', uniqueId: '1-304594-0526-1', partNo: 'WH08X37859', description: 'LID LOCK & HARNESS', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 59.99, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'Encompass-Birmingham' },
+			{ raNo: '1-80723', poNo: 'SA-3309888-ATL', uniqueId: '1-304594-0526-2', partNo: 'WH01X37858', description: 'LID LOCK STRIKER', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 11.61, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SB-1276506820' },
+			{ raNo: '1-80893', poNo: 'SA-3323058-ATL-1', uniqueId: '1-316467-0526-1', partNo: 'WR57X26303', description: 'VALVE & GUARD ASM', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 71.51, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'MCN-162468bp' },
+			{ raNo: '1-80896', poNo: 'SA-3323058-ATL-1', uniqueId: '1-316467-0526-2', partNo: 'WR57X25054', description: 'WATER VALVE', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 94.58, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SS-6488757' },
+			{ raNo: '1-80955', poNo: 'SA-3178355-ATL', uniqueId: '1-297866-0526-1', partNo: 'WH22X37840', description: 'MAIN CONTROL BOARD', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 123.99, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SB' },
+			{ raNo: '1-80979', poNo: 'SA-2831637-ATL-3', uniqueId: '1-280670-0526-1', partNo: 'WE04X25280', description: 'TIMER', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-12', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 62.47, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'Midea-104268' },
+			{ raNo: '1-99391', poNo: '26000304417DF-ATL-1', uniqueId: '1-918675-0326-1', partNo: 'DC47-00015A', description: 'THERMOSTAT', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-15', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 17.89, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'LG' },
+			{ raNo: '1-99398', poNo: '26000304417DF-ATL-1', uniqueId: '1-918675-0326-2', partNo: 'DC47-00016A', description: 'THERMOSTAT', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-15', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 9.21, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SS' },
+			{ raNo: '1-99410', poNo: '26000304417DF-ATL-1', uniqueId: '1-918675-0326-3', partNo: 'DC32-00007A', description: 'THERMISTOR', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-15', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 14.06, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SP' },
+			{ raNo: '1-99417', poNo: '26000304417DF-ATL-1', uniqueId: '1-918675-0326-4', partNo: '6602-001655', description: 'BELT-TIMING GEAR', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-15', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 27.22, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'encompass' },
+			{ raNo: '25-04840', poNo: 'SA-3064113-ATL', uniqueId: '25-163412-0526-1', partNo: 'WB28X37607', description: 'KIT LP CONVERSION ASM', returnType: 'RETURN', returnReason: '', status: 'NOT RECEIVED', returnDate: '2026-05-11', returnedBy: 'Calvin Nguyen', qty: 1, unitPrice: 14.02, coreValue: 0.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'Encompass-Birmingham' }
+		];
+
+		const coreReturnData = [
+			{ raNo: '10-87898', poNo: '26000611691DF-ATL', uniqueId: '1-300469-0526-2', partNo: 'W11629911', description: 'ACU FINAL ASSEMBLY - KDTM404K*1 2021 DASH', returnType: 'CORE RETURN', returnReason: '', status: 'CORE RETURN', returnDate: '2026-05-11', returnedBy: '', qty: 1, unitPrice: 0.00, coreValue: 60.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'SB' },
+			{ raNo: '10-88672', poNo: '26000631296DF-ATL-1', uniqueId: '1-327763-0526-1', partNo: 'W11608056', description: 'CONTROL BOARD WTW4950HW3 WTW4955HW3', returnType: 'CORE RETURN', returnReason: '', status: 'CORE RETURN', returnDate: '2026-05-14', returnedBy: '', qty: 1, unitPrice: 0.00, coreValue: 60.00, returnLabel: '', location: 'Atlanta', vendor: 'Encompass', account: 'Midea-104268' }
+		];
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function formatMoney(value) {
+			const num = Number(value || 0);
+			return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+		}
+
+		function renderRegularReturns() {
+			const tbody = document.getElementById('regularBody');
+			const search = document.getElementById('resultSearch').value.trim().toLowerCase();
+			const location = document.getElementById('locationFilter').value.trim();
+			const vendor = document.getElementById('vendorFilter').value.trim();
+			const account = document.getElementById('accountFilter').value.trim();
+			const shipTo = document.getElementById('shipToFilter').value.trim().toLowerCase();
+			const raNo = document.getElementById('raFilter').value.trim().toLowerCase();
+			const uniqueId = document.getElementById('uniqueIdFilter').value.trim().toLowerCase();
+			const fromDate = document.getElementById('fromDate').value;
+			const toDate = document.getElementById('toDate').value;
+
+			let filtered = regularReturnData.slice();
+
+			if (location) {
+				filtered = filtered.filter(r => r.location === location);
+			}
+
+			if (vendor) {
+				filtered = filtered.filter(r => r.vendor === vendor);
+			}
+
+			if (account) {
+				filtered = filtered.filter(r => (r.account || '') === account);
+			}
+
+			if (shipTo) {
+				filtered = filtered.filter(r => (r.poNo || '').toLowerCase().includes(shipTo));
+			}
+
+			if (raNo) {
+				filtered = filtered.filter(r => (r.raNo || '').toLowerCase().includes(raNo));
+			}
+
+			if (uniqueId) {
+				filtered = filtered.filter(r => (r.uniqueId || '').toLowerCase().includes(uniqueId));
+			}
+
+			if (fromDate || toDate) {
+				filtered = filtered.filter(r => {
+					const rDate = new Date(r.returnDate);
+					if (fromDate && rDate < new Date(fromDate)) return false;
+					if (toDate && rDate > new Date(toDate)) return false;
+					return true;
+				});
+			}
+
+			if (search) {
+				filtered = filtered.filter(r => {
+					const blob = [r.raNo, r.poNo, r.uniqueId, r.partNo, r.description, r.status, r.returnReason].join(' ').toLowerCase();
+					return blob.includes(search);
+				});
+			}
+
+			document.getElementById('recordInfo').textContent = `${filtered.length} records found`;
+
+			if (!filtered.length) {
+				tbody.innerHTML = '<tr class="no-data"><td colspan="14">No records found</td></tr>';
+				return;
+			}
+
+			let totalUnitPrice = 0;
+			let totalCore = 0;
+
+			tbody.innerHTML = filtered.map((r, idx) => {
+				totalUnitPrice += r.unitPrice;
+				totalCore += r.coreValue;
+				return `
+					<tr>
+						<td>${r.raNo}</td>
+						<td>${r.poNo}</td>
+						<td>${r.uniqueId}</td>
+						<td><span class="clickable-part-no" onclick="openPartInfoModal('${encodeURIComponent(r.partNo)}')">${r.partNo}</span></td>
+						<td>${r.description}</td>
+						<td>${r.returnType}</td>
+						<td><input type="text" class="table-input" data-row="${idx}" data-field="returnReason" value="${r.returnReason || ''}" placeholder="Enter reason"></td>
+						<td><select class="table-select" data-row="${idx}" data-field="status"><option value="NOT RECEIVED" ${r.status === 'NOT RECEIVED' ? 'selected' : ''}>NOT RECEIVED</option><option value="RECEIVED" ${r.status === 'RECEIVED' ? 'selected' : ''}>RECEIVED</option><option value="PROCESSED" ${r.status === 'PROCESSED' ? 'selected' : ''}>PROCESSED</option><option value="DISPUTED" ${r.status === 'DISPUTED' ? 'selected' : ''}>DISPUTED</option></select></td>
+						<td>${r.returnDate}</td>
+						<td><input type="text" class="table-input" data-row="${idx}" data-field="returnedBy" value="${r.returnedBy || ''}" placeholder="Name"></td>
+						<td class="qty">${r.qty}</td>
+						<td class="money">$${formatMoney(r.unitPrice)}</td>
+						<td class="money">$${formatMoney(r.coreValue)}</td>
+						<td>${r.returnLabel || '-'}</td>
+					</tr>
+				`;
+			}).join('');
+
+			tbody.innerHTML += `
+				<tr class="totals-row">
+					<td colspan="11"></td>
+					<td class="money">$${formatMoney(totalUnitPrice)}</td>
+					<td class="money">$${formatMoney(totalCore)}</td>
+					<td></td>
+				</tr>
+			`;
+
+			// Attach listeners to editable fields
+			document.querySelectorAll('#regularBody .table-input, #regularBody .table-select').forEach(input => {
+				input.addEventListener('change', updateRegularField);
+				input.addEventListener('blur', updateRegularField);
+			});
+
+			queueRegularScrollbarRefresh();
+		}
+
+		function renderCoreReturns() {
+			const tbody = document.getElementById('coreBody');
+			const search = document.getElementById('coreResultSearch').value.trim().toLowerCase();
+			const location = document.getElementById('locationFilter').value.trim();
+			const vendor = document.getElementById('vendorFilter').value.trim();
+			const account = document.getElementById('accountFilter').value.trim();
+			const shipTo = document.getElementById('shipToFilter').value.trim().toLowerCase();
+			const raNo = document.getElementById('raFilter').value.trim().toLowerCase();
+			const uniqueId = document.getElementById('uniqueIdFilter').value.trim().toLowerCase();
+			const fromDate = document.getElementById('fromDate').value;
+			const toDate = document.getElementById('toDate').value;
+
+			let filtered = coreReturnData.slice();
+
+			if (location) {
+				filtered = filtered.filter(r => r.location === location);
+			}
+
+			if (vendor) {
+				filtered = filtered.filter(r => r.vendor === vendor);
+			}
+
+			if (account) {
+				filtered = filtered.filter(r => (r.account || '') === account);
+			}
+
+			if (shipTo) {
+				filtered = filtered.filter(r => (r.poNo || '').toLowerCase().includes(shipTo));
+			}
+
+			if (raNo) {
+				filtered = filtered.filter(r => (r.raNo || '').toLowerCase().includes(raNo));
+			}
+
+			if (uniqueId) {
+				filtered = filtered.filter(r => (r.uniqueId || '').toLowerCase().includes(uniqueId));
+			}
+
+			if (fromDate || toDate) {
+				filtered = filtered.filter(r => {
+					const rDate = new Date(r.returnDate);
+					if (fromDate && rDate < new Date(fromDate)) return false;
+					if (toDate && rDate > new Date(toDate)) return false;
+					return true;
+				});
+			}
+
+			if (search) {
+				filtered = filtered.filter(r => {
+					const blob = [r.raNo, r.poNo, r.uniqueId, r.partNo, r.description, r.status, r.returnReason].join(' ').toLowerCase();
+					return blob.includes(search);
+				});
+			}
+
+			document.getElementById('coreRecordInfo').textContent = `${filtered.length} records found`;
+
+			if (!filtered.length) {
+				tbody.innerHTML = '<tr class="no-data"><td colspan="14">No records found</td></tr>';
+				return;
+			}
+
+			let totalUnitPrice = 0;
+			let totalCore = 0;
+
+			tbody.innerHTML = filtered.map((r, idx) => {
+				totalUnitPrice += r.unitPrice;
+				totalCore += r.coreValue;
+				return `
+					<tr>
+						<td>${r.raNo}</td>
+						<td>${r.poNo}</td>
+						<td>${r.uniqueId}</td>
+						<td><span class="clickable-part-no" onclick="openPartInfoModal('${encodeURIComponent(r.partNo)}')">${r.partNo}</span></td>
+						<td>${r.description}</td>
+						<td>${r.returnType}</td>
+						<td><input type="text" class="table-input" data-row="${idx}" data-field="returnReason" value="${r.returnReason || ''}" placeholder="Enter reason"></td>
+						<td><select class="table-select" data-row="${idx}" data-field="status"><option value="NOT RECEIVED" ${r.status === 'NOT RECEIVED' ? 'selected' : ''}>NOT RECEIVED</option><option value="CORE RETURN" ${r.status === 'CORE RETURN' ? 'selected' : ''}>CORE RETURN</option><option value="RECEIVED" ${r.status === 'RECEIVED' ? 'selected' : ''}>RECEIVED</option><option value="PROCESSED" ${r.status === 'PROCESSED' ? 'selected' : ''}>PROCESSED</option><option value="DISPUTED" ${r.status === 'DISPUTED' ? 'selected' : ''}>DISPUTED</option></select></td>
+						<td>${r.returnDate}</td>
+						<td><input type="text" class="table-input" data-row="${idx}" data-field="returnedBy" value="${r.returnedBy || ''}" placeholder="Name"></td>
+						<td class="qty">${r.qty}</td>
+						<td class="money">$${formatMoney(r.unitPrice)}</td>
+						<td class="money">$${formatMoney(r.coreValue)}</td>
+						<td>${r.returnLabel || '-'}</td>
+					</tr>
+				`;
+			}).join('');
+
+			tbody.innerHTML += `
+				<tr class="totals-row">
+					<td colspan="11"></td>
+					<td class="money">$${formatMoney(totalUnitPrice)}</td>
+					<td class="money">$${formatMoney(totalCore)}</td>
+					<td></td>
+				</tr>
+			`;
+
+			// Attach listeners to editable fields
+			document.querySelectorAll('#coreBody .table-input, #coreBody .table-select').forEach(input => {
+				input.addEventListener('change', updateCoreField);
+				input.addEventListener('blur', updateCoreField);
+			});
+
+			queueCoreScrollbarRefresh();
+		}
+
+		function updateRegularField(e) {
+			const input = e.target;
+			const rowIdx = parseInt(input.getAttribute('data-row'), 10);
+			const field = input.getAttribute('data-field');
+			const value = input.value;
+
+			if (rowIdx >= 0 && rowIdx < regularReturnData.length) {
+				regularReturnData[rowIdx][field] = value;
+				saveReturnData();
+				renderRegularReturns();
+			}
+		}
+
+		function updateCoreField(e) {
+			const input = e.target;
+			const rowIdx = parseInt(input.getAttribute('data-row'), 10);
+			const field = input.getAttribute('data-field');
+			const value = input.value;
+
+			if (rowIdx >= 0 && rowIdx < coreReturnData.length) {
+				coreReturnData[rowIdx][field] = value;
+				saveReturnData();
+				renderCoreReturns();
+			}
+		}
+
+		function saveReturnData() {
+			localStorage.setItem('partReturnStatusData', JSON.stringify({
+				regular: regularReturnData,
+				core: coreReturnData
+			}));
+		}
+
+		function loadReturnData() {
+			const saved = localStorage.getItem('partReturnStatusData');
+			if (saved) {
+				try {
+					const data = JSON.parse(saved);
+					if (data.regular && Array.isArray(data.regular)) {
+						regularReturnData = data.regular;
+					}
+					if (data.core && Array.isArray(data.core)) {
+						coreReturnData = data.core;
+					}
+				} catch (e) {
+					console.error('Failed to load return data:', e);
+				}
+			}
+		}
+
+		const partInfoByPart = {
+			DEFAULT: {
+				rows: [
+					{ leftLabel: 'Make', leftValue: 'GEH', rightLabel: 'Part #', rightValue: '' },
+					{ leftLabel: 'Price', leftValue: '31.56', rightLabel: 'Dealer Price', rightValue: '42.83' },
+					{ leftLabel: 'Retail Price', leftValue: '0', rightLabel: 'List Price', rightValue: '66.84' },
+					{ leftLabel: 'Core Price', leftValue: '', rightLabel: 'Core?', rightValue: '' },
+					{ leftLabel: 'Description', leftValue: 'DOOR LOCK', rightLabel: 'Discontinue?', rightValue: 'false' },
+					{ leftLabel: 'Drop Shop only?', leftValue: '', rightLabel: 'Hazmat?', rightValue: '' },
+					{ leftLabel: 'Refrigerant?', leftValue: 'false', rightLabel: 'Oversize?', rightValue: 'false' }
+				],
+				availability: [
+					{ id: '301', name: 'LOUISVILLE', qty: 100 },
+					{ id: '1230', name: 'CHARLOTTE', qty: 100 },
+					{ id: '1260', name: 'ALBANY', qty: 100 },
+					{ id: '7200', name: 'FRESNO', qty: 89 },
+					{ id: '7910', name: 'APPLIANCE DENVER', qty: 76 },
+					{ id: '1010', name: 'BYRON CENTER', qty: 73 },
+					{ id: '601', name: 'DENTON', qty: 51 },
+					{ id: '5300', name: 'JACKSONVILLE', qty: 41 },
+					{ id: '7930', name: 'VANCOUVER WA', qty: 39 },
+					{ id: '401', name: 'PEORIA', qty: 36 },
+					{ id: '201', name: 'APPLIANCE LENEXA', qty: 0 },
+					{ id: '302', name: 'LOUISVILLE 2', qty: 0 },
+					{ id: '1280', name: 'GLEN MILLS', qty: 0 }
+				]
+			},
+			WE04X25194: {
+				rows: [
+					{ leftLabel: 'Make', leftValue: 'GEH', rightLabel: 'Part #', rightValue: '' },
+					{ leftLabel: 'Price', leftValue: '13.18', rightLabel: 'Dealer Price', rightValue: '19.46' },
+					{ leftLabel: 'Retail Price', leftValue: '0', rightLabel: 'List Price', rightValue: '31.86' },
+					{ leftLabel: 'Core Price', leftValue: '', rightLabel: 'Core?', rightValue: '' },
+					{ leftLabel: 'Description', leftValue: 'DRYER THERMOSTAT', rightLabel: 'Discontinue?', rightValue: 'false' },
+					{ leftLabel: 'Drop Shop only?', leftValue: '', rightLabel: 'Hazmat?', rightValue: '' },
+					{ leftLabel: 'Refrigerant?', leftValue: 'false', rightLabel: 'Oversize?', rightValue: 'false' }
+				],
+				availability: [
+					{ id: '1230', name: 'CHARLOTTE', qty: 39 },
+					{ id: '7930', name: 'VANCOUVER WA', qty: 29 },
+					{ id: '1010', name: 'BYRON CENTER', qty: 20 },
+					{ id: '1260', name: 'ALBANY', qty: 11 },
+					{ id: '201', name: 'APPLIANCE LENEXA', qty: 9 },
+					{ id: '301', name: 'LOUISVILLE', qty: 9 },
+					{ id: '7200', name: 'FRESNO', qty: 9 },
+					{ id: '7910', name: 'APPLIANCE DENVER', qty: 6 },
+					{ id: '401', name: 'PEORIA', qty: 1 },
+					{ id: '601', name: 'DENTON', qty: 1 },
+					{ id: '302', name: 'LOUISVILLE 2', qty: 0 },
+					{ id: '1280', name: 'GLEN MILLS', qty: 0 },
+					{ id: '5300', name: 'JACKSONVILLE', qty: 0 }
+				]
+			}
+		};
+
+		function getPartInfoData(partNo) {
+			return partInfoByPart[partNo] || partInfoByPart.DEFAULT;
+		}
+
+		function renderPartInfoFields(bodyId, partNo) {
+			const tbody = document.getElementById(bodyId);
+			if (!tbody) return;
+			const data = getPartInfoData(partNo);
+			const rows = data.rows || [];
+			tbody.innerHTML = rows.map(r => `
+				<tr>
+					<td>${r.leftLabel}</td>
+					<td>${r.leftValue}</td>
+					<td>${r.rightLabel}</td>
+					<td>${r.rightValue}</td>
+				</tr>
+			`).join('');
+		}
+
+		function renderPartInfoAvailability(partNo) {
+			const tbody = document.getElementById('partInfoAvailabilityBody');
+			const countDiv = document.getElementById('partInfoAvailabilityCount');
+			if (!tbody || !countDiv) return;
+			const data = getPartInfoData(partNo);
+			const availability = data.availability || [];
+			countDiv.textContent = `${availability.length} records found`;
+			tbody.innerHTML = availability.map(a => `
+				<tr>
+					<td>${a.id}</td>
+					<td>${a.name}</td>
+					<td>${a.qty}</td>
+				</tr>
+			`).join('');
+		}
+
+		function switchPartInfoTab(tabName) {
+			document.querySelectorAll('.part-info-tab-btn').forEach(btn => {
+				const isActive = btn.getAttribute('data-part-tab') === tabName;
+				btn.classList.toggle('active', isActive);
+				btn.setAttribute('aria-selected', isActive);
+			});
+			document.querySelectorAll('.part-info-pane').forEach(pane => {
+				const isActive = pane.getAttribute('data-part-pane') === tabName;
+				pane.classList.toggle('active', isActive);
+			});
+		}
+
+		function openPartInfoModal(encodedPartNo) {
+			const partNo = decodeURIComponent(encodedPartNo || '').trim();
+			if (!partNo) return;
+			const overlay = document.getElementById('partInfoModalOverlay');
+			const title = document.getElementById('partInfoTitle');
+			if (!overlay || !title) return;
+
+			title.textContent = `Part Info. of (${partNo})`;
+			renderPartInfoFields('partInfoFieldBodyEncompass', partNo);
+			renderPartInfoFields('partInfoFieldBodyMarcone', partNo);
+			renderPartInfoAvailability(partNo);
+			switchPartInfoTab('marcone');
+
+			overlay.classList.add('is-open');
+			overlay.setAttribute('aria-hidden', 'false');
+		}
+
+		function closePartInfoModal() {
+			const overlay = document.getElementById('partInfoModalOverlay');
+			if (!overlay) return;
+			overlay.classList.remove('is-open');
+			overlay.setAttribute('aria-hidden', 'true');
+		}
+
+		window.openPartInfoModal = openPartInfoModal;
+
+		function queueRegularScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncRegularScrollbarWidth();
+					updateRegularScrollbarVisibility();
+				});
+			});
+		}
+
+		function queueCoreScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncCoreScrollbarWidth();
+					updateCoreScrollbarVisibility();
+				});
+			});
+		}
+
+		function syncRegularScrollbarWidth() {
+			const tableWrap = document.getElementById('regularTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.return-table') : null;
+			const floatingBar = document.getElementById('regularFloatingScrollbar');
+			const floatingInner = document.getElementById('regularFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(0, Math.floor(rect.left)) + 'px';
+			floatingBar.style.bottom = '0px';
+		}
+
+		function syncCoreScrollbarWidth() {
+			const tableWrap = document.getElementById('coreTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.return-table') : null;
+			const floatingBar = document.getElementById('coreFloatingScrollbar');
+			const floatingInner = document.getElementById('coreFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(0, Math.floor(rect.left)) + 'px';
+			floatingBar.style.bottom = '0px';
+		}
+
+		function updateRegularScrollbarVisibility() {
+			const tableWrap = document.getElementById('regularTableWrap');
+			const floatingBar = document.getElementById('regularFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const viewportBottom = window.innerHeight;
+			const scrollbarInViewport = rect.bottom <= viewportBottom && rect.bottom >= 0;
+			const tableIntersectsViewport = rect.top < viewportBottom && rect.bottom > 0;
+			const shouldShow = hasHorizontalOverflow && tableIntersectsViewport && !scrollbarInViewport;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncRegularScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function updateCoreScrollbarVisibility() {
+			const tableWrap = document.getElementById('coreTableWrap');
+			const floatingBar = document.getElementById('coreFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const viewportBottom = window.innerHeight;
+			const scrollbarInViewport = rect.bottom <= viewportBottom && rect.bottom >= 0;
+			const tableIntersectsViewport = rect.top < viewportBottom && rect.bottom > 0;
+			const shouldShow = hasHorizontalOverflow && tableIntersectsViewport && !scrollbarInViewport;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncCoreScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupScrollbars() {
+			const regularFloatingBar = document.getElementById('regularFloatingScrollbar');
+			const coreFloatingBar = document.getElementById('coreFloatingScrollbar');
+			const regularTableWrap = document.getElementById('regularTableWrap');
+			const coreTableWrap = document.getElementById('coreTableWrap');
+
+			if (regularFloatingBar && regularFloatingBar.parentElement !== document.body) {
+				document.body.appendChild(regularFloatingBar);
+			}
+
+			if (coreFloatingBar && coreFloatingBar.parentElement !== document.body) {
+				document.body.appendChild(coreFloatingBar);
+			}
+
+			// Regular table scrollbar setup
+			if (regularFloatingBar && regularTableWrap) {
+				let syncingFromFloating = false;
+				let syncingFromTable = false;
+
+				regularFloatingBar.addEventListener('scroll', function () {
+					if (syncingFromTable) {
+						syncingFromTable = false;
+						return;
+					}
+					syncingFromFloating = true;
+					regularTableWrap.scrollLeft = regularFloatingBar.scrollLeft;
+				});
+
+				regularTableWrap.addEventListener('scroll', function () {
+					if (syncingFromFloating) {
+						syncingFromFloating = false;
+						return;
+					}
+					syncingFromTable = true;
+					regularFloatingBar.scrollLeft = regularTableWrap.scrollLeft;
+					updateRegularScrollbarVisibility();
+				});
+
+				window.addEventListener('resize', function () {
+					syncRegularScrollbarWidth();
+					updateRegularScrollbarVisibility();
+				});
+				window.addEventListener('scroll', updateRegularScrollbarVisibility, { passive: true });
+				queueRegularScrollbarRefresh();
+			}
+
+			// Core table scrollbar setup
+			if (coreFloatingBar && coreTableWrap) {
+				let syncingFromFloating = false;
+				let syncingFromTable = false;
+
+				coreFloatingBar.addEventListener('scroll', function () {
+					if (syncingFromTable) {
+						syncingFromTable = false;
+						return;
+					}
+					syncingFromFloating = true;
+					coreTableWrap.scrollLeft = coreFloatingBar.scrollLeft;
+				});
+
+				coreTableWrap.addEventListener('scroll', function () {
+					if (syncingFromFloating) {
+						syncingFromFloating = false;
+						return;
+					}
+					syncingFromTable = true;
+					coreFloatingBar.scrollLeft = coreTableWrap.scrollLeft;
+					updateCoreScrollbarVisibility();
+				});
+
+				window.addEventListener('resize', function () {
+					syncCoreScrollbarWidth();
+					updateCoreScrollbarVisibility();
+				});
+				window.addEventListener('scroll', updateCoreScrollbarVisibility, { passive: true });
+				queueCoreScrollbarRefresh();
+			}
+		}
+
+		document.addEventListener('DOMContentLoaded', function () {
+			loadUserInfo();
+			applyPrettyUrl('partReturnStatus');
+			loadReturnData();
+			setupScrollbars();
+			renderRegularReturns();
+			renderCoreReturns();
+
+			// Part info modal setup
+			const partInfoCloseBtn = document.getElementById('partInfoCloseBtn');
+			if (partInfoCloseBtn) {
+				partInfoCloseBtn.addEventListener('click', closePartInfoModal);
+			}
+
+			const partInfoOverlay = document.getElementById('partInfoModalOverlay');
+			if (partInfoOverlay) {
+				partInfoOverlay.addEventListener('click', function (e) {
+					if (e.target === partInfoOverlay) {
+						closePartInfoModal();
+					}
+				});
+			}
+
+			document.addEventListener('keydown', function (e) {
+				if (e.key === 'Escape') {
+					closePartInfoModal();
+				}
+			});
+
+			// Part info tabs
+			document.querySelectorAll('.part-info-tab-btn').forEach(btn => {
+				btn.addEventListener('click', function () {
+					const tabName = this.getAttribute('data-part-tab');
+					switchPartInfoTab(tabName);
+				});
+			});
+
+			// Tab switching
+			document.querySelectorAll('.tab-btn').forEach(btn => {
+				btn.addEventListener('click', function () {
+					const tab = this.getAttribute('data-tab');
+					document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+					document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+					this.classList.add('active');
+					document.getElementById(tab + 'Tab').classList.add('active');
+					if (tab === 'regular') {
+						queueRegularScrollbarRefresh();
+					} else {
+						queueCoreScrollbarRefresh();
+					}
+				});
+			});
+
+			// Filter and search
+			['locationFilter', 'vendorFilter', 'accountFilter', 'shipToFilter', 'fromDate', 'toDate', 'raFilter', 'uniqueIdFilter', 'resultSearch', 'coreResultSearch'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) {
+					el.addEventListener('input', () => {
+						renderRegularReturns();
+						renderCoreReturns();
+					});
+					el.addEventListener('change', () => {
+						renderRegularReturns();
+						renderCoreReturns();
+					});
+				}
+			});
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

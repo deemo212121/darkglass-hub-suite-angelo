@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/logo.png";
+import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,18 +10,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, Clock, LogOut, Shield, Settings as SettingsIcon, User } from "lucide-react";
+
+function getInitials(value: string | null) {
+  if (!value) return "U";
+  const localPart = value.split("@")[0] ?? value;
+  const parts = localPart.split(/[._-]/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return localPart.slice(0, 2).toUpperCase();
+}
 
 export function AppHeader() {
   const { email, companyId, logout, ready } = useAuth();
   const navigate = useNavigate();
-  const initials = (email ?? "?")
-    .split("@")[0]
-    .split(/[._-]/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase())
-    .join("") || "U";
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[oklch(0.16_0.04_260/0.7)] border-b border-[var(--color-panel-border)]">
       <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
@@ -40,10 +41,10 @@ export function AppHeader() {
                   aria-label="Account menu"
                 >
                   <span className="grid place-items-center h-8 w-8 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold">
-                    {initials}
+                    {getInitials(email)}
                   </span>
                   <span className="hidden sm:flex flex-col items-start leading-tight">
-                    <span className="text-foreground text-sm">{email}</span>
+                    <span className="text-foreground text-sm truncate max-w-[180px]">{email}</span>
                     <span className="text-muted-foreground text-[11px]">Company {companyId}</span>
                   </span>
                   <ChevronDown className="h-4 w-4 text-muted-foreground group-data-[state=open]:rotate-180 transition-transform" />
@@ -57,7 +58,7 @@ export function AppHeader() {
                 <DropdownMenuLabel className="px-2 py-2">
                   <div className="flex items-center gap-2.5">
                     <span className="grid place-items-center h-9 w-9 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold">
-                      {initials}
+                      {getInitials(email)}
                     </span>
                     <div className="leading-tight min-w-0">
                       <div className="text-sm font-medium truncate">{email}</div>

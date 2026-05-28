@@ -112,34 +112,34 @@ export function PartReturnStatusPage() {
       </div>
 
       <div className="flex gap-2 mb-4">
-        {(["regular","core"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`btn ${tab === t ? "btn-primary" : ""}`}
-          >
-            {t === "regular" ? "Regular Part Returns" : "Core Part Returns"}
-          </button>
-        ))}
+          {(["regular","core"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`btn ${tab === t ? "btn-primary" : ""}`}
+            >
+              {t === "regular" ? "Regular Part Returns" : "Core Part Returns"}
+            </button>
+          ))}
       </div>
 
       <div className="panel">
         <div className="filter-grid">
           <input className="glass-input" placeholder="Search all fields…" value={search} onChange={(e) => setSearch(e.target.value)} />
           <input className="glass-input" placeholder="Part #" value={filters.partNo ?? ""} onChange={(e) => setFilters({ ...filters, partNo: e.target.value })} />
-          <select className="glass-input" value={filters.vendor ?? ""} onChange={(e) => setFilters({ ...filters, vendor: e.target.value })}>
+          <select className="glass-input" title="Filter by vendor" value={filters.vendor ?? ""} onChange={(e) => setFilters({ ...filters, vendor: e.target.value })}>
             <option value="">All Vendors</option>
             {PART_RETURN_VENDORS.map((v) => <option key={v}>{v}</option>)}
           </select>
-          <select className="glass-input" value={filters.account ?? ""} onChange={(e) => setFilters({ ...filters, account: e.target.value })}>
+          <select className="glass-input" title="Filter by account" value={filters.account ?? ""} onChange={(e) => setFilters({ ...filters, account: e.target.value })}>
             <option value="">All Accounts</option>
             {PART_RETURN_ACCOUNTS.map((a) => <option key={a}>{a}</option>)}
           </select>
-          <select className="glass-input" value={filters.status ?? ""} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+          <select className="glass-input" title="Filter by status" value={filters.status ?? ""} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
             <option value="">All Statuses</option>
             {PART_RETURN_STATUSES.map((s) => <option key={s}>{s}</option>)}
           </select>
-          <select className="glass-input" value={filters.reason ?? ""} onChange={(e) => setFilters({ ...filters, reason: e.target.value })}>
+          <select className="glass-input" title="Filter by reason" value={filters.reason ?? ""} onChange={(e) => setFilters({ ...filters, reason: e.target.value })}>
             <option value="">All Reasons</option>
             {PART_RETURN_REASONS.map((s) => <option key={s}>{s}</option>)}
           </select>
@@ -147,14 +147,14 @@ export function PartReturnStatusPage() {
           <input className="glass-input" placeholder="Unique ID" value={filters.uniqueId ?? ""} onChange={(e) => setFilters({ ...filters, uniqueId: e.target.value })} />
         </div>
         <div className="flex items-center gap-2 mt-4">
-          <button className="btn" onClick={reset}><RefreshCw className="h-4 w-4" />Refresh</button>
-          <button className="btn" onClick={save}><Save className="h-4 w-4" />Save</button>
+          <button className="btn" onClick={reset} title="Clear all filters"><RefreshCw className="h-4 w-4" />Refresh</button>
+          <button className="btn" onClick={save} title="Save current filters"><Save className="h-4 w-4" />Save</button>
           <button className="btn btn-primary" onClick={add}><Plus className="h-4 w-4" />Add Return</button>
           <div className="ml-auto text-xs text-muted-foreground">{filtered.length} of {data.length} records</div>
         </div>
       </div>
 
-      <div className="panel" style={{ overflowX: "auto" }}>
+      <div className="panel overflow-x-auto">
         <table className="data-table">
           <thead>
             <tr>
@@ -166,7 +166,7 @@ export function PartReturnStatusPage() {
               <th>Reason</th>
               <th>Status</th>
               <th>Returned by</th>
-              <th></th>
+              <th className="w-[60px]"></th>
             </tr>
           </thead>
           <tbody>
@@ -180,37 +180,37 @@ export function PartReturnStatusPage() {
                 <td>{r.description}</td>
                 <td>
                   <div>{r.vendor}</div>
-                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{r.ra}</div>
+                  <div className="text-xs text-muted-foreground">{r.ra}</div>
                 </td>
                 <td>
                   <div>{r.account}</div>
-                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{r.uniqueId}</div>
+                  <div className="text-xs text-muted-foreground">{r.uniqueId}</div>
                 </td>
-                <td><span style={{ color: "#1f2937" }}>{r.returnLabel}</span></td>
+                <td><span className="text-slate-900">{r.returnLabel}</span></td>
                 <td>
-                  <select value={r.reason} onChange={(e) => update(r.__id, "reason", e.target.value)}>
+                  <select title="Edit reason" value={r.reason} onChange={(e) => update(r.__id, "reason", e.target.value)}>
                     {PART_RETURN_REASONS.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </td>
                 <td>
-                  <select value={r.status} onChange={(e) => update(r.__id, "status", e.target.value)}>
+                  <select title="Edit status" value={r.status} onChange={(e) => update(r.__id, "status", e.target.value)}>
                     {PART_RETURN_STATUSES.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </td>
                 <td>
-                  <select value={r.returnedBy} onChange={(e) => update(r.__id, "returnedBy", e.target.value)}>
+                  <select title="Edit returned by" value={r.returnedBy} onChange={(e) => update(r.__id, "returnedBy", e.target.value)}>
                     {PART_RETURN_TECHS.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </td>
-                <td>
-                  <button className="text-destructive hover:opacity-80" onClick={() => del(r.__id)} aria-label="Delete">
+                <td className="text-center">
+                  <button className="text-destructive hover:opacity-80" onClick={() => del(r.__id)} aria-label="Delete row">
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: "center", padding: "2rem", color: "#6b7280" }}>No records</td></tr>
+              <tr><td colSpan={9} className="py-8 text-center text-muted-foreground">No records</td></tr>
             )}
           </tbody>
         </table>
@@ -218,10 +218,10 @@ export function PartReturnStatusPage() {
 
       {modalRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setModalRow(null)}>
-          <div className="panel max-w-2xl w-full" style={{ marginBottom: 0 }} onClick={(e) => e.stopPropagation()}>
+          <div className="panel max-w-2xl w-full mb-0" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center mb-3">
               <h2 className="text-lg font-semibold">Part {modalRow.partNo}</h2>
-              <button className="ml-auto btn" onClick={() => setModalRow(null)}><X className="h-4 w-4" /></button>
+              <button className="ml-auto btn" title="Close dialog" onClick={() => setModalRow(null)}><X className="h-4 w-4" /></button>
             </div>
             <div className="flex gap-2 mb-3">
               {(["Encompass","Marcone"] as const).map((v) => (

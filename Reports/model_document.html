@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Model Documents - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.action-row {
+			display: flex;
+			gap: 0.75rem;
+			margin: 1rem 0;
+			flex-wrap: wrap;
+		}
+
+		.action-btn {
+			padding: 0.6rem 1rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.86rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.action-btn:hover {
+			border-color: rgba(96, 165, 250, 0.7);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.results-note {
+			margin: 0.4rem 0 0.8rem;
+			font-size: 0.82rem;
+			color: #cbd5e1;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.documents-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.documents-table th,
+		.documents-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.65rem 0.75rem;
+			font-size: 0.82rem;
+			text-align: left;
+		}
+
+		.documents-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.documents-table td:last-child {
+			text-align: center;
+			white-space: nowrap;
+		}
+
+		.doc-link {
+			color: #0066cc;
+			text-decoration: none;
+			cursor: pointer;
+			font-weight: 500;
+		}
+
+		.doc-link:hover {
+			text-decoration: underline;
+		}
+
+		.action-buttons {
+			display: flex;
+			gap: 0.5rem;
+			justify-content: center;
+		}
+
+		.btn-action {
+			padding: 0.35rem 0.65rem;
+			font-size: 0.75rem;
+			border: 1px solid #d1d5db;
+			border-radius: 4px;
+			cursor: pointer;
+			transition: all 0.2s ease;
+			background: #f3f4f6;
+			color: #374151;
+		}
+
+		.btn-action:hover {
+			background: #e5e7eb;
+		}
+
+		.btn-edit {
+			color: #0066cc;
+		}
+
+		.btn-delete {
+			color: #dc2626;
+		}
+
+		.empty-state {
+			text-align: center;
+			padding: 2rem;
+			color: #6b7280;
+		}
+
+		@media (max-width: 1024px) {
+			.controls {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.panel {
+				padding: 1rem;
+			}
+
+			table.documents-table {
+				min-width: 760px;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.module-header h2 {
+				font-size: 1.1rem;
+			}
+
+			.controls {
+				grid-template-columns: 1fr;
+			}
+
+			.results-note {
+				font-size: 0.8rem;
+			}
+
+			.table-wrap {
+				margin: 0 -0.25rem;
+				padding-bottom: 0.25rem;
+				-webkit-overflow-scrolling: touch;
+			}
+
+			table.documents-table {
+				min-width: 680px;
+			}
+
+			.documents-table th,
+			.documents-table td {
+				padding: 0.55rem 0.6rem;
+				font-size: 0.78rem;
+			}
+		}
+
+		@media (max-width: 480px) {
+			.panel {
+				padding: 0.85rem;
+			}
+
+			.control-group label {
+				font-size: 0.76rem;
+			}
+
+			.control-group input,
+			.control-group select {
+				padding: 0.6rem 0.65rem;
+				font-size: 0.85rem;
+			}
+
+			.back-btn {
+				width: 100%;
+				justify-content: center;
+			}
+
+			.action-row {
+				flex-direction: column;
+			}
+
+			.action-btn {
+				width: 100%;
+			}
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">MODEL DOCUMENTS</h2>
+		</div>
+
+		<div class="panel">
+			<div class="controls">
+				<div class="control-group">
+					<label for="modelCode">Model Code</label>
+					<input 
+						id="modelCode" 
+						type="text" 
+						placeholder="Enter model code"
+						onchange="loadDocuments()"
+						onkeyup="handleSearch()"
+					>
+				</div>
+			</div>
+
+			<div id="resultsNote" class="results-note">0 records found</div>
+
+			<div class="table-wrap" id="docTableWrap">
+				<table class="documents-table">
+					<thead>
+						<tr>
+							<th>Document</th>
+							<th>File / Url</th>
+							<th>File Name</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody">
+						<tr>
+							<td colspan="4" class="empty-state">No documents found</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<!-- Add New Document Row -->
+			<div style="margin-top: 1rem; padding: 1rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 10px;">
+				<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+					<div class="control-group">
+						<label for="newDocType">Document</label>
+						<select id="newDocType">
+							<option value="">Select Document Type</option>
+							<option value="Exploded View">Exploded View</option>
+							<option value="Service Bulletin">Service Bulletin</option>
+							<option value="Service Manual">Service Manual</option>
+							<option value="Training Manual">Training Manual</option>
+							<option value="User's Manual">User's Manual</option>
+						</select>
+					</div>
+
+					<div class="control-group">
+						<label for="newFileUrl">File / Url</label>
+						<input 
+							id="newFileUrl" 
+							type="text" 
+							placeholder="Enter file path or URL"
+						>
+					</div>
+
+					<div class="control-group">
+						<label for="newFileName">File Name</label>
+						<input 
+							id="newFileName" 
+							type="text" 
+							placeholder="Enter file name"
+						>
+					</div>
+				</div>
+
+				<div class="action-row" style="margin-top: 1rem;">
+					<button class="action-btn" onclick="addNewDocument()" style="background: #60a5fa; color: #0f172a; border: none; font-weight: 600;">Add Document</button>
+					<button class="action-btn" onclick="clearAddForm()">Clear</button>
+				</div>
+			</div>
+
+			<div class="action-row">
+				<button class="action-btn" onclick="saveData()">Save</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<footer id="contact">
+	<script>
+		let documentsData = [];
+		let autoRefreshInterval;
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function loadDocuments() {
+			const modelCode = document.getElementById('modelCode').value;
+			if (!modelCode) {
+				documentsData = [];
+				updateTable();
+				return;
+			}
+
+			// Sample data - replace with actual API call
+			documentsData = [
+				{
+					id: 1,
+					document: 'User\'s Manual',
+					fileUrl: '/docs/manual.pdf',
+					fileName: 'manual_v1.pdf'
+				},
+				{
+					id: 2,
+					document: 'Service Manual',
+					fileUrl: '/docs/service_manual.pdf',
+					fileName: 'service_manual_v2.pdf'
+				},
+				{
+					id: 3,
+					document: 'Exploded View',
+					fileUrl: '/docs/exploded.pdf',
+					fileName: 'exploded_view.pdf'
+				}
+			];
+
+			updateTable();
+		}
+
+		function updateTable() {
+			const tableBody = document.getElementById('tableBody');
+			const resultsNote = document.getElementById('resultsNote');
+
+			resultsNote.textContent = `Showing ${documentsData.length} records`;
+
+			if (documentsData.length === 0) {
+				tableBody.innerHTML = `
+					<tr>
+						<td colspan="4" class="empty-state">No documents found</td>
+					</tr>
+				`;
+				return;
+			}
+
+			tableBody.innerHTML = documentsData.map(doc => `
+				<tr>
+					<td>${doc.document}</td>
+					<td><a href="${doc.fileUrl}" target="_blank" class="doc-link">${doc.fileUrl}</a></td>
+					<td>${doc.fileName}</td>
+					<td>
+						<div class="action-buttons">
+							<button class="btn-action btn-edit" onclick="editDocument(${doc.id})">Edit</button>
+							<button class="btn-action btn-delete" onclick="deleteDocument(${doc.id})">Delete</button>
+						</div>
+					</td>
+				</tr>
+			`).join('');
+		}
+
+		function handleSearch() {
+			// Auto-search as user types model code
+			loadDocuments();
+		}
+
+		function addNewDocument() {
+			const docType = document.getElementById('newDocType').value;
+			const fileUrl = document.getElementById('newFileUrl').value;
+			const fileName = document.getElementById('newFileName').value;
+
+			if (!docType || !fileUrl || !fileName) {
+				alert('Please fill in all fields');
+				return;
+			}
+
+			const newDoc = {
+				id: documentsData.length + 1,
+				document: docType,
+				fileUrl: fileUrl,
+				fileName: fileName
+			};
+
+			documentsData.push(newDoc);
+			updateTable();
+			clearAddForm();
+		}
+
+		function clearAddForm() {
+			document.getElementById('newDocType').value = '';
+			document.getElementById('newFileUrl').value = '';
+			document.getElementById('newFileName').value = '';
+		}
+
+		function editDocument(id) {
+			const doc = documentsData.find(d => d.id === id);
+			if (doc) {
+				alert(`Edit: ${doc.document}`);
+			}
+		}
+
+		function deleteDocument(id) {
+			if (confirm('Are you sure you want to delete this document?')) {
+				documentsData = documentsData.filter(d => d.id !== id);
+				updateTable();
+			}
+		}
+
+		function saveData() {
+			alert('Data saved successfully');
+		}
+
+		// Auto-refresh every 5 seconds
+		function startAutoRefresh() {
+			autoRefreshInterval = setInterval(() => {
+				const modelCode = document.getElementById('modelCode').value;
+				if (modelCode) {
+					loadDocuments();
+				}
+			}, 5000);
+		}
+
+		window.addEventListener('load', function () {
+			applyPrettyUrl('modelDocuments');
+			loadUserInfo();
+			startAutoRefresh();
+			setupScrollbars();
+		});
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('docTableWrap');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!tableContainer || !floatingScrollbar) return;
+			function update() {
+				const hasOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasOverflow) { floatingScrollbar.classList.remove('is-visible'); return; }
+				const rect = tableContainer.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else { floatingScrollbar.classList.remove('is-visible'); }
+			}
+			tableContainer.addEventListener('scroll', () => { floatingScrollbar.scrollLeft = tableContainer.scrollLeft; });
+			floatingScrollbar.addEventListener('scroll', () => { tableContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+
+		// Cleanup interval when user leaves
+		window.addEventListener('beforeunload', function () {
+			if (autoRefreshInterval) {
+				clearInterval(autoRefreshInterval);
+			}
+		});
+	</script>
+</body>
+</html>

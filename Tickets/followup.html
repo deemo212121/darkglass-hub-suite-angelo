@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Follow-up Dashboard - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.followup-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.location-title {
+			font-size: 1.25rem;
+			font-weight: 700;
+			margin: 0 0 0.5rem;
+		}
+
+		.followup-desc {
+			margin: 0 0 1.2rem;
+			color: #d1d5db;
+			font-size: 0.9rem;
+		}
+
+		.location-switch {
+			display: grid;
+			grid-template-columns: minmax(180px, 260px) 1fr;
+			gap: 0.8rem;
+			align-items: end;
+			margin-bottom: 0.8rem;
+		}
+
+		.location-switch label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #e5e7eb;
+			display: block;
+			margin-bottom: 0.35rem;
+		}
+
+		.location-switch select {
+			width: 100%;
+			padding: 0.6rem 0.7rem;
+			border-radius: 6px;
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			background: rgba(2, 6, 23, 0.8);
+			color: #fff;
+			font-size: 0.88rem;
+		}
+
+		.location-switch select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.metrics-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 0.9rem;
+		}
+
+		.metric-card {
+			background: rgba(17, 24, 39, 0.88);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-radius: 8px;
+			padding: 0.85rem;
+		}
+
+		.metric-name {
+			font-size: 0.85rem;
+			font-weight: 600;
+			margin-bottom: 0.45rem;
+			color: #e5e7eb;
+		}
+
+		.metric-percent {
+			font-size: 1rem;
+			font-weight: 700;
+			color: #93c5fd;
+		}
+
+		.metric-ratio {
+			margin-top: 0.2rem;
+			font-size: 0.84rem;
+			color: #cbd5e1;
+		}
+
+		.progress-track {
+			height: 7px;
+			background: rgba(148, 163, 184, 0.25);
+			border-radius: 999px;
+			margin-top: 0.45rem;
+			overflow: hidden;
+		}
+
+		.progress-fill {
+			height: 100%;
+			background: linear-gradient(90deg, #3b82f6, #60a5fa);
+		}
+
+		.tools-panel {
+			margin-top: 1rem;
+			background: rgba(17, 24, 39, 0.88);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-radius: 8px;
+			padding: 0.9rem;
+		}
+
+		.tools-links {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.55rem;
+			margin-bottom: 0.85rem;
+		}
+
+		.tool-link {
+			padding: 0.4rem 0.7rem;
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-radius: 6px;
+			font-size: 0.82rem;
+			color: #e5e7eb;
+			background: rgba(30, 41, 59, 0.8);
+		}
+
+		.lookup-row {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 0.75rem;
+		}
+
+		.lookup-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.lookup-field label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #e5e7eb;
+		}
+
+		.lookup-field input {
+			width: 100%;
+			padding: 0.6rem 0.7rem;
+			border-radius: 6px;
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			background: rgba(2, 6, 23, 0.8);
+			color: #fff;
+			font-size: 0.88rem;
+		}
+
+		.lookup-actions {
+			display: flex;
+			align-items: flex-end;
+		}
+
+		.lookup-btn {
+			padding: 0.62rem 1rem;
+			border: 1px solid rgba(96, 165, 250, 0.5);
+			background: rgba(59, 130, 246, 0.2);
+			color: #fff;
+			border-radius: 6px;
+			font-size: 0.88rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.lookup-result {
+			margin-top: 0.65rem;
+			font-size: 0.82rem;
+			color: #bfdbfe;
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.7rem;
+			}
+
+			.location-switch {
+				grid-template-columns: 1fr;
+				gap: 0.55rem;
+			}
+
+			.location-title {
+				font-size: 1.1rem;
+			}
+		}
+
+		@media (max-width: 480px) {
+			.followup-panel {
+				padding: 0.9rem;
+			}
+
+			.back-btn,
+			.lookup-btn {
+				width: 100%;
+				justify-content: center;
+			}
+
+			.lookup-actions {
+				display: block;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">FOLLOW-UP DASHBOARD</h2>
+		</div>
+
+		<div class="followup-panel">
+			<div class="location-switch">
+				<div>
+					<label for="locationSelect">Location</label>
+					<select id="locationSelect"><option value="">Loading...</option></select>
+				</div>
+				<h3 id="locationTitle" class="location-title">Asheville</h3>
+			</div>
+			<p class="followup-desc">Follow up the all tickets that you are responsible of.</p>
+
+			<div class="metrics-grid" id="metricsGrid"></div>
+
+			<div class="tools-panel">
+				<div class="tools-links">
+					<span class="tool-link">Mobile Home</span>
+					<span class="tool-link">Operation Manuals</span>
+					<span class="tool-link">FAQ</span>
+					<span class="tool-link">Privacy Policy</span>
+					<span class="tool-link">Clear Cache</span>
+					<span class="tool-link">Clear Temp Files</span>
+				</div>
+
+				<div class="lookup-row">
+					<div class="lookup-field">
+						<label for="ticketLookup">(ticket #)</label>
+						<input id="ticketLookup" type="text" placeholder="Enter ticket #">
+					</div>
+					<div class="lookup-field">
+						<label for="zipLookup">(zip code)</label>
+						<input id="zipLookup" type="text" placeholder="Enter zip code">
+					</div>
+					<div class="lookup-actions">
+						<button class="lookup-btn" id="lookupBtn" type="button">Lookup</button>
+					</div>
+				</div>
+
+				<div id="lookupResult" class="lookup-result"></div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		loadLocationDropdown('locationSelect', supabaseClient, userCompanyId);
+
+		let metricDataByLocation = {};
+		let activeCompanyDbId = null;
+		const _userEmail = localStorage.getItem('userEmail');
+		const _userCompanyId = localStorage.getItem('userCompanyId');
+		if (!_userEmail || !_userCompanyId) window.location.href = '../../landing.html';
+
+		async function getCompanyDbId(cid) {
+			if (!cid) return null;
+			const { data } = await supabaseClient.from('companies').select('id').eq('company_id', cid).maybeSingle();
+			return data ? data.id : null;
+		}
+
+		async function loadFollowupFromDatabase() {
+			activeCompanyDbId = await getCompanyDbId(_userCompanyId);
+			let query = supabaseClient.from('tickets')
+				.select('assigned_area, repair_status')
+				.order('assigned_area', { ascending: true })
+				.limit(5000);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			const { data, error } = await query;
+			if (error) { console.error('Followup fetch error:', error); }
+
+			// Group by location → repair_status → count
+			const byLocation = {};
+			(data || []).forEach((t) => {
+				const loc = t.assigned_area || 'Unknown';
+				const stat = t.repair_status || 'Unknown';
+				if (!byLocation[loc]) byLocation[loc] = {};
+				byLocation[loc][stat] = (byLocation[loc][stat] || 0) + 1;
+			});
+
+			// Build metricDataByLocation
+			metricDataByLocation = {};
+			Object.keys(byLocation).sort().forEach((loc) => {
+				const statCounts = byLocation[loc];
+				metricDataByLocation[loc] = Object.keys(statCounts).sort().map((stat) => {
+					const total = statCounts[stat];
+					return { name: stat, percent: 0, ratio: `${total} ticket(s)` };
+				});
+			});
+
+			// Populate location dropdown from DB
+			const sel = document.getElementById('locationSelect');
+			const existingVals = new Set(Array.from(sel.options).map(o => o.value));
+			Object.keys(metricDataByLocation).forEach((loc) => {
+				if (!existingVals.has(loc)) {
+					const opt = document.createElement('option');
+					opt.value = loc; opt.textContent = loc;
+					sel.appendChild(opt);
+				}
+			});
+
+			updateLocationMetrics();
+		}
+
+		function loadUserInfo() {
+			document.getElementById('userDisplayName').textContent = _userEmail || '';
+			document.getElementById('companyDisplayId').textContent = `Company: ${_userCompanyId || ''}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function renderMetrics(location) {
+			const metricData = metricDataByLocation[location] || [];
+			const grid = document.getElementById('metricsGrid');
+			if (metricData.length === 0) {
+				grid.innerHTML = '<div class="metric-card"><div class="metric-name">No data for this location</div></div>';
+				return;
+			}
+			grid.innerHTML = metricData.map((item) => `
+				<div class="metric-card">
+					<div class="metric-name">${item.name}</div>
+					<div class="metric-percent">${item.percent}%</div>
+					<div class="metric-ratio">${item.ratio}</div>
+					<div class="progress-track">
+						<div class="progress-fill" style="width: ${Math.max(0, Math.min(100, item.percent))}%;"></div>
+					</div>
+				</div>
+			`).join('');
+		}
+
+		function updateLocationMetrics() {
+			const selectedLocation = document.getElementById('locationSelect').value;
+			document.getElementById('locationTitle').textContent = selectedLocation;
+			renderMetrics(selectedLocation);
+		}
+
+		function lookup() {
+			const ticket = document.getElementById('ticketLookup').value.trim();
+			const zip = document.getElementById('zipLookup').value.trim();
+			const result = document.getElementById('lookupResult');
+			if (!ticket && !zip) {
+				result.textContent = 'Enter a ticket number or zip code for lookup.';
+				return;
+			}
+			result.textContent = `Lookup completed for Ticket: ${ticket || 'N/A'} | Zip: ${zip || 'N/A'}`;
+		}
+
+		document.getElementById('lookupBtn').addEventListener('click', lookup);
+		document.getElementById('locationSelect').addEventListener('change', updateLocationMetrics);
+		window.addEventListener('load', async function () {
+			loadUserInfo();
+			await loadFollowupFromDatabase();
+		});
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

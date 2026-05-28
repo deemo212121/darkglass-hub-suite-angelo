@@ -1,0 +1,1219 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Transaction Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.report-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.report-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.control-hint {
+			font-size: 0.78rem;
+			color: #cbd5e1;
+		}
+
+		.action-row {
+			display: flex;
+			gap: 0.75rem;
+			margin: 0.75rem 0 0.5rem;
+			flex-wrap: wrap;
+		}
+
+		.action-btn {
+			padding: 0.6rem 1rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.86rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.action-btn:hover {
+			border-color: rgba(96, 165, 250, 0.7);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.results-note {
+			margin: 0.4rem 0 0.8rem;
+			font-size: 0.82rem;
+			color: #cbd5e1;
+		}
+
+		.search-bar {
+			display: flex;
+			gap: 0.5rem;
+			margin: 0.5rem 0 1rem;
+		}
+
+		.search-input {
+			flex: 1;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.search-input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.search-input::placeholder {
+			color: #64748b;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.report-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.report-table th,
+		.report-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.65rem 0.75rem;
+			font-size: 0.78rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.report-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.report-table td:first-child,
+		.report-table td:nth-child(3),
+		.report-table td:nth-child(4),
+		.report-table td:nth-child(8),
+		.report-table td:nth-child(11),
+		.report-table td:nth-child(12),
+		.report-table td:nth-child(13),
+		.report-table td:nth-child(14),
+		.report-table td:nth-child(16) {
+			text-align: left;
+		}
+
+		.total-row {
+			background: #f9fafb;
+			font-weight: 700;
+		}
+
+		.total-row td {
+			background: #f3f4f6;
+			color: #1f2937;
+		}
+
+		@media (max-width: 1024px) {
+			.report-controls {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.report-panel {
+				padding: 1rem;
+			}
+
+			table.report-table {
+				min-width: 1200px;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.module-header h2 {
+				font-size: 1.1rem;
+			}
+
+			.report-controls {
+				grid-template-columns: 1fr;
+			}
+
+			.results-note {
+				font-size: 0.8rem;
+			}
+
+			.table-wrap {
+				margin: 0 -0.25rem;
+				padding-bottom: 0.25rem;
+				-webkit-overflow-scrolling: touch;
+			}
+
+			table.report-table {
+				min-width: 1000px;
+			}
+
+			.report-table th,
+			.report-table td {
+				padding: 0.55rem 0.6rem;
+				font-size: 0.75rem;
+			}
+		}
+
+		@media (max-width: 480px) {
+			.report-panel {
+				padding: 0.85rem;
+			}
+
+			.control-group label {
+				font-size: 0.76rem;
+			}
+
+			.control-group input,
+			.control-group select {
+				padding: 0.6rem 0.65rem;
+				font-size: 0.85rem;
+			}
+
+			.back-btn {
+				width: 100%;
+				justify-content: center;
+			}
+
+			.action-row {
+				flex-direction: column;
+			}
+
+			.action-btn {
+				width: 100%;
+			}
+
+			.search-bar {
+				flex-direction: column;
+			}
+
+			.search-input {
+				width: 100%;
+			}
+		}
+
+		/* Modal Styles */
+		.modal-overlay {
+			display: none;
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.7);
+			z-index: 1000;
+			overflow-y: auto;
+		}
+
+		.modal-overlay.active {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.modal-content {
+			background: #fff;
+			border-radius: 8px;
+			padding: 2rem;
+			max-width: 700px;
+			width: 90%;
+			max-height: 85vh;
+			overflow-y: auto;
+			position: relative;
+			box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+		}
+
+		.modal-close {
+			position: absolute;
+			top: 1rem;
+			right: 1rem;
+			background: none;
+			border: none;
+			font-size: 1.5rem;
+			cursor: pointer;
+			color: #6b7280;
+		}
+
+		.modal-close:hover {
+			color: #1f2937;
+		}
+
+		.modal-header {
+			margin-bottom: 1.5rem;
+			padding-bottom: 1rem;
+			border-bottom: 2px solid #e5e7eb;
+		}
+
+		.modal-header h2 {
+			margin: 0;
+			font-size: 1.5rem;
+			color: #1f2937;
+		}
+
+		.modal-header p {
+			margin: 0.5rem 0 0 0;
+			color: #6b7280;
+			font-size: 0.9rem;
+		}
+
+		.modal-section {
+			margin-bottom: 1.5rem;
+		}
+
+		.modal-section h3 {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #374151;
+			margin: 0 0 0.75rem 0;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+
+		.modal-grid {
+			display: grid;
+			grid-template-columns: repeat(4, 1fr);
+			gap: 1.5rem;
+		}
+
+		.modal-field {
+			display: flex;
+			flex-direction: column;
+		}
+
+		.modal-label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #6b7280;
+			margin-bottom: 0.3rem;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+		}
+
+		.modal-value {
+			font-size: 0.95rem;
+			color: #1f2937;
+			font-weight: 500;
+		}
+
+		.modal-table {
+			width: 100%;
+			border-collapse: collapse;
+		}
+
+		.modal-table th,
+		.modal-table td {
+			padding: 0.6rem;
+			border-bottom: 1px solid #e5e7eb;
+			text-align: left;
+			font-size: 0.85rem;
+		}
+
+		.modal-table th {
+			background: #f3f4f6;
+			font-weight: 600;
+			color: #374151;
+		}
+
+		.modal-tabs {
+			display: flex;
+			border-bottom: 2px solid #e5e7eb;
+			margin: -1rem -1rem 1rem -1rem;
+			gap: 0;
+		}
+
+		.modal-tab-button {
+			flex: 1;
+			padding: 0.75rem 1rem;
+			background: transparent;
+			border: none;
+			color: #6b7280;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+			border-bottom: 3px solid transparent;
+			transition: all 0.3s ease;
+		}
+
+		.modal-tab-button:hover {
+			color: #374151;
+			background: rgba(255, 255, 255, 0.04);
+		}
+
+		.modal-tab-button.active {
+			color: #60a5fa;
+			border-bottom-color: #60a5fa;
+		}
+
+		.modal-tab-content {
+			display: none;
+		}
+
+		.modal-tab-content.active {
+			display: block;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">PART TRANSACTION REPORT</h2>
+		</div>
+
+		<div class="report-panel">
+			<div class="report-controls">
+				<div class="control-group">
+					<label for="location">Location</label>
+					<select id="location" onchange="applyFilters()">
+						<option value="">All Locations</option>
+						<option value="Savannah">Savannah</option>
+						<option value="Mobile">Mobile</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Asheville">Asheville</option>
+						<option value="Jacksonville">Jacksonville</option>
+						<option value="Wilmington">Wilmington</option>
+						<option value="Nashville">Nashville</option>
+						<option value="Knoxville">Knoxville</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Little Rock">Little Rock</option>
+						<option value="St. Louis">St. Louis</option>
+						<option value="Huntsville">Huntsville</option>
+						<option value="Raleigh">Raleigh</option>
+						<option value="Destin">Destin</option>
+						<option value="Tallahassee">Tallahassee</option>
+						<option value="Lake Charles">Lake Charles</option>
+						<option value="Columbus">Columbus</option>
+					</select>
+				</div>
+
+				<div class="control-group">
+					<label for="poDateFrom">P/O Date From</label>
+					<input id="poDateFrom" type="date" onchange="applyFilters()">
+					<div class="control-hint">mm/dd/yyyy</div>
+				</div>
+
+				<div class="control-group">
+					<label for="poDateTo">P/O Date To</label>
+					<input id="poDateTo" type="date" onchange="applyFilters()">
+					<div class="control-hint">mm/dd/yyyy</div>
+				</div>
+			</div>
+
+			<div class="action-row">
+				<button id="searchBtn" class="action-btn" type="button">Search</button>
+				<button id="resetBtn" class="action-btn" type="button">Reset Filters</button>
+			</div>
+
+			<div class="search-bar">
+				<input 
+					type="text" 
+					class="search-input" 
+					placeholder="search in result"
+					id="searchInput"
+					onkeyup="filterTable()"
+				>
+			</div>
+
+			<div id="resultsNote" class="results-note">Showing 0 of 0 records</div>
+
+			<div class="table-wrap" id="ptrTableWrap">
+				<table class="report-table">
+					<thead>
+						<tr>
+							<th>P/O Date</th>
+							<th>Part Dist.</th>
+							<th>PO #</th>
+							<th>Location</th>
+							<th>Invoice #</th>
+							<th>Account Type</th>
+							<th>PartNo</th>
+							<th>Part Description</th>
+							<th>Qty</th>
+							<th>Total Price</th>
+							<th>Part Status</th>
+							<th>Triaged by</th>
+							<th>Ticket #</th>
+							<th>Repair Status</th>
+							<th>Visit #</th>
+							<th>Note</th>
+							<th>R/A Date</th>
+							<th>CreditNo</th>
+						</tr>
+					</thead>
+					<tbody id="reportTableBody"></tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<!-- Part Details Modal -->
+	<div id="partModal" class="modal-overlay">
+		<div class="modal-content">
+			<button class="modal-close" onclick="closePartModal()">&times;</button>
+			
+			<div class="modal-header">
+				<h2 id="partModalTitle">Part Info. of (WH10X35297)</h2>
+			</div>
+
+			<div class="modal-tabs">
+				<button class="modal-tab-button active" onclick="switchTab('encompass')">Encompass</button>
+				<button class="modal-tab-button" onclick="switchTab('marcone')">Marcone</button>
+			</div>
+
+			<!-- Encompass Tab Content -->
+			<div id="encompass-tab" class="modal-tab-content active">
+				<div class="modal-grid">
+					<div class="modal-field">
+						<span class="modal-label">Internal ID</span>
+						<span class="modal-value" id="partInternalId">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Part #</span>
+						<span class="modal-value" id="partNumber">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Part Image</span>
+						<span class="modal-value" id="partImage">-</span>
+					</div>
+					<div style="grid-column: span 1;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">MFG Code</span>
+						<span class="modal-value" id="partMfgCode">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Description</span>
+						<span class="modal-value" id="partDescription">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Weight</span>
+						<span class="modal-value" id="partWeight">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Length</span>
+						<span class="modal-value" id="partLength">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Width</span>
+						<span class="modal-value" id="partWidth">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Height</span>
+						<span class="modal-value" id="partHeight">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Carrier Size</span>
+						<span class="modal-value" id="partCarrierSize">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Auth. Required</span>
+						<span class="modal-value" id="partAuthRequired">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Available Qty</span>
+						<span class="modal-value" id="partAvailQty">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">ETA</span>
+						<span class="modal-value" id="partEta">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">List Price</span>
+						<span class="modal-value" id="partListPrice">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Core Price</span>
+						<span class="modal-value" id="partCorePrice">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Part Price</span>
+						<span class="modal-value" id="partPrice">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Total Price</span>
+						<span class="modal-value" id="partTotalPrice">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Alt. Part</span>
+						<span class="modal-value" id="partAltPart">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Harmonized Tariff</span>
+						<span class="modal-value" id="partHarmonizedTariff">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Returnable?</span>
+						<span class="modal-value" id="partReturnable">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">In-Wty Return?</span>
+						<span class="modal-value" id="partInWtyReturn">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+				</div>
+
+				<div class="modal-section" style="margin-top: 2rem;">
+					<h3>Availability (Encompass)</h3>
+					<div style="margin-bottom: 1rem;">
+						<span style="font-size: 0.85rem; color: #6b7280; font-style: italic;" id="availabilityNote">0 records found</span>
+					</div>
+					<table class="modal-table">
+						<thead>
+							<tr>
+								<th>Country</th>
+								<th>W/H Name</th>
+								<th>Available Qty</th>
+							</tr>
+						</thead>
+						<tbody id="availabilityTableBody">
+							<tr>
+								<td colspan="3" style="text-align: center; color: #9ca3af;">No availability data</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+
+			<!-- Marcone Tab Content -->
+			<div id="marcone-tab" class="modal-tab-content">
+				<div class="modal-grid">
+					<div class="modal-field">
+						<span class="modal-label">Internal ID</span>
+						<span class="modal-value" id="marconeInternalId">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Part #</span>
+						<span class="modal-value" id="marconePartNumber">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Part Image</span>
+						<span class="modal-value" id="marconeImage">-</span>
+					</div>
+					<div style="grid-column: span 1;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">MFG Code</span>
+						<span class="modal-value" id="marconeMfgCode">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Description</span>
+						<span class="modal-value" id="marconePartDescription">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Weight</span>
+						<span class="modal-value" id="marconeWeight">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Length</span>
+						<span class="modal-value" id="marconeLength">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Width</span>
+						<span class="modal-value" id="marconeWidth">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Height</span>
+						<span class="modal-value" id="marconeHeight">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Carrier Size</span>
+						<span class="modal-value" id="marconeCarrierSize">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Auth. Required</span>
+						<span class="modal-value" id="marconeAuthRequired">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Available Qty</span>
+						<span class="modal-value" id="marconeAvailQty">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">ETA</span>
+						<span class="modal-value" id="marconeEta">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">List Price</span>
+						<span class="modal-value" id="marconeListPrice">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Core Price</span>
+						<span class="modal-value" id="marconeCorePrice">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Part Price</span>
+						<span class="modal-value" id="marconePrice">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Total Price</span>
+						<span class="modal-value" id="marconeTotalPrice">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Alt. Part</span>
+						<span class="modal-value" id="marconeAltPart">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">Harmonized Tariff</span>
+						<span class="modal-value" id="marconeHarmonizedTariff">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+
+					<div class="modal-field">
+						<span class="modal-label">Returnable?</span>
+						<span class="modal-value" id="marconeReturnable">-</span>
+					</div>
+					<div class="modal-field">
+						<span class="modal-label">In-Wty Return?</span>
+						<span class="modal-value" id="marconeInWtyReturn">-</span>
+					</div>
+					<div style="grid-column: span 2;"></div>
+				</div>
+
+				<div class="modal-section" style="margin-top: 2rem;">
+					<h3>Availability (Marcone)</h3>
+					<div style="margin-bottom: 1rem;">
+						<span style="font-size: 0.85rem; color: #6b7280; font-style: italic;" id="marconeAvailabilityNote">0 records found</span>
+					</div>
+					<table class="modal-table">
+						<thead>
+							<tr>
+								<th>Country</th>
+								<th>W/H Name</th>
+								<th>Available Qty</th>
+							</tr>
+						</thead>
+						<tbody id="marconeAvailabilityTableBody">
+							<tr>
+								<td colspan="3" style="text-align: center; color: #9ca3af;">No availability data</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../routes.js"></script>
+	<script>
+		let ptrData = [];
+		let filteredData = [];
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function loadPTRData() {
+			// Sample data - replace with actual API call
+			ptrData = [
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: '', location: 'Savannah', invoiceNo: '', accountType: 'NSA', partNo: 'drain pump housing', partDesc: 'drain pump housing', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'HSV20260534218180', repairStatus: 'TR-Need PO', visitNo: 1, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: '00195767-1', location: 'Mobile', invoiceNo: '788511', accountType: 'NSA', partNo: 'RV-MZA400WRZZ', partDesc: 'MAGNETRON', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'SMO20260534529824', repairStatus: 'CSR-Needs Scheduling', visitNo: 2, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: '00195767-1', location: 'Mobile', invoiceNo: '788511', accountType: 'NSA', partNo: 'FC-QZA691WRKZ', partDesc: 'HVC ASSY', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'SMO20260534529824', repairStatus: 'CSR-Needs Scheduling', visitNo: 3, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: '00196131-1', location: 'Savannah', invoiceNo: '788507', accountType: 'NSA', partNo: 'RV-MZA400WRZZ', partDesc: 'MAGNETRON', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'SMO20260534458562', repairStatus: 'PT-Need PreAuthorization', visitNo: 4, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: '00196131-1', location: 'Savannah', invoiceNo: '788507', accountType: 'NSA', partNo: 'FC-QZA691WRKZ', partDesc: 'HVC ASSY', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'SMO20260534458562', repairStatus: 'PT-Need PreAuthorization', visitNo: 5, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Encompass', poNo: '1007145943-10-ATL-1', location: 'Atlanta', invoiceNo: '1-347696-0526', accountType: 'SP', partNo: '5304532557', partDesc: 'EVAPORATOR MOTOR', qty: 1, totalPrice: '$64.37', partStatus: 'RA - PNN', triagedBy: 'Naveen Lakhani', ticketNo: '1007145943-10', repairStatus: 'OP-UPDATE HOLD', visitNo: 6, note: '05/18=1-09986', raDate: '05/19/2026', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Encompass', poNo: '2421292-AV', location: 'Asheville', invoiceNo: '', accountType: 'SP', partNo: '204659P', partDesc: 'ASM, CNTRL', qty: 1, totalPrice: '$292.18', partStatus: 'PO Made', triagedBy: 'Jordan Koetsier', ticketNo: '2421292', repairStatus: 'OP-Waiting for Part', visitNo: 7, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: 'HAP20260534492957_1', location: 'Wilmington', invoiceNo: '0083490087', accountType: 'NSA', partNo: 'K1870599', partDesc: 'Freezer Fan Motor', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'HAP20260534492957', repairStatus: 'OP-Waiting for Part', visitNo: 8, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'NSA', poNo: 'HAP20260534527683_1', location: 'Nashville', invoiceNo: '0083490472', accountType: 'NSA', partNo: 'K2082181', partDesc: 'Defrost Heater', qty: 1, totalPrice: '$0.00', partStatus: 'PO Made', triagedBy: '', ticketNo: 'HAP20260534527683', repairStatus: 'OP-Waiting for Part', visitNo: 9, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Squaretrade', poNo: '002330174130-1', location: 'Jacksonville', invoiceNo: '002330174130-1', accountType: 'SP', partNo: '5220FR2006Z', partDesc: 'WASHER WATER VALVE', qty: 1, totalPrice: '$0.00', partStatus: 'CX Home', triagedBy: '', ticketNo: '002330174130', repairStatus: 'CSR-Needs Scheduling', visitNo: 1, note: 'If used during repair requires return: No Shipping Provider: FedEx', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Marcone-162468', poNo: '1006143008-11-CB-2', location: 'Columbus', invoiceNo: '', accountType: 'SP', partNo: 'GRLP5', partDesc: 'LP CONVERSION KIT', qty: 1, totalPrice: '$19.43', partStatus: 'PO Made', triagedBy: 'Mark Marquez', ticketNo: '1006143008-11', repairStatus: 'OP-Waiting for Part', visitNo: 1, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Marcone-162468', poNo: '1006947917-10-JV-4', location: 'Jacksonville', invoiceNo: '74088444', accountType: 'SP', partNo: '241829001', partDesc: 'BAR-DRIVE', qty: 1, totalPrice: '$34.28', partStatus: 'Part Ready', triagedBy: 'Kemuel Tamayo', ticketNo: '1006947917-10', repairStatus: 'CSR-Needs Scheduling', visitNo: 1, note: '', raDate: '', creditNo: '' },
+				{ poDate: '05/18/2026', partDist: 'Marcone-162468', poNo: '1006947917-10-JV-4', location: 'Jacksonville', invoiceNo: '74088444', accountType: 'SP', partNo: '140123513032', partDesc: 'HOUSING', qty: 1, totalPrice: '$31.23', partStatus: 'Part Ready', triagedBy: 'Cheska Timkang', ticketNo: '1006947917-10', repairStatus: 'CSR-Needs Scheduling', visitNo: 2, note: 'WCI - 5304530705', raDate: '', creditNo: '' },
+			];
+
+			filteredData = [...ptrData];
+			renderTable();
+		}
+
+		function renderTable() {
+			const tableBody = document.getElementById('reportTableBody');
+			const resultsNote = document.getElementById('resultsNote');
+
+			if (filteredData.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="18" style="text-align: center; padding: 2rem;">No records found</td></tr>';
+				resultsNote.textContent = 'Showing 0 of ' + ptrData.length + ' records';
+				return;
+			}
+
+			let totalPrice = 0;
+			filteredData.forEach(row => {
+				const priceStr = row.totalPrice.replace('$', '').replace(',', '');
+				totalPrice += parseFloat(priceStr) || 0;
+			});
+
+			tableBody.innerHTML = filteredData.map(row => `
+				<tr>
+					<td>${row.poDate}</td>
+					<td>${row.partDist}</td>
+					<td>${row.poNo}</td>
+					<td>${row.location}</td>
+					<td>${row.invoiceNo}</td>
+					<td>${row.accountType}</td>
+					<td><a href="javascript:void(0);" onclick="openPartModal('${row.partNo}', '${row.partDist}')" style="color: #0066cc; text-decoration: none; font-weight: 500; cursor: pointer;">${row.partNo}</a></td>
+					<td>${row.partDesc}</td>
+					<td>${row.qty}</td>
+					<td>${row.totalPrice}</td>
+					<td>${row.partStatus}</td>
+					<td>${row.triagedBy}</td>
+					<td><a href="../../Modules/Tickets/ticket_details.html?ticketNo=${row.ticketNo}" target="_blank" style="color: #0066cc; text-decoration: none; font-weight: 500; cursor: pointer;">${row.ticketNo}</a></td>
+					<td>${row.repairStatus}</td>
+					<td>${row.visitNo}</td>
+					<td>${row.note}</td>
+					<td>${row.raDate}</td>
+					<td>${row.creditNo}</td>
+				</tr>
+			`).join('') + `
+				<tr class="total-row">
+					<td colspan="9" style="text-align: right; padding-right: 1rem;">TOTAL</td>
+					<td>$${totalPrice.toFixed(2)}</td>
+					<td colspan="8"></td>
+				</tr>
+			`;
+
+			resultsNote.textContent = `Showing ${filteredData.length} of ${ptrData.length} records`;
+		}
+
+		function applyFilters() {
+			const location = document.getElementById('location').value;
+			const poDateFrom = document.getElementById('poDateFrom').value;
+			const poDateTo = document.getElementById('poDateTo').value;
+
+			filteredData = ptrData.filter(row => {
+				let match = true;
+
+				if (location && row.location !== location) {
+					match = false;
+				}
+
+				if (match && poDateFrom) {
+					const fromDate = new Date(poDateFrom);
+					const rowDate = new Date(row.poDate.split('/').reverse().join('-'));
+					if (rowDate < fromDate) {
+						match = false;
+					}
+				}
+
+				if (match && poDateTo) {
+					const toDate = new Date(poDateTo);
+					const rowDate = new Date(row.poDate.split('/').reverse().join('-'));
+					if (rowDate > toDate) {
+						match = false;
+					}
+				}
+
+				return match;
+			});
+
+			renderTable();
+		}
+
+		function filterTable() {
+			const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+			
+			if (!searchTerm) {
+				applyFilters();
+				return;
+			}
+
+			const location = document.getElementById('location').value;
+			const poDateFrom = document.getElementById('poDateFrom').value;
+			const poDateTo = document.getElementById('poDateTo').value;
+
+			filteredData = ptrData.filter(row => {
+				let match = true;
+
+				// Apply date and location filters
+				if (location && row.location !== location) {
+					match = false;
+				}
+
+				if (match && poDateFrom) {
+					const fromDate = new Date(poDateFrom);
+					const rowDate = new Date(row.poDate.split('/').reverse().join('-'));
+					if (rowDate < fromDate) {
+						match = false;
+					}
+				}
+
+				if (match && poDateTo) {
+					const toDate = new Date(poDateTo);
+					const rowDate = new Date(row.poDate.split('/').reverse().join('-'));
+					if (rowDate > toDate) {
+						match = false;
+					}
+				}
+
+				// Apply search filter
+				if (match && searchTerm) {
+					const searchText = `${row.poDate}${row.partDist}${row.poNo}${row.location}${row.invoiceNo}${row.accountType}${row.partNo}${row.partDesc}${row.ticketNo}${row.repairStatus}`.toLowerCase();
+					match = searchText.includes(searchTerm);
+				}
+
+				return match;
+			});
+
+			renderTable();
+		}
+
+		function resetFilters() {
+			document.getElementById('location').value = '';
+			document.getElementById('poDateFrom').value = '';
+			document.getElementById('poDateTo').value = '';
+			document.getElementById('searchInput').value = '';
+			filteredData = [...ptrData];
+			renderTable();
+		}
+
+		document.getElementById('searchBtn').addEventListener('click', applyFilters);
+		document.getElementById('resetBtn').addEventListener('click', resetFilters);
+
+		function switchTab(tabName) {
+			// Remove active class from all tabs
+			document.querySelectorAll('.modal-tab-button').forEach(btn => btn.classList.remove('active'));
+			document.querySelectorAll('.modal-tab-content').forEach(content => content.classList.remove('active'));
+
+			// Add active class to selected tab
+			event.target.classList.add('active');
+			document.getElementById(tabName + '-tab').classList.add('active');
+		}
+
+		function openPartModal(partNo, partDist) {
+			// Find the part record
+			const part = ptrData.find(p => p.partNo === partNo && p.partDist === partDist);
+			
+			if (!part) {
+				console.error('Part not found:', partNo, partDist);
+				return;
+			}
+
+			// Sample warehouse availability data
+			const warehouseData = {
+				'5304532557': [
+					{ country: 'US', warehouse: 'Litchfield Park, AZ (C)', qty: 6 },
+					{ country: 'US', warehouse: 'Cincinnati, OH', qty: 4 },
+					{ country: 'US', warehouse: 'Evansville, IN', qty: 3 },
+					{ country: 'US', warehouse: 'Addison, IL (C)', qty: 23 },
+					{ country: 'US', warehouse: 'Atlanta, GA', qty: 18 },
+					{ country: 'US', warehouse: 'Dallas, TX', qty: 13 },
+					{ country: 'US', warehouse: 'Fort Lauderdale, FL', qty: 12 }
+				],
+				'default': [
+					{ country: 'US', warehouse: 'Addison, IL (C)', qty: 12 },
+					{ country: 'US', warehouse: 'Atlanta, GA', qty: 8 }
+				]
+			};
+
+			const availability = warehouseData[partNo] || warehouseData['default'];
+
+			// Update modal header with part number
+			document.getElementById('partModalTitle').textContent = `Part Info. of (${part.partNo})`;
+
+			// Populate Encompass tab
+			document.getElementById('partInternalId').textContent = '13051613';
+			document.getElementById('partNumber').textContent = part.partNo || '-';
+			document.getElementById('partImage').textContent = '-';
+			document.getElementById('partMfgCode').textContent = 'FRI';
+			document.getElementById('partDescription').textContent = part.partDesc || 'EVAPORATOR MOTOR';
+
+			// Populate dimensions & weight
+			document.getElementById('partWeight').textContent = '0 lbs';
+			document.getElementById('partLength').textContent = '7870 inches';
+			document.getElementById('partWidth').textContent = '3740 inches';
+			document.getElementById('partHeight').textContent = '2360 inches';
+
+			// Populate additional fields
+			document.getElementById('partCarrierSize').textContent = '0';
+			document.getElementById('partAuthRequired').textContent = 'N';
+			document.getElementById('partAvailQty').textContent = '50';
+			document.getElementById('partEta').textContent = '2026-05-19';
+
+			// Populate pricing
+			document.getElementById('partListPrice').textContent = '-';
+			document.getElementById('partCorePrice').textContent = '0.00';
+			document.getElementById('partPrice').textContent = '64.37';
+			document.getElementById('partTotalPrice').textContent = '64.37';
+
+			// Populate more additional info
+			document.getElementById('partAltPart').textContent = '-';
+			document.getElementById('partHarmonizedTariff').textContent = '8481809015';
+			document.getElementById('partReturnable').textContent = 'Y';
+			document.getElementById('partInWtyReturn').textContent = 'Y';
+
+			// Populate availability table
+			const availabilityTableBody = document.getElementById('availabilityTableBody');
+			const availabilityNote = document.getElementById('availabilityNote');
+			
+			availabilityNote.textContent = availability.length + ' records found';
+			availabilityTableBody.innerHTML = availability.map(item => `
+				<tr>
+					<td>${item.country}</td>
+					<td>${item.warehouse}</td>
+					<td>${item.qty}</td>
+				</tr>
+			`).join('');
+
+			// Populate Marcone tab
+			document.getElementById('marconeInternalId').textContent = '13051613';
+			document.getElementById('marconePartNumber').textContent = part.partNo || '-';
+			document.getElementById('marconeImage').textContent = '-';
+			document.getElementById('marconeMfgCode').textContent = 'FRI';
+			document.getElementById('marconePartDescription').textContent = part.partDesc || 'EVAPORATOR MOTOR';
+
+			// Populate Marcone dimensions & weight
+			document.getElementById('marconeWeight').textContent = '0 lbs';
+			document.getElementById('marconeLength').textContent = '7870 inches';
+			document.getElementById('marconeWidth').textContent = '3740 inches';
+			document.getElementById('marconeHeight').textContent = '2360 inches';
+
+			// Populate Marcone additional fields
+			document.getElementById('marconeCarrierSize').textContent = '0';
+			document.getElementById('marconeAuthRequired').textContent = 'N';
+			document.getElementById('marconeAvailQty').textContent = '35';
+			document.getElementById('marconeEta').textContent = '2026-05-18';
+
+			// Populate Marcone pricing (different from Encompass)
+			document.getElementById('marconeListPrice').textContent = '-';
+			document.getElementById('marconeCorePrice').textContent = '6.00';
+			document.getElementById('marconePrice').textContent = '68.45';
+			document.getElementById('marconeTotalPrice').textContent = '74.45';
+
+			// Populate Marcone more additional info
+			document.getElementById('marconeAltPart').textContent = '-';
+			document.getElementById('marconeHarmonizedTariff').textContent = '8481809015';
+			document.getElementById('marconeReturnable').textContent = 'Y';
+			document.getElementById('marconeInWtyReturn').textContent = 'Y';
+
+			// Populate Marcone availability table (different warehouse data)
+			const marconeAvailabilityTableBody = document.getElementById('marconeAvailabilityTableBody');
+			const marconeAvailabilityNote = document.getElementById('marconeAvailabilityNote');
+			const marconeAvailability = [
+				{ country: 'US', warehouse: 'Indianapolis, IN', qty: 9 },
+				{ country: 'US', warehouse: 'Memphis, TN', qty: 12 },
+				{ country: 'US', warehouse: 'Phoenix, AZ', qty: 6 }
+			];
+
+			marconeAvailabilityNote.textContent = marconeAvailability.length + ' records found';
+			marconeAvailabilityTableBody.innerHTML = marconeAvailability.map(item => `
+				<tr>
+					<td>${item.country}</td>
+					<td>${item.warehouse}</td>
+					<td>${item.qty}</td>
+				</tr>
+			`).join('');
+
+			// Reset tabs to Encompass
+			document.querySelectorAll('.modal-tab-button').forEach((btn, idx) => {
+				btn.classList.toggle('active', idx === 0);
+			});
+			document.querySelectorAll('.modal-tab-content').forEach((content, idx) => {
+				content.classList.toggle('active', idx === 0);
+			});
+
+			// Show modal
+			const modal = document.getElementById('partModal');
+			modal.classList.add('active');
+		}
+
+		function closePartModal() {
+			const modal = document.getElementById('partModal');
+			modal.classList.remove('active');
+		}
+
+		// Close modal when clicking outside of it
+		document.getElementById('partModal').addEventListener('click', function(e) {
+			if (e.target === this) {
+				closePartModal();
+			}
+		});
+
+		window.addEventListener('load', function () {
+			applyPrettyUrl('reportPtr');
+			loadUserInfo();
+			loadPTRData();
+			setupScrollbars();
+		});
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('ptrTableWrap');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!tableContainer || !floatingScrollbar) return;
+			function update() {
+				const hasOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasOverflow) { floatingScrollbar.classList.remove('is-visible'); return; }
+				const rect = tableContainer.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else { floatingScrollbar.classList.remove('is-visible'); }
+			}
+			tableContainer.addEventListener('scroll', () => { floatingScrollbar.scrollLeft = tableContainer.scrollLeft; });
+			floatingScrollbar.addEventListener('scroll', () => { tableContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

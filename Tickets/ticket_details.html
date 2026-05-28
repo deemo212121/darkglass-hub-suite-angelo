@@ -1,0 +1,3004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Ticket Details - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.details-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.top-meta {
+			display: grid;
+			grid-template-columns: repeat(4, minmax(120px, 1fr));
+			gap: 0.7rem;
+			margin: 0.6rem 0 1rem;
+		}
+
+		.meta-card {
+			background: rgba(17, 24, 39, 0.9);
+			border: 1px solid rgba(255, 255, 255, 0.14);
+			border-radius: 8px;
+			padding: 0.55rem 0.65rem;
+		}
+
+		.meta-label {
+			font-size: 0.72rem;
+			color: #cbd5e1;
+			margin-bottom: 0.15rem;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.meta-value {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #fff;
+		}
+
+		.related-note {
+			margin: 0.1rem 0 0.6rem;
+			font-size: 0.84rem;
+			color: #bfdbfe;
+		}
+
+		.search-ticket-wrap {
+			display: flex;
+			gap: 0.55rem;
+			flex-wrap: wrap;
+			align-items: end;
+			margin: 0.15rem 0 0.95rem;
+		}
+
+		.search-ticket-wrap .field {
+			min-width: 280px;
+			max-width: 420px;
+			flex: 1;
+		}
+
+		.search-feedback {
+			display: none;
+			margin: -0.4rem 0 0.8rem;
+			padding: 0.45rem 0.65rem;
+			border-radius: 6px;
+			font-size: 0.8rem;
+			font-weight: 600;
+		}
+
+		.search-feedback.error {
+			display: block;
+			background: transparent;
+			border: none;
+			padding: 0;
+			color: #f87171;
+		}
+
+		.search-feedback.ok {
+			display: block;
+			background: rgba(20, 83, 45, 0.35);
+			border: 1px solid rgba(74, 222, 128, 0.55);
+			color: #dcfce7;
+		}
+
+		.tab-row {
+			display: flex;
+			gap: 0.55rem;
+			flex-wrap: wrap;
+			margin: 0.2rem 0 1rem;
+		}
+
+		.tab-btn {
+			padding: 0.5rem 0.85rem;
+			border-radius: 999px;
+			border: 1px solid rgba(255, 255, 255, 0.24);
+			background: rgba(17, 24, 39, 0.9);
+			color: #dbeafe;
+			font-size: 0.82rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.tab-btn.active {
+			background: rgba(30, 64, 175, 0.45);
+			border-color: rgba(96, 165, 250, 0.6);
+			color: #fff;
+		}
+
+		.tab-panel {
+			display: none;
+		}
+
+		.tab-panel.active {
+			display: block;
+		}
+
+		.section-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 0.95rem;
+			margin-bottom: 1rem;
+		}
+
+		.section-card {
+			background: rgba(17, 24, 39, 0.78);
+			border: 1px solid rgba(255, 255, 255, 0.14);
+			border-radius: 8px;
+			padding: 0.85rem;
+		}
+
+		.section-title {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #dbeafe;
+			margin-bottom: 0.7rem;
+		}
+
+		.form-grid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 0.65rem;
+		}
+
+		.form-grid.full {
+			grid-template-columns: 1fr;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.field label {
+			font-size: 0.75rem;
+			font-weight: 600;
+			color: #cbd5e1;
+		}
+
+		.field input,
+		.field textarea,
+		.field .value-box {
+			width: 100%;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.16);
+			background: rgba(2, 6, 23, 0.78);
+			color: #fff;
+			padding: 0.55rem 0.65rem;
+			font-size: 0.83rem;
+		}
+
+		.field textarea {
+			min-height: 68px;
+			resize: vertical;
+		}
+
+		.pill-row {
+			display: flex;
+			gap: 0.45rem;
+			flex-wrap: wrap;
+		}
+
+		.pill {
+			padding: 0.28rem 0.55rem;
+			border-radius: 999px;
+			border: 1px solid rgba(147, 197, 253, 0.55);
+			background: rgba(30, 64, 175, 0.36);
+			font-size: 0.74rem;
+			color: #dbeafe;
+		}
+
+		.action-row {
+			display: flex;
+			gap: 0.6rem;
+			flex-wrap: wrap;
+			margin-top: 0.8rem;
+		}
+
+		.action-btn {
+			padding: 0.55rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.24);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.82rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+		}
+
+		.action-btn:hover {
+			transform: translateY(-1px);
+			border-color: rgba(147, 197, 253, 0.8);
+			box-shadow: 0 6px 14px rgba(2, 6, 23, 0.35);
+		}
+
+		.maps-btn {
+			margin-top: 0.45rem;
+			background: linear-gradient(135deg, #0f172a, #1e293b);
+			border-color: rgba(148, 163, 184, 0.75);
+		}
+
+		.planner-btn {
+			margin-top: 0.45rem;
+			background: linear-gradient(135deg, #134e4a, #0f766e);
+			border-color: rgba(45, 212, 191, 0.55);
+		}
+
+		.attachment-toolbar {
+			display: flex;
+			align-items: center;
+			gap: 0.7rem;
+			flex-wrap: wrap;
+			margin-bottom: 0.7rem;
+		}
+
+		.attachment-type-select,
+		.attachment-file-input {
+			background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.95));
+			color: #e2e8f0;
+			border: 1px solid rgba(148, 163, 184, 0.55);
+			border-radius: 8px;
+			padding: 0.5rem 0.62rem;
+			font-size: 0.8rem;
+			font-weight: 600;
+			min-height: 36px;
+		}
+
+		.attachment-type-select {
+			background: #ffffff;
+			color: #000000;
+			min-width: 210px;
+		}
+
+		.attachment-type-select option {
+			color: #000000;
+			background: #ffffff;
+		}
+
+		.attachment-file-input {
+			max-width: 260px;
+		}
+
+		.attachment-add-btn {
+			background: linear-gradient(135deg, #1d4ed8, #1e40af);
+			border-color: rgba(96, 165, 250, 0.75);
+			font-weight: 700;
+		}
+
+		.attachment-modal {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 9300;
+			background: rgba(2, 6, 23, 0.82);
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.attachment-modal.open {
+			display: flex;
+		}
+
+		.attachment-modal-content {
+			width: min(96vw, 980px);
+			max-height: 92vh;
+			background: #0f172a;
+			border: 1px solid rgba(148, 163, 184, 0.45);
+			border-radius: 12px;
+			overflow: hidden;
+			box-shadow: 0 25px 60px rgba(2, 6, 23, 0.55);
+		}
+
+		.attachment-modal-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.8rem;
+			padding: 0.7rem 0.9rem;
+			background: rgba(30, 41, 59, 0.95);
+			border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+		}
+
+		.attachment-modal-title {
+			color: #e2e8f0;
+			font-size: 0.86rem;
+			font-weight: 700;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+
+		.attachment-modal-close {
+			border: 1px solid rgba(148, 163, 184, 0.6);
+			background: rgba(15, 23, 42, 0.9);
+			color: #e2e8f0;
+			border-radius: 7px;
+			padding: 0.35rem 0.7rem;
+			cursor: pointer;
+			font-size: 0.78rem;
+			font-weight: 700;
+		}
+
+		.attachment-modal-body {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background: #020617;
+			max-height: calc(92vh - 58px);
+			overflow: auto;
+		}
+
+		.attachment-modal-body img {
+			display: block;
+			max-width: 100%;
+			max-height: calc(92vh - 74px);
+			object-fit: contain;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.details-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.details-table th,
+		.details-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.55rem 0.65rem;
+			font-size: 0.8rem;
+			text-align: left;
+			white-space: nowrap;
+		}
+
+		.details-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		table.details-table.compact th,
+		table.details-table.compact td {
+			padding: 0.42rem 0.5rem;
+			font-size: 0.76rem;
+		}
+
+		@media (max-width: 1024px) {
+			.top-meta {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.section-grid {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.form-grid {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		/* ── Part Modal ───────────────────────────────────────── */
+		#partModalOverlay {
+			display: none;
+			position: fixed;
+			inset: 0;
+			background: rgba(0,0,0,0.55);
+			z-index: 9000;
+			align-items: center;
+			justify-content: center;
+		}
+		#partModalOverlay.open { display: flex; }
+		#partModal {
+			background: #1f2937;
+			border: 1px solid rgba(255,255,255,0.18);
+			border-radius: 12px;
+			width: min(96vw, 860px);
+			max-height: 90vh;
+			overflow-y: auto;
+			padding: 1.5rem 1.75rem;
+			color: #e5e7eb;
+		}
+		#partModal h3 {
+			margin: 0 0 1rem;
+			font-size: 1.05rem;
+			font-weight: 700;
+			color: #fff;
+		}
+		.pm-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+			gap: 0.75rem 1rem;
+		}
+		.pm-field { display: flex; flex-direction: column; gap: 0.3rem; }
+		.pm-field label { font-size: 0.73rem; color: #9ca3af; font-weight: 600; }
+		.pm-field input, .pm-field select {
+			background: rgba(255,255,255,0.07);
+			border: 1px solid rgba(255,255,255,0.2);
+			border-radius: 6px;
+			color: #fff;
+			padding: 0.42rem 0.6rem;
+			font-size: 0.8rem;
+		}
+		.pm-field input::placeholder { color: #6b7280; }
+		.pm-field select option { color: #000; background: #fff; }
+		.pm-actions {
+			display: flex;
+			gap: 0.6rem;
+			margin-top: 1.25rem;
+			justify-content: flex-end;
+		}
+		.pm-save-btn {
+			background: #2563eb;
+			color: #fff;
+			border: none;
+			border-radius: 6px;
+			padding: 0.55rem 1.2rem;
+			font-size: 0.83rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+		.pm-cancel-btn {
+			background: rgba(255,255,255,0.08);
+			color: #e5e7eb;
+			border: 1px solid rgba(255,255,255,0.2);
+			border-radius: 6px;
+			padding: 0.55rem 1.2rem;
+			font-size: 0.83rem;
+			cursor: pointer;
+		}
+		.part-edit-btn, .part-del-btn {
+			border: none;
+			border-radius: 4px;
+			padding: 0.28rem 0.55rem;
+			font-size: 0.72rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		.part-edit-btn { background: #2563eb; color: #fff; margin-right: 3px; }
+		.part-del-btn  { background: #dc2626; color: #fff; }
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToTicketList()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Ticket List
+			</button>
+			<h2 style="color: white; margin: 0;">Ticket Detail Information (ER)</h2>
+		</div>
+
+		<div class="details-panel">
+			<div id="relatedTicketSummary" class="related-note">*** 0 ticket(s) available ***</div>
+
+			<div class="search-ticket-wrap">
+				<div class="field">
+					<label for="ticketLookupInput">Search Ticket #</label>
+					<input id="ticketLookupInput" type="text" placeholder="Enter ticket number and press Enter">
+				</div>
+				<button id="ticketLookupBtn" class="action-btn" type="button">Search Ticket</button>
+			</div>
+			<div id="ticketLookupFeedback" class="search-feedback"></div>
+
+			<div class="top-meta">
+				<div class="meta-card"><div class="meta-label">Ticket #</div><div id="currentTicketValue" class="meta-value">JHONTEST</div></div>
+				<div class="meta-card"><div class="meta-label">Account</div><div class="meta-value">ER</div></div>
+				<div class="meta-card"><div class="meta-label">Wty</div><div class="meta-value">OW</div></div>
+				<div class="meta-card"><div class="meta-label">Product</div><div class="meta-value">Dryer</div></div>
+				<div class="meta-card"><div class="meta-label">TAT</div><div class="meta-value">0d</div></div>
+				<div class="meta-card"><div class="meta-label">Status</div><div class="meta-value">CSR-Acknowledged</div></div>
+				<div class="meta-card"><div class="meta-label">Schedule</div><div class="meta-value">N/A</div></div>
+				<div class="meta-card"><div class="meta-label">Contact</div><div class="meta-value">615-971-1310</div></div>
+			</div>
+
+			<div class="pill-row" style="margin-bottom: 1rem;">
+				<span class="pill">Sched.</span>
+				<span class="pill">Triage</span>
+				<span class="pill">P/O</span>
+				<span class="pill">Visit</span>
+				<span class="pill">Comp.</span>
+				<span class="pill">Claim</span>
+			</div>
+
+			<div class="tab-row">
+				<button class="tab-btn active" type="button" data-tab="generalTab">General Information</button>
+				<button class="tab-btn" type="button" data-tab="serviceTab">Service Tracking 0</button>
+				<button class="tab-btn" type="button" data-tab="compTab">Compensation</button>
+				<button class="tab-btn" type="button" data-tab="billingTab">Billing</button>
+			</div>
+
+			<div id="generalTab" class="tab-panel active">
+				<div class="section-grid">
+					<div class="section-card">
+						<div class="section-title">General Information</div>
+						<div class="form-grid">
+							<div class="field">
+								<label>Ticket No*</label>
+								<input type="text" value="JhonTest Fake Ticket (not included statistically)" readonly>
+							</div>
+							<div class="field">
+								<label>Source*</label>
+								<input type="text" value="Call in" readonly>
+							</div>
+							<div class="field">
+								<label>Posting Date</label>
+								<input type="text" value="05/14/2026 (Assigned: 05/14/2026 13:40:32)" readonly>
+							</div>
+							<div class="field">
+								<label>Location</label>
+								<input type="text" value="Jackson, TN" readonly>
+							</div>
+						</div>
+
+						<div class="form-grid full" style="margin-top: 0.6rem;">
+							<div class="field">
+								<label>Blacklist Reason</label>
+								<textarea readonly>(write blacklist reason)</textarea>
+							</div>
+							<div class="field">
+								<label>Problem Description*</label>
+								<textarea readonly></textarea>
+							</div>
+						</div>
+					</div>
+
+					<div class="section-card">
+						<div class="section-title">Customer Information</div>
+						<div class="form-grid">
+							<div class="field">
+								<label>First Name*</label>
+								<input type="text" value="Aleena" readonly>
+							</div>
+							<div class="field">
+								<label>Last Name*</label>
+								<input type="text" value="Hii" readonly>
+							</div>
+							<div class="field">
+								<label>Company Name</label>
+								<input type="text" value="" readonly>
+							</div>
+							<div class="field">
+								<label>Home Phone</label>
+								<input type="text" value="" readonly>
+							</div>
+							<div class="field">
+								<label>Cell Phone</label>
+								<input type="text" value="615-971-1310" readonly>
+							</div>
+							<div class="field">
+								<label>Work Phone</label>
+								<input type="text" value="" readonly>
+							</div>
+						</div>
+
+						<div class="form-grid full" style="margin-top: 0.6rem;">
+							<div class="field">
+								<label>Address*</label>
+								<textarea readonly>1903 N HIGHLAND AVE
+
+JACKSON
+
+Tennessee
+38305
+
+
+1903 N HIGHLAND AVE JACKSON TN 38305, MADISON County</textarea>
+								<div class="action-row">
+									<button class="action-btn maps-btn" type="button" onclick="openCustomerAddressInGmaps()">View on GMaps</button>
+									<button class="action-btn planner-btn" type="button" onclick="openTicketInWorkPlanner()">Open Work Planner</button>
+								</div>
+							</div>
+							<div class="field">
+								<label>Address Note</label>
+								<textarea readonly>(special note for direction)</textarea>
+							</div>
+							<div class="field">
+								<label>Cx Email 1/2</label>
+								<div class="value-box">(email 1) / (email 2)</div>
+							</div>
+							<div class="field">
+								<label>Contact Method</label>
+								<div class="value-box">Email Fax Phone SMS Text</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="section-grid">
+					<div class="section-card">
+						<div class="section-title">Product Information</div>
+						<div class="pill-row" style="margin-bottom: 0.7rem;">
+							<span class="pill">Exploded View</span>
+							<span class="pill">Service Bulletin</span>
+							<span class="pill">Service Manual</span>
+							<span class="pill">Training Manual</span>
+							<span class="pill">User's Manual</span>
+						</div>
+
+						<div class="form-grid">
+							<div class="field"><label>Model*</label><input type="text" value="N/A" readonly></div>
+							<div class="field"><label>Serial No</label><input type="text" value="N/A" readonly></div>
+							<div class="field"><label>Model Version</label><input type="text" value="(version/product code)" readonly></div>
+							<div class="field"><label>Brand</label><input type="text" value="" readonly></div>
+							<div class="field"><label>Product Category</label><input type="text" value="Dryer" readonly></div>
+							<div class="field"><label>Purchase Date</label><input type="text" value="mm/dd/yyyy" readonly></div>
+							<div class="field"><label>Warranty Type</label><input type="text" value="Out-of-warranty" readonly></div>
+							<div class="field"><label>Wty Term (Labor)</label><input type="text" value="mm/dd/yyyy" readonly></div>
+							<div class="field"><label>Wty Term (Part)</label><input type="text" value="mm/dd/yyyy" readonly></div>
+							<div class="field"><label>Redo Ticket #</label><input type="text" value="" readonly></div>
+							<div class="field"><label>Cx Preferred Date</label><input type="text" value="mm/dd/yyyy" readonly></div>
+						</div>
+					</div>
+
+					<div class="section-card">
+						<div class="section-title">Extra Information</div>
+						<div class="table-wrap">
+							<table class="details-table">
+								<thead>
+									<tr>
+										<th>Property</th>
+										<th>Value</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td></td>
+										<td></td>
+										<td>Add</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+
+						<div class="action-row">
+							<button class="action-btn" type="button">Update All</button>
+							<button class="action-btn" type="button">Close</button>
+							<button class="action-btn" type="button">List</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div id="serviceTab" class="tab-panel">
+				   <div class="section-card" style="margin-bottom: 0.95rem;">
+					   <div class="section-title">Attachments</div>
+					   <div class="attachment-toolbar">
+						   <select id="attachmentTypeSelect" class="attachment-type-select">
+							   <option value="">Select Type</option>
+							   <option value="Cx Signature">Cx Signature</option>
+							   <option value="Cx Upload">Cx Upload</option>
+							   <option value="Email">Email</option>
+							   <option value="Estimate">Estimate</option>
+							   <option value="HASS">HASS</option>
+							   <option value="Model/Serial">Model/Serial</option>
+							   <option value="Others">Others</option>
+							   <option value="Receipt">Receipt</option>
+							   <option value="Repair Invoice">Repair Invoice</option>
+							   <option value="Request Authorization (SP)">Request Authorization (SP)</option>
+							   <option value="Technicial">Technicial</option>
+							   <option value="Unit">Unit</option>
+							   <option value="Waiver Signature">Waiver Signature</option>
+							   <option value="Mode/Sellal">Mode/Sellal</option>
+						   </select>
+						   <input type="file" id="attachmentInput" class="attachment-file-input">
+						   <button class="action-btn attachment-add-btn" type="button" onclick="addAttachment()">Add</button>
+					   </div>
+					   <div class="table-wrap">
+						   <table class="details-table compact" id="attachmentsTable">
+							   <thead><tr><th>Type</th><th>Created</th><th>View</th><th>Actions</th></tr></thead>
+							   <tbody id="attachmentsTableBody">
+								   <tr id="attachmentsEmptyRow"><td>No file chosen</td><td></td><td></td><td>Add</td></tr>
+							   </tbody>
+						   </table>
+					   </div>
+					   <div class="related-note" id="attachmentSaveStatus" style="margin-top: 0.55rem;"></div>
+				   </div>
+
+				<div class="section-grid">
+					<div class="section-card">
+						<div class="section-title">Triage Recommendation</div>
+						<div class="field" style="margin-top: 0.7rem;">
+							<label>Triage RecommendationKeyword:</label>
+							<textarea readonly>05/14 - Customer called to schedule the appointment using a new ticket, schedule</textarea>
+						</div>
+						<div class="action-row"><button class="action-btn" type="button">Refresh</button></div>
+						<div class="value-box" style="margin-top: 0.45rem;">Click "Refresh" to see triage recommended parts</div>
+					</div>
+
+					<div class="section-card">
+						<div class="section-title">Visit Log</div>
+						<div class="value-box" id="visitLogPhone">N/A</div>
+						<div class="value-box" style="margin-top: 0.5rem;" id="visitLogContact">N/A</div>
+						<div class="value-box" style="margin-top: 0.5rem;" id="visitLogRedo">Redo Ticket #: NONE</div>
+						<div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin:0.6rem 0 0.4rem;">
+							<span class="related-note" id="visitDistinctCount" style="margin:0;">0 visits</span>
+							<button class="action-btn" type="button" onclick="openVisitModal(null)" style="cursor:pointer;">+ Add Visit</button>
+						</div>
+						<div class="table-wrap">
+							<table class="details-table compact" id="visitsTable">
+								<thead>
+									<tr>
+										<th>ID</th><th>Schedule Date</th><th>Technician*</th><th>Symptom (Cx)</th><th>Diagnosis</th><th>Repair Type (2nd Tech)</th><th>Note (Internal)</th><th>Reclaim</th><th>Activity</th><th>Action Type*</th><th>Time Slot</th><th>Repair Status*</th><th>Symptom (Tech)</th><th>Resolution</th><th>Non-Completion Reason</th><th>Triage Note</th><th>Visited</th><th>Not Completed?</th><th>Actions</th>
+									</tr>
+								</thead>
+								<tbody id="visitLogBody">
+									<tr id="visitsEmptyRow"><td colspan="19" style="color:#aaa;font-style:italic;text-align:center;">No visits added</td></tr>
+								</tbody>
+							</table>
+						</div>
+						<div class="related-note" id="visitLogMeta" style="margin-top: 0.6rem;"></div>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Call (Service) Information</div>
+					<div class="form-grid">
+						<div class="field"><label>Account No</label><input id="svcAccountNo" type="text" readonly value=""></div>
+						<div class="field"><label>Manufacture ID</label><input id="svcManufactureId" type="text" readonly value=""></div>
+						<div class="field"><label>Call No</label><input id="svcCallNo" type="text" readonly value=""></div>
+						<div class="field"><label>Ticket Source</label><input id="svcTicketSource" type="text" readonly value=""></div>
+						<div class="field"><label>Call Type</label><input id="svcCallType" type="text" readonly value=""></div>
+						<div class="field"><label>Service Type</label><input id="svcServiceType" type="text" readonly value=""></div>
+						<div class="field"><label>Call Status</label><input id="svcCallStatus" type="text" readonly value=""></div>
+						<div class="field"><label>Posting Date</label><input id="svcPostingDate" type="text" readonly value=""></div>
+						<div class="field"><label>Repeat Call</label><input id="svcRepeatCall" type="text" readonly value=""></div>
+						<div class="field"><label>Contract #</label><input id="svcContractNo" type="text" readonly value=""></div>
+						<div class="field"><label>Co-Pay</label><input id="svcCopay" type="text" readonly value=""></div>
+						<div class="field"><label>Claim Company</label><input id="svcClaimCompany" type="text" readonly value=""></div>
+						<div class="field"><label>Schedule Date (SP)</label><input id="svcScheduleDate" type="text" readonly value=""></div>
+						<div class="field"><label>Schedule Period</label><input id="svcSchedulePeriod" type="text" readonly value=""></div>
+						<div class="field"><label>Cx Preferred Date</label><input id="svcPreferredDate" type="text" readonly value=""></div>
+						<div class="field"><label>Technician</label><input id="svcTechnician" type="text" readonly value=""></div>
+					<div class="field"><label>PO #</label><input id="svcPoNo" type="text" readonly value=""></div>
+					<div class="field"><label>PO Amount</label><input id="svcPoAmount" type="text" readonly value=""></div>
+					<div class="field"><label>Emergency</label><input id="svcEmergency" type="text" readonly value=""></div>
+					<div class="field"><label>Auth No</label><input id="svcAuthNo" type="text" readonly value=""></div>
+				</div>
+				<div class="form-grid full" style="margin-top: 0.6rem;">
+					<div class="field"><label>Problem Description</label><textarea id="svcProblemDescription" readonly></textarea></div>
+					<div class="field"><label>Observation Notes</label><textarea id="svcObservationNotes" readonly></textarea></div>
+				</div>
+			</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Reschedule Information</div>
+					<div class="form-grid">
+						<div class="field"><label>New Schedule Date</label><input id="rsNewScheduleDate" type="text" readonly value=""></div>
+						<div class="field"><label>New Schedule Period</label><input id="rsNewSchedulePeriod" type="text" readonly value=""></div>
+						<div class="field"><label>Group</label><input id="rsGroup" type="text" readonly value=""></div>
+						<div class="field"><label>Reason</label><input id="rsReason" type="text" readonly value=""></div>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Completion Information</div>
+					<div class="form-grid">
+						<div class="field"><label>Complete Date</label><input id="compCompleteDate" type="text" readonly value=""></div>
+						<div class="field"><label>Resolution</label><input id="compResolution" type="text" readonly value=""></div>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Reject Information</div>
+					<div class="form-grid">
+						<div class="field"><label>Reject Reason</label><input id="rejRejectReason" type="text" readonly value=""></div>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Call Attribute Information</div>
+					<div class="table-wrap">
+						<table class="details-table compact" id="callAttributeTable">
+							<thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+							<tbody id="callAttributeBody">
+								<tr><td colspan="2" style="color:#aaa;font-style:italic;">No attributes</td></tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Customer Notes</div>
+					<div class="table-wrap">
+						<table class="details-table compact" id="customerNotesTable">
+							<thead><tr><th>Date</th><th>Notes</th><th>By</th></tr></thead>
+							<tbody id="customerNotesBody">
+								<tr><td colspan="3" style="color:#aaa;font-style:italic;">No notes</td></tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Servicer Notes</div>
+					<div class="table-wrap">
+						<table class="details-table compact" id="servicerNotesTable">
+							<thead><tr><th>#</th><th>Notes</th><th>By</th></tr></thead>
+							<tbody id="servicerNotesBody">
+								<tr><td colspan="3" style="color:#aaa;font-style:italic;">No notes</td></tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+				<div class="section-card" style="margin-bottom: 0.95rem;">
+					<div class="section-title">Part Transaction</div>
+					<div class="value-box" id="partModelCode" style="margin-bottom: 0.6rem;">Model Code: N/A</div>
+					<div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.55rem;">
+						<span class="related-note" id="partDistinctCount" style="margin:0;">0 distinct records found</span>
+						<div class="field" style="margin:0; max-width:220px;">
+							<label style="font-size:0.72rem;">search in result</label>
+							<input type="text" id="partSearchInput" placeholder="Search parts…" oninput="filterPartsTable()" style="font-size:0.78rem;">
+						</div>
+						<button class="action-btn" type="button" onclick="openPartModal(null)" style="cursor:pointer;">+ Add Part</button>
+						<span id="partSaveStatus" style="font-size:0.75rem; font-weight:600;"></span>
+					</div>
+					<div class="table-wrap">
+						<table class="details-table compact" id="partsTable">
+							<thead>
+								<tr>
+									<th>ID</th><th>Part No*</th><th>Part Dist.*</th><th>Part Description</th><th>PO No</th><th>P/O Date</th><th>Invoice No</th><th>Invoice Date</th><th>Qty* @ Lot</th><th>Part Price</th><th>Core Value</th><th>Ship Cost</th><th>Markup</th><th>Claim To</th><th>Part Status*</th><th>Note</th><th>Visit ID*</th><th>Order #</th><th>ETA</th><th>In Tracking #</th><th>RA Date</th><th>RA #</th><th>Out Tracking #</th><th>Credit #</th><th>Total (Markup)</th><th>Hold</th><th>Cx Paid</th><th>Actions</th>
+								</tr>
+							</thead>
+							<tbody id="partsTableBody">
+								<tr id="partsEmptyRow"><td colspan="28" style="color:#aaa;font-style:italic;text-align:center;">No parts added</td></tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div class="section-grid">
+					<div class="section-card">
+						<div class="section-title">Claim Transaction</div>
+						<div class="value-box" style="margin-bottom: 0.55rem;">Ticket #: 1007186287-12 ELECTROLUX</div>
+						<div class="related-note">Ticket Event - 3 distinct records found</div>
+						<div class="field" style="margin-bottom: 0.55rem; max-width: 280px;"><label>search in result</label><input type="text" readonly value=""></div>
+						<div class="table-wrap">
+							<table class="details-table compact">
+								<thead><tr><th>ID</th><th>Event</th><th>Repair Status</th><th>Processed Time</th><th>SMS Notify</th><th>Email Notify</th><th>Event Time</th><th>Event Name</th><th>Act By</th><th>Detail</th><th>From</th><th>To</th></tr></thead>
+								<tbody id="claimEventBody">
+									<tr><td colspan="12" style="color:#aaa;font-style:italic;">No events</td></tr>
+								</tbody>
+							</table>
+						</div>
+						<div class="value-box" style="margin-top: 0.6rem;">1020501001</div>
+					</div>
+
+					<div class="section-card">
+						<div class="section-title">Comment</div>
+						<div class="related-note">Show all historical records</div>
+						<div class="table-wrap">
+							<table class="details-table compact">
+								<thead><tr><th>ID</th><th>Commented</th><th>By</th><th>Action</th><th>Ref #</th><th>Comment</th><th>SP Comment</th><th>Alert</th><th>Actions</th></tr></thead>
+								<tbody>
+									<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>Add</td></tr>
+									<tr><td>M1</td><td>05/14/2026 09:30:47</td><td>Anna Dominique Dimacali</td><td>CSR Action</td><td>1</td><td>* SCHEDULE,</td><td></td><td></td><td></td></tr>
+								</tbody>
+							</table>
+						</div>
+						<div class="value-box" style="margin-top: 0.6rem;">1020501005001</div>
+						<div class="action-row">
+							<button class="action-btn" type="button">Compensation</button>
+							<button class="action-btn" type="button">Billing</button>
+							<button class="action-btn" type="button">Close</button>
+							<button class="action-btn" type="button">List</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div id="compTab" class="tab-panel">
+				<div class="section-card">
+					<div class="section-title">Compensation</div>
+					<div class="table-wrap">
+						<table class="details-table compact">
+							<thead>
+								<tr>
+									<th>Compensation Item</th><th>Beneficiary</th><th>Amount</th><th>Rate</th><th>Activity Date</th><th>Requires Approved Claim / Requires Cx Payment</th><th>Comment</th><th>Created by</th><th>Last Modified by</th><th>Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr><td></td><td>Memphis Admin</td><td></td><td></td><td>05/14/2026</td><td></td><td></td><td></td><td></td><td>Add</td></tr>
+							</tbody>
+						</table>
+					</div>
+					<div class="action-row">
+						<button class="action-btn" type="button">Billing</button>
+						<button class="action-btn" type="button">Close</button>
+						<button class="action-btn" type="button">List</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="billingTab" class="tab-panel">
+				<div class="section-card">
+					<div class="section-title">Billing Information</div>
+					<div class="value-box" style="margin-bottom: 0.55rem;">Paid in full</div>
+					<div class="related-note">0 distinct record found</div>
+					<div class="field" style="margin-bottom: 0.55rem; max-width: 280px;"><label>search in result</label><input type="text" readonly value=""></div>
+					<div class="table-wrap">
+						<table class="details-table compact">
+							<thead>
+								<tr>
+									<th>ID</th><th>Visit ID*</th><th>Cx Email</th><th>Cx Name*</th><th>Labor Fee*</th><th>Part Fee*</th><th>Diag(Trip) Fee*</th><th>Others Fee*</th><th>Tax Rate*</th><th>Tax</th><th>Deduction</th><th>Total</th><th>Payment*</th><th>C. Card #</th><th>App. Code</th><th>Sign</th><th>Comment</th><th>Tx Date</th><th>Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr><td></td><td>V1</td><td>jonshaw@lakesidechurch.ws</td><td>Jon Shaw</td><td>Tax</td><td>Tax</td><td>Tax</td><td>Tax</td><td>%</td><td>$0.00</td><td>0.00</td><td></td><td></td><td></td><td></td><td></td><td></td><td>05/14/2026</td><td>Add</td></tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div class="section-card" style="margin-top: 0.95rem;">
+					<div class="section-title">Estimations</div>
+					<div class="table-wrap">
+						<table class="details-table compact">
+							<thead><tr><th>ID</th><th>Estimated</th><th>Type</th><th>Labor Fee</th><th>Part Fee</th><th>Diagnose Fee</th><th>Others Fee</th><th>Tax Rate (%)</th><th>Tax Fee</th><th>Deduction</th><th>Refund</th><th>Total</th><th>Confirmed</th><th>Created by</th></tr></thead>
+							<tbody><tr><td colspan="14"></td></tr></tbody>
+						</table>
+					</div>
+					<div class="action-row">
+						<button class="action-btn" type="button">Close</button>
+						<button class="action-btn" type="button">List</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		const DEFAULT_TICKET = '';
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const LOCAL_API_BASE = 'http://127.0.0.1:3100';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		let validTickets = new Set();
+		let activeCompanyDbId = null;
+		let activeCompanyCode = null;
+		let currentTicketData = null;
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return { userEmail, userCompanyId };
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToTicketList() {
+			window.location.href = 'ticket_list.html';
+		}
+
+		function initTabs() {
+			const tabButtons = document.querySelectorAll('.tab-btn');
+			const tabPanels = document.querySelectorAll('.tab-panel');
+
+			tabButtons.forEach((button) => {
+				button.addEventListener('click', () => {
+					tabButtons.forEach((btn) => btn.classList.remove('active'));
+					tabPanels.forEach((panel) => panel.classList.remove('active'));
+
+					button.classList.add('active');
+					const targetPanel = document.getElementById(button.dataset.tab);
+					if (targetPanel) {
+						targetPanel.classList.add('active');
+					}
+				});
+			});
+		}
+
+		function normalizeTicket(ticket) {
+			return ticket.trim().toUpperCase();
+		}
+
+		function isTicketValid(ticket) {
+			return validTickets.has(ticket);
+		}
+
+		async function getCompanyDbId(companyCode) {
+			if (!companyCode) return null;
+			const { data, error } = await supabaseClient
+				.from('companies')
+				.select('id')
+				.eq('company_id', companyCode)
+				.maybeSingle();
+			if (error) return null;
+			return data?.id || null;
+		}
+
+		async function hydrateValidTickets() {
+			const extractedTickets = new Set();
+
+			try {
+				const response = await fetch(`${LOCAL_API_BASE}/api/tickets?company_id=${encodeURIComponent(activeCompanyCode || '')}&limit=1000`);
+				if (response.ok) {
+					const payload = await response.json();
+					(payload?.data || []).forEach((row) => {
+						const ticket = normalizeTicket(row.ticket_no || '');
+						if (ticket) extractedTickets.add(ticket);
+					});
+				}
+			} catch (apiError) {
+				console.warn('Failed to hydrate ticket list from local API.', apiError);
+			}
+
+			if (extractedTickets.size === 0) {
+				let query = supabaseClient
+					.from('tickets')
+					.select('ticket_no')
+					.order('created_at', { ascending: false })
+					.limit(1000);
+
+				if (activeCompanyDbId) {
+					query = query.eq('company_id', activeCompanyDbId);
+				}
+
+				const { data, error } = await query;
+				if (!error) {
+					(data || []).forEach((row) => {
+						const ticket = normalizeTicket(row.ticket_no || '');
+						if (ticket) extractedTickets.add(ticket);
+					});
+				}
+			}
+
+			validTickets = extractedTickets;
+			updateRelatedTicketSummary();
+		}
+
+		function updateRelatedTicketSummary() {
+			const summary = document.getElementById('relatedTicketSummary');
+			if (!summary) {
+				return;
+			}
+			summary.textContent = `*** ${validTickets.size} ticket(s) available ***`;
+		}
+
+		function formatDate(value) {
+			if (!value) return 'N/A';
+			const raw = String(value).trim();
+			const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+			if (dateOnly) {
+				return `${dateOnly[2]}/${dateOnly[3]}/${dateOnly[1]}`;
+			}
+			const date = new Date(raw);
+			if (Number.isNaN(date.getTime())) return String(value);
+			const mm = String(date.getMonth() + 1).padStart(2, '0');
+			const dd = String(date.getDate()).padStart(2, '0');
+			const yyyy = date.getFullYear();
+			return `${mm}/${dd}/${yyyy}`;
+		}
+
+		function calculateTatDays(callTakenDate, completeDate) {
+			if (!callTakenDate) return '0d';
+			const start = new Date(callTakenDate);
+			const end = completeDate ? new Date(completeDate) : new Date();
+			if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '0d';
+			const diffMs = Math.max(0, end - start);
+			const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+			return `${days}d`;
+		}
+
+		function parseTicketProblemPayload(ticket) {
+			const raw = ticket?.problem_description;
+			if (!raw) {
+				return {};
+			}
+
+			if (typeof raw === 'object') {
+				return raw;
+			}
+
+			if (typeof raw !== 'string') {
+				return {};
+			}
+
+			const trimmed = raw.trim();
+			if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+				return {};
+			}
+
+			try {
+				return JSON.parse(trimmed) || {};
+			} catch {
+				return {};
+			}
+		}
+
+		function getErSnapshot(ticket) {
+			const payload = parseTicketProblemPayload(ticket);
+			return payload?.er || {};
+		}
+
+		function formatScheduleMeta(ticket, erSnapshot) {
+			if (ticket?.schedule_date) {
+				return formatDate(ticket.schedule_date);
+			}
+
+			const scheduleDateTime = firstNonEmpty(erSnapshot?.schedule_datetime);
+			if (scheduleDateTime) {
+				const amPmPrefix = /\bAM\b/i.test(scheduleDateTime) ? 'MA ' : /\bPM\b/i.test(scheduleDateTime) ? 'PA ' : '';
+				const mmdd = scheduleDateTime.match(/(\d{1,2})\/(\d{1,2})/);
+				if (mmdd) {
+					return `${amPmPrefix}${String(mmdd[1]).padStart(2, '0')}/${String(mmdd[2]).padStart(2, '0')}`.trim();
+				}
+				return scheduleDateTime;
+			}
+
+			return 'N/A';
+		}
+
+		function setMetaValues(ticket) {
+			const metaValues = document.querySelectorAll('.top-meta .meta-value');
+			if (metaValues.length < 8) return;
+			const erSnapshot = getErSnapshot(ticket);
+			const bestPhone = firstNonEmpty(
+				ticket.customer_cell_phone_1,
+				ticket.customer_home_phone,
+				ticket.customer_work_phone,
+				erSnapshot.phone
+			);
+
+			metaValues[0].textContent = ticket.ticket_no || 'N/A';
+			metaValues[1].textContent = firstNonEmpty(ticket.source_brand, ticket.source, erSnapshot.source_brand) || 'N/A';
+			metaValues[2].textContent = firstNonEmpty(ticket.warranty_type, erSnapshot.warranty_type) || 'N/A';
+			metaValues[3].textContent = ticket.product_category || 'N/A';
+			metaValues[4].textContent = calculateTatDays(ticket.call_taken_date, ticket.complete_date);
+			metaValues[5].textContent = ticket.repair_status || 'N/A';
+			metaValues[6].textContent = formatScheduleMeta(ticket, erSnapshot);
+			metaValues[7].textContent = bestPhone || 'N/A';
+		}
+
+		function setLoadingState(message = 'Loading ticket...') {
+			setTicketDisplay('Loading...');
+			showTicketFeedback(message, 'ok');
+
+			const metaValues = document.querySelectorAll('.top-meta .meta-value');
+			metaValues.forEach((el) => {
+				el.textContent = '...';
+			});
+
+			const controls = document.querySelectorAll('#generalTab input, #generalTab textarea');
+			controls.forEach((control) => {
+				control.value = '';
+			});
+
+			const valueBoxes = document.querySelectorAll('#generalTab .value-box');
+			valueBoxes.forEach((box) => {
+				box.textContent = '';
+			});
+		}
+
+		function firstNonEmpty(...values) {
+			for (const value of values) {
+				if (value == null) {
+					continue;
+				}
+				const text = String(value).trim();
+				if (text) {
+					return text;
+				}
+			}
+			return '';
+		}
+
+		function setInputByLabel(panelId, labelText, value) {
+			const normalizedTarget = String(labelText || '').trim().toLowerCase();
+			if (!normalizedTarget) {
+				return;
+			}
+
+			const panel = document.getElementById(panelId);
+			if (!panel) {
+				return;
+			}
+
+			const labels = Array.from(panel.querySelectorAll('label'));
+			const label = labels.find((el) => (el.textContent || '').trim().toLowerCase().includes(normalizedTarget));
+			if (!label) {
+				return;
+			}
+
+			const field = label.closest('.field');
+			if (!field) {
+				return;
+			}
+
+			const control = field.querySelector('input, textarea, select, .value-box');
+			if (!control) {
+				return;
+			}
+
+			const output = value == null ? '' : String(value);
+			if (control.tagName === 'INPUT' || control.tagName === 'TEXTAREA') {
+				control.value = output;
+			} else {
+				control.textContent = output;
+			}
+		}
+
+		function getControlByLabel(panelId, labelText) {
+			const normalizedTarget = String(labelText || '').trim().toLowerCase();
+			if (!normalizedTarget) return null;
+
+			const panel = document.getElementById(panelId);
+			if (!panel) return null;
+
+			const labels = Array.from(panel.querySelectorAll('label'));
+			const label = labels.find((el) => (el.textContent || '').trim().toLowerCase().includes(normalizedTarget));
+			if (!label) return null;
+
+			const field = label.closest('.field');
+			if (!field) return null;
+
+			return field.querySelector('input, textarea, select, .value-box');
+		}
+
+		function openCustomerAddressInGmaps() {
+			const control = getControlByLabel('generalTab', 'address*');
+			const rawAddress = control ? (control.value || control.textContent || '') : '';
+			const address = String(rawAddress).replace(/\s+/g, ' ').trim();
+			if (!address) {
+				showTicketFeedback('Address is empty. Please add an address first.', 'error');
+				return;
+			}
+			const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+			window.open(mapsUrl, '_blank', 'noopener');
+		}
+
+		function openTicketInWorkPlanner() {
+			const ticketControl = getControlByLabel('generalTab', 'ticket no*');
+			const locationControl = getControlByLabel('generalTab', 'location');
+			const ticket = normalizeTicket(ticketControl ? (ticketControl.value || ticketControl.textContent || '') : '');
+			const location = String(locationControl ? (locationControl.value || locationControl.textContent || '') : '').trim();
+
+			if (!ticket) {
+				showTicketFeedback('Ticket number is empty. Please load a ticket first.', 'error');
+				return;
+			}
+
+			const params = new URLSearchParams();
+			params.set('ticket', ticket);
+			if (location) {
+				params.set('location', location);
+			}
+
+			window.open(`work_planner.html?${params.toString()}`, '_blank', 'noopener');
+		}
+
+		function parseProblemDescription(ticket) {
+			const raw = ticket?.problem_description;
+			if (!raw) {
+				return '';
+			}
+
+			if (typeof raw === 'string') {
+				const trimmed = raw.trim();
+				if (!trimmed) {
+					return '';
+				}
+				if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+					return trimmed;
+				}
+				try {
+					const parsed = JSON.parse(trimmed);
+					return firstNonEmpty(parsed?.problemDescription, parsed?.description, parsed?.problem, parsed?.notes);
+				} catch {
+					return trimmed;
+				}
+			}
+
+			if (typeof raw === 'object') {
+				return firstNonEmpty(raw?.problemDescription, raw?.description, raw?.problem, raw?.notes);
+			}
+
+			return '';
+		}
+
+		function splitCustomerName(ticket) {
+			const explicitFirst = firstNonEmpty(ticket.customer_first_name, ticket.first_name);
+			const explicitLast = firstNonEmpty(ticket.customer_last_name, ticket.last_name);
+			if (explicitFirst || explicitLast) {
+				return {
+					first: explicitFirst,
+					last: explicitLast
+				};
+			}
+
+			const fullName = firstNonEmpty(ticket.customer_name, ticket.cx_name);
+			if (!fullName) {
+				return { first: '', last: '' };
+			}
+
+			const parts = fullName.split(/\s+/).filter(Boolean);
+			if (parts.length === 1) {
+				return { first: parts[0], last: '' };
+			}
+			return {
+				first: parts[0],
+				last: parts.slice(1).join(' ')
+			};
+		}
+
+		function getSectionCardByTitle(panelId, title) {
+			const panel = document.getElementById(panelId);
+			if (!panel) {
+				return null;
+			}
+			const cards = Array.from(panel.querySelectorAll('.section-card'));
+			return cards.find((card) => {
+				const el = card.querySelector('.section-title');
+				return (el?.textContent || '').trim().toLowerCase() === String(title || '').trim().toLowerCase();
+			}) || null;
+		}
+
+		function setServiceField(fieldId, value) {
+			const el = document.getElementById(fieldId);
+			if (!el) {
+				return;
+			}
+			const output = firstNonEmpty(value);
+			if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+				el.value = output;
+			} else {
+				el.textContent = output;
+			}
+		}
+
+		function parseScheduleParts(scheduleDateTime) {
+			const raw = String(scheduleDateTime || '').trim();
+			if (!raw) {
+				return { date: '', period: '' };
+			}
+
+			const datePart = firstNonEmpty(raw.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/)?.[0]);
+			const periodPart = firstNonEmpty(raw.replace(datePart, '').trim());
+			return { date: datePart, period: periodPart };
+		}
+
+		function applyCallServiceSection(ticket, er) {
+			const schedule = parseScheduleParts(er.schedule_datetime);
+			setServiceField('svcAccountNo', firstNonEmpty(er.account_no, er.accountno));
+			setServiceField('svcManufactureId', firstNonEmpty(er.manufacture_id, er.client_code, er.clientcode));
+			setServiceField('svcCallNo', firstNonEmpty(ticket.ticket_no, er.call_reference));
+			setServiceField('svcTicketSource', firstNonEmpty(ticket.source_brand, ticket.source, er.source_brand));
+			setServiceField('svcCallType', firstNonEmpty(ticket.warranty_type, er.warranty_type));
+			setServiceField('svcServiceType', firstNonEmpty(er.job_type, er.service_type));
+			setServiceField('svcCallStatus', firstNonEmpty(ticket.repair_status, er.repair_status));
+			setServiceField('svcPostingDate', firstNonEmpty(er.posting_date, formatDate(ticket.call_taken_date)));
+			setServiceField('svcRepeatCall', firstNonEmpty(er.repeat_call));
+			setServiceField('svcContractNo', firstNonEmpty(er.contract_no));
+			setServiceField('svcCopay', firstNonEmpty(er.copay));
+			setServiceField('svcClaimCompany', firstNonEmpty(ticket.source_brand, er.source_brand, ticket.source));
+			setServiceField('svcScheduleDate', firstNonEmpty(formatDate(ticket.schedule_date), schedule.date));
+			setServiceField('svcSchedulePeriod', firstNonEmpty(schedule.period));
+			setServiceField('svcPreferredDate', firstNonEmpty(formatDate(ticket.cx_preferred_date), er.cx_prefer));
+			setServiceField('svcTechnician', firstNonEmpty(ticket.technician_name, er.technician_name));
+			setServiceField('svcProblemDescription', firstNonEmpty(parseProblemDescription(ticket), er.problem_description));
+			setServiceField('svcObservationNotes', firstNonEmpty(er.observation_notes, er.internal_note));
+			setServiceField('svcPoNo',             firstNonEmpty(er.po_no, er.po_number));
+			setServiceField('svcPoAmount',         firstNonEmpty(er.po_amount));
+			setServiceField('svcEmergency',        firstNonEmpty(er.emergency));
+			setServiceField('svcAuthNo',           firstNonEmpty(er.auth_no, er.auth_number));
+
+			// Reschedule
+			setServiceField('rsNewScheduleDate',   firstNonEmpty(er.new_schedule_date, formatDate(er.reschedule_date)));
+			setServiceField('rsNewSchedulePeriod', firstNonEmpty(er.new_schedule_period));
+			setServiceField('rsGroup',             firstNonEmpty(er.reschedule_group));
+			setServiceField('rsReason',            firstNonEmpty(er.reschedule_reason));
+
+			// Completion
+			setServiceField('compCompleteDate',    firstNonEmpty(formatDate(ticket.complete_date), er.complete_date));
+			setServiceField('compResolution',      firstNonEmpty(ticket.resolution, er.resolution));
+
+			// Reject
+			setServiceField('rejRejectReason',     firstNonEmpty(er.reject_reason));
+
+			// Call Attributes (array from er.call_attributes or er.attributes)
+			const attrBody = document.getElementById('callAttributeBody');
+			if (attrBody) {
+				const attrs = er.call_attributes || er.attributes || [];
+				if (Array.isArray(attrs) && attrs.length > 0) {
+					attrBody.innerHTML = attrs.map((a) => {
+						const attr = a.attribute || a.name || '';
+						const val  = a.value || '';
+						return `<tr><td>${attr}</td><td style="word-break:break-all;">${val}</td></tr>`;
+					}).join('');
+				}
+			}
+
+			// Customer Notes
+			const cnBody = document.getElementById('customerNotesBody');
+			if (cnBody) {
+				const notes = er.customer_notes || [];
+				if (Array.isArray(notes) && notes.length > 0) {
+					cnBody.innerHTML = notes.map((n) =>
+						`<tr><td style="white-space:nowrap;">${n.date || ''}</td><td style="word-break:break-word;max-width:600px;">${n.notes || n.note || ''}</td><td>${n.by || ''}</td></tr>`
+					).join('');
+				}
+			}
+
+			// Servicer Notes
+			const snBody = document.getElementById('servicerNotesBody');
+			if (snBody) {
+				const snotes = er.servicer_notes || er.servicer_comments || [];
+				if (Array.isArray(snotes) && snotes.length > 0) {
+					snBody.innerHTML = snotes.map((n, i) =>
+						`<tr><td>${n.id || (i+1)}</td><td style="word-break:break-word;max-width:600px;">${n.notes || n.note || ''}</td><td>${n.by || ''}</td></tr>`
+					).join('');
+				}
+			}
+		}
+
+		function applyServiceTabSnapshot(ticket, erDetail) {
+			const er = {
+				...getErSnapshot(ticket),
+				...(erDetail?.general_information?.mapped || {})
+			};
+
+			applyCallServiceSection(ticket, er);
+
+			const visitLogCard = getSectionCardByTitle('serviceTab', 'Visit Log');
+			if (visitLogCard) {
+				const boxes = visitLogCard.querySelectorAll('.value-box');
+				if (boxes[0]) boxes[0].textContent = firstNonEmpty(ticket.customer_cell_phone_1, ticket.customer_home_phone, er.phone, 'N/A');
+				if (boxes[1]) boxes[1].textContent = firstNonEmpty(er.contact_status, 'N/A');
+				if (boxes[2]) boxes[2].textContent = `Redo Ticket #: ${firstNonEmpty(er.redo_flag, 'NONE')}`;
+			}
+
+			const partCard = getSectionCardByTitle('serviceTab', 'Part Transaction');
+			if (partCard) {
+				const modelCodeBox = partCard.querySelector('.value-box');
+				if (modelCodeBox) {
+					modelCodeBox.textContent = `Model Code: ${firstNonEmpty(ticket.model, er.model, 'N/A')}`;
+				}
+			}
+
+			const claimCard = getSectionCardByTitle('serviceTab', 'Claim Transaction');
+			if (claimCard) {
+				const claimBox = claimCard.querySelector('.value-box');
+				if (claimBox) {
+					const claimSource = firstNonEmpty(ticket.claim_to, ticket.source_brand, ticket.source, er.source_brand);
+					claimBox.textContent = `Ticket #: ${firstNonEmpty(ticket.ticket_no, 'N/A')} ${claimSource}`.trim();
+				}
+				const eventNote = claimCard.querySelector('.related-note');
+				if (eventNote) eventNote.textContent = 'Ticket Event - 0 distinct records found';
+				const eventBody = claimCard.querySelector('#claimEventBody');
+				if (eventBody) eventBody.innerHTML = '<tr><td colspan="12" style="color:#aaa;font-style:italic;">No events for manually created tickets</td></tr>';
+			}
+
+			// Update Service Tracking badge with visit count from ER tables
+			const visitCount = erDetail?.service_tracking?.tables?.[0]?.rows?.length ?? 0;
+			const serviceTabBtn = document.querySelector('.tab-btn[data-tab="serviceTab"]');
+			if (serviceTabBtn) serviceTabBtn.textContent = `Service Tracking ${visitCount}`;
+		}
+
+		function applyTicketToUi(ticket) {
+			const erSnapshot = getErSnapshot(ticket);
+			const names = splitCustomerName(ticket);
+
+			const cleanAddr = (...parts) => parts.filter(Boolean).join(' ').trim();
+			const address = cleanAddr(
+				ticket.customer_address, ticket.customer_city, ticket.customer_state, ticket.customer_zip
+			) || cleanAddr(
+				erSnapshot.customer_address_1, erSnapshot.customer_address_2,
+				erSnapshot.customer_city, erSnapshot.customer_state, erSnapshot.customer_zip
+			);
+
+			const emailSummary = [
+				firstNonEmpty(ticket.customer_email_1, ticket.cx_email_1),
+				firstNonEmpty(ticket.customer_email_2, ticket.cx_email_2),
+				firstNonEmpty(erSnapshot.customer_email_1),
+				firstNonEmpty(erSnapshot.customer_email_2)
+			].filter(Boolean).join(' / ');
+
+			setInputByLabel('generalTab', 'ticket no*', ticket.ticket_no || '');
+			setInputByLabel('generalTab', 'source*', firstNonEmpty(ticket.source_brand, ticket.source, erSnapshot.source_brand));
+			setInputByLabel('generalTab', 'posting date', formatDate(ticket.call_taken_date));
+			setInputByLabel('generalTab', 'location', firstNonEmpty(ticket.assigned_area, ticket.location, erSnapshot.er_location, erSnapshot.customer_city));
+			setInputByLabel('generalTab', 'blacklist reason', firstNonEmpty(ticket.blacklist_reason));
+			setInputByLabel('generalTab', 'problem description*', parseProblemDescription(ticket));
+
+			setInputByLabel('generalTab', 'first name*', names.first);
+			setInputByLabel('generalTab', 'last name*', names.last);
+			setInputByLabel('generalTab', 'company name', firstNonEmpty(ticket.customer_company_name, ticket.company_name));
+			setInputByLabel('generalTab', 'home phone', firstNonEmpty(ticket.customer_home_phone, erSnapshot.phone));
+			setInputByLabel('generalTab', 'cell phone', firstNonEmpty(ticket.customer_cell_phone_1, ticket.customer_cell_phone, erSnapshot.phone));
+			setInputByLabel('generalTab', 'work phone', firstNonEmpty(ticket.customer_work_phone));
+			setInputByLabel('generalTab', 'address*', address);
+			setInputByLabel('generalTab', 'address note', firstNonEmpty(ticket.customer_address_note, erSnapshot.customer_address_note));
+			setInputByLabel('generalTab', 'cx email 1/2', emailSummary);
+
+			setInputByLabel('generalTab', 'model*', firstNonEmpty(ticket.model, erSnapshot.model));
+			setInputByLabel('generalTab', 'serial no', firstNonEmpty(ticket.serial_no));
+			setInputByLabel('generalTab', 'brand', firstNonEmpty(ticket.brand, erSnapshot.brand));
+			setInputByLabel('generalTab', 'product category', firstNonEmpty(ticket.product_category));
+			setInputByLabel('generalTab', 'purchase date', formatDate(ticket.purchase_date));
+			setInputByLabel('generalTab', 'warranty type', firstNonEmpty(ticket.warranty_type, erSnapshot.warranty_type));
+
+			applyServiceTabSnapshot(ticket, null);
+		}
+
+		function setGeneralInfoInputs(ticket) {
+			applyTicketToUi(ticket);
+		}
+
+		function applyErDetailToUi(erDetail) {
+			if (!erDetail || typeof erDetail !== 'object') return;
+			if (erDetail.error) {
+				showTicketFeedback(`ER detail fetch warning: ${erDetail.error}`, 'error');
+				return;
+			}
+
+			const mapped = erDetail?.general_information?.mapped || {};
+			const legacyFields = erDetail.fields || {};
+			const getLegacy = (...keys) => {
+				for (const key of keys) {
+					if (legacyFields[key]) return legacyFields[key];
+				}
+				return '';
+			};
+
+			const fullName = mapped.customer_full_name || getLegacy('CustomerName', 'customerName', 'Customer');
+			const fullAddress = [
+				mapped.customer_address_1,
+				mapped.customer_address_2,
+				mapped.customer_city,
+				mapped.customer_state,
+				mapped.customer_zip
+			].filter(Boolean).join(' ').trim() || getLegacy('Address', 'CustomerAddress', 'CustAddress');
+			const bestPhone = mapped.customer_cell_phone || mapped.customer_home_phone || mapped.customer_work_phone || getLegacy('Phone', 'CellPhone', 'HomePhone');
+			const mappedNames = splitCustomerName({
+				customer_first_name: mapped.customer_first_name,
+				customer_last_name: mapped.customer_last_name,
+				customer_name: fullName
+			});
+			const parsedPurchaseDate = formatDate(mapped.purchase_date);
+
+			setInputByLabel('generalTab', 'first name', mappedNames.first);
+			setInputByLabel('generalTab', 'last name', mappedNames.last);
+			setInputByLabel('generalTab', 'address*', fullAddress || '');
+			setInputByLabel('generalTab', 'address note', mapped.customer_address_note || '');
+			setInputByLabel('generalTab', 'cell phone', bestPhone || '');
+			setInputByLabel('generalTab', 'home phone', mapped.customer_home_phone || '');
+			setInputByLabel('generalTab', 'work phone', mapped.customer_work_phone || '');
+			setInputByLabel('generalTab', 'model*', mapped.model || '');
+			setInputByLabel('generalTab', 'serial no', mapped.serial_no || '');
+			setInputByLabel('generalTab', 'brand', mapped.brand || '');
+			setInputByLabel('generalTab', 'product category', mapped.product_category || '');
+			setInputByLabel('generalTab', 'purchase date', parsedPurchaseDate === 'N/A' ? '' : parsedPurchaseDate);
+			setInputByLabel('generalTab', 'warranty type', mapped.warranty_type || '');
+			setInputByLabel('generalTab', 'cx email 1/2', [mapped.customer_email_1, mapped.customer_email_2].filter(Boolean).join(' / '));
+			setInputByLabel('generalTab', 'problem description*', firstNonEmpty(mapped.problem_description, mapped.problem));
+			setInputByLabel('generalTab', 'location', firstNonEmpty(mapped.assigned_area, mapped.location));
+			setInputByLabel('generalTab', 'source*', firstNonEmpty(mapped.source_brand, mapped.source));
+			if (currentTicketData) {
+				applyServiceTabSnapshot(currentTicketData, erDetail);
+			}
+
+			const customerInput = document.querySelector('input[id="customerName"], input[name="customerName"], #generalTab input[placeholder*="Customer"]');
+			if (customerInput && !customerInput.value && fullName) {
+				customerInput.value = fullName;
+			}
+
+			const addressInput = document.querySelector('input[id="address"], textarea[id="address"], #generalTab input[placeholder*="Address"]');
+			if (addressInput && !addressInput.value && fullAddress) {
+				addressInput.value = fullAddress;
+			}
+
+			const phoneInput = document.querySelector('input[id="phone"], input[id="customerPhone"], #generalTab input[placeholder*="Phone"]');
+			if (phoneInput && !phoneInput.value && bestPhone) {
+				phoneInput.value = bestPhone;
+			}
+
+			showTicketFeedback('Loaded ER live detail for this ticket.', 'ok');
+		}
+
+		async function fetchTicketDetailsFromLocalApi(ticketNo, forceLive = false) {
+			const params = new URLSearchParams({
+				ticket_no: ticketNo,
+				company_id: activeCompanyCode || ''
+			});
+			if (forceLive) {
+				params.set('live', '1');
+			}
+
+			const response = await fetch(`${LOCAL_API_BASE}/api/ticket-details?${params.toString()}`);
+			if (!response.ok) {
+				throw new Error(`Local API failed (${response.status})`);
+			}
+			const payload = await response.json();
+			if (!payload?.ok || !payload?.data?.ticket) {
+				throw new Error('Ticket details payload is invalid.');
+			}
+			return payload.data;
+		}
+
+		async function fetchTicketByNumberFromLocalApi(ticketNo) {
+			const response = await fetch(`${LOCAL_API_BASE}/api/tickets?company_id=${encodeURIComponent(activeCompanyCode || '')}&limit=5000`);
+			if (!response.ok) {
+				throw new Error(`Local API failed (${response.status})`);
+			}
+			const payload = await response.json();
+			const rows = payload?.data || [];
+			const target = normalizeTicket(ticketNo);
+			const match = rows.find((row) => normalizeTicket(row?.ticket_no || '') === target);
+			return match || null;
+		}
+
+		async function fetchTicketByNumber(ticketNo) {
+			const COLS = 'ticket_no, source, customer_name, warranty_type, product_category, repair_status, schedule_date, call_taken_date, complete_date, customer_home_phone, customer_cell_phone_1, customer_cell_phone_2, customer_work_phone, customer_email_1, customer_email_2, assigned_area, customer_address, customer_city, customer_zip, customer_state, customer_address_note, model, serial_no, brand, purchase_date, problem_description, claim_to, technician_name';
+			let query = supabaseClient
+				.from('tickets')
+				.select(COLS)
+				.ilike('ticket_no', ticketNo)
+				.limit(1)
+				.maybeSingle();
+
+			if (activeCompanyDbId) {
+				query = supabaseClient
+					.from('tickets')
+					.select(COLS)
+					.ilike('ticket_no', ticketNo)
+					.eq('company_id', activeCompanyDbId)
+					.limit(1)
+					.maybeSingle();
+			}
+
+			const { data, error } = await query;
+			if (error) {
+				throw new Error(error.message || 'Failed to load ticket details.');
+			}
+			return data;
+		}
+
+		async function loadTicketDetails(ticketNo) {
+			let ticket = null;
+			let erDetail = null;
+
+			try {
+				const apiData = await fetchTicketDetailsFromLocalApi(ticketNo, false);
+				ticket = apiData.ticket;
+				erDetail = apiData.er_detail || null;
+			} catch (apiError) {
+				console.warn('ER local API detail fetch failed, falling back to direct DB read.', apiError);
+				try {
+					ticket = await fetchTicketByNumberFromLocalApi(ticketNo);
+				} catch (listApiError) {
+					console.warn('Local tickets API lookup failed, falling back to direct DB read.', listApiError);
+				}
+				if (!ticket) {
+					ticket = await fetchTicketByNumber(ticketNo);
+				}
+			}
+
+			// If no erDetail from local API, try fetching from ticket_details table in Supabase
+			if (!erDetail) {
+				try {
+					const { data: tdRow } = await supabaseClient
+						.from('ticket_details')
+						.select('detail_json')
+						.ilike('ticket_no', ticketNo)
+						.maybeSingle();
+					if (tdRow?.detail_json) {
+						erDetail = tdRow.detail_json;
+					}
+				} catch (tdError) {
+					console.warn('ticket_details Supabase fetch failed.', tdError);
+				}
+			}
+
+			if (!ticket) {
+				throw new Error(`Ticket "${ticketNo}" was not found.`);
+			}
+
+			currentTicketData = ticket;
+
+			setTicketDisplay(ticket.ticket_no || ticketNo);
+			setMetaValues(ticket);
+			setGeneralInfoInputs(ticket);
+			applyErDetailToUi(erDetail);
+			await loadAttachmentsFromSupabase(ticket.ticket_no || ticketNo);
+			await loadPartsFromSupabase(ticket.ticket_no || ticketNo);
+			await loadVisitsFromSupabase(ticket.ticket_no || ticketNo);
+		}
+
+		function showTicketFeedback(message, type) {
+			const feedback = document.getElementById('ticketLookupFeedback');
+			if (!feedback) {
+				return;
+			}
+			feedback.className = 'search-feedback';
+			if (!message) {
+				feedback.textContent = '';
+				return;
+			}
+			feedback.classList.add(type);
+			feedback.textContent = message;
+		}
+
+		function setTicketDisplay(ticket) {
+			const ticketDisplay = document.getElementById('currentTicketValue');
+			if (ticketDisplay) {
+				ticketDisplay.textContent = ticket;
+			}
+		}
+
+		async function applyTicketFromQuery() {
+			const params = new URLSearchParams(window.location.search);
+			let ticket = normalizeTicket(params.get('ticket') || '');
+			const ticketLookupInput = document.getElementById('ticketLookupInput');
+
+			if (!ticket) {
+				ticket = Array.from(validTickets)[0] || DEFAULT_TICKET;
+				if (ticketLookupInput) {
+					ticketLookupInput.value = ticket;
+				}
+				if (!ticket) {
+					showTicketFeedback('No tickets found for this company yet.', 'error');
+					setTicketDisplay('N/A');
+					return;
+				}
+			}
+
+			try {
+				setLoadingState(`Loading ${ticket}...`);
+				await loadTicketDetails(ticket);
+				validTickets.add(ticket);
+				if (ticketLookupInput) {
+					ticketLookupInput.value = ticket;
+				}
+				showTicketFeedback('', '');
+			} catch (error) {
+				showTicketFeedback(error.message || `Ticket "${ticket}" was not found.`, 'error');
+			}
+		}
+
+		function initTicketSearch() {
+			const ticketLookupInput = document.getElementById('ticketLookupInput');
+			const ticketLookupBtn = document.getElementById('ticketLookupBtn');
+
+			async function goToTicket() {
+				const value = normalizeTicket(ticketLookupInput.value);
+				if (!value) {
+					showTicketFeedback('Enter a ticket number to search.', 'error');
+					return;
+				}
+
+				try {
+					setLoadingState(`Loading ${value}...`);
+					await loadTicketDetails(value);
+					validTickets.add(value);
+					showTicketFeedback('', '');
+					history.replaceState(null, '', `ticket_details.html?ticket=${encodeURIComponent(value)}`);
+				} catch (error) {
+					showTicketFeedback(error.message, 'error');
+				}
+			}
+
+			ticketLookupBtn.addEventListener('click', () => { goToTicket(); });
+			ticketLookupInput.addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					goToTicket();
+				}
+			});
+		}
+
+		document.addEventListener('DOMContentLoaded', async function () {
+	
+			const userContext = loadUserInfo();
+			activeCompanyCode = userContext?.userCompanyId || '';
+			activeCompanyDbId = null;
+			getCompanyDbId(userContext?.userCompanyId || '')
+				.then((id) => {
+					activeCompanyDbId = id;
+				})
+				.catch((error) => {
+					console.warn('Company DB id lookup failed.', error);
+				});
+			
+			applyPrettyUrl('ticketDetails');
+			initTabs();
+			initTicketSearch();
+			setLoadingState('Loading ticket...');
+			await applyTicketFromQuery();
+			hydrateValidTickets().catch((error) => {
+				console.warn('Ticket hydration after initial load failed.', error);
+			});
+		});
+
+		/* ══════════════════════════════════════════════════════
+		   ATTACHMENTS — Upload / Edit / Delete (Supabase, private signed URLs)
+		══════════════════════════════════════════════════════ */
+		const ATTACHMENTS_BUCKET = 'ticket-attachments';
+		let attachmentsList = [];
+		let attachmentsCounter = 0;
+		let currentAttachmentTicketNo = null;
+
+		function setAttachmentSaveStatus(message, isError = false) {
+			const el = document.getElementById('attachmentSaveStatus');
+			if (!el) return;
+			el.textContent = message || '';
+			el.style.color = isError ? '#f87171' : '#93c5fd';
+			if (message) {
+				setTimeout(() => {
+					if (el.textContent === message) el.textContent = '';
+				}, 4500);
+			}
+		}
+
+		function formatAttachmentTimestamp(value) {
+			const date = value ? new Date(value) : new Date();
+			if (Number.isNaN(date.getTime())) return String(value || '');
+			const yyyy = date.getFullYear();
+			const mm = String(date.getMonth() + 1).padStart(2, '0');
+			const dd = String(date.getDate()).padStart(2, '0');
+			const hh = String(date.getHours()).padStart(2, '0');
+			const mi = String(date.getMinutes()).padStart(2, '0');
+			const ss = String(date.getSeconds()).padStart(2, '0');
+			return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+		}
+
+		function sanitizeFileName(name) {
+			return String(name || 'attachment')
+				.replace(/[^a-zA-Z0-9._-]+/g, '_')
+				.replace(/_+/g, '_');
+		}
+
+		async function loadAttachmentsFromSupabase(ticketNo) {
+			currentAttachmentTicketNo = ticketNo;
+			attachmentsList = [];
+			attachmentsCounter = 0;
+			renderAttachmentsTable();
+
+			try {
+				const { data, error } = await supabaseClient
+					.from('tickets')
+					.select('attachments_json')
+					.ilike('ticket_no', ticketNo)
+					.limit(1)
+					.maybeSingle();
+
+				if (error) {
+					console.warn('Attachments load error:', error.message);
+					setAttachmentSaveStatus('Attachments column missing or blocked by RLS.', true);
+					return;
+				}
+
+				if (Array.isArray(data?.attachments_json)) {
+					attachmentsList = data.attachments_json;
+					attachmentsCounter = attachmentsList.reduce((max, a) => {
+						const n = parseInt((a.id || '').replace(/\D/g, ''), 10) || 0;
+						return Math.max(max, n);
+					}, 0);
+				}
+			} catch (e) {
+				console.warn('Attachments load exception:', e);
+			}
+
+			renderAttachmentsTable();
+		}
+
+		async function saveAttachmentsToSupabase() {
+			if (!currentAttachmentTicketNo) {
+				setAttachmentSaveStatus('No ticket loaded for attachments.', true);
+				return false;
+			}
+
+			try {
+				const { data: updated, error } = await supabaseClient
+					.from('tickets')
+					.update({ attachments_json: attachmentsList })
+					.ilike('ticket_no', currentAttachmentTicketNo)
+					.select('ticket_no');
+
+				if (error) {
+					console.warn('Attachments save error:', error.message);
+					setAttachmentSaveStatus(`Save failed: ${error.message}`, true);
+					return false;
+				}
+
+				if (!updated || updated.length === 0) {
+					setAttachmentSaveStatus('Save blocked. Add UPDATE RLS policy for tickets.', true);
+					return false;
+				}
+
+				setAttachmentSaveStatus('Attachments saved to Supabase.');
+				return true;
+			} catch (e) {
+				console.warn('Attachments save exception:', e);
+				setAttachmentSaveStatus(`Save error: ${e.message}`, true);
+				return false;
+			}
+		}
+
+		async function addAttachment() {
+			const input = document.getElementById('attachmentInput');
+			const typeSelect = document.getElementById('attachmentTypeSelect');
+			if (!currentAttachmentTicketNo) {
+				setAttachmentSaveStatus('Load a ticket first.', true);
+				return;
+			}
+			if (!typeSelect?.value) {
+				setAttachmentSaveStatus('Select an attachment type.', true);
+				return;
+			}
+			if (!input?.files || input.files.length === 0) {
+				setAttachmentSaveStatus('Choose a file first.', true);
+				return;
+			}
+
+			const file = input.files[0];
+			const now = new Date();
+			const safeName = sanitizeFileName(file.name);
+			const storagePath = `${currentAttachmentTicketNo}/${Date.now()}_${safeName}`;
+
+			setAttachmentSaveStatus('Uploading attachment...');
+
+			try {
+				const { error: uploadError } = await supabaseClient
+					.storage
+					.from(ATTACHMENTS_BUCKET)
+					.upload(storagePath, file, { upsert: false });
+
+				if (uploadError) {
+					setAttachmentSaveStatus(`Upload failed: ${uploadError.message}`, true);
+					return;
+				}
+
+				attachmentsCounter += 1;
+				attachmentsList.push({
+					id: `A${attachmentsCounter}`,
+					type: typeSelect.value,
+					created: now.toISOString(),
+					name: file.name,
+					path: storagePath,
+					size: file.size,
+					mime: file.type || ''
+				});
+
+				renderAttachmentsTable();
+				const saved = await saveAttachmentsToSupabase();
+				if (!saved) {
+					// Roll back storage and local record if metadata save fails
+					await supabaseClient.storage.from(ATTACHMENTS_BUCKET).remove([storagePath]);
+					attachmentsList = attachmentsList.filter((a) => a.path !== storagePath);
+					renderAttachmentsTable();
+				}
+			} catch (e) {
+				console.warn('Attachment add exception:', e);
+				setAttachmentSaveStatus(`Upload error: ${e.message}`, true);
+			} finally {
+				if (input) input.value = '';
+				if (typeSelect) typeSelect.value = '';
+			}
+		}
+
+		async function viewAttachment(id) {
+			const attachment = attachmentsList.find((a) => a.id === id);
+			if (!attachment) return;
+
+			if (!attachment.path && attachment.url) {
+				window.open(attachment.url, '_blank');
+				return;
+			}
+			if (!attachment.path) {
+				setAttachmentSaveStatus('Attachment path is missing.', true);
+				return;
+			}
+
+			setAttachmentSaveStatus('Generating secure link...');
+			const { data, error } = await supabaseClient
+				.storage
+				.from(ATTACHMENTS_BUCKET)
+				.createSignedUrl(attachment.path, 60);
+
+			if (error || !data?.signedUrl) {
+				setAttachmentSaveStatus(`View failed: ${error?.message || 'No signed URL returned'}`, true);
+				return;
+			}
+
+			if (isImageAttachment(attachment)) {
+				openAttachmentImageModal(data.signedUrl, attachment.name || 'Attachment Preview');
+				return;
+			}
+
+			window.open(data.signedUrl, '_blank');
+		}
+
+		function isImageAttachment(attachment) {
+			if (!attachment) return false;
+			const mime = String(attachment.mime || '').toLowerCase();
+			if (mime.startsWith('image/')) return true;
+			const name = String(attachment.name || '').toLowerCase();
+			return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/.test(name);
+		}
+
+		function openAttachmentImageModal(url, title) {
+			const overlay = document.getElementById('attachmentImageModal');
+			const img = document.getElementById('attachmentImageModalImg');
+			const titleEl = document.getElementById('attachmentImageModalTitle');
+			if (!overlay || !img || !titleEl) return;
+			titleEl.textContent = title || 'Attachment Preview';
+			img.src = url;
+			img.alt = title || 'Attachment Preview';
+			overlay.classList.add('open');
+		}
+
+		function closeAttachmentImageModal() {
+			const overlay = document.getElementById('attachmentImageModal');
+			const img = document.getElementById('attachmentImageModalImg');
+			if (overlay) overlay.classList.remove('open');
+			if (img) img.src = '';
+		}
+
+		document.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape') closeAttachmentImageModal();
+		});
+
+		async function deleteAttachment(id) {
+			const attachment = attachmentsList.find((a) => a.id === id);
+			if (!attachment) return;
+			if (!confirm('Delete this attachment?')) return;
+
+			if (attachment.path) {
+				const { error: removeError } = await supabaseClient
+					.storage
+					.from(ATTACHMENTS_BUCKET)
+					.remove([attachment.path]);
+				if (removeError) {
+					setAttachmentSaveStatus(`Delete failed: ${removeError.message}`, true);
+					return;
+				}
+			}
+
+			attachmentsList = attachmentsList.filter((a) => a.id !== id);
+			renderAttachmentsTable();
+			await saveAttachmentsToSupabase();
+		}
+
+		function renderAttachmentsTable() {
+			const tbody = document.getElementById('attachmentsTableBody');
+			if (!tbody) return;
+
+			if (attachmentsList.length === 0) {
+				tbody.innerHTML = '<tr id="attachmentsEmptyRow"><td>No attachments</td><td></td><td></td><td>Add</td></tr>';
+				return;
+			}
+
+			tbody.innerHTML = attachmentsList.map((a) => {
+				const created = formatAttachmentTimestamp(a.created);
+				const safeName = String(a.name || 'View').replace(/"/g, '&quot;');
+				return `
+					<tr data-attachid="${a.id}">
+						<td>${a.type || 'FILE'}</td>
+						<td>${created}</td>
+						<td><button class="part-edit-btn" type="button" title="${safeName}" onclick="viewAttachment('${a.id}')">${a.name || 'View'}</button></td>
+						<td>
+							<button class="part-del-btn" type="button" onclick="deleteAttachment('${a.id}')">Delete</button>
+						</td>
+					</tr>
+				`;
+			}).join('');
+		}
+
+		/* ══════════════════════════════════════════════════════
+		   PART TRANSACTION — Add / Edit / Delete
+		══════════════════════════════════════════════════════ */
+		let partsList = [];   // { id, partNo, partDist, partDesc, poNo, poDate, invoiceNo, invoiceDate, qty, partPrice, coreValue, shipCost, markup, claimTo, partStatus, note, visitId, orderNo, eta, inTracking, raDate, raNo, outTracking, creditNo, total, hold, cxPaid }
+		let partsCounter = 0;
+		let currentPartTicketNo = null;
+
+		function deriveRepairStatusFromParts(currentStatus) {
+			const hasNeedPO = partsList.some((p) => p.partStatus === 'Need PO');
+			if (hasNeedPO) return 'TR-Need PO';
+
+			const waitingStatuses = new Set([
+				'On Order', // legacy value
+				'Back Order',
+				'PO Made',
+				'Part Ready',
+				'SQT Received',
+				'Tech Pickup',
+				'Hold for Estimation',
+				'Hold for next vist'
+			]);
+			const hasWaitingPart = partsList.some((p) => waitingStatuses.has(p.partStatus));
+			if (hasWaitingPart) return 'OP-Waiting for Part';
+
+			if (currentStatus === 'TR-Need PO') return 'OP-Ready for Service';
+			return currentStatus;
+		}
+
+		function applyRepairStatusToUi(nextStatus) {
+			if (!nextStatus) return;
+			if (currentTicketData) currentTicketData.repair_status = nextStatus;
+			const metaValues = document.querySelectorAll('.top-meta .meta-value');
+			if (metaValues[5]) metaValues[5].textContent = nextStatus;
+			const svcCallStatus = document.getElementById('svcCallStatus');
+			if (svcCallStatus) svcCallStatus.value = nextStatus;
+		}
+
+		async function loadPartsFromSupabase(ticketNo) {
+			currentPartTicketNo = ticketNo;
+			try {
+				const { data, error } = await supabaseClient
+					.from('tickets')
+					.select('parts_json, repair_status')
+					.ilike('ticket_no', ticketNo)
+					.limit(1)
+					.maybeSingle();
+				if (error) { console.warn('Parts load error:', error.message); return; }
+				if (data?.parts_json && Array.isArray(data.parts_json)) {
+					partsList = data.parts_json;
+					partsCounter = partsList.reduce((max, p) => {
+						const n = parseInt((p.id || '').replace(/\D/g, ''), 10) || 0;
+						return Math.max(max, n);
+					}, 0);
+					renderPartsTable();
+
+					// Auto-sync repair_status based on current parts state
+					const nextStatus = deriveRepairStatusFromParts(data.repair_status || '');
+					if (nextStatus && nextStatus !== data.repair_status) {
+						const { error: syncErr } = await supabaseClient
+							.from('tickets')
+							.update({ repair_status: nextStatus })
+							.ilike('ticket_no', ticketNo);
+						if (!syncErr) {
+							applyRepairStatusToUi(nextStatus);
+						}
+					} else {
+						applyRepairStatusToUi(data.repair_status || '');
+					}
+				}
+			} catch (e) {
+				console.warn('Parts load exception:', e);
+			}
+		}
+
+		function setPartSaveStatus(msg, isError) {
+			const el = document.getElementById('partSaveStatus');
+			if (!el) return;
+			el.textContent = msg;
+			el.style.color = isError ? '#f87171' : '#34d399';
+			if (msg) setTimeout(() => { el.textContent = ''; }, 4000);
+		}
+
+		async function savePartsToSupabase() {
+			if (!currentPartTicketNo) {
+				setPartSaveStatus('⚠ No ticket loaded — parts not saved.', true);
+				return;
+			}
+			try {
+				const currentStatus = currentTicketData?.repair_status || '';
+				const nextStatus = deriveRepairStatusFromParts(currentStatus);
+				const updatePayload = { parts_json: partsList };
+				if (nextStatus && nextStatus !== currentStatus) {
+					updatePayload.repair_status = nextStatus;
+				}
+
+				const { data: updated, error } = await supabaseClient
+					.from('tickets')
+					.update(updatePayload)
+					.ilike('ticket_no', currentPartTicketNo)
+					.select('ticket_no');
+
+				if (error) {
+					console.warn('Parts save error:', error.message);
+					setPartSaveStatus(`⚠ Save failed: ${error.message}`, true);
+					return;
+				}
+
+				if (!updated || updated.length === 0) {
+					setPartSaveStatus('⚠ Save blocked — run UPDATE RLS policy SQL in Supabase.', true);
+					console.warn('Parts save: 0 rows updated. Missing UPDATE RLS policy on tickets table.');
+					return;
+				}
+
+				setPartSaveStatus('✓ Parts saved', false);
+
+				applyRepairStatusToUi(updatePayload.repair_status || currentStatus);
+			} catch (e) {
+				console.warn('Parts save exception:', e);
+				setPartSaveStatus(`⚠ Save error: ${e.message}`, true);
+			}
+		}
+
+		function openPartModal(editId) {
+			const pm = document.getElementById('pmEditId');
+			const overlay = document.getElementById('partModalOverlay');
+			const title = document.getElementById('partModalTitle');
+
+			// clear all fields
+			['pmPartNo','pmPartDesc','pmPoNo','pmInvoiceNo','pmQty',
+			 'pmPartPrice','pmCoreValue','pmShipCost','pmMarkup','pmTotal',
+			 'pmClaimTo','pmVisitId','pmOrderNo','pmInTracking','pmRaNo',
+			 'pmOutTracking','pmCreditNo','pmNote'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) el.value = id === 'pmQty' ? '1' : '';
+			});
+			['pmPartDist','pmPartStatus','pmHold','pmCxPaid'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) el.value = '';
+			});
+			document.getElementById('pmHold').value = 'No';
+			document.getElementById('pmCxPaid').value = 'No';
+			['pmPoDate','pmInvoiceDate','pmEta','pmRaDate'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) el.value = '';
+			});
+
+			if (editId !== null) {
+				// pre-fill for edit
+				const part = partsList.find(p => p.id === editId);
+				if (!part) return;
+				pm.value = editId;
+				title.textContent = 'Edit Part';
+				document.getElementById('pmPartNo').value       = part.partNo || '';
+				document.getElementById('pmPartDist').value     = part.partDist || '';
+				document.getElementById('pmPartDesc').value     = part.partDesc || '';
+				document.getElementById('pmPoNo').value         = part.poNo || '';
+				document.getElementById('pmPoDate').value       = part.poDate || '';
+				document.getElementById('pmInvoiceNo').value    = part.invoiceNo || '';
+				document.getElementById('pmInvoiceDate').value  = part.invoiceDate || '';
+				document.getElementById('pmQty').value          = part.qty || 1;
+				document.getElementById('pmPartPrice').value    = part.partPrice || '';
+				document.getElementById('pmCoreValue').value    = part.coreValue || '';
+				document.getElementById('pmShipCost').value     = part.shipCost || '';
+				document.getElementById('pmMarkup').value       = part.markup || '';
+				document.getElementById('pmClaimTo').value      = part.claimTo || '';
+				document.getElementById('pmPartStatus').value   = part.partStatus || '';
+				document.getElementById('pmNote').value         = part.note || '';
+				document.getElementById('pmVisitId').value      = part.visitId || '';
+				document.getElementById('pmOrderNo').value      = part.orderNo || '';
+				document.getElementById('pmEta').value          = part.eta || '';
+				document.getElementById('pmInTracking').value   = part.inTracking || '';
+				document.getElementById('pmRaDate').value       = part.raDate || '';
+				document.getElementById('pmRaNo').value         = part.raNo || '';
+				document.getElementById('pmOutTracking').value  = part.outTracking || '';
+				document.getElementById('pmCreditNo').value     = part.creditNo || '';
+				document.getElementById('pmTotal').value        = part.total || '';
+				document.getElementById('pmHold').value         = part.hold || 'No';
+				document.getElementById('pmCxPaid').value       = part.cxPaid || 'No';
+			} else {
+				pm.value = '';
+				title.textContent = 'Add Part';
+			}
+
+			overlay.classList.add('open');
+		}
+
+		function closePartModal() {
+			document.getElementById('partModalOverlay').classList.remove('open');
+		}
+
+		function onPartOverlayClick(e) {
+			if (e.target === document.getElementById('partModalOverlay')) closePartModal();
+		}
+
+		function updateTotalMarkup() {
+			const price  = parseFloat(document.getElementById('pmPartPrice').value) || 0;
+			const markup = parseFloat(document.getElementById('pmMarkup').value) || 0;
+			const total  = price + (price * markup / 100);
+			document.getElementById('pmTotal').value = total > 0 ? total.toFixed(2) : '';
+		}
+
+		function savePart() {
+			const partNo = document.getElementById('pmPartNo').value.trim();
+			if (!partNo) { alert('Part No is required.'); return; }
+
+			const editId = document.getElementById('pmEditId').value;
+			const price  = parseFloat(document.getElementById('pmPartPrice').value) || 0;
+			const markup = parseFloat(document.getElementById('pmMarkup').value) || 0;
+			const total  = price > 0 ? (price + price * markup / 100).toFixed(2) : '';
+
+			const part = {
+				partNo,
+				partDist:     document.getElementById('pmPartDist').value,
+				partDesc:     document.getElementById('pmPartDesc').value.trim(),
+				poNo:         document.getElementById('pmPoNo').value.trim(),
+				poDate:       document.getElementById('pmPoDate').value,
+				invoiceNo:    document.getElementById('pmInvoiceNo').value.trim(),
+				invoiceDate:  document.getElementById('pmInvoiceDate').value,
+				qty:          document.getElementById('pmQty').value || '1',
+				partPrice:    document.getElementById('pmPartPrice').value,
+				coreValue:    document.getElementById('pmCoreValue').value,
+				shipCost:     document.getElementById('pmShipCost').value,
+				markup:       document.getElementById('pmMarkup').value,
+				claimTo:      document.getElementById('pmClaimTo').value.trim(),
+				partStatus:   document.getElementById('pmPartStatus').value,
+				note:         document.getElementById('pmNote').value.trim(),
+				visitId:      document.getElementById('pmVisitId').value.trim(),
+				orderNo:      document.getElementById('pmOrderNo').value.trim(),
+				eta:          document.getElementById('pmEta').value,
+				inTracking:   document.getElementById('pmInTracking').value.trim(),
+				raDate:       document.getElementById('pmRaDate').value,
+				raNo:         document.getElementById('pmRaNo').value.trim(),
+				outTracking:  document.getElementById('pmOutTracking').value.trim(),
+				creditNo:     document.getElementById('pmCreditNo').value.trim(),
+				total,
+				hold:         document.getElementById('pmHold').value,
+				cxPaid:       document.getElementById('pmCxPaid').value,
+			};
+
+			if (editId) {
+				const idx = partsList.findIndex(p => p.id === editId);
+				if (idx !== -1) { part.id = editId; partsList[idx] = part; }
+			} else {
+				partsCounter++;
+				part.id = `P${partsCounter}`;
+				partsList.push(part);
+			}
+
+			renderPartsTable();
+			closePartModal();
+			savePartsToSupabase();
+		}
+
+		function deletePart(id) {
+			if (!confirm('Remove this part?')) return;
+			partsList = partsList.filter(p => p.id !== id);
+			renderPartsTable();
+			savePartsToSupabase();
+		}
+
+		function fmtDate(val) {
+			if (!val) return '';
+			// yyyy-mm-dd → mm/dd/yyyy
+			const m = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+			return m ? `${m[2]}/${m[3]}/${m[1]}` : val;
+		}
+
+		function renderPartsTable() {
+			const tbody = document.getElementById('partsTableBody');
+			const countEl = document.getElementById('partDistinctCount');
+			if (!tbody) return;
+
+			if (partsList.length === 0) {
+				tbody.innerHTML = '<tr id="partsEmptyRow"><td colspan="28" style="color:#aaa;font-style:italic;text-align:center;">No parts added</td></tr>';
+				if (countEl) countEl.textContent = '0 distinct records found';
+				return;
+			}
+
+			if (countEl) countEl.textContent = `${partsList.length} distinct record${partsList.length !== 1 ? 's' : ''} found`;
+
+			tbody.innerHTML = partsList.map(p => `
+				<tr data-partid="${p.id}">
+					<td>${p.id}</td>
+					<td>${p.partNo}</td>
+					<td>${p.partDist}</td>
+					<td>${p.partDesc}</td>
+					<td>${p.poNo}</td>
+					<td>${fmtDate(p.poDate)}</td>
+					<td>${p.invoiceNo}</td>
+					<td>${fmtDate(p.invoiceDate)}</td>
+					<td>${p.qty}</td>
+					<td>${p.partPrice ? '$' + parseFloat(p.partPrice).toFixed(2) : ''}</td>
+					<td>${p.coreValue ? '$' + parseFloat(p.coreValue).toFixed(2) : ''}</td>
+					<td>${p.shipCost ? '$' + parseFloat(p.shipCost).toFixed(2) : ''}</td>
+					<td>${p.markup ? p.markup + '%' : ''}</td>
+					<td>${p.claimTo}</td>
+					<td>${p.partStatus}</td>
+					<td>${p.note}</td>
+					<td>${p.visitId}</td>
+					<td>${p.orderNo}</td>
+					<td>${fmtDate(p.eta)}</td>
+					<td>${p.inTracking}</td>
+					<td>${fmtDate(p.raDate)}</td>
+					<td>${p.raNo}</td>
+					<td>${p.outTracking}</td>
+					<td>${p.creditNo}</td>
+					<td>${p.total ? '$' + p.total : ''}</td>
+					<td>${p.hold}</td>
+					<td>${p.cxPaid}</td>
+					<td>
+						<button class="part-edit-btn" type="button" onclick="openPartModal('${p.id}')">Edit</button>
+						<button class="part-del-btn"  type="button" onclick="deletePart('${p.id}')">Del</button>
+					</td>
+				</tr>`).join('');
+
+			filterPartsTable();
+		}
+
+		function filterPartsTable() {
+			const query = (document.getElementById('partSearchInput')?.value || '').toLowerCase();
+			const tbody = document.getElementById('partsTableBody');
+			if (!tbody) return;
+			tbody.querySelectorAll('tr[data-partid]').forEach(row => {
+				row.style.display = (!query || row.textContent.toLowerCase().includes(query)) ? '' : 'none';
+			});
+		}
+
+		/* ══════════════════════════════════════════════════════
+		   VISIT LOG — Add / Edit / Delete
+		══════════════════════════════════════════════════════ */
+		let visitsList = [];
+		let visitsCounter = 0;
+		let currentVisitTicketNo = null;
+		const VISIT_TECHNICIANS = [
+			{ name: 'Daven Hodge', label: 'Daven Hodge (3/3)' },
+			{ name: 'Jordan Koetsier', label: 'Jordan Koetsier (2/2)' }
+		];
+
+		async function loadVisitsFromSupabase(ticketNo) {
+			currentVisitTicketNo = ticketNo;
+			try {
+				const { data, error } = await supabaseClient
+					.from('tickets')
+					.select('visits_json')
+					.ilike('ticket_no', ticketNo)
+					.limit(1)
+					.maybeSingle();
+				if (error) { console.warn('Visits load error:', error.message); return; }
+				if (data?.visits_json && Array.isArray(data.visits_json)) {
+					visitsList = data.visits_json;
+					visitsCounter = visitsList.reduce((max, v) => {
+						const n = parseInt((v.id || '').replace(/\D/g, ''), 10) || 0;
+						return Math.max(max, n);
+					}, 0);
+					renderVisitsTable();
+				}
+			} catch (e) {
+				console.warn('Visits load exception:', e);
+			}
+		}
+
+		async function saveVisitsToSupabase() {
+			if (!currentVisitTicketNo) return;
+			try {
+				const { data: updated, error } = await supabaseClient
+					.from('tickets')
+					.update({ visits_json: visitsList })
+					.ilike('ticket_no', currentVisitTicketNo)
+					.select('ticket_no');
+				if (error) {
+					console.warn('Visits save error:', error.message);
+					showTicketFeedback(`⚠ Visit save failed: ${error.message}`, 'error');
+					return;
+				}
+				if (!updated || updated.length === 0) {
+					showTicketFeedback('⚠ Visit save blocked — run visits_json column SQL in Supabase.', 'error');
+					return;
+				}
+			} catch (e) {
+				console.warn('Visits save exception:', e);
+			}
+		}
+
+		async function syncTicketFromVisit(visit) {
+			if (!currentVisitTicketNo || !visit) return;
+
+			const updatePayload = {};
+			if (visit.technician) updatePayload.technician_name = visit.technician;
+			if (visit.scheduleDate) updatePayload.schedule_date = visit.scheduleDate;
+			if (visit.repairStatus) updatePayload.repair_status = visit.repairStatus;
+
+			if (Object.keys(updatePayload).length === 0) return;
+
+			const { data: updated, error } = await supabaseClient
+				.from('tickets')
+				.update(updatePayload)
+				.ilike('ticket_no', currentVisitTicketNo)
+				.select('ticket_no, technician_name, schedule_date, repair_status');
+
+			if (error) {
+				throw new Error(error.message || 'Failed to sync ticket from visit.');
+			}
+
+			if (!updated || updated.length === 0) {
+				throw new Error('Visit sync blocked — run UPDATE RLS policy SQL in Supabase.');
+			}
+
+			if (currentTicketData) {
+				Object.assign(currentTicketData, updatePayload);
+				setMetaValues(currentTicketData);
+			}
+
+			if (updatePayload.technician_name) {
+				setServiceField('svcTechnician', updatePayload.technician_name);
+			}
+			if (updatePayload.schedule_date) {
+				setServiceField('svcScheduleDate', formatDate(updatePayload.schedule_date));
+			}
+			if (updatePayload.repair_status) {
+				applyRepairStatusToUi(updatePayload.repair_status);
+			}
+		}
+
+		function openVisitModal(editId) {
+			const overlay = document.getElementById('visitModalOverlay');
+			const title   = document.getElementById('visitModalTitle');
+			const technicianSelect = document.getElementById('vmTechnician');
+			document.getElementById('vmEditId').value = '';
+
+			// clear
+			['vmTechnician','vmActivity','vmRepairType','vmReclaim','vmNotCompleted',
+			 'vmSymptomCx','vmDiagnosis','vmSymptomTech','vmResolution',
+			 'vmNoteInternal','vmNonCompletionReason','vmTriageNote'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) el.value = '';
+			});
+			if (technicianSelect) {
+				technicianSelect.innerHTML = ['<option value="">— select —</option>']
+					.concat(VISIT_TECHNICIANS.map((tech) => `<option value="${tech.name}">${tech.label}</option>`))
+					.join('');
+			}
+			['vmTimeSlot','vmActionType','vmRepairStatus','vmVisited'].forEach(id => {
+				const el = document.getElementById(id);
+				if (el) el.value = '';
+			});
+			document.getElementById('vmScheduleDate').value = '';
+
+			if (editId !== null) {
+				const v = visitsList.find(v => v.id === editId);
+				if (!v) return;
+				document.getElementById('vmEditId').value              = editId;
+				title.textContent                                       = 'Edit Visit';
+				document.getElementById('vmScheduleDate').value        = v.scheduleDate || '';
+				if (technicianSelect) technicianSelect.value = v.technician || '';
+				document.getElementById('vmTimeSlot').value            = v.timeSlot || '';
+				document.getElementById('vmActivity').value            = v.activity || '';
+				document.getElementById('vmActionType').value          = v.actionType || '';
+				document.getElementById('vmRepairStatus').value        = v.repairStatus || '';
+				document.getElementById('vmRepairType').value          = v.repairType || '';
+				document.getElementById('vmReclaim').value             = v.reclaim || '';
+				document.getElementById('vmVisited').value             = v.visited || '';
+				document.getElementById('vmNotCompleted').value        = v.notCompleted || '';
+				document.getElementById('vmSymptomCx').value           = v.symptomCx || '';
+				document.getElementById('vmDiagnosis').value           = v.diagnosis || '';
+				document.getElementById('vmSymptomTech').value         = v.symptomTech || '';
+				document.getElementById('vmResolution').value          = v.resolution || '';
+				document.getElementById('vmNoteInternal').value        = v.noteInternal || '';
+				document.getElementById('vmNonCompletionReason').value = v.nonCompletionReason || '';
+				document.getElementById('vmTriageNote').value          = v.triageNote || '';
+			} else {
+				title.textContent = 'Add Visit';
+			}
+
+			overlay.style.display = 'flex';
+		}
+
+		function closeVisitModal() {
+			document.getElementById('visitModalOverlay').style.display = 'none';
+		}
+
+		function onVisitOverlayClick(e) {
+			if (e.target === document.getElementById('visitModalOverlay')) closeVisitModal();
+		}
+
+		async function saveVisit() {
+			const technician = document.getElementById('vmTechnician').value.trim();
+			if (!technician) { alert('Technician is required.'); return; }
+
+			const editId = document.getElementById('vmEditId').value;
+			const visit = {
+				scheduleDate:        document.getElementById('vmScheduleDate').value,
+				technician,
+				timeSlot:            document.getElementById('vmTimeSlot').value,
+				activity:            document.getElementById('vmActivity').value.trim(),
+				actionType:          document.getElementById('vmActionType').value,
+				repairStatus:        document.getElementById('vmRepairStatus').value,
+				repairType:          document.getElementById('vmRepairType').value.trim(),
+				reclaim:             document.getElementById('vmReclaim').value.trim(),
+				visited:             document.getElementById('vmVisited').value,
+				notCompleted:        document.getElementById('vmNotCompleted').value.trim(),
+				symptomCx:           document.getElementById('vmSymptomCx').value.trim(),
+				diagnosis:           document.getElementById('vmDiagnosis').value.trim(),
+				symptomTech:         document.getElementById('vmSymptomTech').value.trim(),
+				resolution:          document.getElementById('vmResolution').value.trim(),
+				noteInternal:        document.getElementById('vmNoteInternal').value.trim(),
+				nonCompletionReason: document.getElementById('vmNonCompletionReason').value.trim(),
+				triageNote:          document.getElementById('vmTriageNote').value.trim(),
+			};
+
+			if (editId) {
+				const idx = visitsList.findIndex(v => v.id === editId);
+				if (idx !== -1) { visit.id = editId; visitsList[idx] = visit; }
+			} else {
+				visitsCounter++;
+				visit.id = `V${visitsCounter}`;
+				visitsList.push(visit);
+			}
+
+			renderVisitsTable();
+			closeVisitModal();
+			try {
+				await saveVisitsToSupabase();
+				await syncTicketFromVisit(visit);
+			} catch (error) {
+				console.warn('Visit sync exception:', error);
+				showTicketFeedback(`⚠ Visit saved, but ticket sync failed: ${error.message}`, 'error');
+			}
+		}
+
+		function deleteVisit(id) {
+			if (!confirm('Remove this visit?')) return;
+			visitsList = visitsList.filter(v => v.id !== id);
+			renderVisitsTable();
+			saveVisitsToSupabase();
+		}
+
+		function renderVisitsTable() {
+			const tbody   = document.getElementById('visitLogBody');
+			const countEl = document.getElementById('visitDistinctCount');
+			if (!tbody) return;
+
+			if (visitsList.length === 0) {
+				tbody.innerHTML = '<tr id="visitsEmptyRow"><td colspan="19" style="color:#aaa;font-style:italic;text-align:center;">No visits added</td></tr>';
+				if (countEl) countEl.textContent = '0 visits';
+				return;
+			}
+
+			if (countEl) countEl.textContent = `${visitsList.length} visit${visitsList.length !== 1 ? 's' : ''}`;
+
+			tbody.innerHTML = visitsList.map(v => {
+				const truncate = (txt, len = 60) => txt && txt.length > len ? txt.slice(0, len) + '…' : (txt || '');
+				return `<tr data-visitid="${v.id}">
+					<td>${v.id}</td>
+					<td>${fmtDate(v.scheduleDate)}</td>
+					<td>${v.technician}</td>
+					<td title="${(v.symptomCx||'').replace(/"/g,'&quot;')}" style="max-width:160px;white-space:normal;word-break:break-word;">${truncate(v.symptomCx, 80)}</td>
+					<td title="${(v.diagnosis||'').replace(/"/g,'&quot;')}" style="max-width:160px;white-space:normal;word-break:break-word;">${truncate(v.diagnosis, 80)}</td>
+					<td>${v.repairType}</td>
+					<td title="${(v.noteInternal||'').replace(/"/g,'&quot;')}">${truncate(v.noteInternal)}</td>
+					<td>${v.reclaim}</td>
+					<td>${v.activity}</td>
+					<td>${v.actionType}</td>
+					<td>${v.timeSlot}</td>
+					<td>${v.repairStatus}</td>
+					<td title="${(v.symptomTech||'').replace(/"/g,'&quot;')}">${truncate(v.symptomTech)}</td>
+					<td title="${(v.resolution||'').replace(/"/g,'&quot;')}" style="max-width:160px;white-space:normal;word-break:break-word;">${truncate(v.resolution, 80)}</td>
+					<td>${truncate(v.nonCompletionReason)}</td>
+					<td title="${(v.triageNote||'').replace(/"/g,'&quot;')}">${truncate(v.triageNote)}</td>
+					<td>${v.visited}</td>
+					<td>${v.notCompleted}</td>
+					<td>
+						<button class="part-edit-btn" type="button" onclick="openVisitModal('${v.id}')">Edit</button>
+						<button class="part-del-btn"  type="button" onclick="deleteVisit('${v.id}')">Del</button>
+					</td>
+				</tr>`;
+			}).join('');
+		}
+	</script>
+	<!-- ── Part Transaction Modal ───────────────────────────── -->
+	<div id="partModalOverlay" onclick="onPartOverlayClick(event)">
+		<div id="partModal">
+			<h3 id="partModalTitle">Add Part</h3>
+			<input type="hidden" id="pmEditId" value="">
+			<div class="pm-grid">
+				<div class="pm-field" style="grid-column:span 2;">
+					<label>Part No *</label>
+					<input id="pmPartNo" type="text" placeholder="e.g. W11316760">
+				</div>
+				<div class="pm-field">
+					<label>Part Distributor *</label>
+					<select id="pmPartDist">
+						<option value="">— select —</option>
+						<option>Encompass</option>
+						<option>RepairClinic</option>
+						<option>PartSelect</option>
+						<option>Marcone</option>
+						<option>Johnstone</option>
+						<option>Other</option>
+					</select>
+				</div>
+				<div class="pm-field" style="grid-column:span 2;">
+					<label>Part Description</label>
+					<input id="pmPartDesc" type="text" placeholder="e.g. Door gasket">
+				</div>
+				<div class="pm-field">
+					<label>PO No</label>
+					<input id="pmPoNo" type="text">
+				</div>
+				<div class="pm-field">
+					<label>P/O Date</label>
+					<input id="pmPoDate" type="date">
+				</div>
+				<div class="pm-field">
+					<label>Invoice No</label>
+					<input id="pmInvoiceNo" type="text">
+				</div>
+				<div class="pm-field">
+					<label>Invoice Date</label>
+					<input id="pmInvoiceDate" type="date">
+				</div>
+				<div class="pm-field">
+					<label>Qty *</label>
+					<input id="pmQty" type="number" min="1" value="1">
+				</div>
+				<div class="pm-field">
+					<label>Part Price ($)</label>
+					<input id="pmPartPrice" type="number" min="0" step="0.01" placeholder="0.00" oninput="updateTotalMarkup()">
+				</div>
+				<div class="pm-field">
+					<label>Core Value ($)</label>
+					<input id="pmCoreValue" type="number" min="0" step="0.01" placeholder="0.00">
+				</div>
+				<div class="pm-field">
+					<label>Ship Cost ($)</label>
+					<input id="pmShipCost" type="number" min="0" step="0.01" placeholder="0.00">
+				</div>
+				<div class="pm-field">
+					<label>Markup (%)</label>
+					<input id="pmMarkup" type="number" min="0" step="0.01" placeholder="0" oninput="updateTotalMarkup()">
+				</div>
+				<div class="pm-field">
+					<label>Total (Markup) ($)</label>
+					<input id="pmTotal" type="text" readonly placeholder="— auto —" style="background:rgba(255,255,255,0.03);">
+				</div>
+				<div class="pm-field">
+					<label>Claim To</label>
+					<input id="pmClaimTo" type="text" placeholder="e.g. ELECTROLUX">
+				</div>
+				<div class="pm-field">
+					<label>Part Status *</label>
+					<select id="pmPartStatus">
+						<option value="">— select —</option>
+						<option>Back Order</option>
+						<option>Cancelled</option>
+						<option>Claimed</option>
+						<option>CX Home</option>
+						<option>Cx Received</option>
+						<option>Defective</option>
+						<option>Hold for Estimation</option>
+						<option>Hold for next vist</option>
+						<option>Lost</option>
+						<option>Need PO</option>
+						<option>Not Used &amp; Stocked</option>
+						<option>PAID</option>
+						<option>Part Ready</option>
+						<option>PO Made</option>
+						<option>RA - Defect</option>
+						<option>RA- DMG</option>
+						<option>RA - PNN</option>
+						<option>RA - Qty Discrepancy</option>
+						<option>SQT Received</option>
+						<option>Tech Pickup</option>
+						<option>Used</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Visit ID *</label>
+					<input id="pmVisitId" type="text" placeholder="e.g. V1">
+				</div>
+				<div class="pm-field">
+					<label>Order #</label>
+					<input id="pmOrderNo" type="text">
+				</div>
+				<div class="pm-field">
+					<label>ETA</label>
+					<input id="pmEta" type="date">
+				</div>
+				<div class="pm-field">
+					<label>In Tracking #</label>
+					<input id="pmInTracking" type="text">
+				</div>
+				<div class="pm-field">
+					<label>RA Date</label>
+					<input id="pmRaDate" type="date">
+				</div>
+				<div class="pm-field">
+					<label>RA #</label>
+					<input id="pmRaNo" type="text">
+				</div>
+				<div class="pm-field">
+					<label>Out Tracking #</label>
+					<input id="pmOutTracking" type="text">
+				</div>
+				<div class="pm-field">
+					<label>Credit #</label>
+					<input id="pmCreditNo" type="text">
+				</div>
+				<div class="pm-field">
+					<label>Hold</label>
+					<select id="pmHold">
+						<option value="No">No</option>
+						<option value="Hold">Hold</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Cx Paid</label>
+					<select id="pmCxPaid">
+						<option value="No">No</option>
+						<option value="Paid">Paid</option>
+					</select>
+				</div>
+				<div class="pm-field" style="grid-column:span 2;">
+					<label>Note</label>
+					<input id="pmNote" type="text" placeholder="Internal note…">
+				</div>
+			</div>
+			<div class="pm-actions">
+				<button class="pm-cancel-btn" type="button" onclick="closePartModal()">Cancel</button>
+				<button class="pm-save-btn" type="button" onclick="savePart()">Save Part</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- ── Visit Log Modal ──────────────────────────────────── -->
+	<div id="visitModalOverlay" onclick="onVisitOverlayClick(event)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9100;align-items:center;justify-content:center;">
+		<div id="visitModal" style="background:#1f2937;border:1px solid rgba(255,255,255,0.18);border-radius:12px;width:min(96vw,860px);max-height:90vh;overflow-y:auto;padding:1.5rem 1.75rem;color:#e5e7eb;">
+			<h3 id="visitModalTitle" style="margin:0 0 1rem;font-size:1.05rem;font-weight:700;color:#fff;">Add Visit</h3>
+			<input type="hidden" id="vmEditId" value="">
+			<div class="pm-grid">
+				<div class="pm-field">
+					<label>Schedule Date *</label>
+					<input id="vmScheduleDate" type="date">
+				</div>
+				<div class="pm-field" style="grid-column:span 2;">
+					<label>Technician *</label>
+					<select id="vmTechnician">
+						<option value="">— select —</option>
+						<option value="Daven Hodge">Daven Hodge (3/3)</option>
+						<option value="Jordan Koetsier">Jordan Koetsier (2/2)</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Time Slot</label>
+					<select id="vmTimeSlot">
+						<option value="">— select —</option>
+						<option>AM</option>
+						<option>PM</option>
+						<option>ALL DAY</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Activity</label>
+					<input id="vmActivity" type="text" placeholder="e.g. 1.0 hr">
+				</div>
+				<div class="pm-field">
+					<label>Action Type *</label>
+					<select id="vmActionType">
+						<option value="">— select —</option>
+						<option>Visited</option>
+						<option>Cx Conf.</option>
+						<option>Not Completed</option>
+						<option>Cancelled</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Repair Status *</label>
+					<select id="vmRepairStatus">
+						<option value="">— select —</option>
+						<option>CL-Need Cancel</option>
+						<option>CL-Parts Back Ordered</option>
+						<option>CL-Ready to Complete</option>
+						<option>CSR-Acknowledged</option>
+						<option>CSR-Assigned to ASC</option>
+						<option>CSR-Left Message for Cx</option>
+						<option>CSR-Needs Scheduling</option>
+						<option>OP-Ready for Service</option>
+						<option>OP-Reschedule Follow up</option>
+						<option>OP-UPDATE HOLD</option>
+						<option>OP-Waiting for Part</option>
+						<option>PT-Need PreAuthorization</option>
+						<option>TR-Need PO</option>
+						<option>TR-Need Triage</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Repair Type (2nd Tech)</label>
+					<input id="vmRepairType" type="text" placeholder="e.g. 2nd">
+				</div>
+				<div class="pm-field">
+					<label>Reclaim</label>
+					<input id="vmReclaim" type="text" placeholder="Reclaim">
+				</div>
+				<div class="pm-field">
+					<label>Visited</label>
+					<select id="vmVisited">
+						<option value="">— select —</option>
+						<option>Visited</option>
+						<option>Not Visited</option>
+					</select>
+				</div>
+				<div class="pm-field">
+					<label>Not Completed?</label>
+					<input id="vmNotCompleted" type="text" placeholder="e.g. Triage Support">
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Symptom (Cx)</label>
+					<textarea id="vmSymptomCx" rows="3" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Diagnosis</label>
+					<textarea id="vmDiagnosis" rows="3" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Symptom (Tech)</label>
+					<textarea id="vmSymptomTech" rows="2" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Resolution</label>
+					<textarea id="vmResolution" rows="3" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Note (Internal)</label>
+					<textarea id="vmNoteInternal" rows="2" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Non-Completion Reason</label>
+					<textarea id="vmNonCompletionReason" rows="2" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+				<div class="pm-field" style="grid-column:span 3;">
+					<label>Triage Note</label>
+					<textarea id="vmTriageNote" rows="2" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:0.42rem 0.6rem;font-size:0.8rem;resize:vertical;"></textarea>
+				</div>
+			</div>
+			<div class="pm-actions">
+				<button class="pm-cancel-btn" type="button" onclick="closeVisitModal()">Cancel</button>
+				<button class="pm-save-btn" type="button" onclick="saveVisit()">Save Visit</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="attachmentImageModal" class="attachment-modal" onclick="if(event.target===this)closeAttachmentImageModal()">
+		<div class="attachment-modal-content">
+			<div class="attachment-modal-head">
+				<div id="attachmentImageModalTitle" class="attachment-modal-title">Attachment Preview</div>
+				<button class="attachment-modal-close" type="button" onclick="closeAttachmentImageModal()">Close</button>
+			</div>
+			<div class="attachment-modal-body">
+				<img id="attachmentImageModalImg" src="" alt="Attachment Preview">
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>

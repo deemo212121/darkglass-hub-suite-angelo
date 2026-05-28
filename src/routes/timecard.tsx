@@ -19,10 +19,15 @@ function TimecardPage() {
 
   useEffect(() => {
     const raw = localStorage.getItem(KEY);
-    if (raw) { try { setEntries(JSON.parse(raw)); return; } catch {} }
-    // seed a few entries
+    if (raw) {
+      try {
+        setEntries(JSON.parse(raw));
+        return;
+      } catch {}
+    }
     const seed: Entry[] = Array.from({ length: 5 }, (_, i) => {
-      const d = new Date(); d.setDate(d.getDate() - i);
+      const d = new Date();
+      d.setDate(d.getDate() - i);
       return {
         id: `seed-${i}`,
         date: d.toISOString().slice(0, 10),
@@ -39,25 +44,11 @@ function TimecardPage() {
     localStorage.setItem(KEY, JSON.stringify(next));
   };
 
-  const inMonth = useMemo(() => entries.filter((e) => e.date.startsWith(month)), [entries, month]);
-
-  const totals = useMemo(() => {
-    let total = 0;
-    for (const e of inMonth) {
-      if (!e.in || !e.out) continue;
-      const [h1, m1] = e.in.split(":").map(Number);
-      const [h2, m2] = e.out.split(":").map(Number);
-      const hrs = (h2 + m2 / 60) - (h1 + m1 / 60);
-      if (hrs > 0) total += hrs;
-    }
-    const regular = Math.min(total, 160);
-    const overtime = Math.max(0, total - 160);
-    return { total, regular, overtime };
-  }, [inMonth]);
-
   const addRow = () => persist([{ id: `t-${Date.now()}`, date: today.toISOString().slice(0, 10), in: "08:00", out: "17:00", notes: "" }, ...entries]);
-  const update = (id: string, key: keyof Entry, value: string) => persist(entries.map((e) => e.id === id ? { ...e, [key]: value } : e));
-  const remove = (id: string) => persist(entries.filter((e) => e.id !== id));
+  const update = (id: string, key: keyof Entry, value: string) => persist(entries.map((entry) => (entry.id === id ? { ...entry, [key]: value } : entry)));
+  const remove = (id: string) => persist(entries.filter((entry) => entry.id !== id));
+
+  const filtered = useMemo(() => entries.filter((entry) => entry.date.startsWith(month)), [entries, month]);
 
   return (
     <AccountPageShell title="My Timecard" description="Review and edit your time in/out records.">
@@ -67,46 +58,54 @@ function TimecardPage() {
             <span className="text-xs text-muted-foreground">Month</span>
             <input className="glass-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
           </label>
-          <div className="grid grid-cols-3 gap-4 ml-auto">
-            <Stat label="Total hours" value={totals.total.toFixed(1)} />
-            <Stat label="Regular" value={totals.regular.toFixed(1)} />
-            <Stat label="Overtime" value={totals.overtime.toFixed(1)} accent />
+          <div className="ml-auto flex items-center gap-3">
+            <button className="btn" onClick={addRow}><Plus className="h-4 w-4" />Add row</button>
+            <button className="btn btn-primary" onClick={() => persist(entries)}><Save className="h-4 w-4" />Save</button>
           </div>
         </div>
-        <div className="flex items-center gap-2 mt-4">
-          <button className="btn btn-primary" onClick={addRow}><Plus className="h-4 w-4" />Add entry</button>
-          <button className="btn" onClick={() => persist(entries)}><Save className="h-4 w-4" />Save</button>
-          <div className="ml-auto text-xs text-muted-foreground">{inMonth.length} entries</div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
+            <div className="text-xs text-muted-foreground">Entries this month</div>
+            <div className="text-2xl font-semibold">{filtered.length}</div>
+          </div>
+          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
+            <div className="text-xs text-muted-foreground">Latest date</div>
+            <div className="text-2xl font-semibold">{filtered[0]?.date ?? "-"}</div>
+          </div>
+          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
+            <div className="text-xs text-muted-foreground">Status</div>
+            <div className="text-2xl font-semibold">{filtered.length ? "Active" : "No entries"}</div>
+          </div>
         </div>
       </section>
 
-      <section className="panel" style={{ overflowX: "auto" }}>
-        <table className="data-table">
-          <thead>
-            <tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th><th>Notes</th><th style={{ width: 50 }}></th></tr>
+      <section className="panel overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            <tr>
+              <th className="py-3 pr-3">Date</th>
+              <th className="py-3 pr-3">In</th>
+              <th className="py-3 pr-3">Out</th>
+              <th className="py-3 pr-3">Notes</th>
+              <th className="py-3 pr-3"></th>
+            </tr>
           </thead>
           <tbody>
-            {inMonth.map((e) => {
-              const [h1, m1] = (e.in || "0:0").split(":").map(Number);
-              const [h2, m2] = (e.out || "0:0").split(":").map(Number);
-              const hrs = Math.max(0, (h2 + m2 / 60) - (h1 + m1 / 60));
-              return (
-                <tr key={e.id}>
-                  <td><input type="date" value={e.date} onChange={(ev) => update(e.id, "date", ev.target.value)} /></td>
-                  <td><input type="time" value={e.in} onChange={(ev) => update(e.id, "in", ev.target.value)} /></td>
-                  <td><input type="time" value={e.out} onChange={(ev) => update(e.id, "out", ev.target.value)} /></td>
-                  <td>{hrs.toFixed(2)}</td>
-                  <td><input type="text" value={e.notes} onChange={(ev) => update(e.id, "notes", ev.target.value)} /></td>
-                  <td><button className="text-destructive" onClick={() => remove(e.id)}><Trash2 className="h-4 w-4" /></button></td>
-                </tr>
-              );
-            })}
-            {inMonth.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", padding: "2rem", color: "#6b7280" }}>No entries this month</td></tr>}
+            {filtered.map((entry) => (
+              <tr key={entry.id} className="border-t border-[var(--color-panel-border)]">
+                <td className="py-3 pr-3"><input className="glass-input min-w-36" type="date" value={entry.date} onChange={(e) => update(entry.id, "date", e.target.value)} /></td>
+                <td className="py-3 pr-3"><input className="glass-input min-w-28" type="time" value={entry.in} onChange={(e) => update(entry.id, "in", e.target.value)} /></td>
+                <td className="py-3 pr-3"><input className="glass-input min-w-28" type="time" value={entry.out} onChange={(e) => update(entry.id, "out", e.target.value)} /></td>
+                <td className="py-3 pr-3"><input className="glass-input min-w-64" value={entry.notes} onChange={(e) => update(entry.id, "notes", e.target.value)} /></td>
+                <td className="py-3 pr-3 text-right"><button className="btn" onClick={() => remove(entry.id)}><Trash2 className="h-4 w-4" />Remove</button></td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </section>
     </AccountPageShell>
   );
+<<<<<<< HEAD
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
@@ -117,3 +116,6 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
     </div>
   );
 }
+=======
+}
+>>>>>>> 6d0f135 (Restore legacy modules and bundle splitting)

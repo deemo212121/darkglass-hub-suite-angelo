@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Work Calendar (Monthly) - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.calendar-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.2rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.control-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1rem;
+			margin-bottom: 0.8rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		#monthPicker::-webkit-calendar-picker-indicator {
+			filter: invert(1);
+			opacity: 0.95;
+			cursor: pointer;
+		}
+
+		.month-nav {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.month-arrow {
+			width: 34px;
+			height: 34px;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 1rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.month-arrow:hover {
+			border-color: rgba(96, 165, 250, 0.8);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.month-banner {
+			margin: 0.25rem 0 0.85rem;
+			font-size: 1.1rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.option-row {
+			display: flex;
+			align-items: center;
+			gap: 1rem;
+			margin-bottom: 0.85rem;
+			flex-wrap: wrap;
+		}
+
+		.show-group {
+			display: flex;
+			align-items: center;
+			gap: 0.7rem;
+			font-size: 0.88rem;
+		}
+
+		.toggle-btn {
+			padding: 0.55rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.toggle-btn.active {
+			border-color: rgba(96, 165, 250, 0.8);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 1rem;
+			margin: 0.5rem 0 0.8rem;
+			flex-wrap: wrap;
+		}
+
+		.count-text {
+			font-size: 0.9rem;
+			font-weight: 600;
+			color: #bfdbfe;
+		}
+
+		.meta-row input {
+			min-width: 220px;
+			padding: 0.58rem 0.7rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.85rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.work-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.work-table th,
+		.work-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.6rem 0.7rem;
+			font-size: 0.79rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.work-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.work-table td:nth-child(1),
+		.work-table td:nth-child(8) {
+			text-align: left;
+		}
+
+		.hidden-col {
+			display: none;
+		}
+
+		.calendar-grid {
+			display: none;
+			grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+			gap: 0.85rem;
+		}
+
+		.calendar-day {
+			background: rgba(17, 24, 39, 0.9);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-radius: 8px;
+			padding: 0.75rem;
+		}
+
+		.day-title {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #bfdbfe;
+			margin-bottom: 0.45rem;
+		}
+
+		.day-count {
+			font-size: 0.78rem;
+			color: #cbd5e1;
+			margin-bottom: 0.5rem;
+		}
+
+		.ticket-chip {
+			font-size: 0.76rem;
+			padding: 0.35rem 0.45rem;
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			border-radius: 6px;
+			margin-bottom: 0.35rem;
+			background: rgba(30, 41, 59, 0.85);
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.option-row {
+				flex-direction: column;
+				align-items: flex-start;
+			}
+
+			.month-arrow {
+				width: 32px;
+				height: 32px;
+			}
+
+			table.work-table {
+				min-width: 1300px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">Work Calendar (Monthly)</h2>
+		</div>
+
+		<div class="calendar-panel">
+			<div class="control-grid">
+				<div class="control-group">
+					<label for="engineer">Engineer</label>
+					<select id="engineer">
+						<option value="Josh Malloch" selected>Josh Malloch</option>
+						<option value="R. Mendoza">R. Mendoza</option>
+						<option value="M. Navarro">M. Navarro</option>
+					</select>
+				</div>
+				<div class="control-group">
+					<label for="monthPicker">Month</label>
+					<div class="month-nav">
+						<button id="prevMonthBtn" class="month-arrow" type="button" aria-label="Previous month">&#x2039;</button>
+						<input id="monthPicker" type="month" value="2026-05">
+						<button id="nextMonthBtn" class="month-arrow" type="button" aria-label="Next month">&#x203A;</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="monthBanner" class="month-banner">May 2026</div>
+
+			<div class="option-row">
+				<div class="show-group">
+					<span>Show</span>
+					<label><input id="showTicketNo" type="checkbox" checked> Ticket No</label>
+					<label><input id="showAddress" type="checkbox" checked> Name/City/Zip</label>
+				</div>
+				<div>
+					<button id="calendarViewBtn" class="toggle-btn" type="button">Calendar View</button>
+					<button id="listViewBtn" class="toggle-btn active" type="button">List View</button>
+				</div>
+			</div>
+
+			<div class="meta-row">
+				<div id="recordCount" class="count-text">0 records found</div>
+				<input id="searchInResult" type="text" placeholder="search in result">
+			</div>
+
+			<div id="listView" class="table-wrap">
+				<table class="work-table">
+					<thead>
+						<tr>
+							<th data-col="ticketNo">Ticket No</th>
+							<th>Type</th>
+							<th>Posting Date</th>
+							<th>Schedule</th>
+							<th>Status</th>
+							<th>ModelCode</th>
+							<th>Serial</th>
+							<th data-col="address">Address</th>
+							<th>Aging</th>
+							<th>Repair Type</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody"></tbody>
+				</table>
+			</div>
+
+			<div id="calendarView" class="calendar-grid"></div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+		let allRows = [];
+		let activeCompanyDbId = null;
+
+		const _userEmail = localStorage.getItem('userEmail');
+		const _userCompanyId = localStorage.getItem('userCompanyId');
+		if (!_userEmail || !_userCompanyId) window.location.href = '../../landing.html';
+
+		async function getCompanyDbId(cid) {
+			if (!cid) return null;
+			const { data } = await supabaseClient.from('companies').select('id').eq('company_id', cid).maybeSingle();
+			return data ? data.id : null;
+		}
+
+		async function loadCalendarFromDatabase() {
+			activeCompanyDbId = await getCompanyDbId(_userCompanyId);
+			let query = supabaseClient.from('tickets')
+				.select('ticket_no, technician_name, source, call_taken_date, schedule_date, repair_status, model, serial_no, customer_address, warranty_type, created_at')
+				.not('schedule_date', 'is', null)
+				.order('schedule_date', { ascending: false })
+				.limit(1000);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			const { data, error } = await query;
+			if (error) { console.error('Calendar fetch error:', error); }
+			const now = new Date();
+			allRows = (data || []).map((t) => {
+				const postDate = t.call_taken_date ? new Date(t.call_taken_date) : null;
+				const schedDate = t.schedule_date ? new Date(t.schedule_date) : null;
+				const aging = postDate ? Math.floor((now - postDate) / 86400000) : 0;
+				const fmt = (d) => d ? `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}` : '';
+				return {
+					engineer: t.technician_name || 'Unassigned',
+					ticketNo: t.ticket_no || '',
+					type: t.source || '',
+					postingDate: fmt(postDate),
+					schedule: fmt(schedDate),
+					status: t.repair_status || '',
+					modelCode: t.model || '',
+					serial: t.serial_no || '',
+					address: t.customer_address || '',
+					aging,
+					repairType: t.warranty_type || ''
+				};
+			});
+			update_engineer_dropdown();
+			render();
+		}
+
+		function update_engineer_dropdown() {
+			const sel = document.getElementById('engineer');
+			const existing = new Set(Array.from(sel.options).map(o => o.value));
+			[...new Set(allRows.map(r => r.engineer))].sort().forEach(eng => {
+				if (!existing.has(eng)) {
+					const opt = document.createElement('option');
+					opt.value = eng; opt.textContent = eng;
+					sel.appendChild(opt);
+				}
+			});
+		}
+		let currentView = 'list';
+
+
+		function loadUserInfo() {
+			document.getElementById('userDisplayName').textContent = _userEmail || '';
+			document.getElementById('companyDisplayId').textContent = `Company: ${_userCompanyId || ''}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function parseDate(mmddyyyy) {
+			const parts = mmddyyyy.split('/');
+			if (parts.length !== 3) {
+				return null;
+			}
+			return new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
+		}
+
+		function getFilteredRows() {
+			const engineer = document.getElementById('engineer').value;
+			const monthValue = document.getElementById('monthPicker').value;
+			const search = document.getElementById('searchInResult').value.trim().toLowerCase();
+			const monthDate = monthValue ? new Date(monthValue + '-01T00:00:00') : null;
+
+			return allRows.filter((row) => {
+				if (engineer && row.engineer !== engineer) {
+					return false;
+				}
+				if (monthDate) {
+					const scheduleDate = parseDate(row.schedule);
+					if (!scheduleDate || scheduleDate.getMonth() !== monthDate.getMonth() || scheduleDate.getFullYear() !== monthDate.getFullYear()) {
+						return false;
+					}
+				}
+				if (search) {
+					const haystack = [
+						row.ticketNo,
+						row.type,
+						row.postingDate,
+						row.schedule,
+						row.status,
+						row.modelCode,
+						row.serial,
+						row.address,
+						String(row.aging),
+						row.repairType
+					].join(' ').toLowerCase();
+					if (!haystack.includes(search)) {
+						return false;
+					}
+				}
+				return true;
+			});
+		}
+
+		function renderList(rows) {
+			const tbody = document.getElementById('tableBody');
+			if (rows.length === 0) {
+				tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:#64748b; font-style:italic;">No records found</td></tr>';
+				return;
+			}
+			tbody.innerHTML = rows.map((row) => `
+				<tr>
+					<td data-col="ticketNo">${row.ticketNo}</td>
+					<td>${row.type}</td>
+					<td>${row.postingDate}</td>
+					<td>${row.schedule}</td>
+					<td>${row.status}</td>
+					<td>${row.modelCode}</td>
+					<td>${row.serial || '-'}</td>
+					<td data-col="address">${row.address}</td>
+					<td>${row.aging}</td>
+					<td>${row.repairType || ''}</td>
+				</tr>
+			`).join('');
+		}
+
+		function renderCalendar(rows) {
+			const container = document.getElementById('calendarView');
+			if (rows.length === 0) {
+				container.innerHTML = '<div class="calendar-day"><div class="day-title">No Schedules</div><div class="day-count">No records found</div></div>';
+				return;
+			}
+
+			const grouped = rows.reduce((acc, row) => {
+				if (!acc[row.schedule]) {
+					acc[row.schedule] = [];
+				}
+				acc[row.schedule].push(row);
+				return acc;
+			}, {});
+
+			const sortedDates = Object.keys(grouped).sort((a, b) => parseDate(a) - parseDate(b));
+			container.innerHTML = sortedDates.map((dateKey) => {
+				const dayRows = grouped[dateKey];
+				const chips = dayRows.map((row) => `<div class="ticket-chip">${row.ticketNo} - ${row.status}</div>`).join('');
+				return `
+					<div class="calendar-day">
+						<div class="day-title">${dateKey}</div>
+						<div class="day-count">${dayRows.length} ticket(s)</div>
+						${chips}
+					</div>
+				`;
+			}).join('');
+		}
+
+		function applyColumnVisibility() {
+			const showTicketNo = document.getElementById('showTicketNo').checked;
+			const showAddress = document.getElementById('showAddress').checked;
+
+			document.querySelectorAll('[data-col="ticketNo"]').forEach((el) => {
+				el.classList.toggle('hidden-col', !showTicketNo);
+			});
+			document.querySelectorAll('[data-col="address"]').forEach((el) => {
+				el.classList.toggle('hidden-col', !showAddress);
+			});
+		}
+
+		function updateMonthBanner() {
+			const monthValue = document.getElementById('monthPicker').value;
+			if (!monthValue) {
+				document.getElementById('monthBanner').textContent = '';
+				return;
+			}
+			const date = new Date(monthValue + '-01T00:00:00');
+			const display = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+			document.getElementById('monthBanner').textContent = display;
+		}
+
+		function shiftMonth(offset) {
+			const monthPicker = document.getElementById('monthPicker');
+			const currentValue = monthPicker.value;
+			if (!currentValue) {
+				return;
+			}
+			const date = new Date(currentValue + '-01T00:00:00');
+			date.setMonth(date.getMonth() + offset);
+			const year = date.getFullYear();
+			const month = String(date.getMonth() + 1).padStart(2, '0');
+			monthPicker.value = `${year}-${month}`;
+			render();
+		}
+
+		function setView(view) {
+			currentView = view;
+			document.getElementById('calendarViewBtn').classList.toggle('active', view === 'calendar');
+			document.getElementById('listViewBtn').classList.toggle('active', view === 'list');
+			document.getElementById('calendarView').style.display = view === 'calendar' ? 'grid' : 'none';
+			document.getElementById('listView').style.display = view === 'list' ? 'block' : 'none';
+		}
+
+		function render() {
+			updateMonthBanner();
+			const rows = getFilteredRows();
+			document.getElementById('recordCount').textContent = `${rows.length} records found`;
+			renderList(rows);
+			renderCalendar(rows);
+			applyColumnVisibility();
+			setView(currentView);
+		}
+
+		document.getElementById('engineer').addEventListener('change', render);
+		document.getElementById('monthPicker').addEventListener('change', render);
+		document.getElementById('searchInResult').addEventListener('input', render);
+		document.getElementById('showTicketNo').addEventListener('change', render);
+		document.getElementById('showAddress').addEventListener('change', render);
+		document.getElementById('calendarViewBtn').addEventListener('click', function () {
+			setView('calendar');
+		});
+		document.getElementById('listViewBtn').addEventListener('click', function () {
+			setView('list');
+		});
+		document.getElementById('prevMonthBtn').addEventListener('click', function () {
+			shiftMonth(-1);
+		});
+		document.getElementById('nextMonthBtn').addEventListener('click', function () {
+			shiftMonth(1);
+		});
+
+		window.addEventListener('load', async function () {
+			loadUserInfo();
+			await loadCalendarFromDatabase();
+		});
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>

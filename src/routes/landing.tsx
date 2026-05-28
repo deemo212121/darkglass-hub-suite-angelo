@@ -1,9 +1,13 @@
 import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import logo from "@/assets/logo.png";
+import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { LayoutDashboard, Package, Ticket, FileBarChart, Users, ShieldCheck, ArrowRight } from "lucide-react";
+import { Footer } from "@/components/Footer";
+import { ArrowRight } from "lucide-react";
+import { getUsers } from "@/lib/db-api";
+import { LOGIN_COMPANY_OPTIONS } from "@/lib/modules";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/landing")({
   head: () => ({ meta: [{ title: "Sign in — Admin Hub Solutions" }] }),
@@ -16,6 +20,7 @@ function Landing() {
   const [form, setForm] = useState({ email: "", password: "", company: "4930403", remember: true });
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [emailOptions, setEmailOptions] = useState<string[]>([]);
 
   useEffect(() => {
     if (form.remember) {
@@ -23,6 +28,31 @@ function Landing() {
       if (last) setForm((f) => ({ ...f, email: last }));
     }
   }, [form.remember]);
+
+  useEffect(() => {
+    let active = true;
+    getUsers()
+      .then((users) => {
+        if (!active) return;
+        const savedEmail = localStorage.getItem("ahs:lastEmail");
+        const nextOptions = Array.from(
+          new Set([
+            ...users.map((user) => user.email).filter(Boolean),
+            savedEmail,
+          ].filter((value): value is string => Boolean(value)))
+        ).sort((a, b) => a.localeCompare(b));
+        setEmailOptions(nextOptions);
+        setForm((current) => ({
+          ...current,
+          email: current.email || nextOptions[0] || "",
+        }));
+      })
+      .catch(() => setEmailOptions((current) => current));
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (ready && email) return <Navigate to="/home" />;
 
@@ -44,9 +74,6 @@ function Landing() {
             <span className="font-display font-semibold text-lg">Admin Hub Solutions</span>
           </div>
           <nav className="flex items-center gap-6">
-            <a href="#features" className="text-sm text-muted-foreground hover:text-foreground hidden sm:inline">Features</a>
-            <a href="#modules" className="text-sm text-muted-foreground hover:text-foreground hidden sm:inline">Modules</a>
-            <a href="#contact" className="text-sm text-muted-foreground hover:text-foreground hidden sm:inline">Contact</a>
             <button onClick={() => setOpen(true)} className="btn btn-primary">Login</button>
           </nav>
         </div>
@@ -74,39 +101,9 @@ function Landing() {
         </div>
       </section>
 
-      {/* Modules grid */}
-      <section id="modules" className="max-w-6xl mx-auto px-6 pb-24">
-        <div className="text-center mb-12">
-          <h2 className="font-display text-3xl sm:text-4xl font-semibold">Everything you need, in one place</h2>
-          <p className="mt-3 text-muted-foreground">Six integrated modules to run your entire operation.</p>
-        </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[
-            { icon: LayoutDashboard, t: "Dashboard", d: "Real-time activity, KPIs, and system status at a glance." },
-            { icon: Package, t: "Parts", d: "Track inventory, returns, vendors, and warranty across the supply chain." },
-            { icon: Ticket, t: "Tickets", d: "Dispatch, schedule, and resolve service tickets end-to-end." },
-            { icon: FileBarChart, t: "Claims", d: "Submit, track, and approve claims with full audit history." },
-            { icon: Users, t: "Reports", d: "Inventory, sales, performance — exportable on demand." },
-            { icon: ShieldCheck, t: "Admin", d: "Users, roles, settings, and a complete audit trail." },
-          ].map((m) => (
-            <div key={m.t} className="panel hover:border-primary/40 transition-colors">
-              <div className="h-10 w-10 rounded-md bg-primary/15 text-primary flex items-center justify-center">
-                <m.icon className="h-5 w-5" />
-              </div>
-              <h3 className="mt-4 font-display font-semibold text-lg">{m.t}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{m.d}</p>
-            </div>
-          ))}
-        </div>
-      </section>
 
-      {/* Footer */}
-      <footer id="contact" className="border-t border-white/10">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
-          <span>© {new Date().getFullYear()} Admin Hub Solutions</span>
-          <span>Demo build — data stored locally in your browser.</span>
-        </div>
-      </footer>
+
+      <Footer />
 
       {/* Login Modal */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -118,8 +115,16 @@ function Landing() {
           <form onSubmit={submit} className="space-y-3">
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs">Email</span>
-              <input className="glass-input mt-1" type="email" autoComplete="email"
-                value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <Select value={form.email} onValueChange={(value) => setForm({ ...form, email: value })}>
+                <SelectTrigger className="glass-input mt-1 w-full">
+                  <SelectValue placeholder={emailOptions.length ? "Select email" : "No accounts loaded"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {emailOptions.map((option) => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs">Password</span>
@@ -128,8 +133,16 @@ function Landing() {
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs">Company ID</span>
-              <input className="glass-input mt-1" value={form.company}
-                onChange={(e) => setForm({ ...form, company: e.target.value })} />
+              <Select value={form.company} onValueChange={(value) => setForm({ ...form, company: value })}>
+                <SelectTrigger className="glass-input mt-1 w-full">
+                  <SelectValue placeholder="Select company ID" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LOGIN_COMPANY_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.remember} onChange={(e) => setForm({ ...form, remember: e.target.checked })} />

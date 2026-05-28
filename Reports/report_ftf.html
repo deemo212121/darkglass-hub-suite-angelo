@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>First Time Fix Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../config.js"></script>
+	<style>
+		/* ── FTF Report Panel ── */
+		.ftf-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.ftf-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1.2rem;
+			align-items: center;
+			padding: 1.25rem 1.25rem 0 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-row {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		/* ── Buttons ── */
+		.filter-btn {
+			padding: 0.35rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.filter-btn:hover,
+		.filter-btn.active {
+			background: rgba(96, 165, 250, 0.2);
+			border-color: #60a5fa;
+			color: #e0e7ff;
+		}
+
+		/* ── Checkboxes ── */
+		.checkbox-group {
+			display: flex;
+			gap: 1rem;
+			flex-wrap: wrap;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+			cursor: pointer;
+			user-select: none;
+			color: #e2e8f0;
+			font-size: 0.85rem;
+			font-weight: 500;
+		}
+
+		.checkbox-label input[type="checkbox"] {
+			width: 16px;
+			height: 16px;
+			cursor: pointer;
+			accent-color: #3b82f6;
+		}
+
+		.checkbox-label:hover input[type="checkbox"] {
+			accent-color: #60a5fa;
+		}
+
+		/* ── Modal ── */
+		.modal {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			background: rgba(0, 0, 0, 0.6);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 1000;
+		}
+
+		.modal.open {
+			display: flex;
+		}
+
+		.modal-content {
+			background: #1e293b;
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			border-radius: 8px;
+			width: 90%;
+			max-width: 900px;
+			max-height: 80vh;
+			display: flex;
+			flex-direction: column;
+			box-shadow: 0 20px 25px rgba(0, 0, 0, 0.3);
+		}
+
+		.modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 1.25rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		.modal-header h3 {
+			color: #e2e8f0;
+			margin: 0;
+			font-size: 1.1rem;
+			font-weight: 600;
+		}
+
+		.modal-close {
+			background: none;
+			border: none;
+			color: #94a3b8;
+			font-size: 1.5rem;
+			cursor: pointer;
+			transition: color 0.15s;
+		}
+
+		.modal-close:hover {
+			color: #e2e8f0;
+		}
+
+		.modal-body {
+			padding: 1.25rem;
+			overflow-y: auto;
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+			gap: 1rem;
+		}
+
+		.input-field {
+			padding: 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.95rem;
+		}
+
+		.input-field::placeholder {
+			color: #64748b;
+		}
+
+		.input-field:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+		}
+
+		.modal-buttons {
+			display: flex;
+			gap: 1rem;
+			justify-content: flex-end;
+			margin-top: 0.5rem;
+		}
+
+		.btn-primary {
+			padding: 0.6rem 1.25rem;
+			background: rgba(37, 99, 235, 0.9);
+			border: 1px solid rgba(96, 165, 250, 0.65);
+			color: white;
+			border-radius: 6px;
+			cursor: pointer;
+			font-weight: 600;
+			transition: all 0.3s ease;
+			font-size: 0.9rem;
+		}
+
+		.btn-primary:hover {
+			background: rgba(29, 78, 216, 0.98);
+			box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+		}
+
+		.btn-secondary {
+			padding: 0.6rem 1.25rem;
+			background: rgba(100, 116, 139, 0.15);
+			border: 1px solid rgba(100, 116, 139, 0.4);
+			color: #cbd5e1;
+			border-radius: 6px;
+			cursor: pointer;
+			font-weight: 600;
+			transition: all 0.3s ease;
+			font-size: 0.9rem;
+		}
+
+		.btn-secondary:hover {
+			background: rgba(100, 116, 139, 0.25);
+			border-color: rgba(100, 116, 139, 0.6);
+		}
+
+		.modal-search {
+			margin-bottom: 1rem;
+		}
+
+		.ticket-search-box {
+			width: 100%;
+			padding: 0.5rem 0.75rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.85rem;
+			outline: none;
+		}
+
+		.ticket-search-box:focus {
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.ticket-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.85rem;
+		}
+
+		.ticket-table thead {
+			background: rgba(30, 41, 59, 0.6);
+		}
+
+		.ticket-table th {
+			padding: 0.65rem 0.75rem;
+			text-align: left;
+			color: #cbd5e1;
+			font-weight: 600;
+			border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+		}
+
+		.ticket-table td {
+			padding: 0.65rem 0.75rem;
+			color: #e2e8f0;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		.ticket-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.1);
+		}
+
+		/* ── Date inputs ── */
+		.date-input {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+		}
+
+		.date-input:focus {
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.date-sep {
+			color: #64748b;
+			font-size: 0.8rem;
+		}
+
+		/* ── Select dropdown ── */
+		.ftf-select {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+			cursor: pointer;
+		}
+
+		.ftf-select:focus {
+			border-color: #60a5fa;
+		}
+
+		.ftf-select option {
+			background: #1e293b;
+			color: #e2e8f0;
+		}
+
+		/* ── Search ── */
+		.ftf-search-box {
+			flex: 1;
+			min-width: 200px;
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+		}
+
+		.ftf-search-input {
+			padding: 0.35rem 0.6rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			outline: none;
+			flex: 1;
+		}
+
+		.ftf-search-input:focus {
+			border-color: #60a5fa;
+		}
+
+		.ftf-search-input::placeholder {
+			color: #64748b;
+		}
+
+		/* ── Table container ── */
+		.ftf-table-container {
+			flex: 1;
+			overflow-x: auto;
+			overflow-y: auto;
+			padding: 1.25rem;
+			background: rgba(15, 23, 42, 0.5);
+		}
+
+		.ftf-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.8rem;
+		}
+
+		.ftf-table thead {
+			position: sticky;
+			top: 0;
+			background: rgba(30, 41, 59, 0.95);
+			z-index: 2;
+		}
+
+		.ftf-table th {
+			padding: 0.55rem 0.65rem;
+			text-align: center;
+			font-weight: 700;
+			color: #94a3b8;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			white-space: nowrap;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+			min-width: 50px;
+		}
+
+		.ftf-table td {
+			padding: 0.5rem 0.65rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			color: #cbd5e1;
+			text-align: center;
+		}
+
+		.ftf-location-cell {
+			text-align: left;
+			font-weight: 600;
+			color: #e2e8f0;
+			white-space: nowrap;
+		}
+
+		.ftf-tech-cell {
+			text-align: left;
+			font-weight: 500;
+			color: #cbd5e1;
+			white-space: nowrap;
+			font-size: 0.9rem;
+		}
+
+		.ftf-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.ftf-percentage {
+			text-align: right;
+			font-weight: 600;
+			min-width: 45px;
+		}
+
+		.ftf-percentage.high {
+			color: #22c55e;
+		}
+
+		.ftf-percentage.medium {
+			color: #fbbf24;
+		}
+
+		.ftf-percentage.low {
+			color: #ef4444;
+		}
+
+		.ftf-percentage.empty {
+			color: #64748b;
+		}
+
+		.ftf-total {
+			font-weight: 700;
+			color: #93c5fd;
+		}
+
+		/* ── Info bar ── */
+		.ftf-info {
+			padding: 0.65rem 1.25rem;
+			background: rgba(30, 41, 59, 0.6);
+			border-top: 1px solid rgba(255, 255, 255, 0.05);
+			font-size: 0.8rem;
+			color: #cbd5e1;
+		}
+
+		.ftf-info strong {
+			color: #e0e7ff;
+		}
+
+		/* ── Module header search button ── */
+		.module-header-btn {
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			color: #cbd5e1;
+			padding: 0.4rem 0.65rem;
+			border-radius: 4px;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			transition: all 0.15s;
+		}
+
+		.module-header-btn:hover {
+			background: rgba(96, 165, 250, 0.15);
+			border-color: #60a5fa;
+			color: #60a5fa;
+		}
+
+		/* ── Floating search button ── */
+		.ftf-floating-search-btn {
+			position: fixed;
+			bottom: 1rem;
+			right: 1rem;
+			width: 46px;
+			height: 46px;
+			border-radius: 999px;
+			background: rgba(37, 99, 235, 0.9);
+			border: 1px solid rgba(96, 165, 250, 0.65);
+			color: white;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			z-index: 1200;
+		}
+
+		.ftf-floating-search-btn svg {
+			width: 22px;
+			height: 22px;
+			color: white;
+		}
+
+		.ftf-floating-search-btn:hover {
+			background: rgba(29, 78, 216, 0.95);
+		}
+
+		/* ── Ticket lookup wrapper ── */
+		.ftf-ticket-lookup-wrap {
+			position: fixed;
+			bottom: 1rem;
+			right: 1rem;
+			z-index: 1100;
+		}
+
+		.ftf-ticket-lookup-wrap.is-collapsed .ftf-ticket-lookup {
+			display: none;
+		}
+
+		.ftf-ticket-lookup-wrap.is-expanded .ftf-ticket-lookup {
+			display: flex;
+		}
+
+		.ftf-ticket-lookup {
+			position: absolute;
+			bottom: 70px;
+			right: 0;
+			background: #1e293b;
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			border-radius: 8px;
+			padding: 0.8rem;
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.8rem;
+			align-items: flex-start;
+			width: max-content;
+			max-width: 500px;
+			justify-content: flex-start;
+			overflow-x: auto;
+		}
+
+		.ftf-ticket-lookup .lookup-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.2rem;
+		}
+
+		.ftf-ticket-lookup .lookup-field label {
+			font-size: 0.72rem;
+			color: rgba(255, 255, 255, 0.76);
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.ftf-ticket-lookup input {
+			width: 145px;
+			padding: 0.42rem 0.55rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			background: rgba(255, 255, 255, 0.09);
+			color: #fff;
+			font-size: 0.82rem;
+		}
+
+		.ftf-ticket-lookup .lookup-zip-input {
+			width: 105px;
+		}
+
+		.ftf-ticket-lookup input::placeholder {
+			color: rgba(255, 255, 255, 0.45);
+		}
+
+		.ftf-ticket-lookup input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+		}
+
+		.ftf-ticket-lookup .lookup-view-btn {
+			padding: 0.46rem 0.8rem;
+			border: 1px solid rgba(96, 165, 250, 0.65);
+			border-radius: 6px;
+			background: rgba(37, 99, 235, 0.85);
+			color: #fff;
+			font-size: 0.82rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.ftf-ticket-lookup .lookup-view-btn:hover {
+			background: rgba(29, 78, 216, 0.95);
+		}
+
+		@media (max-width: 768px) {
+			.ftf-ticket-lookup-wrap {
+				bottom: 0.75rem;
+				right: 0.75rem;
+			}
+
+			.ftf-ticket-lookup {
+				width: min(92vw, 420px);
+				justify-content: flex-start;
+				overflow-x: auto;
+			}
+		}
+
+		/* Footer */
+		footer {
+			background-color: rgba(0, 0, 0, 0.2);
+			color: rgba(255, 255, 255, 0.8);
+			padding: 2rem;
+			text-align: center;
+			font-size: 0.9rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+			position: relative;
+			overflow: visible;
+		}
+
+		footer a {
+			color: rgba(255, 255, 255, 0.95);
+			text-decoration: none;
+			transition: color 0.3s ease;
+		}
+
+		footer a:hover {
+			color: white;
+		}
+
+		/* Footer Ticket Lookup */
+		.footer-ticket-lookup-wrap {
+			position: fixed;
+			bottom: 1rem;
+			right: 1rem;
+			transform: none;
+			z-index: 1200;
+			padding: 0;
+			display: flex;
+			flex-direction: column;
+			align-items: flex-end;
+			gap: 0.5rem;
+		}
+
+		.footer-ticket-lookup-wrap.is-collapsed {
+			gap: 0;
+		}
+
+		.lookup-fab {
+			width: 46px;
+			height: 46px;
+			border-radius: 999px;
+			border: 1px solid rgba(96, 165, 250, 0.65);
+			background: rgba(37, 99, 235, 0.9);
+			color: #fff;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+		}
+
+		.lookup-fab svg {
+			width: 22px;
+			height: 22px;
+			stroke: currentColor;
+			stroke-width: 1.8;
+			fill: none;
+		}
+
+		.lookup-fab:hover {
+			background: rgba(29, 78, 216, 0.98);
+		}
+
+		.footer-ticket-lookup-wrap.is-expanded .lookup-fab {
+			display: none;
+		}
+
+		.footer-ticket-lookup {
+			display: flex;
+			align-items: flex-end;
+			gap: 0.55rem;
+			flex-wrap: nowrap;
+			background: rgba(15, 23, 42, 0.55);
+			border: 1px solid rgba(155, 149, 149, 0.14);
+			border-radius: 8px;
+			padding: 0.5rem;
+			transition: opacity 0.2s ease, transform 0.2s ease;
+			box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+		}
+
+		.footer-ticket-lookup-wrap.is-collapsed .footer-ticket-lookup {
+			display: none;
+		}
+
+		.footer-ticket-lookup-wrap.is-expanded .footer-ticket-lookup {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+
+		.footer-ticket-lookup .lookup-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.2rem;
+		}
+
+		.footer-ticket-lookup .lookup-field label {
+			font-size: 0.72rem;
+			color: rgba(255, 255, 255, 0.76);
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.footer-ticket-lookup input {
+			width: 145px;
+			padding: 0.42rem 0.55rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			background: rgba(255, 255, 255, 0.09);
+			color: #fff;
+			font-size: 0.82rem;
+		}
+
+		.footer-ticket-lookup .lookup-zip-input {
+			width: 105px;
+		}
+
+		.footer-ticket-lookup input::placeholder {
+			color: rgba(255, 255, 255, 0.45);
+		}
+
+		.footer-ticket-lookup input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+		}
+
+		.footer-ticket-lookup .lookup-view-btn {
+			padding: 0.46rem 0.8rem;
+			border: 1px solid rgba(96, 165, 250, 0.65);
+			border-radius: 6px;
+			background: rgba(37, 99, 235, 0.85);
+			color: #fff;
+			font-size: 0.82rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.footer-ticket-lookup .lookup-view-btn:hover {
+			background: rgba(29, 78, 216, 0.95);
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+
+	<!-- Global ticket lookup will be injected by routes.js -->
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../js/app-config.js"></script>
+	<script src="../../js/app-data.js"></script>
+	<script src="../../js/report-builders.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		/* ── Auth ── */
+		const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+		const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+
+		// if (!userEmail || !userCompanyId) window.location.href = '../../landing.html';
+
+		/* ── Render app ── */
+		const appContainer = document.getElementById('appContainer');
+		appContainer.innerHTML = `
+			<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+				<div class="dashboard-header">
+					<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+						<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+						<h1 class="dashboard-title">Admin Hub Solutions</h1>
+					</a>
+					<div class="user-info">
+						<div>
+							<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+							<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+						</div>
+						<button class="logout-btn" onclick="logout()">Logout</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="module-page" style="display: flex; flex-direction: column;">
+				<div class="module-header">
+					<button class="back-btn" onclick="goToDashboard()">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="19" y1="12" x2="5" y2="12"></line>
+							<polyline points="12 19 5 12 12 5"></polyline>
+						</svg>
+						Back to Dashboard
+					</button>
+					<h2 style="color: white; margin: 0;">First Time Fix Report</h2>
+				</div>
+
+				<div class="ftf-panel">
+					<!-- Controls bar -->
+					<div class="ftf-controls">
+						<!-- Data Level -->
+						<div class="control-group">
+							<span class="control-label">Data Level</span>
+							<div class="control-row checkbox-group">
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="location" value="location" checked>
+									<span>Location</span>
+								</label>
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="technician" value="technician">
+									<span>Technician</span>
+								</label>
+								<label class="checkbox-label">
+									<input type="checkbox" class="data-level-checkbox" name="branch" value="branch">
+									<span>Branch</span>
+								</label>
+							</div>
+						</div>
+
+						<!-- Warranty Type -->
+						<div class="control-group">
+							<span class="control-label">Warranty Type</span>
+							<div class="control-row">
+								<button class="filter-btn active" data-warranty="all">All</button>
+								<button class="filter-btn" data-warranty="in">In-warranty</button>
+								<button class="filter-btn" data-warranty="out">Out-of-warranty</button>
+							</div>
+						</div>
+
+						<!-- Date Range -->
+						<div class="control-group">
+							<span class="control-label">Dates</span>
+							<div class="control-row" style="gap: 0.25rem;">
+								<select class="ftf-select" id="dateRangeSelect">
+									<option value="monthly">Monthly</option>
+									<option value="weekly">Weekly</option>
+									<option value="daily" selected>Daily</option>
+								</select>
+								<span class="date-sep">~</span>
+								<input type="date" class="date-input" id="startDate" value="2026-05-06">
+								<span class="date-sep">~</span>
+								<input type="date" class="date-input" id="endDate" value="2026-05-18">
+							</div>
+						</div>
+					</div>
+
+					<!-- Search box -->
+					<div style="padding: 0.65rem 1.25rem; background: rgba(30, 41, 59, 0.4); border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+						<div class="ftf-search-box">
+							<input type="text" class="ftf-search-input" id="searchInput" placeholder="search in result">
+						</div>
+					</div>
+
+					<!-- Table -->
+					<div class="ftf-table-container table-scroll-wrapper" id="ftfTableWrap">
+						<table class="ftf-table" id="ftfTable">
+							<thead>
+								<tr>
+									<th>Location</th>
+									<th>Tech</th>
+									<th>05/06</th>
+									<th>05/07</th>
+									<th>05/08</th>
+									<th>05/09</th>
+									<th>05/10</th>
+									<th>05/11</th>
+									<th>05/12</th>
+									<th>05/13</th>
+									<th>05/14</th>
+									<th>05/15</th>
+									<th>05/16</th>
+									<th>05/17</th>
+									<th>05/18</th>
+									<th>Total</th>
+								</tr>
+							</thead>
+							<tbody id="ftfTableBody"></tbody>
+						</table>
+					</div>
+
+					<!-- Info bar -->
+					<div class="ftf-info" id="ftfInfo">
+						<p id="ftfDataSource" style="margin: 0 0 0.35rem 0; font-size: 0.85rem; color: #93c5fd;"></p>
+						<strong id="recordCount">112</strong> records found
+					</div>
+				</div>
+
+				<!-- Ticket Details Modal (positioned outside ftf-panel for proper z-index and positioning) -->
+				<div id="ticketModal" class="modal" style="display: none;">
+					<div class="modal-content">
+						<div class="modal-header">
+							<h3 id="modalTitle">Ticket Details</h3>
+							<button class="modal-close" onclick="closeTicketModal()">&times;</button>
+						</div>
+						<div class="modal-body">
+							<div class="modal-search">
+								<input type="text" id="ticketSearchInput" placeholder="search in result" class="ticket-search-box">
+							</div>
+							<table class="ticket-table">
+								<thead>
+									<tr>
+										<th>#</th>
+										<th>Tech Name</th>
+										<th>Ticket No</th>
+										<th>Posting Date</th>
+										<th>Complete Date</th>
+										<th>Repair Status</th>
+										<th>Warranty Type</th>
+										<th># of Visit</th>
+									</tr>
+								</thead>
+								<tbody id="ticketTableBody"></tbody>
+							</table>
+							<div id="ticketCount" style="margin-top: 1rem; color: #94a3b8; font-size: 0.85rem;"></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		`;
+
+		/* ── User display ── */
+		document.getElementById('userDisplayName').textContent = userEmail || '';
+		document.getElementById('companyDisplayId').textContent = userCompanyId || '';
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		/* ── FTF Data ── */
+		let FTF_DATA = [
+			{ location: 'Asheville', tech: 'Daven Hodge', data: { '05/11': 66.7, '05/12': 50.0, '05/18': 60.0 } },
+			{ location: 'Asheville', tech: 'Jordan Koetsier', data: { '05/06': 75.0, '05/07': 20.0, '05/08': 66.7, '05/12': 50.0, '05/18': 35.0 } },
+			{ location: 'Atlanta', tech: 'Abel Severino', data: { '05/07': 66.7, '05/08': 66.7, '05/12': 100.0, '05/13': 66.7, '05/14': 100.0, '05/15': 100.0, '05/18': 72.2 } },
+			{ location: 'Atlanta', tech: 'Abraham Im', data: { '05/06': 33.3, '05/07': 66.7, '05/12': 20.0, '05/13': 66.7, '05/14': 16.7, '05/18': 31.8 } },
+			{ location: 'Atlanta', tech: 'Erick Guzman Juarez', data: { '05/06': 50.0, '05/08': 50.0, '05/18': 33.3 } },
+			{ location: 'Atlanta', tech: 'Gerrell Berg', data: { '05/06': 33.3, '05/07': 100.0, '05/08': 100.0, '05/11': 50.0, '05/13': 100.0, '05/14': 50.0, '05/15': 50.0, '05/18': 50.0 } },
+			{ location: 'Atlanta', tech: 'Jordan Brown', data: { '05/06': 100.0, '05/07': 50.0, '05/12': 100.0, '05/18': 41.7 } },
+			{ location: 'Atlanta', tech: 'Joshua Silva', data: { '05/08': 100.0, '05/11': 100.0, '05/12': 33.3, '05/14': 33.3, '05/15': 33.3, '05/18': 35.3 } },
+			{ location: 'Atlanta', tech: 'Kevin Khaiphanliane', data: { '05/06': 33.3, '05/08': 33.3, '05/13': 100.0, '05/14': 100.0, '05/18': 36.4 } },
+			{ location: 'Atlanta', tech: 'Nathan Napora', data: { '05/06': 50.0, '05/08': 100.0, '05/11': 33.3, '05/12': 100.0, '05/13': 50.0, '05/15': 50.0, '05/18': 60.0 } },
+			{ location: 'Birmingham', tech: 'David Sims', data: { '05/06': 100.0, '05/07': 50.0, '05/08': 33.3, '05/11': 66.7, '05/12': 20.0, '05/18': 37.5 } },
+			{ location: 'Birmingham', tech: 'Memphis Admin', data: { '05/07': 100.0, '05/16': 50.0 } },
+			{ location: 'Birmingham', tech: 'Nashville Admin', data: { '05/06': 100.0, '05/18': 100.0 } },
+			{ location: 'Birmingham', tech: 'Zonate Grant', data: { '05/06': 80.0, '05/07': 66.7, '05/08': 33.3, '05/11': 50.0, '05/13': 50.0, '05/15': 100.0, '05/18': 57.7 } },
+			{ location: 'Cape Girardeau', tech: 'Deprece Harris', data: { '05/11': 50.0, '05/13': 100.0, '05/14': 100.0, '05/15': 100.0, '05/18': 50.0 } },
+			{ location: 'Cape Girardeau', tech: 'Matthew Nichols', data: { '05/06': 33.3, '05/07': 66.7, '05/08': 50.0, '05/11': 66.7, '05/13': 66.7, '05/15': 50.0, '05/18': 55.0 } },
+			{ location: 'Chattanooga', tech: 'Austin Ferguson', data: { '05/07': 50.0, '05/08': 40.0, '05/11': 33.3, '05/13': 50.0, '05/15': 100.0, '05/18': 47.4 } },
+			{ location: 'Chattanooga', tech: 'Christian Andrews', data: { '05/08': 75.0, '05/11': 50.0, '05/12': 100.0, '05/13': 50.0, '05/15': 100.0, '05/18': 50.0 } },
+			{ location: 'Chattanooga', tech: 'Derious Nichols', data: { '05/15': 100.0, '05/18': 100.0 } },
+			{ location: 'Chattanooga', tech: 'Seven Grinis', data: { '05/07': 57.1, '05/08': 25.0, '05/11': 100.0, '05/12': 100.0, '05/14': 100.0, '05/18': 54.5 } },
+			{ location: 'Chattanooga', tech: 'Thaddaeus Springfield', data: { '05/06': 100.0, '05/07': 100.0, '05/12': 100.0, '05/13': 66.7, '05/18': 87.5 } },
+			{ location: 'Columbus', tech: 'A\'Dejaun Tyson', data: { '05/06': 100.0, '05/07': 100.0, '05/08': 100.0, '05/11': 16.7, '05/12': 25.0, '05/13': 80.0, '05/14': 75.0, '05/15': 66.7, '05/18': 67.6 } },
+			{ location: 'Columbus', tech: 'Matt Simmons', data: { '05/06': 75.0, '05/07': 83.3, '05/08': 66.7, '05/12': 100.0, '05/13': 66.7, '05/15': 66.7, '05/18': 64.3 } },
+			{ location: 'Columbus', tech: 'Percy Smith', data: { '05/06': 40.0, '05/07': 33.3, '05/08': 60.0, '05/09': 33.3, '05/11': 66.7, '05/12': 33.3, '05/15': 75.0, '05/16': 100.0, '05/18': 43.8 } },
+			{ location: 'Dallas', tech: 'Lashamus Dowell', data: { '05/13': 100.0, '05/14': 100.0, '05/16': 100.0 } },
+			{ location: 'Destin', tech: 'Garrett McCarley', data: { '05/06': 50.0, '05/07': 100.0, '05/08': 50.0, '05/11': 100.0, '05/12': 50.0, '05/18': 50.0 } },
+			{ location: 'Huntsville', tech: 'Dylan Lano', data: { '05/06': 100.0, '05/07': 66.7, '05/11': 50.0, '05/15': 50.0, '05/18': 37.5 } },
+			{ location: 'Huntsville', tech: 'Jordan Stanley', data: { '05/06': 40.0, '05/07': 42.9, '05/11': 100.0, '05/12': 50.0, '05/13': 50.0, '05/15': 50.0, '05/18': 51.7 } },
+			{ location: 'Huntsville', tech: 'Memphis Admin', data: {} },
+			{ location: 'Jackson,MS', tech: 'Anthony Leonard Cavett', data: { '05/06': 33.3, '05/07': 75.0, '05/08': 100.0, '05/12': 33.3, '05/13': 25.0, '05/18': 36.4 } },
+			{ location: 'Jackson,MS', tech: 'Antonio Smith', data: { '05/06': 50.0, '05/08': 33.3, '05/11': 100.0, '05/12': 75.0, '05/15': 100.0, '05/18': 53.3 } },
+			{ location: 'Jackson,MS', tech: 'Danny Thornton', data: { '05/06': 33.3, '05/11': 50.0, '05/18': 33.3 } },
+			{ location: 'Jackson,MS', tech: 'Lashamus Dowell', data: { '05/06': 25.0, '05/07': 66.7, '05/08': 100.0, '05/11': 40.0, '05/18': 50.0 } },
+			{ location: 'Jackson,MS', tech: 'Mikkel Brown', data: { '05/06': 50.0, '05/07': 50.0, '05/08': 50.0, '05/11': 20.0, '05/12': 50.0, '05/13': 75.0, '05/14': 66.7, '05/15': 75.0, '05/18': 54.2 } },
+			{ location: 'Jackson,MS', tech: 'Terry Davis', data: { '05/12': 50.0, '05/13': 75.0, '05/18': 26.7 } },
+			{ location: 'Jackson,MS', tech: 'Tywon Ross', data: { '05/06': 100.0, '05/11': 50.0, '05/13': 100.0, '05/18': 35.7 } },
+			{ location: 'Jackson,TN', tech: 'Brandon Phillips', data: { '05/06': 66.7, '05/07': 20.0, '05/11': 100.0, '05/12': 40.0, '05/13': 25.0, '05/14': 33.3, '05/18': 36.4 } },
+			{ location: 'Jackson,TN', tech: 'Caleb Jessie', data: { '05/06': 100.0, '05/17': 100.0 } },
+			{ location: 'Jackson,TN', tech: 'Christian Clark', data: { '05/07': 50.0, '05/11': 33.3, '05/12': 50.0, '05/13': 25.0, '05/14': 50.0, '05/18': 30.0 } },
+			{ location: 'Jackson,TN', tech: 'Gabriel Talley', data: { '05/06': 50.0, '05/07': 33.3, '05/12': 100.0, '05/18': 30.8 } },
+			{ location: 'Jackson,TN', tech: 'Jaylon Yarbrough', data: { '05/06': 50.0, '05/07': 66.7, '05/08': 50.0, '05/11': 33.3, '05/12': 50.0, '05/13': 75.0, '05/14': 16.7, '05/18': 46.2 } },
+			{ location: 'Jacksonville', tech: 'Alexxis Henry', data: { '05/06': 66.7, '05/08': 20.0, '05/09': 50.0, '05/10': 100.0, '05/11': 33.3, '05/13': 80.0, '05/14': 50.0, '05/18': 43.8 } },
+			{ location: 'Jacksonville', tech: 'Bradley Hollowell', data: { '05/06': 66.7, '05/08': 20.0, '05/11': 100.0, '05/13': 100.0, '05/15': 50.0, '05/18': 46.7 } },
+			{ location: 'Jacksonville', tech: 'Daven Hodge', data: { '05/07': 66.7, '05/18': 66.7 } },
+			{ location: 'Jacksonville', tech: 'Zakarya Moradi', data: { '05/06': 50.0, '05/07': 100.0, '05/08': 80.0, '05/11': 100.0, '05/12': 100.0, '05/13': 66.7, '05/14': 83.3, '05/15': 100.0, '05/18': 82.1 } },
+			{ location: 'Jonesboro', tech: 'Andre Riddle', data: { '05/13': 60.0, '05/18': 33.3 } },
+			{ location: 'Jonesboro', tech: 'Erick Guzman Juarez', data: {} },
+			{ location: 'Jonesboro', tech: 'Isaac Booth', data: { '05/06': 50.0, '05/07': 33.3, '05/18': 33.3 } },
+			{ location: 'Jonesboro', tech: 'Jason Bateman', data: { '05/07': 100.0, '05/13': 100.0, '05/14': 100.0, '05/18': 43.8 } },
+			{ location: 'Jonesboro', tech: 'Sean Smith', data: { '05/15': 100.0, '05/18': 100.0 } },
+			{ location: 'Knoxville', tech: 'Alex Myles', data: { '05/06': 50.0, '05/13': 40.0, '05/14': 66.7, '05/18': 27.8 } },
+			{ location: 'Knoxville', tech: 'Jaxson Mcconkey', data: { '05/07': 100.0, '05/18': 66.7 } },
+			{ location: 'Knoxville', tech: 'Joshua Rhinehart', data: { '05/07': 100.0, '05/13': 25.0, '05/18': 25.0 } },
+			{ location: 'Knoxville', tech: 'Leo Sun', data: { '05/12': 33.3, '05/14': 100.0, '05/18': 20.0 } },
+			{ location: 'Knoxville', tech: 'Memphis Admin', data: {} },
+			{ location: 'Knoxville', tech: 'Zac Coisman', data: { '05/07': 50.0, '05/08': 20.0, '05/11': 20.0, '05/12': 33.3, '05/13': 50.0, '05/18': 27.3 } },
+			{ location: 'Lake Charles', tech: 'Danny Thornton', data: { '05/12': 100.0, '05/13': 100.0, '05/14': 100.0, '05/15': 100.0, '05/18': 100.0 } },
+			{ location: 'Little Rock', tech: 'Andre Riddle', data: { '05/06': 33.3, '05/11': 66.7, '05/18': 37.5 } },
+			{ location: 'Little Rock', tech: 'Darius Brown', data: { '05/06': 50.0, '05/07': 100.0, '05/11': 100.0, '05/12': 33.3, '05/13': 33.3, '05/15': 66.7, '05/18': 46.7 } },
+			{ location: 'Little Rock', tech: 'Jonathan Knox', data: { '05/06': 100.0, '05/08': 50.0, '05/11': 50.0, '05/13': 50.0, '05/14': 66.7, '05/15': 80.0, '05/18': 50.0 } },
+			{ location: 'Little Rock', tech: 'Memphis Admin', data: { '05/07': 100.0, '05/18': 50.0 } },
+			{ location: 'Little Rock', tech: 'Nocona Detten', data: { '05/07': 50.0, '05/08': 100.0, '05/11': 100.0, '05/18': 55.6 } },
+			{ location: 'Memphis', tech: 'Darrin Stewart', data: { '05/07': 100.0, '05/08': 100.0, '05/11': 33.3, '05/12': 33.3, '05/18': 31.3 } },
+			{ location: 'Memphis', tech: 'Darryel Burdette', data: { '05/07': 50.0, '05/12': 50.0, '05/13': 20.0, '05/14': 25.0, '05/18': 29.2 } },
+			{ location: 'Memphis', tech: 'Jeff Lucas', data: { '05/06': 16.7, '05/09': 66.7, '05/12': 50.0, '05/13': 66.7, '05/14': 100.0, '05/18': 45.8 } },
+			{ location: 'Memphis', tech: 'Rico Shaw', data: { '05/06': 25.0, '05/08': 50.0, '05/11': 20.0, '05/12': 50.0, '05/14': 66.7, '05/15': 50.0, '05/18': 29.6 } },
+			{ location: 'Memphis', tech: 'Sean Smith', data: { '05/06': 40.0, '05/07': 75.0, '05/11': 33.3, '05/12': 50.0, '05/13': 33.3, '05/18': 36.4 } },
+			{ location: 'Mobile', tech: 'Dominic Holman', data: { '05/06': 42.9, '05/07': 40.0, '05/08': 33.3, '05/11': 20.0, '05/12': 20.0, '05/18': 25.0 } },
+			{ location: 'Mobile', tech: 'Jonathan Colquett', data: { '05/12': 66.7, '05/13': 33.3, '05/18': 23.1 } },
+			{ location: 'Mobile', tech: 'Jonathon Allen', data: {} },
+			{ location: 'Mobile', tech: 'Leonard Peoples', data: { '05/06': 33.3, '05/08': 50.0, '05/18': 33.3 } },
+			{ location: 'Mobile', tech: 'Memphis Admin', data: {} },
+			{ location: 'Mobile', tech: 'Nashville Admin', data: { '05/07': 100.0, '05/18': 100.0 } },
+			{ location: 'Mobile', tech: 'Thaddaeus Springfield', data: { '05/16': 100.0, '05/18': 100.0 } },
+			{ location: 'Montgomery', tech: 'Andy Oh', data: { '05/06': 60.0, '05/07': 80.0, '05/08': 25.0, '05/11': 50.0, '05/13': 50.0, '05/14': 40.0, '05/18': 44.4 } },
+			{ location: 'Nashville', tech: 'Baolin Henry Zhang', data: { '05/06': 50.0, '05/07': 50.0, '05/08': 75.0, '05/11': 100.0, '05/12': 25.0, '05/13': 50.0, '05/14': 100.0, '05/15': 50.0, '05/18': 60.0 } },
+			{ location: 'Nashville', tech: 'John Godfrey', data: { '05/07': 66.7, '05/08': 100.0, '05/11': 33.3, '05/13': 66.7, '05/14': 50.0, '05/18': 38.9 } },
+			{ location: 'Nashville', tech: 'Justin Robertson', data: { '05/06': 100.0, '05/07': 33.3, '05/08': 66.7, '05/11': 20.0, '05/13': 25.0, '05/14': 25.0, '05/15': 33.3, '05/18': 33.3 } },
+			{ location: 'Nashville', tech: 'Leo Sun', data: { '05/07': 66.7, '05/18': 50.0 } },
+			{ location: 'Nashville', tech: 'Memphis Admin', data: {} },
+			{ location: 'Nashville', tech: 'Steven Kurvink', data: { '05/06': 33.3, '05/07': 50.0, '05/11': 33.3, '05/18': 17.6 } },
+			{ location: 'New Orleans', tech: 'Cole Mushinsky', data: { '05/06': 100.0, '05/12': 50.0, '05/15': 50.0, '05/18': 44.4 } },
+			{ location: 'New Orleans', tech: 'Cooper Shaffett', data: { '05/06': 50.0, '05/12': 50.0, '05/14': 33.3, '05/18': 31.3 } },
+			{ location: 'New Orleans', tech: 'Corey Cage', data: { '05/07': 50.0, '05/11': 100.0, '05/12': 50.0, '05/13': 25.0, '05/18': 36.4 } },
+			{ location: 'New Orleans', tech: 'Joseph Wease', data: { '05/06': 50.0, '05/11': 50.0, '05/14': 100.0, '05/18': 44.4 } },
+			{ location: 'New Orleans', tech: 'Kurt Merckel', data: { '05/06': 75.0, '05/12': 100.0, '05/13': 40.0, '05/14': 25.0, '05/15': 100.0, '05/18': 45.0 } },
+			{ location: 'New Orleans', tech: 'Memphis Admin', data: { '05/12': 100.0, '05/13': 100.0, '05/18': 66.7 } },
+			{ location: 'New Orleans', tech: 'Ryder Tourere', data: { '05/12': 100.0, '05/13': 33.3, '05/14': 100.0, '05/15': 100.0, '05/18': 66.7 } },
+			{ location: 'Norfolk', tech: 'Chris Simpson', data: { '05/06': 100.0, '05/07': 80.0, '05/08': 80.0, '05/11': 75.0, '05/12': 100.0, '05/18': 75.0 } },
+			{ location: 'Norfolk', tech: 'Edward Lindsey', data: { '05/06': 100.0, '05/07': 66.7, '05/08': 33.3, '05/11': 66.7, '05/12': 33.3, '05/13': 50.0, '05/14': 100.0, '05/15': 66.7, '05/18': 59.1 } },
+			{ location: 'Raleigh', tech: 'Damon Ottley', data: { '05/06': 20.0, '05/07': 100.0, '05/08': 100.0, '05/11': 100.0, '05/12': 100.0, '05/13': 100.0, '05/18': 52.9 } },
+			{ location: 'Raleigh', tech: 'Javier Camel', data: { '05/12': 33.3, '05/13': 50.0, '05/14': 50.0, '05/18': 40.0 } },
+			{ location: 'Raleigh', tech: 'Marc James', data: { '05/06': 66.7, '05/07': 40.0, '05/08': 33.3, '05/11': 50.0, '05/12': 100.0, '05/13': 100.0, '05/14': 100.0, '05/15': 66.7, '05/18': 64.0 } },
+			{ location: 'Raleigh', tech: 'Shane McSparren', data: { '05/07': 33.3, '05/08': 100.0, '05/18': 37.5 } },
+			{ location: 'Richmond', tech: 'Zachary Gonzalez', data: { '05/06': 100.0, '05/07': 100.0, '05/08': 50.0, '05/11': 80.0, '05/12': 75.0, '05/13': 50.0, '05/14': 60.0, '05/15': 100.0, '05/18': 73.3 } },
+			{ location: 'San Antonio', tech: 'Erick Guzman Juarez', data: { '05/12': 100.0, '05/13': 100.0, '05/14': 100.0, '05/15': 100.0, '05/18': 100.0 } },
+			{ location: 'Savannah', tech: 'Carlos Ramirez', data: { '05/06': 100.0, '05/07': 50.0, '05/11': 100.0, '05/14': 50.0, '05/15': 66.7, '05/18': 50.0 } },
+			{ location: 'Savannah', tech: 'Dustin Earls', data: { '05/07': 66.7, '05/08': 33.3, '05/11': 100.0, '05/15': 50.0, '05/18': 31.3 } },
+			{ location: 'Savannah', tech: 'Lance Novak', data: { '05/06': 50.0, '05/07': 100.0, '05/08': 50.0, '05/09': 100.0, '05/11': 33.3, '05/13': 66.7, '05/14': 60.0, '05/18': 53.3 } },
+			{ location: 'St. Louis', tech: 'Antonio Weathersby', data: { '05/11': 100.0, '05/12': 50.0, '05/13': 33.3, '05/18': 50.0 } },
+			{ location: 'St. Louis', tech: 'DeAndre Murray', data: { '05/08': 33.3, '05/11': 50.0, '05/12': 66.7, '05/13': 25.0, '05/14': 100.0, '05/15': 100.0, '05/18': 52.9 } },
+			{ location: 'St. Louis', tech: 'Demarkco Cody', data: { '05/06': 66.7, '05/07': 60.0, '05/08': 66.7, '05/12': 100.0, '05/13': 50.0, '05/14': 33.3, '05/15': 75.0, '05/18': 60.0 } },
+			{ location: 'St. Louis', tech: 'Derious Nichols', data: { '05/06': 66.7, '05/07': 57.1, '05/08': 66.7, '05/11': 40.0, '05/12': 40.0, '05/13': 66.7, '05/14': 80.0, '05/15': 25.0, '05/18': 54.8 } },
+			{ location: 'St. Louis', tech: 'Jacob Rhodes', data: { '05/06': 50.0, '05/07': 80.0, '05/08': 25.0, '05/12': 100.0, '05/13': 20.0, '05/14': 50.0, '05/15': 75.0, '05/18': 52.0 } },
+			{ location: 'St. Louis', tech: 'Troy Willis', data: { '05/06': 100.0, '05/07': 40.0, '05/08': 50.0, '05/12': 50.0, '05/13': 66.7, '05/15': 100.0, '05/18': 56.3 } },
+			{ location: 'Tallahassee', tech: 'Hunter Burch', data: { '05/06': 25.0, '05/07': 40.0, '05/12': 100.0, '05/18': 41.2 } },
+			{ location: 'Tallahassee', tech: 'Matthew Mccrary', data: { '05/06': 60.0, '05/07': 66.7, '05/08': 25.0, '05/12': 100.0, '05/13': 100.0, '05/14': 66.7, '05/18': 55.0 } },
+			{ location: 'Wilmington', tech: 'Brye\'shawn Butler', data: { '05/06': 100.0, '05/07': 100.0, '05/08': 25.0, '05/11': 66.7, '05/13': 50.0, '05/14': 50.0, '05/15': 100.0, '05/18': 66.7 } },
+			{ location: 'Wilmington', tech: 'Jordan Davis', data: { '05/07': 100.0, '05/08': 50.0, '05/11': 33.3, '05/12': 66.7, '05/13': 60.0, '05/14': 33.3, '05/15': 50.0, '05/18': 55.6 } },
+			{ location: 'Wilmington', tech: 'Josh Malloch', data: { '05/07': 100.0, '05/08': 100.0, '05/11': 75.0, '05/12': 66.7, '05/13': 60.0, '05/14': 50.0, '05/18': 68.4 } },
+			{ location: 'Wilmington', tech: 'Justin Alverez', data: { '05/06': 50.0, '05/07': 50.0, '05/08': 50.0, '05/11': 40.0, '05/12': 100.0, '05/14': 33.3, '05/18': 46.2 } },
+			{ location: 'Wilmington', tech: 'Nashville Admin', data: { '05/07': 100.0, '05/18': 100.0 } }
+		];
+
+		const ALL_DATES = ['05/06', '05/07', '05/08', '05/09', '05/10', '05/11', '05/12', '05/13', '05/14', '05/15', '05/16', '05/17', '05/18'];
+
+		/* ── Current view state ── */
+		let selectedDimensions = new Set(['location']); // multiple selectable dimensions
+		let currentDateRange = 'daily'; // daily, weekly, or monthly
+		let LOCATION_DATA = []; // location-level aggregation
+		let TECHNICIAN_DATA = []; // tech-level aggregation
+		let BRANCH_DATA = []; // branch-level aggregation
+		let currentModalKey = null;
+		let currentModalTickets = [];
+
+		/* ── Ticket data by location/tech and date ── */
+		const TICKET_DATA = {
+			// Location-only lookups
+			'Asheville|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 },
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '089924874133', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: 'SA-3271887', postDate: '05/04/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'Concession LP', visits: 1 }
+			],
+			// Technician-only lookups
+			'Jordan Koetsier|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 },
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '089924874133', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: 'SA-3271887', postDate: '05/04/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'Concession LP', visits: 1 }
+			],
+			'Jordan Koetsier|||05/07': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3182234', postDate: '04/25/2026', completeDate: '05/07/2026', status: 'CL-Claimed', warranty: 'Out of warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '051414874139', postDate: '04/29/2026', completeDate: '05/07/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Jordan Koetsier|||05/08': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3292331', postDate: '04/27/2026', completeDate: '05/08/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 },
+				{ tech: 'Jordan Koetsier', no: '051414874140', postDate: '04/30/2026', completeDate: '05/08/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '089924874144', postDate: '05/01/2026', completeDate: '05/08/2026', status: 'CL-Claimed', warranty: 'Concession LP', visits: 1 }
+			],
+			'Jordan Koetsier|||05/12': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122442', postDate: '05/01/2026', completeDate: '05/12/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '051414874145', postDate: '05/03/2026', completeDate: '05/12/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Jordan Koetsier|||05/18': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3182333', postDate: '05/05/2026', completeDate: '05/18/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 },
+				{ tech: 'Jordan Koetsier', no: '051414874146', postDate: '05/06/2026', completeDate: '05/18/2026', status: 'CL-Claimed', warranty: 'Out of warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '089924874147', postDate: '05/08/2026', completeDate: '05/18/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Daven Hodge|||05/11': [
+				{ tech: 'Daven Hodge', no: 'SA-3122555', postDate: '04/28/2026', completeDate: '05/11/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Daven Hodge|||05/12': [
+				{ tech: 'Daven Hodge', no: 'SA-3122666', postDate: '04/30/2026', completeDate: '05/12/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'Daven Hodge|||05/18': [
+				{ tech: 'Daven Hodge', no: 'SA-3122777', postDate: '05/02/2026', completeDate: '05/18/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			// Location + Technician lookups
+			'Asheville|||Jordan Koetsier|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 },
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '089924874133', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: 'SA-3271887', postDate: '05/04/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'Concession LP', visits: 1 }
+			],
+			'Asheville|||Jordan Koetsier|||05/07': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3182234', postDate: '04/25/2026', completeDate: '05/07/2026', status: 'CL-Claimed', warranty: 'Out of warranty', visits: 1 },
+				{ tech: 'Jordan Koetsier', no: '051414874139', postDate: '04/29/2026', completeDate: '05/07/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Asheville|||Daven Hodge|||05/11': [
+				{ tech: 'Daven Hodge', no: 'SA-3122555', postDate: '04/28/2026', completeDate: '05/11/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			'Asheville|||Daven Hodge|||05/12': [
+				{ tech: 'Daven Hodge', no: 'SA-3122666', postDate: '04/30/2026', completeDate: '05/12/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'Asheville|||Daven Hodge|||05/18': [
+				{ tech: 'Daven Hodge', no: 'SA-3122777', postDate: '05/02/2026', completeDate: '05/18/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			// Location + Branch sample lookups
+			'Asheville|||*SERVICEPOWER|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'Asheville|||*SPPN|||05/06': [
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			// Branch-only lookups
+			'*SERVICEPOWER|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'*SPPN|||05/06': [
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			// Technician + Branch lookups
+			'Jordan Koetsier|||*SERVICEPOWER|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'Jordan Koetsier|||*SPPN|||05/06': [
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			],
+			// Location + Technician + Branch lookups
+			'Asheville|||Jordan Koetsier|||*SERVICEPOWER|||05/06': [
+				{ tech: 'Jordan Koetsier', no: 'SA-3122331', postDate: '04/23/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 2 }
+			],
+			'Asheville|||Jordan Koetsier|||*SPPN|||05/06': [
+				{ tech: 'Jordan Koetsier', no: '051414874138', postDate: '04/29/2026', completeDate: '05/06/2026', status: 'CL-Claimed', warranty: 'In warranty', visits: 1 }
+			]
+		};
+		
+		/* ── Branches list ── */
+		const BRANCHES = [
+			'*SERVICEPOWER',
+			'*SPPN',
+			'1276506820',
+			'4930403',
+			'500894',
+			'6488757',
+			'AIG WARRANTY',
+			'ALLIANCE - SPEED QUE',
+			'ASSURANT SOLUTIONS',
+			'CENTRICITY',
+			'ELECTROLUX',
+			'ER',
+			'GE',
+			'HISENSE',
+			'MEMPHISUAI',
+			'SQUARE TRADE'
+		];
+
+		/* ── Get branch for record index ── */
+		function getBranchForIndex(index) {
+			return BRANCHES[index % BRANCHES.length];
+		}
+		function generateLocationData() {
+			const locMap = {};
+			FTF_DATA.forEach(row => {
+				if (!locMap[row.location]) {
+					locMap[row.location] = { location: row.location, data: {} };
+				}
+				// Merge data
+				Object.entries(row.data).forEach(([date, value]) => {
+					if (value !== undefined && value !== null) {
+						if (!locMap[row.location].data[date]) {
+							locMap[row.location].data[date] = [];
+						}
+						locMap[row.location].data[date].push(value);
+					}
+				});
+			});
+			// Average the merged data
+			Object.values(locMap).forEach(locRow => {
+				Object.entries(locRow.data).forEach(([date, values]) => {
+					locRow.data[date] = +(values.reduce((a, b) => a + b) / values.length).toFixed(1);
+				});
+			});
+			return Object.values(locMap);
+		}
+
+		/* ── Generate technician-level data from raw data ── */
+		function generateTechnicianData() {
+			const techMap = {};
+			FTF_DATA.forEach(row => {
+				if (!techMap[row.tech]) {
+					techMap[row.tech] = { tech: row.tech, data: {} };
+				}
+				// Merge all this tech's records
+				Object.entries(row.data).forEach(([date, value]) => {
+					if (value !== undefined && value !== null) {
+						if (!techMap[row.tech].data[date]) {
+							techMap[row.tech].data[date] = [];
+						}
+						techMap[row.tech].data[date].push(value);
+					}
+				});
+			});
+			// Average the merged data
+			Object.values(techMap).forEach(techRow => {
+				Object.entries(techRow.data).forEach(([date, values]) => {
+					techRow.data[date] = +(values.reduce((a, b) => a + b) / values.length).toFixed(1);
+				});
+			});
+			return Object.values(techMap);
+		}
+
+		/* ── Generate branch-level data from raw data ── */
+		function generateBranchData() {
+			const branchMap = {};
+			FTF_DATA.forEach((row, index) => {
+				const branch = getBranchForIndex(index);
+				if (!branchMap[branch]) {
+					branchMap[branch] = { branch: branch, data: {} };
+				}
+				// Merge all this branch's records
+				Object.entries(row.data).forEach(([date, value]) => {
+					if (value !== undefined && value !== null) {
+						if (!branchMap[branch].data[date]) {
+							branchMap[branch].data[date] = [];
+						}
+						branchMap[branch].data[date].push(value);
+					}
+				});
+			});
+			// Average the merged data
+			Object.values(branchMap).forEach(branchRow => {
+				Object.entries(branchRow.data).forEach(([date, values]) => {
+					branchRow.data[date] = +(values.reduce((a, b) => a + b) / values.length).toFixed(1);
+				});
+			});
+			return Object.values(branchMap);
+		}
+
+		/* ── Helper: get color class ── */
+		function getPercentageClass(pct) {
+			if (!pct && pct !== 0) return 'empty';
+			if (pct >= 75) return 'high';
+			if (pct >= 50) return 'medium';
+			return 'low';
+		}
+
+		/* ── Helper: calculate average ── */
+		function calculateAverage(data) {
+			const values = Object.values(data);
+			if (!values.length) return 0;
+			return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1);
+		}
+
+		/* ── Get dates grouped by Daily/Weekly/Monthly ── */
+		function getWeeklyDates() {
+			const weeks = [];
+			for (let i = 0; i < ALL_DATES.length; i += 7) {
+				const weekDates = ALL_DATES.slice(i, i + 7);
+				const weekLabel = `${weekDates[0]} - ${weekDates[weekDates.length - 1]}`;
+				weeks.push({ label: weekLabel, dates: weekDates });
+			}
+			return weeks;
+		}
+
+		function getMonthlyDates() {
+			return [{ label: 'May 2026', dates: ALL_DATES }];
+		}
+
+		function getActiveDateGrouping() {
+			if (currentDateRange === 'weekly') {
+				return getWeeklyDates();
+			} else if (currentDateRange === 'monthly') {
+				return getMonthlyDates();
+			}
+			return ALL_DATES.map(d => ({ label: d, dates: [d] }));
+		}
+
+		/* ── Update table header based on selected dimensions ── */
+		function updateTableHeader() {
+			const thead = document.querySelector('table thead');
+			if (!thead) return;
+			
+			let headers = [];
+			
+			// Add headers based on selected dimension order
+			if (selectedDimensions.has('location')) headers.push('Location');
+			if (selectedDimensions.has('technician')) headers.push('Tech');
+			if (selectedDimensions.has('branch')) headers.push('Branch');
+			
+			// If no dimensions selected, default to location
+			if (headers.length === 0) headers.push('Location');
+			
+			const dateGrouping = getActiveDateGrouping();
+			const headerHTML = `
+				<tr>
+					${headers.map(h => `<th>${h}</th>`).join('')}
+					${dateGrouping.map(group => `<th>${group.label}</th>`).join('')}
+					<th>Total</th>
+				</tr>
+			`;
+			thead.innerHTML = headerHTML;
+		}
+
+		/* ── Render table ── */
+		function renderTable(filteredData = null) {
+			updateTableHeader();
+			
+			const tbody = document.getElementById('ftfTableBody');
+			let dataToRender;
+			
+			if (filteredData) {
+				dataToRender = filteredData;
+			} else {
+				// Select data based on selected dimensions
+				if (selectedDimensions.has('location') && selectedDimensions.has('technician') && selectedDimensions.has('branch')) {
+					// All three: show raw 112 records with all fields
+					dataToRender = FTF_DATA.map((row, index) => ({
+						...row,
+						branch: getBranchForIndex(index)
+					}));
+				} else if (selectedDimensions.has('location') && selectedDimensions.has('technician')) {
+					// Location + Tech: show raw 112 records
+					dataToRender = FTF_DATA;
+				} else if (selectedDimensions.has('location') && selectedDimensions.has('branch')) {
+					// Location + Branch: merge location-branch combos from raw data
+					const locBranchMap = {};
+					FTF_DATA.forEach((row, index) => {
+						const branch = getBranchForIndex(index);
+						const key = row.location + '|||' + branch;
+						if (!locBranchMap[key]) {
+							locBranchMap[key] = { location: row.location, branch: branch, data: {} };
+						}
+						Object.entries(row.data).forEach(([date, value]) => {
+							if (value !== undefined && value !== null) {
+								if (!locBranchMap[key].data[date]) {
+									locBranchMap[key].data[date] = [];
+								}
+								locBranchMap[key].data[date].push(value);
+							}
+						});
+					});
+					Object.values(locBranchMap).forEach(row => {
+						Object.entries(row.data).forEach(([date, values]) => {
+							row.data[date] = +(values.reduce((a, b) => a + b) / values.length).toFixed(1);
+						});
+					});
+					dataToRender = Object.values(locBranchMap);
+				} else if (selectedDimensions.has('technician') && selectedDimensions.has('branch')) {
+					// Tech + Branch: merge tech-branch combos from raw data
+					const techBranchMap = {};
+					FTF_DATA.forEach((row, index) => {
+						const branch = getBranchForIndex(index);
+						const key = row.tech + '|||' + branch;
+						if (!techBranchMap[key]) {
+							techBranchMap[key] = { tech: row.tech, branch: branch, data: {} };
+						}
+						Object.entries(row.data).forEach(([date, value]) => {
+							if (value !== undefined && value !== null) {
+								if (!techBranchMap[key].data[date]) {
+									techBranchMap[key].data[date] = [];
+								}
+								techBranchMap[key].data[date].push(value);
+							}
+						});
+					});
+					Object.values(techBranchMap).forEach(row => {
+						Object.entries(row.data).forEach(([date, values]) => {
+							row.data[date] = +(values.reduce((a, b) => a + b) / values.length).toFixed(1);
+						});
+					});
+					dataToRender = Object.values(techBranchMap);
+				} else if (selectedDimensions.has('location')) {
+					dataToRender = LOCATION_DATA;
+				} else if (selectedDimensions.has('technician')) {
+					dataToRender = TECHNICIAN_DATA;
+				} else if (selectedDimensions.has('branch')) {
+					dataToRender = BRANCH_DATA;
+				} else {
+					dataToRender = LOCATION_DATA;
+				}
+			}
+
+			tbody.innerHTML = dataToRender.map(row => {
+				const cells = [];
+				
+				// Add dimension columns in order based on selected dimensions
+				if (selectedDimensions.has('location')) {
+					cells.push(`<td class="ftf-location-cell">${row.location}</td>`);
+				}
+				if (selectedDimensions.has('technician')) {
+					cells.push(`<td class="ftf-tech-cell">${row.tech}</td>`);
+				}
+				if (selectedDimensions.has('branch')) {
+					cells.push(`<td class="ftf-branch-cell">${row.branch}</td>`);
+				}
+
+				const dateGrouping = getActiveDateGrouping();
+				dateGrouping.forEach(dateGroup => {
+					// Get value(s) for this date group
+					let value;
+					let displayDate = dateGroup.dates[0]; // Use first date in group for modal key
+					
+					if (dateGroup.dates.length > 1) {
+						// Multiple dates in group - average them
+						const values = dateGroup.dates
+							.map(d => row.data[d])
+							.filter(v => v !== undefined && v !== null);
+						value = values.length > 0 ? +(values.reduce((a, b) => a + b) / values.length).toFixed(1) : undefined;
+					} else {
+						value = row.data[dateGroup.dates[0]];
+					}
+					
+					const pctClass = getPercentageClass(value);
+					if (value) {
+						// Build composite key from all selected dimensions
+						const keyParts = [];
+						if (selectedDimensions.has('location')) keyParts.push(row.location || 'Unknown');
+						if (selectedDimensions.has('technician')) keyParts.push(row.tech || 'Unknown');
+						if (selectedDimensions.has('branch')) keyParts.push(row.branch || 'Unknown');
+						keyParts.push(displayDate);
+						const compositeKey = keyParts.join('|||');
+						cells.push(`<td class="ftf-percentage ${pctClass}" style="cursor: pointer;" onclick="showTicketModal('${compositeKey}')">${value.toFixed(1)}</td>`);
+					} else {
+						cells.push(`<td class="ftf-percentage ${pctClass}">—</td>`);
+					}
+				});
+
+				const avg = calculateAverage(row.data);
+				const avgClass = getPercentageClass(avg);
+				cells.push(`<td class="ftf-percentage ftf-total ${avgClass}">${avg}</td>`);
+
+				return `<tr>${cells.join('')}</tr>`;
+			}).join('');
+
+			document.getElementById('recordCount').textContent = dataToRender.length;
+		}
+
+		async function initFtfReportData() {
+			const companyId = localStorage.getItem('userCompanyId');
+			let msg = 'Displaying built-in sample data.';
+			if (window.AdminHubData && window.AdminHubReportBuilders) {
+				try {
+					const snap = await AdminHubData.fetchJsonSetting(companyId, 'ftf_report_snapshot');
+					if (Array.isArray(snap?.ftfData) && snap.ftfData.length) {
+						FTF_DATA = snap.ftfData;
+						msg = `Loaded ${FTF_DATA.length} rows from saved FTF snapshot.`;
+					} else {
+						const tickets = await AdminHubData.loadTicketsForReports(companyId);
+						const built = AdminHubReportBuilders.buildFtfDataFromTickets(tickets);
+						if (built.length) {
+							FTF_DATA = built;
+							msg = `Built ${FTF_DATA.length} tech/location rows from ${tickets.length} synced tickets.`;
+						} else if (snap?.syncedAt) {
+							msg = `Last ER sync: ${new Date(snap.syncedAt).toLocaleString()} (${(snap.rows || []).length} raw rows). Using sample chart data.`;
+						}
+					}
+				} catch (error) {
+					msg = `Using sample data: ${error.message}`;
+				}
+			}
+			const el = document.getElementById('ftfDataSource');
+			if (el) el.textContent = msg;
+		}
+
+		/* ── Initialize data ── */
+		async function initializeFtfPage() {
+			await initFtfReportData();
+			LOCATION_DATA = generateLocationData();
+			TECHNICIAN_DATA = generateTechnicianData();
+			BRANCH_DATA = generateBranchData();
+			document.querySelector('[data-level="location"]')?.classList.add('active');
+			renderTable();
+			setupScrollbars();
+		}
+		/* ── Modal functions ── */
+		function closeTicketModal() {
+			document.getElementById('ticketModal').style.display = 'none';
+		}
+
+		function showTicketModal(compositeKey) {
+			currentModalKey = compositeKey;
+			
+			// Look up tickets using the composite key
+			currentModalTickets = TICKET_DATA[compositeKey] || [];
+			
+			const modal = document.getElementById('ticketModal');
+			
+			// Extract parts from composite key to build title
+			const keyParts = compositeKey.split('|||');
+			const date = keyParts[keyParts.length - 1];
+			
+			// Build title from selected dimensions in order
+			// The keyParts were built in same order: location, technician, branch, date
+			const titleParts = [];
+			let keyIndex = 0;
+			if (selectedDimensions.has('location')) {
+				titleParts.push(keyParts[keyIndex]);
+				keyIndex++;
+			}
+			if (selectedDimensions.has('technician')) {
+				titleParts.push(keyParts[keyIndex]);
+				keyIndex++;
+			}
+			if (selectedDimensions.has('branch')) {
+				titleParts.push(keyParts[keyIndex]);
+				keyIndex++;
+			}
+			
+			const title = `${titleParts.join(' - ')} Tickets for aging 2026-${date}`;
+			document.getElementById('modalTitle').textContent = title;
+			
+			renderTicketTable(currentModalTickets);
+			modal.style.display = 'flex';
+		}
+
+		function renderTicketTable(tickets) {
+			const tbody = document.getElementById('ticketTableBody');
+			tbody.innerHTML = tickets.map((ticket, index) => `
+				<tr>
+					<td>${index + 1}</td>
+					<td>${ticket.tech}</td>
+					<td>${ticket.no}</td>
+					<td>${ticket.postDate}</td>
+					<td>${ticket.completeDate}</td>
+					<td>${ticket.status}</td>
+					<td>${ticket.warranty}</td>
+					<td>${ticket.visits}</td>
+				</tr>
+			`).join('');
+			
+			document.getElementById('ticketCount').textContent = `${tickets.length} records found`;
+		}
+
+		// Ticket search functionality
+		const ticketSearchInput = document.getElementById('ticketSearchInput');
+		if (ticketSearchInput) {
+			ticketSearchInput.addEventListener('input', function(e) {
+				const query = e.target.value.toLowerCase();
+				const filtered = currentModalTickets.filter(ticket => {
+					return ticket.tech.toLowerCase().includes(query) ||
+						ticket.no.toLowerCase().includes(query) ||
+						ticket.status.toLowerCase().includes(query) ||
+						ticket.warranty.toLowerCase().includes(query);
+				});
+				renderTicketTable(filtered);
+			});
+		}
+
+		// Close modal when clicking outside
+		const ticketModal = document.getElementById('ticketModal');
+		if (ticketModal) {
+			ticketModal.addEventListener('click', function(e) {
+				if (e.target === this) {
+					closeTicketModal();
+				}
+			});
+		}
+
+		/* ── Event listeners ── */
+		document.querySelectorAll('.data-level-checkbox').forEach(checkbox => {
+			checkbox.addEventListener('change', function () {
+				if (this.checked) {
+					selectedDimensions.add(this.value);
+				} else {
+					selectedDimensions.delete(this.value);
+				}
+				// Ensure at least one dimension is selected
+				if (selectedDimensions.size === 0) {
+					this.checked = true;
+					selectedDimensions.add(this.value);
+				}
+				renderTable();
+			});
+		});
+
+		/* ── Date Range Dropdown ── */
+		const dateRangeSelect = document.getElementById('dateRangeSelect');
+		if (dateRangeSelect) {
+			dateRangeSelect.addEventListener('change', function () {
+				currentDateRange = this.value;
+				renderTable();
+			});
+		}
+
+		document.querySelectorAll('[data-warranty]').forEach(btn => {
+			btn.addEventListener('click', function () {
+				document.querySelectorAll('[data-warranty]').forEach(b => b.classList.remove('active'));
+				this.classList.add('active');
+				// TODO: implement warranty filtering
+			});
+		});
+
+		document.getElementById('searchInput').addEventListener('input', function (e) {
+			const query = e.target.value.toLowerCase();
+			if (!query) {
+				renderTable();
+				return;
+			}
+			
+			// First, get the data that would be rendered
+			let targetData;
+			
+			if (selectedDimensions.has('location') && selectedDimensions.has('technician') && selectedDimensions.has('branch')) {
+				targetData = FTF_DATA.map((row, index) => ({
+					...row,
+					branch: getBranchForIndex(index)
+				}));
+			} else if (selectedDimensions.has('location') && selectedDimensions.has('technician')) {
+				targetData = FTF_DATA;
+			} else if (selectedDimensions.has('location')) {
+				targetData = LOCATION_DATA;
+			} else if (selectedDimensions.has('technician')) {
+				targetData = TECHNICIAN_DATA;
+			} else if (selectedDimensions.has('branch')) {
+				targetData = BRANCH_DATA;
+			} else {
+				targetData = LOCATION_DATA;
+			}
+			
+			// Search across all selected dimensions
+			const filtered = targetData.filter(row => {
+				let matchesSearch = false;
+				if (selectedDimensions.has('location') && row.location) {
+					matchesSearch = matchesSearch || row.location.toLowerCase().includes(query);
+				}
+				if (selectedDimensions.has('technician') && row.tech) {
+					matchesSearch = matchesSearch || row.tech.toLowerCase().includes(query);
+				}
+				if (selectedDimensions.has('branch') && row.branch) {
+					matchesSearch = matchesSearch || row.branch.toLowerCase().includes(query);
+				}
+				return matchesSearch;
+			});
+			renderTable(filtered);
+		});
+
+		/* ── Floating Ticket Lookup ── */
+		function normalizeZip(zip) {
+			return (zip || '').replace(/\D/g, '').slice(0, 5);
+		}
+
+		function extractZipFromAddress(address) {
+			const match = (address || '').match(/\b(\d{5})(?:-\d{4})?\b/);
+			return match ? match[1] : '';
+		}
+
+		function normalizeTicket(ticket) {
+			return (ticket || '').trim().toUpperCase();
+		}
+
+		function resolveTicketFromZip(zip) {
+			const cleanZip = normalizeZip(zip);
+			if (!cleanZip || !window.TICKETS_DUMMY_DATA || !Array.isArray(window.TICKETS_DUMMY_DATA.workMapTickets)) {
+				return '';
+			}
+
+			for (const row of window.TICKETS_DUMMY_DATA.workMapTickets) {
+				const rowZip = extractZipFromAddress(row.address || '');
+				if (rowZip === cleanZip) {
+					return normalizeTicket(row.ticketNo || '');
+				}
+			}
+
+			return '';
+		}
+
+
+		/* ── Global lookup managed by routes.js ── */
+
+
+		initializeFtfPage();
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('ftfTableWrap');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!tableContainer || !floatingScrollbar) return;
+			function update() {
+				const hasOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasOverflow) { floatingScrollbar.classList.remove('is-visible'); return; }
+				const rect = tableContainer.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else { floatingScrollbar.classList.remove('is-visible'); }
+			}
+			tableContainer.addEventListener('scroll', () => { floatingScrollbar.scrollLeft = tableContainer.scrollLeft; });
+			floatingScrollbar.addEventListener('scroll', () => { tableContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+
+		/* Footer Ticket Lookup Functions */
+		function toggleLookup() {
+			const wrap = document.getElementById('footerLookupWrap');
+			if (wrap.classList.contains('is-collapsed')) {
+				wrap.classList.remove('is-collapsed');
+				wrap.classList.add('is-expanded');
+			} else {
+				wrap.classList.remove('is-expanded');
+				wrap.classList.add('is-collapsed');
+			}
+		}
+
+		function viewTicket() {
+			const ticket = document.getElementById('ticketInput').value;
+			const zip = document.getElementById('zipInput').value;
+			if (ticket) {
+				// Open ticket details - could be customized based on your needs
+				alert('Viewing ticket: ' + ticket + (zip ? ' Zip: ' + zip : ''));
+			}
+		}
+	</script>
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<!-- Footer Ticket Lookup -->
+	<div class="footer-ticket-lookup-wrap is-collapsed" id="footerLookupWrap">
+		<button class="lookup-fab" onclick="toggleLookup()">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<circle cx="11" cy="11" r="8"></circle>
+				<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+			</svg>
+		</button>
+		<div class="footer-ticket-lookup" id="footerLookup">
+			<div class="lookup-field">
+				<label>Ticket</label>
+				<input type="text" id="ticketInput" placeholder="Enter ticket #">
+			</div>
+			<div class="lookup-field">
+				<label>Zip</label>
+				<input type="text" class="lookup-zip-input" id="zipInput" placeholder="Enter zip">
+			</div>
+			<button class="lookup-view-btn" onclick="viewTicket()">View</button>
+		</div>
+	</div>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { initDatabase } from "./db-api";
 
 type AuthState = {
   email: string | null;
@@ -16,9 +17,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    setEmail(localStorage.getItem("userEmail"));
-    setCompanyId(localStorage.getItem("userCompanyId"));
-    setReady(true);
+    // Initialize database on app startup (client-side only)
+    if (typeof window !== "undefined") {
+      initDatabase().then(() => {
+        setEmail(localStorage.getItem("userEmail"));
+        setCompanyId(localStorage.getItem("userCompanyId"));
+        setReady(true);
+      });
+    } else {
+      setReady(true);
+    }
+    
     const handler = (e: StorageEvent) => {
       if (e.key === "userEmail") setEmail(e.newValue);
       if (e.key === "userCompanyId") setCompanyId(e.newValue);

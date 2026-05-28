@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tech Activity Report - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../config.js"></script>
+	<style>
+		/* ── TAR Report Panel ── */
+		.tar-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.tar-controls {
+			display: flex;
+			flex-wrap: nowrap;
+			gap: 1.5rem;
+			align-items: flex-end;
+			padding: 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			overflow-x: auto;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			flex-shrink: 0;
+		}
+
+		.date-range-group {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			flex-shrink: 0;
+			align-items: center;
+			align-content: flex-start;
+		}
+
+		.date-range-group .control-label {
+			flex-basis: 100%;
+			margin-bottom: 0;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-input,
+		.control-select {
+			padding: 0.5rem 0.7rem;
+			background: rgba(2, 6, 23, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+		}
+
+		.control-input:focus,
+		.control-select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.control-select option {
+			background: #1e293b;
+			color: #e2e8f0;
+		}
+
+		/* ── Buttons ── */
+		.filter-btn,
+		.action-btn {
+			padding: 0.5rem 1rem;
+			background: rgba(59, 130, 246, 0.2);
+			border: 1px solid rgba(96, 165, 250, 0.5);
+			color: #e0e7ff;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.filter-btn:hover,
+		.action-btn:hover {
+			background: rgba(96, 165, 250, 0.3);
+			border-color: #60a5fa;
+		}
+
+		/* ── Content Area ── */
+		.tar-content {
+			padding: 1.5rem;
+			overflow-y: auto;
+		}
+
+		/* ── Section Header ── */
+		.section-header {
+			font-size: 1.1rem;
+			font-weight: 700;
+			color: #60a5fa;
+			margin: 1.5rem 0 1rem 0;
+			padding-bottom: 0.5rem;
+			border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+		}
+
+		/* ── Calendar Table ── */
+		.calendar-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: rgba(17, 24, 39, 0.6);
+			margin: 1rem 0;
+			border-radius: 6px;
+			overflow: hidden;
+		}
+
+		.calendar-table th {
+			background: rgba(30, 41, 59, 0.8);
+			font-weight: 700;
+			color: #93c5fd;
+			padding: 0.6rem;
+			text-align: center;
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			font-size: 0.8rem;
+		}
+
+		.calendar-table td {
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			padding: 0.6rem;
+			vertical-align: top;
+			font-size: 0.75rem;
+			color: #cbd5e1;
+			background: rgba(15, 23, 42, 0.4);
+		}
+
+		.calendar-table td.week-number {
+			background: rgba(30, 41, 59, 0.6);
+			font-weight: 700;
+			color: #93c5fd;
+			text-align: center;
+		}
+
+		.calendar-table td.date-header {
+			background: rgba(30, 41, 59, 0.5);
+			font-weight: 600;
+			color: #60a5fa;
+		}
+
+		.calendar-cell {
+			display: flex;
+			flex-direction: column;
+			gap: 0.3rem;
+			min-height: 100px;
+		}
+
+		.calendar-date {
+			font-weight: 700;
+			color: #60a5fa;
+		}
+
+		.activity-header {
+			display: grid;
+			grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+			gap: 0.2rem;
+			padding: 0.2rem 0;
+			font-weight: 700;
+			color: #93c5fd;
+			font-size: 0.7rem;
+			text-align: center;
+		}
+
+		.activity-row {
+			display: grid;
+			grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+			gap: 0.2rem;
+			font-size: 0.7rem;
+			padding: 0.2rem 0;
+		}
+
+		.activity-label {
+			text-align: right;
+			color: #94a3b8;
+			font-size: 0.65rem;
+		}
+
+		.activity-value {
+			text-align: left;
+			color: #cbd5e1;
+			font-weight: 500;
+		}
+
+		/* ── Data Table ── */
+		.data-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 6px;
+			overflow: hidden;
+			margin: 1rem 0;
+		}
+
+		.data-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+			padding: 0.8rem;
+			border: 1px solid #d1d5db;
+			font-size: 0.8rem;
+		}
+
+		.data-table td {
+			padding: 0.7rem 0.8rem;
+			border: 1px solid #e5e7eb;
+			font-size: 0.8rem;
+		}
+
+		.data-table tbody tr:hover {
+			background: #f9fafb;
+		}
+
+		/* ── Table Wrapper ── */
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		/* ── Summary Stats ── */
+		.summary-stats {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+			gap: 1rem;
+			margin: 1rem 0;
+		}
+
+		.stat-card {
+			background: rgba(30, 41, 59, 0.6);
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			padding: 1rem;
+			border-radius: 6px;
+		}
+
+		.stat-label {
+			font-size: 0.8rem;
+			color: #94a3b8;
+			font-weight: 600;
+			margin-bottom: 0.5rem;
+		}
+
+		.stat-value {
+			font-size: 1.4rem;
+			font-weight: 700;
+			color: #60a5fa;
+		}
+
+		@media (max-width: 1024px) {
+			.tar-controls {
+				flex-direction: column;
+				align-items: flex-start;
+			}
+
+			.data-table {
+				min-width: 800px;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.tar-content {
+				padding: 1rem;
+			}
+
+			.section-header {
+				font-size: 1rem;
+			}
+
+			.calendar-table th,
+			.calendar-table td {
+				padding: 0.5rem;
+				font-size: 0.75rem;
+			}
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">Tech Activity Report</h2>
+		</div>
+
+		<div class="tar-panel">
+			<div class="tar-controls">
+				<div class="control-group">
+					<label class="control-label">Location</label>
+				<select id="locationSelect" class="control-select" onchange="onLocationChange()">
+					<option value="">Loading…</option>
+					</select>
+				</div>
+				<div class="control-group">
+					<label class="control-label">Technician</label>
+					<select id="technicianSelect" class="control-select" style="min-width: 200px;">
+						<option value="">All Technicians</option>
+						<option value="Angelo Husain">Angelo Husain</option>
+						<option value="Daven Hodge">Daven Hodge</option>
+						<option value="David Sims">David Sims</option>
+						<option value="Jeselton Chu">Jeselton Chu</option>
+						<option value="Job Christian Alberto">Job Christian Alberto</option>
+						<option value="Jonathon Allen">Jonathon Allen</option>
+						<option value="Jordan Koetsier">Jordan Koetsier</option>
+						<option value="Justin Parker">Justin Parker</option>
+						<option value="Kemuel Tamayo">Kemuel Tamayo</option>
+						<option value="Kenny Shin">Kenny Shin</option>
+						<option value="Mark Marquez">Mark Marquez</option>
+						<option value="Memphis Admin">Memphis Admin</option>
+						<option value="Nashville Admin">Nashville Admin</option>
+						<option value="Rocky Deles">Rocky Deles</option>
+						<option value="Zonate Grant">Zonate Grant</option>
+					</select>
+				</div>
+				<div class="date-range-group">
+					<label class="control-label">Schedule Date</label>
+				<input id="scheduleStart" type="date" class="control-input" value="2026-05-01">
+				<span style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">~</span>
+				<input id="scheduleEnd" type="date" class="control-input" value="2026-05-20">
+				</div>
+				<button class="action-btn" onclick="applyFilters()">Refresh</button>
+			</div>
+
+			<div class="tar-content">
+				<!-- Activity Calendar Section -->
+				<div class="section-header">Activity Calendar</div>
+				<div class="table-wrap" id="calendarTableWrap">
+					<table class="calendar-table" id="activityCalendar">
+						<thead>
+							<tr>
+								<th>Week</th>
+								<th>Sunday</th>
+								<th>Monday</th>
+								<th>Tuesday</th>
+								<th>Wednesday</th>
+								<th>Thursday</th>
+								<th>Friday</th>
+								<th>Saturday</th>
+							</tr>
+						</thead>
+						<tbody id="calendarBody">
+							<!-- Calendar rows will be populated here -->
+						</tbody>
+					</table>
+				</div>
+
+				<!-- Daily Summary Section -->
+				<div class="section-header">Repair Activity Daily Summary</div>
+				<div style="color: #cbd5e1; font-size: 0.85rem; margin-bottom: 0.5rem;" id="dailyResultsCount">10 records found</div>
+				<div class="table-wrap" id="dailyTableWrap">
+					<table class="data-table" id="dailyTable">
+						<thead>
+							<tr>
+								<th>#</th>
+								<th>Date</th>
+								<th># of Assigned</th>
+								<th># of Completed</th>
+								<th># of Cancelled</th>
+								<th># of Exchanged</th>
+								<th># of Pending</th>
+								<th># of Redo</th>
+								<th># of LDT</th>
+								<th>Mileage</th>
+								<th>Complete Ratio</th>
+								<th>True Complete Ratio</th>
+							</tr>
+						</thead>
+						<tbody id="dailyTableBody">
+							<!-- Will be populated by JavaScript -->
+						</tbody>
+					</table>
+				</div>
+
+				<!-- Tech Summary Section -->
+				<div class="section-header">Tech Repair Activity Summary</div>
+				<div style="color: #cbd5e1; font-size: 0.85rem; margin-bottom: 0.5rem;" id="techResultsCount">11 records found</div>
+				<div class="table-wrap" id="techTableWrap">
+					<table class="data-table" id="techTable">
+						<thead>
+							<tr>
+								<th>#</th>
+								<th>Technician</th>
+								<th># of Assigned</th>
+								<th># of Completed</th>
+								<th># of Cancelled</th>
+								<th># of Exchanged</th>
+								<th># of Pending</th>
+								<th># of Redo</th>
+								<th># of LDT</th>
+								<th>Mileage</th>
+								<th>Complete Ratio</th>
+								<th>True Complete Ratio</th>
+							</tr>
+						</thead>
+						<tbody id="techTableBody">
+							<!-- Will be populated by JavaScript -->
+						</tbody>
+					</table>
+				</div>
+
+				<!-- Completed Tickets Section -->
+				<div class="section-header">Completed Tickets</div>
+				<div style="color: #cbd5e1; font-size: 0.85rem; margin-bottom: 0.5rem;" id="completedResultsCount">32 records found</div>
+				<div class="table-wrap" id="completedTableWrap">
+					<table class="data-table" id="completedTable">
+						<thead>
+							<tr>
+								<th>#</th>
+								<th>Type</th>
+								<th>Ticket #</th>
+								<th>Schedule Date</th>
+								<th>Repair Status</th>
+								<th>Tech Name (1)</th>
+								<th>Tech Name (2)</th>
+								<th>Distance</th>
+							</tr>
+						</thead>
+						<tbody id="completedTableBody">
+							<!-- Will be populated by JavaScript -->
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+		const userEmail = localStorage.getItem('userEmail');
+		const userCompanyId = localStorage.getItem('userCompanyId');
+		if (!userEmail || !userCompanyId) window.location.href = '../../landing.html';
+
+		document.getElementById('userDisplayName').textContent = userEmail || '';
+		document.getElementById('companyDisplayId').textContent = userCompanyId || '';
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		// Load data based on selected location
+		let sampleDailyData = [];
+		let sampleTechData = [];
+		let sampleCompletedData = [];
+		let activityByDate = {};
+
+		function populateDaily() {
+			const tbody = document.getElementById('dailyTableBody');
+			document.getElementById('dailyResultsCount').textContent = `${sampleDailyData.length} records found`;
+			tbody.innerHTML = sampleDailyData.map((row, idx) => `
+				<tr>
+					<td>${idx + 1}</td>
+					<td>${row.date}</td>
+					<td>${row.assigned}</td>
+					<td>${row.completed}</td>
+					<td>${row.cancelled}</td>
+					<td>${row.exchanged}</td>
+					<td>${row.pending}</td>
+					<td>${row.redo}</td>
+					<td>${row.ldt}</td>
+					<td>${row.mileage}</td>
+					<td>${row.completeRatio}</td>
+					<td>${row.trueCompleteRatio}</td>
+				</tr>
+			`).join('');
+		}
+
+		function populateTech() {
+			const tbody = document.getElementById('techTableBody');
+			document.getElementById('techResultsCount').textContent = `${sampleTechData.length} records found`;
+			tbody.innerHTML = sampleTechData.map((row, idx) => `
+				<tr>
+					<td>${idx + 1}</td>
+					<td>${row.tech}</td>
+					<td>${row.assigned}</td>
+					<td>${row.completed}</td>
+					<td>${row.cancelled}</td>
+					<td>${row.exchanged}</td>
+					<td>${row.pending}</td>
+					<td>${row.redo}</td>
+					<td>${row.ldt}</td>
+					<td>${row.mileage}</td>
+					<td>${row.completeRatio}</td>
+					<td>${row.trueCompleteRatio}</td>
+				</tr>
+			`).join('');
+		}
+
+		function populateCompleted() {
+			const tbody = document.getElementById('completedTableBody');
+			document.getElementById('completedResultsCount').textContent = `${sampleCompletedData.length} records found`;
+			tbody.innerHTML = sampleCompletedData.map((row, idx) => `
+				<tr>
+					<td>${idx + 1}</td>
+					<td>${row.type}</td>
+					<td>${row.ticket}</td>
+					<td>${row.date}</td>
+					<td>${row.status}</td>
+					<td>${row.tech1}</td>
+					<td>${row.tech2}</td>
+					<td>${row.distance}</td>
+				</tr>
+			`).join('');
+		}
+
+		// Helper function to parse MM/DD/YYYY date string to Date object
+		function parseDate(dateStr) {
+			if (!dateStr) return null;
+			const [month, day, year] = dateStr.split('/').map(Number);
+			return new Date(year, month - 1, day);
+		}
+
+		// Filter data based on date range
+		function applyDateFilters(rawDailyData, rawTechData, rawCompletedData) {
+			const startInput = document.getElementById('scheduleStart').value; // YYYY-MM-DD
+			const endInput = document.getElementById('scheduleEnd').value; // YYYY-MM-DD
+			
+			if (!startInput || !endInput) {
+				return { daily: rawDailyData, tech: rawTechData, completed: rawCompletedData };
+			}
+			
+			// Convert YYYY-MM-DD to Date objects
+			const [startYear, startMonth, startDay] = startInput.split('-').map(Number);
+			const [endYear, endMonth, endDay] = endInput.split('-').map(Number);
+			const startDate = new Date(startYear, startMonth - 1, startDay);
+			const endDate = new Date(endYear, endMonth - 1, endDay);
+			
+			// Filter daily data (format: MM/DD/YYYY)
+			const filteredDaily = rawDailyData.filter(record => {
+				const recordDate = parseDate(record.date);
+				return recordDate >= startDate && recordDate <= endDate;
+			});
+			
+			// For tech data, we'll show all techs but this could be filtered too if needed
+			const filteredTech = rawTechData;
+			
+			// Filter completed tickets (format: MM/DD/YYYY)
+			const filteredCompleted = rawCompletedData.filter(record => {
+				const recordDate = parseDate(record.date);
+				return recordDate >= startDate && recordDate <= endDate;
+			});
+			
+			return { daily: filteredDaily, tech: filteredTech, completed: filteredCompleted };
+		}
+
+		// Populate location dropdown from DB
+		async function populateLocations() {
+			let activeCompanyDbId = null;
+			if (userCompanyId) {
+				const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+				activeCompanyDbId = co ? co.id : null;
+			}
+			let query = supabaseClient.from('tickets').select('assigned_area').not('assigned_area', 'is', null);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			const { data } = await query;
+			const locations = [...new Set((data || []).map(r => r.assigned_area).filter(Boolean))].sort();
+			const sel = document.getElementById('locationSelect');
+			sel.innerHTML = locations.map(l => `<option value="${l}">${l}</option>`).join('');
+			if (!sel.value && locations.length) sel.value = locations[0];
+		}
+
+		// Populate technician dropdown based on selected location
+		async function populateTechnicians(location) {
+			let activeCompanyDbId = null;
+			if (userCompanyId) {
+				const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+				activeCompanyDbId = co ? co.id : null;
+			}
+			let query = supabaseClient.from('tickets').select('technician_name').not('technician_name', 'is', null);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			if (location) query = query.eq('assigned_area', location);
+			const { data } = await query;
+			const techs = [...new Set((data || []).map(r => r.technician_name).filter(Boolean))].sort();
+			const sel = document.getElementById('technicianSelect');
+			const current = sel.value;
+			sel.innerHTML = '<option value="">All Technicians</option>' +
+				techs.map(t => `<option value="${t}">${t}</option>`).join('');
+			if (current && techs.includes(current)) sel.value = current;
+		}
+
+		// Called when location changes — refresh technicians then report
+		async function onLocationChange() {
+			const loc = document.getElementById('locationSelect').value;
+			await populateTechnicians(loc);
+			await generateReport();
+		}
+
+		// Helper function to load location data from Supabase
+		async function loadLocationData() {
+			const location = document.getElementById('locationSelect').value;
+			const startInput = document.getElementById('scheduleStart').value;
+			const endInput = document.getElementById('scheduleEnd').value;
+
+			let activeCompanyDbId = null;
+			if (userCompanyId) {
+				const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+				activeCompanyDbId = co ? co.id : null;
+			}
+
+			const techFilter = document.getElementById('technicianSelect').value;
+			let query = supabaseClient.from('tickets')
+				.select('ticket_no, technician_name, repair_status, source, schedule_date, call_taken_date, complete_date')
+				.order('schedule_date', { ascending: true })
+				.limit(5000);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			if (location) query = query.eq('assigned_area', location);
+			if (techFilter) query = query.eq('technician_name', techFilter);
+			if (startInput) query = query.gte('schedule_date', startInput);
+			if (endInput) query = query.lte('schedule_date', endInput);
+
+			const { data, error } = await query;
+			if (error) { console.error('TAR fetch:', error); return false; }
+
+			const tickets = data || [];
+			const isCompleted = s => /complet|closed/i.test(s || '');
+			const isCancelled = s => /cancel/i.test(s || '');
+			const isExchanged = s => /exchang/i.test(s || '');
+			const isPending = s => !isCompleted(s) && !isCancelled(s) && !isExchanged(s);
+
+			// Daily data grouped by schedule_date
+			const dailyMap = {};
+			tickets.forEach(t => {
+				const d = (t.schedule_date || '').slice(0, 10);
+				if (!d) return;
+				if (!dailyMap[d]) dailyMap[d] = { date: d, assigned: 0, completed: 0, cancelled: 0, exchanged: 0, pending: 0, redo: 0, ldt: 0, mileage: '\u2014' };
+				dailyMap[d].assigned++;
+				if (isCompleted(t.repair_status)) dailyMap[d].completed++;
+				if (isCancelled(t.repair_status)) dailyMap[d].cancelled++;
+				if (isExchanged(t.repair_status)) dailyMap[d].exchanged++;
+				if (isPending(t.repair_status)) dailyMap[d].pending++;
+			});
+			const dailyData = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)).map(r => ({
+				...r,
+				completeRatio: r.assigned ? Math.round(r.completed / r.assigned * 100) + '%' : '\u2014',
+				trueCompleteRatio: r.assigned ? Math.round((r.completed + r.cancelled) / r.assigned * 100) + '%' : '\u2014'
+			}));
+
+			// Tech data grouped by technician
+			const techMap = {};
+			tickets.forEach(t => {
+				const tech = t.technician_name || 'Unassigned';
+				if (!techMap[tech]) techMap[tech] = { tech, assigned: 0, completed: 0, cancelled: 0, exchanged: 0, pending: 0, redo: 0, ldt: 0, mileage: '\u2014' };
+				techMap[tech].assigned++;
+				if (isCompleted(t.repair_status)) techMap[tech].completed++;
+				if (isCancelled(t.repair_status)) techMap[tech].cancelled++;
+				if (isExchanged(t.repair_status)) techMap[tech].exchanged++;
+				if (isPending(t.repair_status)) techMap[tech].pending++;
+			});
+			const techData = Object.values(techMap).map(r => ({
+				...r,
+				completeRatio: r.assigned ? Math.round(r.completed / r.assigned * 100) + '%' : '\u2014',
+				trueCompleteRatio: r.assigned ? Math.round((r.completed + r.cancelled) / r.assigned * 100) + '%' : '\u2014'
+			}));
+
+			// Completed/cancelled tickets list
+			const completedTickets = tickets
+				.filter(t => isCompleted(t.repair_status) || isCancelled(t.repair_status))
+				.map(t => ({
+					type: t.source || '\u2014',
+					ticket: t.ticket_no || '\u2014',
+					date: t.complete_date
+						? new Date(t.complete_date).toLocaleDateString()
+						: (t.schedule_date ? new Date(t.schedule_date).toLocaleDateString() : '\u2014'),
+					status: t.repair_status || '\u2014',
+					tech1: t.technician_name || '\u2014',
+					tech2: '',
+					distance: '\u2014'
+				}));
+
+			// Activity by day-of-month for calendar
+			const actByDate = {};
+			tickets.forEach(t => {
+				const d = (t.schedule_date || '').slice(0, 10);
+				if (!d) return;
+				const day = parseInt(d.slice(8, 10), 10);
+				if (!actByDate[day]) actByDate[day] = { asg: 0, cmp: 0, can: 0, rrr: 0, ldt: 0, jobs: 0, tubs: 0, major: 0, p60: 0, p80: 0, sealed: 0, sealed600: 0 };
+				actByDate[day].asg++;
+				if (isCompleted(t.repair_status)) actByDate[day].cmp++;
+				if (isCancelled(t.repair_status)) actByDate[day].can++;
+			});
+
+			// Auto-fill date range from data when filters are blank
+			if (tickets.length > 0 && !startInput) {
+				const dates = tickets.map(t => t.schedule_date).filter(Boolean).sort();
+				if (dates.length) {
+					document.getElementById('scheduleStart').value = dates[0].slice(0, 10);
+					document.getElementById('scheduleEnd').value = dates[dates.length - 1].slice(0, 10);
+				}
+			}
+
+			window.rawLocationData = { dailyData, techData, completedTickets, activityByDate: actByDate };
+			return true;
+		}
+
+		function getWeekNumber(date) {
+			const d = new Date(date);
+			const dayNum = d.getDay() + 1;
+			const dayOfYear = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+			return Math.ceil((dayOfYear + ((new Date(d.getFullYear(), 0, 1)).getDay() + 1)) / 7);
+		}
+
+		function populateCalendar() {
+			const tbody = document.getElementById('calendarBody');
+			// Use the start date filter to determine which month/year to display
+			const startInput = document.getElementById('scheduleStart').value;
+			const calDate = startInput ? new Date(startInput + 'T00:00:00') : new Date();
+			const year = calDate.getFullYear();
+			const month = calDate.getMonth(); // 0-indexed
+			const firstDay = new Date(year, month, 1).getDay(); // 0 = Sunday, 6 = Saturday
+			const daysInMonth = new Date(year, month + 1, 0).getDate();
+			
+			let html = '';
+			let cellCount = 0;
+			let weekNum = getWeekNumber(new Date(year, month, 1));
+			let rowHtml = '';
+
+			// Start first row with week number
+			rowHtml = `<tr><td class="week-number">${weekNum}</td>`;
+
+			// Add empty cells for days before month starts
+			for (let i = 0; i < firstDay; i++) {
+				rowHtml += `<td style="background: rgba(10, 15, 25, 0.5);"></td>`;
+				cellCount++;
+			}
+
+			// Add cells for each day of the month
+			for (let day = 1; day <= daysInMonth; day++) {
+				if (cellCount === 7) {
+					rowHtml += `</tr>`;
+					html += rowHtml;
+					cellCount = 0;
+					weekNum = getWeekNumber(new Date(year, month, day));
+					rowHtml = `<tr><td class="week-number">${weekNum}</td>`;
+				}
+
+				const activityData = activityByDate[day] || { asg: 0, cmp: 0, can: 0, rrr: 0, ldt: 0, jobs: 0, tubs: 0, major: 0, p60: 0, p80: 0, sealed: 0, sealed600: 0 };
+
+				rowHtml += `<td>
+					<div class="calendar-cell">
+						<span class="calendar-date">${day}</span>
+						<div class="activity-header">
+							<span>ASG</span>
+							<span>CMP</span>
+							<span>CAN</span>
+							<span>RRR</span>
+							<span>LDT</span>
+						</div>
+						<div class="activity-row">
+							<span class="activity-value">${activityData.asg}</span>
+							<span class="activity-value">${activityData.cmp}</span>
+							<span class="activity-value">${activityData.can}</span>
+							<span class="activity-value">${activityData.rrr}</span>
+							<span class="activity-value">${activityData.ldt}</span>
+						</div>
+						<div style="font-size: 0.65rem; color: #94a3b8; margin-top: 0.3rem;">
+							2 Man Job <span style="color: #cbd5e1;">${activityData.jobs}</span><br/>
+							Back Tub <span style="color: #cbd5e1;">${activityData.tubs}</span><br/>
+							Major Repair <span style="color: #cbd5e1;">${activityData.major}</span><br/>
+							Panel 60 Over <span style="color: #cbd5e1;">${activityData.p60}</span><br/>
+							Panel 80 Over <span style="color: #cbd5e1;">${activityData.p80}</span><br/>
+							Sealed System <span style="color: #cbd5e1;">${activityData.sealed}</span><br/>
+							Sealed System(R600) <span style="color: #cbd5e1;">${activityData.sealed600}</span>
+						</div>
+					</div>
+				</td>`;
+
+				cellCount++;
+			}
+
+			// Add empty cells to complete the last row
+			while (cellCount > 0 && cellCount < 7) {
+				rowHtml += `<td style="background: rgba(10, 15, 25, 0.5);"></td>`;
+				cellCount++;
+			}
+
+			// Close the last row
+			if (cellCount > 0) {
+				rowHtml += `</tr>`;
+				html += rowHtml;
+			}
+
+			tbody.innerHTML = html;
+		}
+
+		async function generateReport() {
+			const success = await loadLocationData();
+			if (!success) return;
+			
+			// Apply date filters
+			const filteredData = applyDateFilters(
+				window.rawLocationData.dailyData,
+				window.rawLocationData.techData,
+				window.rawLocationData.completedTickets
+			);
+			
+			sampleDailyData = filteredData.daily;
+			sampleTechData = filteredData.tech;
+			sampleCompletedData = filteredData.completed;
+			activityByDate = window.rawLocationData.activityByDate;
+			
+			populateCalendar();
+			populateDaily();
+			populateTech();
+			populateCompleted();
+		}
+
+		// Function called when Refresh/Generate Report button is clicked
+		async function applyFilters() {
+			await generateReport();
+		}
+
+		window.addEventListener('load', async function() {
+			await populateLocations();
+			const loc = document.getElementById('locationSelect').value;
+			await populateTechnicians(loc);
+			await generateReport();
+			setupScrollbars();
+		});
+
+		function setupScrollbars() {
+			const tableContainers = [
+				document.getElementById('calendarTableWrap'),
+				document.getElementById('dailyTableWrap'),
+				document.getElementById('techTableWrap'),
+				document.getElementById('completedTableWrap')
+			].filter(Boolean);
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!floatingScrollbar) return;
+			let activeContainer = null;
+			function update() {
+				floatingScrollbar.classList.remove('is-visible');
+				activeContainer = null;
+				for (const tc of tableContainers) {
+					const hasOverflow = tc.scrollWidth > tc.clientWidth;
+					if (!hasOverflow) continue;
+					const rect = tc.getBoundingClientRect();
+					if (rect.bottom > window.innerHeight) {
+						floatingScrollbar.classList.add('is-visible');
+						floatingScrollbarInner.style.width = tc.scrollWidth + 'px';
+						floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+						floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+						activeContainer = tc;
+						break;
+					}
+				}
+			}
+			tableContainers.forEach(tc => {
+				tc.addEventListener('scroll', () => { if (activeContainer === tc) floatingScrollbar.scrollLeft = tc.scrollLeft; });
+			});
+			floatingScrollbar.addEventListener('scroll', () => { if (activeContainer) activeContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+	</script>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>
