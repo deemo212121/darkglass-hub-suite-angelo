@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as HomeRouteImport } from './routes/home'
@@ -20,6 +21,11 @@ import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submod
 const TimecardRoute = TimecardRouteImport.update({
   id: '/timecard',
   path: '/timecard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/landing'
     | '/profile'
+    | '/settings'
     | '/timecard'
     | '/m/$module'
     | '/m/$module/$submodule'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/landing'
     | '/profile'
+    | '/settings'
     | '/timecard'
     | '/m/$module'
     | '/m/$module/$submodule'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/landing'
     | '/profile'
+    | '/settings'
     | '/timecard'
     | '/m/$module'
     | '/m/$module/$submodule'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   HomeRoute: typeof HomeRoute
   LandingRoute: typeof LandingRoute
   ProfileRoute: typeof ProfileRoute
+  SettingsRoute: typeof SettingsRoute
   TimecardRoute: typeof TimecardRoute
   MModuleRoute: typeof MModuleRouteWithChildren
 }
@@ -127,6 +140,13 @@ declare module '@tanstack/react-router' {
       path: '/timecard'
       fullPath: '/timecard'
       preLoaderRoute: typeof TimecardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -190,6 +210,7 @@ const rootRouteChildren: RootRouteChildren = {
   HomeRoute: HomeRoute,
   LandingRoute: LandingRoute,
   ProfileRoute: ProfileRoute,
+  SettingsRoute: SettingsRoute,
   TimecardRoute: TimecardRoute,
   MModuleRoute: MModuleRouteWithChildren,
 }
