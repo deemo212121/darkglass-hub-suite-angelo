@@ -12,6 +12,7 @@ import { ClaimsPipeline } from "@/components/ClaimsPipeline";
 import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 import { PartOrder } from "@/components/PartOrder";
 import { PartReceive } from "@/components/PartReceive";
+import { TicketList } from "@/components/TicketList";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -69,6 +70,8 @@ function SubModule() {
         ? <PartOrder mod={mod} sub={sub} />
         : sub.custom === "part-receive"
         ? <PartReceive mod={mod} sub={sub} />
+        : sub.custom === "ticket-list"
+        ? <TicketList mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
       <Footer />
     </>

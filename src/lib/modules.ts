@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive"; // hook for special pages
+  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -466,6 +466,7 @@ const ticketsMod: ModuleDef = {
           created: tickets[i].created,
         } : {};
       },
+      custom: "ticket-list" as const,
     },
     {
       slug: "ticket-details",
