@@ -140,6 +140,115 @@
 			background: #64b5f6;
 			color: #1f2937;
 		}
+
+		/* ── Order Table ── */
+		.order-table-container {
+			margin-top: 2rem;
+			background: rgba(255, 255, 255, 0.04);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 8px;
+			overflow-x: auto;
+		}
+
+		.order-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.9rem;
+			color: #e5e7eb;
+		}
+
+		.order-table thead {
+			background: rgba(30, 60, 114, 0.8);
+			border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+		}
+
+		.order-table th {
+			padding: 0.75rem 1rem;
+			text-align: left;
+			font-weight: 600;
+			color: #93c5fd;
+			letter-spacing: 0.02em;
+		}
+
+		.order-table th.subheader {
+			background: rgba(30, 60, 114, 0.5);
+			padding: 0.5rem 1rem;
+			font-size: 0.8rem;
+			font-weight: 500;
+			color: #bfdbfe;
+			border-top: 1px solid rgba(96, 165, 250, 0.2);
+		}
+
+		.order-table tbody tr {
+			border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+			transition: background 0.15s ease;
+		}
+
+		.order-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.order-table td {
+			padding: 0.75rem 1rem;
+			text-align: left;
+		}
+
+		.order-table td.status-cell {
+			font-weight: 500;
+			color: #60a5fa;
+		}
+
+		.order-table td.action-cell {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+		}
+
+		.btn-action {
+			padding: 0.4rem 0.8rem;
+			border-radius: 4px;
+			border: none;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.btn-reserve {
+			background: rgba(59, 130, 246, 0.2);
+			color: #60a5fa;
+			border: 1px solid rgba(59, 130, 246, 0.4);
+		}
+
+		.btn-reserve:hover {
+			background: rgba(59, 130, 246, 0.35);
+		}
+
+		.btn-manual-po {
+			background: rgba(34, 197, 94, 0.2);
+			color: #4ade80;
+			border: 1px solid rgba(34, 197, 94, 0.4);
+		}
+
+		.btn-manual-po:hover {
+			background: rgba(34, 197, 94, 0.35);
+		}
+
+		.btn-manual-po.disabled,
+		.btn-manual-po:disabled {
+			opacity: 0.5;
+			cursor: not-allowed;
+			background: rgba(107, 114, 128, 0.2);
+			color: #9ca3af;
+			border-color: rgba(107, 114, 128, 0.3);
+		}
+
+		.empty-state {
+			text-align: center;
+			padding: 2rem;
+			color: #64748b;
+			font-size: 0.95rem;
+		}
 	</style>
 </head>
 <body>
@@ -192,7 +301,14 @@
 
 				<div class="form-group">
 					<label>Part Dist.</label>
-					<input type="text" id="partDist" placeholder="Enter part distributor">
+					<select id="partDist" onchange="updateOrderDisplay()">
+						<option value="">Select Distributor</option>
+						<option value="LG">LG</option>
+						<option value="Encompass">Encompass</option>
+						<option value="SS">SS</option>
+						<option value="Marcone-162468">Marcone-162468</option>
+						<option value="Encompass-Birmingham/Montgomery">Encompass-Birmingham/Montgomery</option>
+					</select>
 				</div>
 
 				<div class="form-group">
@@ -226,14 +342,10 @@
 
 				<div class="form-group">
 					<label>Repair Status</label>
-					<select id="repairStatus">
-						<option value="">Select Repair Status</option>
-						<option value="In Progress">In Progress</option>
-						<option value="On Hold">On Hold</option>
-						<option value="Ready for Pickup">Ready for Pickup</option>
-						<option value="Completed">Completed</option>
-						<option value="Pending">Pending</option>
+					<select id="repairStatus" disabled>
+						<option value="Need PO" selected>Need PO</option>
 					</select>
+					<small style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem;">Locked to "Need PO"</small>
 				</div>
 			</div>
 
@@ -295,6 +407,35 @@
 			<div id="orderSummary" style="margin-top: 2rem; padding: 1rem; background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.2); border-radius: 8px; display: none;">
 				<h4 style="color: #64b5f6; margin-top: 0;">Order Summary</h4>
 				<div id="summaryContent" style="font-size: 0.9rem; color: #cbd5e1;"></div>
+			</div>
+
+			<!-- Order Table -->
+			<div class="order-table-container">
+				<table class="order-table">
+					<thead>
+						<tr>
+							<th>Ticket #</th>
+							<th>Status</th>
+							<th>Part Dist.</th>
+							<th>Part No</th>
+							<th>Description</th>
+							<th colspan="2" style="text-align: center;">ETA on inventory</th>
+							<th colspan="2" style="text-align: center;">Action</th>
+						</tr>
+						<tr>
+							<th colspan="5"></th>
+							<th class="subheader">Request</th>
+							<th class="subheader">Avail.</th>
+							<th class="subheader">Reserve</th>
+							<th class="subheader">Manual P/O</th>
+						</tr>
+					</thead>
+					<tbody id="orderTableBody">
+						<tr>
+							<td colspan="9" class="empty-state">No orders found. Select criteria and click "Create Order" to generate a list.</td>
+						</tr>
+					</tbody>
+				</table>
 			</div>
 		</div>
 	</div>
@@ -374,8 +515,113 @@
 			};
 
 			localStorage.setItem('lastOrder', JSON.stringify(orderData));
-			alert('Part Order created successfully!\n\nLocation: ' + location + '\nWarranty Type: ' + warrantyType);
-			resetForm();
+			
+			// Generate sample order data for the table
+			populateOrderTable(location, partDist, warrantyType);
+		}
+
+		// Generate sample orders and populate the table
+		function populateOrderTable(location, partDist, warrantyType) {
+			const orderTableBody = document.getElementById('orderTableBody');
+			
+			// Sample data structure
+			const sampleOrders = [
+				{
+					ticketNo: 'TK-001549',
+					status: 'Need PO',
+					partDist: partDist || 'LG',
+					partNo: 'ACQ86576404',
+					description: 'Compressor Motor',
+					requestQty: 1,
+					availQty: 0,
+					eta: '2026-06-05'
+				},
+				{
+					ticketNo: 'TK-001548',
+					status: 'Need PO',
+					partDist: partDist || 'Encompass',
+					partNo: 'WPW10217825',
+					description: 'Wire Harness',
+					requestQty: 2,
+					availQty: 1,
+					eta: ''
+				},
+				{
+					ticketNo: 'TK-001547',
+					status: 'Need PO',
+					partDist: partDist || 'SS',
+					partNo: 'RPS345-78',
+					description: 'Pump Assembly',
+					requestQty: 1,
+					availQty: 0,
+					eta: '2026-06-10'
+				},
+				{
+					ticketNo: 'TK-001546',
+					status: 'Need PO',
+					partDist: partDist || 'Marcone-162468',
+					partNo: 'EVT456-12',
+					description: 'Evaporator Coil',
+					requestQty: 1,
+					availQty: 0,
+					eta: ''
+				}
+			];
+
+			// Filter or limit orders based on selected partDist
+			let filteredOrders = sampleOrders;
+			if (partDist) {
+				filteredOrders = sampleOrders.filter(o => o.partDist === partDist);
+			}
+
+			if (filteredOrders.length === 0) {
+				orderTableBody.innerHTML = `
+					<tr>
+						<td colspan="9" class="empty-state">No orders found for the selected criteria.</td>
+					</tr>
+				`;
+				return;
+			}
+
+			// Populate table rows
+			orderTableBody.innerHTML = filteredOrders.map(order => {
+				const hasETA = order.eta && order.eta.trim() !== '';
+				return `
+					<tr>
+						<td>${order.ticketNo}</td>
+						<td class="status-cell">${order.status}</td>
+						<td>${order.partDist}</td>
+						<td>${order.partNo}</td>
+						<td>${order.description}</td>
+						<td style="text-align: center;">${order.requestQty}</td>
+						<td style="text-align: center;">${order.availQty}</td>
+						<td class="action-cell">
+							<button class="btn-action btn-reserve" onclick="reservePart('${order.ticketNo}')">Reserve</button>
+						</td>
+						<td class="action-cell">
+							<button class="btn-action btn-manual-po ${!hasETA ? 'disabled' : ''}" 
+								onclick="manualPO('${order.ticketNo}')" 
+								${!hasETA ? 'disabled title="Visible only when ETA is set"' : 'title="Create manual purchase order"'}>
+								Manual P/O
+							</button>
+						</td>
+					</tr>
+				`;
+			}).join('');
+
+			alert(`Part Order created successfully!\n\nLocation: ${location}\nWarranty Type: ${warrantyType}\n\nFound ${filteredOrders.length} order(s) below.`);
+		}
+
+		// Reserve part action
+		function reservePart(ticketNo) {
+			alert(`Reservation initiated for Ticket: ${ticketNo}`);
+			// Logic to handle part reservation
+		}
+
+		// Manual P/O action
+		function manualPO(ticketNo) {
+			alert(`Manual P/O initiated for Ticket: ${ticketNo}`);
+			// Logic to handle manual purchase order
 		}
 
 		// Reset form
