@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return-status" | "claims-pipeline" | "work-map"; // hook for special pages
+  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -240,6 +240,7 @@ const partsMod: ModuleDef = {
         needed: dateStr(7 + (i%14)),
         status: pick(["Draft","Sent","Confirmed","Shipped"], i),
       }),
+      custom: "part-order" as const,
     },
     {
       slug: "part-pickup",

@@ -10,6 +10,7 @@ import { GenericModulePage } from "@/components/GenericModulePage";
 import { PartReturnStatusPage } from "@/components/PartReturnStatus";
 import { ClaimsPipeline } from "@/components/ClaimsPipeline";
 import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
+import { PartOrder } from "@/components/PartOrder";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -63,6 +64,8 @@ function SubModule() {
         ? <ClaimsPipeline mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
+        : sub.custom === "part-order"
+        ? <PartOrder mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
       <Footer />
     </>
