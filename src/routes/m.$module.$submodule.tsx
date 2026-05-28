@@ -9,7 +9,7 @@ import { getModule, getSubModule } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
 import { PartReturnStatusPage } from "@/components/PartReturnStatus";
 import { ClaimsPipeline } from "@/components/ClaimsPipeline";
-import { TicketsMap } from "@/components/TicketsMap";
+import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -62,7 +62,7 @@ function SubModule() {
         : sub.custom === "claims-pipeline"
         ? <ClaimsPipeline mod={mod} sub={sub} />
         : sub.custom === "work-map"
-        ? <TicketsMap mod={mod} sub={sub} />
+        ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
       <Footer />
     </>

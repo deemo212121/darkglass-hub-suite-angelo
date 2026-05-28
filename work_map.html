@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Work Map - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<!-- Load config first (contains hidden API keys) -->
+	<script src="../../config.js"></script>
+	<style>
+		/* ── Map Panel ── */
+		.map-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+		}
+
+		/* ── Top bar ── */
+		.map-topbar {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 1rem;
+			padding: 0.65rem 1rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+			flex-wrap: wrap;
+			position: relative;
+		}
+
+		.date-nav {
+			display: flex;
+			align-items: center;
+			gap: 0.55rem;
+		}
+
+		.date-nav-btn {
+			width: 32px;
+			height: 32px;
+			border-radius: 50%;
+			border: 1px solid rgba(96, 165, 250, 0.5);
+			background: transparent;
+			color: #60a5fa;
+			font-size: 1.05rem;
+			font-weight: 700;
+			cursor: pointer;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			transition: background 0.15s;
+		}
+
+		.date-nav-btn:hover {
+			background: rgba(96, 165, 250, 0.15);
+		}
+
+		#mapDate {
+			background: rgba(15, 23, 42, 0.85);
+			border: 1.5px solid rgba(96, 165, 250, 0.55);
+			border-radius: 6px;
+			color: #e2e8f0;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			text-align: center;
+			padding: 0.32rem 0.65rem;
+			min-width: 130px;
+			letter-spacing: 0.03em;
+			outline: none;
+			box-shadow: 0 0 0 0 rgba(96, 165, 250, 0);
+			transition: border-color 0.2s, box-shadow 0.2s;
+		}
+
+		#mapDate:focus, #mapDate:hover {
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+		}
+
+		#mapDate::-webkit-calendar-picker-indicator {
+			filter: invert(1);
+			opacity: 0.75;
+			cursor: pointer;
+			margin-left: 4px;
+		}
+
+		.color-legend {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+			font-size: 0.85rem;
+			position: absolute;
+			right: 1rem;
+		}
+
+		.color-legend label {
+			display: flex;
+			align-items: center;
+			gap: 0.3rem;
+			cursor: pointer;
+			color: #cbd5e1;
+		}
+
+		/* ── Map body ── */
+		.map-body {
+			display: flex;
+			flex: 1;
+			position: relative;
+			min-height: 620px;
+		}
+
+		/* ── Ticket sidebar ── */
+		.ticket-sidebar {
+			width: 230px;
+			min-width: 200px;
+			background: rgba(15, 23, 42, 0.96);
+			border-right: 1px solid rgba(255, 255, 255, 0.1);
+			display: flex;
+			flex-direction: column;
+			z-index: 10;
+		}
+
+		.sidebar-tabs {
+			display: flex;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.sidebar-tab {
+			flex: 1;
+			padding: 0.6rem;
+			text-align: center;
+			font-size: 0.85rem;
+			font-weight: 600;
+			cursor: pointer;
+			border: none;
+			background: transparent;
+			color: #64748b;
+			transition: color 0.15s;
+		}
+
+		.sidebar-tab.active {
+			color: #fff;
+			border-bottom: 2px solid #60a5fa;
+		}
+
+		.ticket-list {
+			overflow-y: auto;
+			flex: 1;
+		}
+
+		.ticket-card {
+			display: flex;
+			flex-direction: column;
+			padding: 0.55rem 0.75rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+			cursor: pointer;
+			border-left: 4px solid transparent;
+			transition: background 0.15s;
+		}
+
+		.ticket-card:hover {
+			background: rgba(255, 255, 255, 0.05);
+		}
+
+		.ticket-card.selected {
+			background: rgba(96, 165, 250, 0.12);
+		}
+
+		.ticket-card-top {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.4rem;
+		}
+
+		.ticket-card-no {
+			font-size: 0.8rem;
+			font-weight: 700;
+			color: #e2e8f0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.tech-badge {
+			font-size: 0.7rem;
+			font-weight: 700;
+			padding: 0.15rem 0.45rem;
+			border-radius: 4px;
+			white-space: nowrap;
+		}
+
+		.ticket-card-addr {
+			font-size: 0.74rem;
+			color: #94a3b8;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			margin-top: 0.2rem;
+		}
+
+		.status-view {
+			padding: 0.75rem;
+			display: none;
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.status-view.visible {
+			display: flex;
+		}
+
+		.status-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			font-size: 0.82rem;
+		}
+
+		.status-dot {
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			display: inline-block;
+			margin-right: 0.5rem;
+		}
+
+		/* ── Map area ── */
+		.map-area {
+			flex: 1;
+			position: relative;
+			min-height: 500px;
+			background: #d1e8d1;
+			background-image:
+				linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+				linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
+			background-size: 48px 48px;
+			overflow: hidden;
+		}
+
+		.map-area.satellite-mode {
+			background: #1c2d1c;
+			background-image:
+				linear-gradient(rgba(0,255,0,0.04) 1px, transparent 1px),
+				linear-gradient(90deg, rgba(0,255,0,0.04) 1px, transparent 1px);
+		}
+
+		/* Location + pin navigator in topbar */
+		.topbar-location-group {
+			position: absolute;
+			left: 1rem;
+			top: 50%;
+			transform: translateY(-50%);
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+			z-index: 5;
+		}
+
+		.topbar-location-group select {
+			background: rgba(15, 23, 42, 0.9);
+			border: 1px solid rgba(96, 165, 250, 0.45);
+			color: #e2e8f0;
+			font-size: 0.78rem;
+			font-weight: 600;
+			padding: 0.3rem 0.55rem;
+			border-radius: 4px;
+			cursor: pointer;
+			max-width: 180px;
+			outline: none;
+		}
+
+		.topbar-location-group select:focus {
+			border-color: #60a5fa;
+		}
+
+		/* Map/Satellite toggle */
+		.map-type-toggle {
+			position: absolute;
+			top: 1rem;
+			left: 1rem;
+			border: 2px solid #9ca3af;
+			border-radius: 4px;
+			overflow: hidden;
+			z-index: 5;
+			display: flex;
+		}
+
+		.map-type-btn {
+			padding: 0.42rem 0.85rem;
+			font-size: 0.82rem;
+			font-weight: 600;
+			cursor: pointer;
+			border: none;
+			background: #f3f4f6;
+			color: #1f2937;
+		}
+
+		.map-type-btn.active {
+			background: #fff;
+			box-shadow: inset 0 -2px 0 #3b82f6;
+		}
+
+		/* Map placeholder center content */
+		.map-placeholder-inner {
+			position: absolute;
+			inset: 0;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 0.75rem;
+			pointer-events: none;
+		}
+
+		.map-placeholder-icon {
+			opacity: 0.35;
+		}
+
+		/* Pin markers */
+		.map-pins {
+			position: absolute;
+			inset: 0;
+			pointer-events: none;
+		}
+
+		.map-pin {
+			position: absolute;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			cursor: pointer;
+			pointer-events: all;
+			transform: translate(-50%, -100%);
+			transition: transform 0.15s;
+		}
+
+		.map-pin:hover {
+			transform: translate(-50%, -105%) scale(1.15);
+			z-index: 10;
+		}
+
+		.pin-bubble {
+			padding: 0.35rem 0.75rem;
+			border-radius: 4px;
+			font-size: 0.75rem;
+			font-weight: 700;
+			color: #fff;
+			white-space: nowrap;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+			display: flex;
+			align-items: center;
+			gap: 0.3rem;
+			flex-direction: column;
+		}
+
+		.pin-initials {
+			min-width: 1rem;
+			line-height: 1;
+		}
+
+		.pin-time {
+			font-size: 0.65rem;
+			opacity: 0.9;
+			line-height: 1;
+		}
+
+		.pin-tail {
+			width: 0;
+			height: 0;
+			border-left: 5px solid transparent;
+			border-right: 5px solid transparent;
+			margin-top: -1px;
+		}
+
+		/* Selected Day's Tickets panel */
+		.selected-day-panel {
+			position: absolute;
+			top: 1rem;
+			right: 1rem;
+			width: 285px;
+			background: rgba(10, 15, 30, 0.97);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 6px;
+			z-index: 20;
+			overflow: hidden;
+		}
+
+		.selected-day-header {
+			background: #0f172a;
+			padding: 0.55rem 0.9rem;
+			font-size: 0.88rem;
+			font-weight: 700;
+			color: #fff;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.selected-day-filters {
+			display: flex;
+			gap: 0.6rem;
+			padding: 0.55rem 0.85rem;
+			flex-wrap: wrap;
+		}
+
+		.filter-chip {
+			display: flex;
+			align-items: center;
+			gap: 0.3rem;
+			font-size: 0.78rem;
+			color: #e2e8f0;
+			cursor: pointer;
+		}
+
+		/* ── Detail Modal ── */
+		.detail-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.55);
+			z-index: 200;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.detail-overlay.open {
+			display: flex;
+		}
+
+		.detail-modal {
+			background: #1e293b;
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			width: 700px;
+			max-width: 95vw;
+			max-height: 92vh;
+			overflow-y: auto;
+			color: #f1f5f9;
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+		}
+
+		.detail-modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 0.85rem 1.1rem;
+			background: #0f172a;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.detail-title-row {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+		}
+
+		.detail-ticket-no {
+			font-size: 1.1rem;
+			font-weight: 700;
+			color: #fff;
+		}
+
+		.detail-ticket-link {
+			text-decoration: underline;
+			text-underline-offset: 2px;
+		}
+
+		.detail-ticket-link:hover {
+			color: #93c5fd;
+		}
+
+		.google-btn {
+			padding: 0.28rem 0.7rem;
+			background: #4285f4;
+			color: #fff;
+			border: none;
+			border-radius: 4px;
+			font-size: 0.76rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.google-btn:hover {
+			background: #3b78de;
+		}
+
+		.modal-close-btn {
+			background: transparent;
+			border: none;
+			color: #64748b;
+			font-size: 1.4rem;
+			cursor: pointer;
+			line-height: 1;
+			padding: 0.1rem 0.3rem;
+		}
+
+		.modal-close-btn:hover {
+			color: #fff;
+		}
+
+		.detail-body {
+			padding: 1rem 1.1rem;
+		}
+
+		.detail-row {
+			display: flex;
+			gap: 1.5rem;
+			margin-bottom: 0.65rem;
+			flex-wrap: wrap;
+			align-items: flex-start;
+		}
+
+		.detail-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.22rem;
+			min-width: 130px;
+		}
+
+		.detail-field.grow {
+			flex: 1;
+		}
+
+		.detail-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #64748b;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.detail-value {
+			font-size: 0.9rem;
+			color: #f1f5f9;
+		}
+
+		.detail-divider {
+			border: none;
+			border-top: 1px solid rgba(255, 255, 255, 0.08);
+			margin: 0.8rem 0;
+		}
+
+		.schedule-box {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.55rem;
+			background: rgba(30, 64, 175, 0.2);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			border-radius: 6px;
+			padding: 0.45rem 0.85rem;
+			font-size: 0.88rem;
+			flex-wrap: wrap;
+		}
+
+		.schedule-sep {
+			color: #334155;
+		}
+
+		.contact-actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.45rem;
+			margin-top: 0.45rem;
+		}
+
+		.contact-btn {
+			padding: 0.28rem 0.7rem;
+			border-radius: 4px;
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			background: rgba(30, 41, 59, 0.9);
+			color: #e2e8f0;
+			font-size: 0.76rem;
+			cursor: pointer;
+			transition: background 0.15s;
+		}
+
+		.contact-btn:hover {
+			background: rgba(30, 64, 175, 0.3);
+			border-color: rgba(96, 165, 250, 0.4);
+		}
+
+		.status-pill-detail {
+			display: inline-block;
+			padding: 0.25rem 0.7rem;
+			border-radius: 99px;
+			font-size: 0.8rem;
+			font-weight: 600;
+		}
+
+		.internal-note-box {
+			font-size: 0.82rem;
+			color: #cbd5e1;
+			background: rgba(15, 23, 42, 0.6);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 6px;
+			padding: 0.65rem 0.9rem;
+			line-height: 1.65;
+			white-space: pre-wrap;
+			width: 100%;
+			box-sizing: border-box;
+		}
+
+		@media (max-width: 768px) {
+			.ticket-sidebar {
+				width: 175px;
+				min-width: 150px;
+			}
+
+			.color-legend {
+				position: static;
+				right: auto;
+			}
+
+			.selected-day-panel {
+				width: 220px;
+			}
+
+			.map-body {
+				min-height: 480px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<!-- Dashboard Header -->
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+				<button class="back-btn" onclick="goToTicketHub()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">Work Map</h2>
+		</div>
+
+		<div class="map-panel">
+
+			<!-- Top bar: date navigation + legend -->
+			<div class="map-topbar">
+
+				<!-- Location jump (left side) -->
+				<div class="topbar-location-group">
+					<label for="locationSelect" style="color:#94a3b8;font-size:0.8rem;font-weight:600;white-space:nowrap;">Location</label>
+					<select id="locationSelect" aria-label="Location" title="Location"><option value="">Loading...</option></select>
+				</div>
+
+				<div class="date-nav">
+					<button class="date-nav-btn" id="prevDayBtn" type="button" aria-label="Previous day">&#x276E;</button>
+					<input type="date" id="mapDate" aria-label="Date" title="Date">
+					<button class="date-nav-btn" id="nextDayBtn" type="button" aria-label="Next day">&#x276F;</button>
+				</div>
+				<div class="color-legend">
+					<span style="color: #94a3b8; font-size: 0.82rem;">The color of tickets</span>
+					<label><input type="radio" name="colorBy" value="status" checked> by Status</label>
+					<label><input type="radio" name="colorBy" value="tech"> by Tech</label>
+				</div>
+			</div>
+
+			<!-- Map body -->
+			<div class="map-body">
+
+				<!-- Left ticket sidebar -->
+				<div class="ticket-sidebar">
+					<div class="sidebar-tabs">
+						<button class="sidebar-tab" id="tabStatus" type="button">Status</button>
+						<button class="sidebar-tab active" id="tabTickets" type="button">Tickets</button>
+					</div>
+					<!-- Status summary view -->
+					<div class="status-view" id="statusView">
+						<div class="status-row">
+							<span><span class="status-dot" style="background:#3b82f6;"></span>Ready for Service</span>
+							<span id="countReady">0</span>
+						</div>
+						<div class="status-row">
+							<span><span class="status-dot" style="background:#f59e0b;"></span>OP - Reschedule</span>
+							<span id="countOp">0</span>
+						</div>
+						<div class="status-row">
+							<span><span class="status-dot" style="background:#ef4444;"></span>CL - Need Parts</span>
+							<span id="countClNeed">0</span>
+						</div>
+						<div class="status-row">
+							<span><span class="status-dot" style="background:#22c55e;"></span>Completed</span>
+							<span id="countComp">0</span>
+						</div>
+					</div>
+					<!-- Ticket list view -->
+					<div class="ticket-list" id="ticketList"></div>
+				</div>
+
+				<!-- Map area (placeholder until Google Maps API is ready) -->
+				<div class="map-area" id="mapArea">
+
+					<!-- Map / Satellite toggle -->
+					<div class="map-type-toggle">
+						<button class="map-type-btn active" id="mapModeBtn" type="button">Map</button>
+						<button class="map-type-btn" id="satModeBtn" type="button">Satellite</button>
+					</div>
+
+					<!-- Google Map renders here -->
+					<div id="googleMap" style="width:100%;height:100%;min-height:500px;"></div>
+
+					<!-- Fallback HTML pin markers (hidden once Google Maps loads) -->
+					<div class="map-pins" id="mapPins" style="display:none;"></div>
+
+					<!-- Selected Day's Tickets overlay panel -->
+					<div class="selected-day-panel">
+						<div class="selected-day-header">Selected Day's Tickets</div>
+						<div class="selected-day-filters">
+							<label class="filter-chip">
+								<input type="checkbox" id="filterTech" checked> Technician
+							</label>
+							<label class="filter-chip">
+								<input type="checkbox" id="filterReady" checked> Ready
+							</label>
+							<label class="filter-chip">
+								<input type="checkbox" id="filterCLNeed" checked> CL-Need
+							</label>
+							<label class="filter-chip">
+								<input type="checkbox" id="filterComp" checked> Comp.
+							</label>
+						</div>
+					</div>
+
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Ticket Detail Modal -->
+	<div class="detail-overlay" id="detailOverlay">
+		<div class="detail-modal" id="detailModal">
+			<div class="detail-modal-header">
+				<div class="detail-title-row">
+					<a class="detail-ticket-no detail-ticket-link" id="dtTicketNo" href="ticket_details.html" title="Open ticket details" target="_blank" rel="noopener noreferrer"></a>
+					<button class="google-btn" id="googleBtn" type="button">Google</button>
+				</div>
+				<button class="modal-close-btn" id="closeModalBtn" type="button" aria-label="Close">&#x2715;</button>
+			</div>
+			<div class="detail-body" id="detailBody"></div>
+		</div>
+	</div>
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+		/* ── Auth ── */
+		const userEmail = localStorage.getItem('userEmail');
+		const userCompanyId = localStorage.getItem('userCompanyId');
+
+		if (!userEmail || !userCompanyId) window.location.href = '../../landing.html';
+		document.getElementById('userDisplayName').textContent = userEmail || '';
+		document.getElementById('companyDisplayId').textContent = userCompanyId || '';
+		window._workMapInitialLocationLoading = false;
+		
+		// Load location dropdown after auth is verified
+		// loadLocationDropdown is defined in locations-loader.js (external script)
+		if (typeof loadLocationDropdown !== 'undefined') {
+			window._workMapInitialLocationLoading = true;
+			loadLocationDropdown('locationSelect', supabaseClient, userCompanyId)
+				.finally(() => {
+					window._workMapInitialLocationLoading = false;
+					loadMapFromDatabase();
+				});
+		} else {
+			// Fallback: load hardcoded locations
+			const locations = ['Asheville','Atlanta','Birmingham','Cape Girardeau','Chattanooga','Columbus','Dallas','Destin','Huntsville','Jackson,MS','Jackson, TN','Jacksonville','Jonesboro','Knoxville','Lake Charles','Little Rock','Louisville','Memphis','Mobile','Montgomery','Nashville','New Orleans','Norfolk','Philippines','Raleigh','Richmond','San Antonio','Savannah','St. Louis','Tallanassee','Wilmington'].sort();
+			const sel = document.getElementById('locationSelect');
+			if (sel) {
+				// Add empty option first, then locations
+				sel.innerHTML = '<option value="">All Locations</option>' + locations.map(l => `<option value="${l}">${l}</option>`).join('');
+				// No location preselected by default
+			}
+			window._workMapInitialLocationLoading = false;
+			loadMapFromDatabase();
+		}
+		function goToTicketHub() {
+			window.location.href = 'index.html';
+		}
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		/* ── Ticket Data ── */
+		let allTickets = [];
+		let dateFilterFrom = null;
+		let dateFilterTo = null;
+
+		function deriveStatusGroup(status) {
+			const s = (status || '').toLowerCase();
+			if (s.includes('complet') || s.includes('closed') || s === 'comp') return 'comp';
+			if (s.startsWith('cl-')) return 'cl-need';
+			if (s.includes('ready')) return 'ready';
+			return 'op';
+		}
+
+		function toDateStr(d) {
+			// Convert Date object to YYYY-MM-DD local date string to avoid timezone issues
+			if (!d) return null;
+			const y = d.getFullYear();
+			const m = String(d.getMonth() + 1).padStart(2, '0');
+			const day = String(d.getDate()).padStart(2, '0');
+			return `${y}-${m}-${day}`;
+		}
+
+		function isTicketInDateRange(ticket) {
+			if (!dateFilterFrom && !dateFilterTo) return true;
+			// Compare as local date strings (YYYY-MM-DD) to avoid UTC timezone shift
+			const schedStr = ticket.scheduleDateStr;
+			const postStr  = ticket.postingDateStr;
+			const checkStr = schedStr || postStr;
+			if (!checkStr) return true;
+			if (dateFilterFrom && checkStr < dateFilterFrom) return false;
+			if (dateFilterTo   && checkStr > dateFilterTo)   return false;
+			return true;
+		}
+
+		function parseFlexibleDate(value) {
+			if (!value) return null;
+			const direct = new Date(value);
+			if (!Number.isNaN(direct.getTime())) return direct;
+			const m = String(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+			if (m) {
+				const mm = Number(m[1]);
+				const dd = Number(m[2]);
+				const yyyy = Number(m[3]);
+				const parsed = new Date(yyyy, mm - 1, dd);
+				if (!Number.isNaN(parsed.getTime())) return parsed;
+			}
+			return null;
+		}
+
+		function normalizeLocationName(location) {
+			return String(location || '').trim().replace(/\s*,\s*/g, ', ');
+		}
+
+		async function loadMapFromDatabase() {
+			let activeCompanyDbId = null;
+			if (userCompanyId) {
+				const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+				activeCompanyDbId = co ? co.id : null;
+			}
+
+			let techLocationMap = {};
+			if (activeCompanyDbId) {
+				const { data: userRows, error: userError } = await supabaseClient
+					.from('users')
+					.select('first_name,last_name,location,role,status')
+					.eq('company_id', activeCompanyDbId)
+					.eq('role', 'technician')
+					.eq('status', 'active');
+				if (userError) {
+					console.warn('Map technician roster fetch failed:', userError.message);
+				} else {
+					(userRows || []).forEach((user) => {
+						const techName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+						const locationName = normalizeLocationName(user.location || '');
+						if (techName && locationName && !techLocationMap[techName]) {
+							techLocationMap[techName] = locationName;
+						}
+					});
+				}
+			}
+
+			// Get selected location from dropdown
+			const locationSelect = document.getElementById('locationSelect');
+			const selectedLocation = locationSelect ? locationSelect.value : '';
+
+			// ── Step 1: Fetch tickets ──
+			let query = supabaseClient.from('tickets')
+				.select('ticket_no, technician_name, customer_name, customer_address, customer_city, customer_zip, customer_state, customer_cell_phone_1, repair_status, schedule_date, call_taken_date, warranty_type, assigned_area, model, problem_description')
+				.not('repair_status', 'ilike', '%cancel%')
+				.order('created_at', { ascending: false })
+				.limit(1000);
+			
+			// Add company filter if we have company ID (include company-scoped rows plus global rows created by sync jobs)
+			if (activeCompanyDbId) {
+				query = query.or(`company_id.eq.${activeCompanyDbId},company_id.is.null`);
+			}
+
+			const locationText = (locationSelect && locationSelect.options && locationSelect.selectedIndex >= 0)
+				? (locationSelect.options[locationSelect.selectedIndex].text || '')
+				: '';
+			window._workMapSelectedLocationName = (selectedLocation && locationText && locationText !== 'Loading...' && locationText !== 'All Locations')
+				? locationText
+				: '';
+			const loadKey = [userCompanyId || '', locationText || '', dateFilterFrom || '', dateFilterTo || ''].join('|');
+			if (window._workMapLastLoadKey === loadKey) return;
+			window._workMapLastLoadKey = loadKey;
+
+			const { data, error } = await query;
+			if (error) console.error('Map fetch error:', error.message, error.details, error.hint);
+			let tickets = data || [];
+
+			// ── Step 2: Batch-fetch ticket_details for richer address / detail data ──
+			const ticketNos = tickets.map(t => t.ticket_no).filter(Boolean);
+			let detailMap = {}; // ticket_no → detail_json
+			if (ticketNos.length > 0) {
+				try {
+					// Supabase IN filter – batch in chunks of 200 to stay safe
+					const chunks = [];
+					for (let i = 0; i < ticketNos.length; i += 200) chunks.push(ticketNos.slice(i, i + 200));
+					for (const chunk of chunks) {
+						// ticket_nos already scoped to company via the main tickets query — no extra company filter needed
+						const dq = supabaseClient.from('ticket_details')
+							.select('ticket_no, detail_json')
+							.in('ticket_no', chunk);
+						const { data: dRows, error: dErr } = await dq;
+						if (dErr) {
+							console.warn('Error fetching ticket details:', dErr.message);
+							// Continue without ticket details
+							continue;
+						}
+						if (dRows) {
+							dRows.forEach(r => { if (r.ticket_no) detailMap[r.ticket_no] = r.detail_json; });
+						}
+					}
+				} catch (err) {
+					console.warn('Failed to fetch ticket details, continuing without them:', err.message);
+				}
+			}
+
+			// ── Step 3: Build ticket objects, merging detail data ──
+			const now = new Date();
+			const techMap = {};
+			let techIdx = 0;
+			console.log(`Processing ${tickets.length} tickets, detailMap has ${Object.keys(detailMap).length} entries`);
+			allTickets = tickets.map((t, i) => {
+				const tname = t.technician_name || 'Unassigned';
+				const techLocation = techLocationMap[tname] || '';
+				if (!(tname in techMap)) techMap[tname] = techIdx++;
+				const words = tname.trim().split(/\s+/);
+				const techCode = words.length >= 2
+					? words[0][0].toUpperCase() + words[words.length - 1][0].toUpperCase()
+					: tname.slice(0, 2).toUpperCase();
+				// Pull from detail_json if available, otherwise try problem_description
+				let dj = detailMap[t.ticket_no] || null;
+				// If no detail_json, try parsing problem_description
+				if (!dj && t.problem_description) {
+					try {
+						const parsed = JSON.parse(t.problem_description);
+						// Check if it has the expected structure
+						if (parsed.er || parsed.general_information) {
+							dj = parsed;
+						}
+					} catch (e) {
+						// Not valid JSON, might be a string
+						console.log(`Ticket ${t.ticket_no}: problem_description is not JSON:`, t.problem_description?.substring(0, 100));
+						// Try to extract basic info from string
+						if (typeof t.problem_description === 'string') {
+							// Check if it contains basic ticket info
+							dj = { raw_text: t.problem_description };
+						}
+					}
+				}
+				const gm = dj?.general_information?.mapped || dj?.er || {};
+				const sm = dj?.service_tracking?.mapped || {};
+				
+				// Helper to get field from either structure
+				const getField = (field, erField = null) => {
+					if (gm[field] !== undefined && gm[field] !== null && gm[field] !== '') return gm[field];
+					if (erField && gm[erField] !== undefined && gm[erField] !== null && gm[erField] !== '') return gm[erField];
+					return null;
+				};
+				
+				// Get fields using helper to handle both structures
+				const customerCity = getField('customer_city') || t.customer_city;
+				const customerState = getField('customer_state') || t.customer_state;
+				const customerZip = getField('customer_zip') || t.customer_zip;
+				const customerAddress1 = getField('customer_address_1');
+				const customerAddress2 = getField('customer_address_2');
+				const customerFullName = getField('customer_full_name');
+				const phone = getField('phone', 'customer_cell_phone') || t.customer_cell_phone_1 || '—';
+				const repairType = getField('repair_type') || '—';
+				const brand = getField('brand', 'source_brand') || t.brand || '—';
+				const scheduleDateFromGM = getField('schedule_date', 'schedule_datetime');
+				
+				const postDate = parseFlexibleDate(t.call_taken_date);
+				const schedDate = parseFlexibleDate(t.schedule_date || scheduleDateFromGM);
+				const fmt = (d) => d ? d.toLocaleDateString() : '—';
+				const agingDays = postDate ? Math.floor((now - postDate) / 86400000) : 0;
+
+				// Build full geocodable address from detail fields (richer than tickets.customer_address)
+				// Fall back to tickets columns (customer_city, customer_zip, customer_state) for manually-created tickets
+				// Build address exactly like ticket_details.html Address* field:
+				// space-joined from tickets table columns first, fallback to detail_json fields
+				const cleanAddr = (...parts) => parts.filter(Boolean).join(' ').trim();
+				
+				const geocodeAddress =
+					cleanAddr(t.customer_address, customerCity, customerState, customerZip)
+					|| cleanAddr(customerAddress1, customerAddress2, customerCity, customerState, customerZip)
+					|| '—';
+				const derivedArea = normalizeLocationName(t.assigned_area || techLocation);
+
+				// Sidebar display: street portion only
+				const displayAddress = t.customer_address
+					? cleanAddr(t.customer_address, customerCity)
+					: cleanAddr(customerAddress1, customerAddress2, customerCity)
+					|| geocodeAddress || '—';
+
+				return {
+					id: i,
+					ticketNo: t.ticket_no || '—',
+					techCode,
+					techName: tname,
+					customer: customerFullName || t.customer_name || '—',
+					address: displayAddress,
+					geocodeAddress: geocodeAddress,
+					phone,
+					statusGroup: deriveStatusGroup(t.repair_status),
+					repairStatus: t.repair_status || '—',
+					repairType: repairType,
+					postingDate: fmt(postDate),
+					agingDays,
+					cxPrefDate: '—',
+					redo: false,
+					scheduleDate: fmt(schedDate),
+					scheduleConf: '',
+					scheduleTime: '',
+					scheduleHours: '',
+					warranty: getField('warranty_type') || t.warranty_type || '—',
+					assignedArea: derivedArea || '—',
+					inferredArea: derivedArea || '—',
+					city: customerCity || '',
+					model: getField('model') || t.model || '—',
+					serial: getField('serial_no') || '—',
+					brand: brand,
+					triageNote: sm.triage_note || '',
+					claimNote: sm.claim_note || '',
+					internalNote: '',
+					email: getField('customer_email_1') || '',
+					lat: null,
+					lng: null,
+					postingDateObj: postDate,
+					scheduleDateObj: schedDate,
+					postingDateStr: toDateStr(postDate),
+					scheduleDateStr: toDateStr(schedDate)
+				};
+			});
+
+			const gc = getGeocoder();
+			if (gc) {
+				for (const ticket of allTickets) {
+					if (ticket.assignedArea && ticket.assignedArea !== '—') continue;
+					const inferred = await inferNearestLocation(gc, ticket);
+					if (inferred) {
+						ticket.assignedArea = inferred;
+						ticket.inferredArea = inferred;
+						void persistInferredLocation(ticket.ticketNo, inferred);
+					}
+				}
+			}
+
+			// Apply robust location matching after merge so sidebar tickets appear even when assigned_area is inconsistent.
+			if (selectedLocation && locationText && locationText !== 'Loading...') {
+				const needle = locationText.trim().toLowerCase();
+				allTickets = allTickets.filter(t => {
+					// Always show test tickets
+					if (t.ticketNo && t.ticketNo.toLowerCase().includes('test')) {
+						return true;
+					}
+					
+					if (!t.assignedArea || t.assignedArea === '—') {
+						// Keep unassigned tickets visible so they are not lost from the Tickets tab.
+						return true;
+					}
+					const techLocation = normalizeLocationName(techLocationMap[t.technician_name] || '');
+					if (techLocation && techLocation.includes(needle)) {
+						return true;
+					}
+					const hay = [
+						normalizeLocationName(t.assignedArea),
+						t.city,
+						t.address,
+						t.geocodeAddress
+					].filter(Boolean).join(' ').toLowerCase();
+					return hay.includes(needle);
+				});
+			}
+
+			renderFilteredTickets();
+		}
+
+		/* ── Color maps ── */
+		const STATUS_COLORS = {
+			ready:   '#3b82f6',
+			op:      '#f59e0b',
+			'cl-need': '#ef4444',
+			comp:    '#22c55e'
+		};
+		const TECH_COLORS = ['#3b82f6','#f59e0b','#ef4444','#22c55e','#a855f7','#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6'];
+
+		let colorMode = 'status';
+		let selectedTicketId = null;
+		let activeTicket = null;
+		let currentTab = 'tickets'; // 'tickets' | 'status'
+		window._gMapReady = false;
+		window._gMap = null;
+		window._gMapMarkers = [];
+		window._mappedTickets = [];
+		window._TicketMarkerFactory = null;
+		window._workMapSelectedLocationName = '';
+		window._workMapSelectedLocationCenter = null;
+
+		const geocodeCache = {};
+		const locationCenterCache = {};
+		let _geocoder = null;
+
+		function getGeocoder() {
+			if (!_geocoder && window.google && window.google.maps) {
+				_geocoder = new google.maps.Geocoder();
+			}
+			return _geocoder;
+		}
+
+		async function tryGeocode(gc, query) {
+			if (!query || query === '—') return null;
+			const key = query.trim().toLowerCase();
+			if (geocodeCache[key]) return geocodeCache[key];
+			return new Promise(resolve => {
+				gc.geocode({ address: query }, (results, status) => {
+					if (status === 'OK' && results && results[0]) {
+						const loc = results[0].geometry.location;
+						const coords = { lat: loc.lat(), lng: loc.lng() };
+						geocodeCache[key] = coords;
+						resolve(coords);
+					} else {
+						resolve(null);
+					}
+				});
+			});
+		}
+
+		function haversineMiles(lat1, lng1, lat2, lng2) {
+			const R = 3958.8;
+			const toRad = x => x * Math.PI / 180;
+			const dLat = toRad(lat2 - lat1);
+			const dLng = toRad(lng2 - lng1);
+			const a = Math.sin(dLat / 2) ** 2 +
+				Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+			return R * 2 * Math.asin(Math.sqrt(a));
+		}
+
+		async function getLocationCenter(gc, locationName) {
+			const key = String(locationName || '').trim().toLowerCase();
+			if (!key) return null;
+			if (locationCenterCache[key]) return locationCenterCache[key];
+			const coords = await tryGeocode(gc, `${locationName}, USA`);
+			if (coords) locationCenterCache[key] = coords;
+			return coords;
+		}
+
+		async function inferNearestLocation(gc, ticket) {
+			const addressQuery = ticket.geocodeAddress || ticket.address || ticket.city || ticket.assignedArea;
+			if (!addressQuery || addressQuery === '—') return '';
+			const ticketCoords = await tryGeocode(gc, addressQuery.includes(',') ? addressQuery : `${addressQuery}, USA`);
+			if (!ticketCoords) return '';
+
+			const locationSelect = document.getElementById('locationSelect');
+			const locationNames = locationSelect
+				? Array.from(locationSelect.options).map(o => o.value).filter(v => v && v !== 'All Locations' && v !== 'Loading...')
+				: [];
+			let bestName = '';
+			let bestDistance = Number.POSITIVE_INFINITY;
+			for (const locationName of locationNames) {
+				const center = await getLocationCenter(gc, locationName);
+				if (!center) continue;
+				const distance = haversineMiles(ticketCoords.lat, ticketCoords.lng, center.lat, center.lng);
+				if (distance < bestDistance) {
+					bestDistance = distance;
+					bestName = locationName;
+				}
+			}
+			return bestName;
+		}
+
+		async function persistInferredLocation(ticketNo, locationName) {
+			if (!ticketNo || !locationName) return false;
+			try {
+				const { error } = await supabaseClient
+					.from('tickets')
+					.update({ assigned_area: locationName })
+					.eq('ticket_no', ticketNo);
+				if (error) {
+					console.warn(`Failed to persist inferred area for ${ticketNo}:`, error.message);
+					return false;
+				}
+				return true;
+			} catch (err) {
+				console.warn(`Failed to persist inferred area for ${ticketNo}:`, err.message);
+				return false;
+			}
+		}
+
+		async function geocodeTicket(ticket) {
+			if (ticket.lat && ticket.lng) return;
+			const gc = getGeocoder();
+			if (!gc) return;
+
+			// 1. Try full address (street + city + state + zip)
+			const fullAddr = ticket.geocodeAddress || ticket.address;
+			if (fullAddr && fullAddr !== '—') {
+				const q = fullAddr.includes(',') ? fullAddr : (fullAddr + ', USA');
+				const coords = await tryGeocode(gc, q);
+				if (coords) { ticket.lat = coords.lat; ticket.lng = coords.lng; return; }
+			}
+
+			// 2. Fallback: try street address only from display address
+			const dispAddr = ticket.address;
+			if (dispAddr && dispAddr !== '—' && dispAddr !== fullAddr) {
+				const coords = await tryGeocode(gc, dispAddr + ', USA');
+				if (coords) { ticket.lat = coords.lat; ticket.lng = coords.lng; return; }
+			}
+
+			// 3. Fallback: try assigned area (e.g. "Asheville") as city name
+			const area = ticket.assignedArea;
+			if (area && area !== '—') {
+				const coords = await tryGeocode(gc, area + ', USA');
+				if (coords) { ticket.lat = coords.lat; ticket.lng = coords.lng; return; }
+			}
+		}
+
+		function renderGoogleMapMarkers(tickets) {
+			if (!window._gMapReady || !window._gMap || !window._TicketMarkerFactory) return;
+			window._gMapMarkers.forEach(m => m.setMap(null));
+			window._gMapMarkers = [];
+			const mapped = tickets.filter(t => t.lat && t.lng);
+			window._mappedTickets = mapped;
+			mapped.forEach(t => {
+				const marker = window._TicketMarkerFactory(t, window._gMap);
+				window._gMapMarkers.push(marker);
+			});
+			if (mapped.length > 0) {
+				const selectedLocation = (window._workMapSelectedLocationName || '').trim();
+				if (selectedLocation) {
+					// Keep the selected location as the final camera target.
+					google.maps.event.addListenerOnce(window._gMap, 'idle', () => {
+						if (window._workMapSelectedLocationCenter) {
+							window._gMap.panTo(window._workMapSelectedLocationCenter);
+						}
+						if (window._gMap.getZoom() !== 11) window._gMap.setZoom(11);
+					});
+				}
+			}
+	
+		}
+
+		let _geocodeAbort = 0;
+		async function geocodeAndRenderMarkers(tickets) {
+			if (!window._gMapReady) return;
+			const runId = ++_geocodeAbort;
+			const DELAY = 150; // ~6 req/s — well within geocoding limits
+			for (let i = 0; i < tickets.length; i++) {
+				if (_geocodeAbort !== runId) return; // abort if a newer run started
+				await geocodeTicket(tickets[i]);
+				if (i % 5 === 4 || i === tickets.length - 1) {
+					renderGoogleMapMarkers(tickets);
+				}
+				if (i < tickets.length - 1) await new Promise(r => setTimeout(r, DELAY));
+			}
+			renderGoogleMapMarkers(tickets);
+		}
+
+		function getColor(ticket) {
+			if (colorMode === 'tech') return TECH_COLORS[ticket.id % TECH_COLORS.length];
+			return STATUS_COLORS[ticket.statusGroup] || '#64748b';
+		}
+
+		function getTechInitials(name) {
+			const value = String(name || '').trim();
+			if (!value) return 'TK';
+			const words = value.split(/\s+/);
+			return words.length >= 2
+				? words[0][0].toUpperCase() + words[words.length - 1][0].toUpperCase()
+				: value.slice(0, 2).toUpperCase();
+		}
+
+		function getActiveFilters() {
+			const f = [];
+			if (document.getElementById('filterReady').checked) f.push('ready');
+			if (document.getElementById('filterTech').checked) f.push('op');
+			if (document.getElementById('filterCLNeed').checked) f.push('cl-need');
+			if (document.getElementById('filterComp').checked) f.push('comp');
+			return f;
+		}
+
+		/* ── Render filtered tickets (date range + status filters) ── */
+		function renderFilteredTickets() {
+			const filters = getActiveFilters();
+			const visible = allTickets.filter(t => 
+				filters.includes(t.statusGroup) && isTicketInDateRange(t)
+			);
+
+			const list = document.getElementById('ticketList');
+			list.innerHTML = visible.map(t => {
+				const color = getColor(t);
+				const sel = selectedTicketId === t.id ? ' selected' : '';
+				return `<div class="ticket-card${sel}" style="border-left-color:${color};" onclick="openDetail(${t.id})">
+					<div class="ticket-card-top">
+						<span class="ticket-card-no">${t.ticketNo}</span>
+						<span class="tech-badge" style="background:${color}22; color:${color}; border:1px solid ${color}66;">${t.techCode}</span>
+					</div>
+					<div class="ticket-card-addr">${t.address}</div>
+				</div>`;
+			}).join('');
+
+			renderPins(visible);
+			renderStatusCountsFiltered();
+			geocodeAndRenderMarkers(visible);
+		}
+
+		/* ── Render sidebar ticket list ── */
+		function renderTicketList() {
+			const filters = getActiveFilters();
+			const visible = allTickets.filter(t => filters.includes(t.statusGroup));
+
+			const list = document.getElementById('ticketList');
+			list.innerHTML = visible.map(t => {
+				const color = getColor(t);
+				const sel = selectedTicketId === t.id ? ' selected' : '';
+				return `<div class="ticket-card${sel}" style="border-left-color:${color};" onclick="openDetail(${t.id})">
+					<div class="ticket-card-top">
+						<span class="ticket-card-no">${t.ticketNo}</span>
+						<span class="tech-badge" style="background:${color}22; color:${color}; border:1px solid ${color}66;">${t.techCode}</span>
+					</div>
+					<div class="ticket-card-addr">${t.address}</div>
+				</div>`;
+			}).join('');
+
+			renderPins(visible);
+			renderStatusCounts();
+		}
+
+		/* ── Render status summary (with date filter) ── */
+		function renderStatusCountsFiltered() {
+			const filters = getActiveFilters();
+			const visible = allTickets.filter(t => filters.includes(t.statusGroup) && isTicketInDateRange(t));
+			document.getElementById('countReady').textContent  = visible.filter(t => t.statusGroup === 'ready').length;
+			document.getElementById('countOp').textContent     = visible.filter(t => t.statusGroup === 'op').length;
+			document.getElementById('countClNeed').textContent = visible.filter(t => t.statusGroup === 'cl-need').length;
+			document.getElementById('countComp').textContent   = visible.filter(t => t.statusGroup === 'comp').length;
+		}
+
+		/* ── Render status summary ── */
+		function renderStatusCounts() {
+			const filters = getActiveFilters();
+			const visible = allTickets.filter(t => filters.includes(t.statusGroup));
+			document.getElementById('countReady').textContent  = visible.filter(t => t.statusGroup === 'ready').length;
+			document.getElementById('countOp').textContent     = visible.filter(t => t.statusGroup === 'op').length;
+			document.getElementById('countClNeed').textContent = visible.filter(t => t.statusGroup === 'cl-need').length;
+			document.getElementById('countComp').textContent   = visible.filter(t => t.statusGroup === 'comp').length;
+		}
+
+		/* ── Render map pin markers ── */
+		function renderPins(tickets) {
+			const container = document.getElementById('mapPins');
+			container.innerHTML = tickets.map(t => {
+				const color = getColor(t);
+				return `<div class="map-pin" style="left:${t.pinX}%; top:${t.pinY}%;" onclick="openDetail(${t.id})" title="${t.ticketNo} — ${t.address}">
+					<div class="pin-bubble" style="background:${color};">
+						<span class="pin-initials">${t.techCode}</span>
+						<span class="pin-time">${t.ticketNo}</span>
+					</div>
+					<div class="pin-tail" style="border-top:8px solid ${color};"></div>
+				</div>`;
+			}).join('');
+		}
+
+		/* ── Open ticket detail modal ── */
+		function openDetail(id) {
+			const t = allTickets.find(x => x.id === id);
+			if (!t) return;
+			selectedTicketId = id;
+			activeTicket = t;
+			renderFilteredTickets();
+
+			const ticketLink = document.getElementById('dtTicketNo');
+			ticketLink.textContent = t.ticketNo;
+			ticketLink.href = `ticket_details.html?ticket=${encodeURIComponent(t.ticketNo)}`;
+
+			const color = getColor(t);
+			const body = document.getElementById('detailBody');
+			body.innerHTML = `
+				<!-- Row 1: Customer / Posting Date / Cx Pref Date / REDO -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Customer</span>
+						<span class="detail-value">${t.customer}</span>
+					</div>
+					<div class="detail-field">
+						<span class="detail-label">Posting Date</span>
+						<span class="detail-value">${t.postingDate} <span style="color:#64748b; font-size:0.78rem;">(${t.agingDays} days)</span></span>
+					</div>
+					<div class="detail-field">
+						<span class="detail-label">Cx Preferred Date</span>
+						<span class="detail-value">${t.cxPrefDate}</span>
+					</div>
+					<div class="detail-field" style="min-width:60px;">
+						<span class="detail-label">REDO</span>
+						<input type="checkbox" ${t.redo ? 'checked' : ''} style="margin-top:0.3rem; width:16px; height:16px; cursor:pointer;">
+					</div>
+				</div>
+
+				<!-- Row 2: Schedule -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Schedule</span>
+						<div class="schedule-box" style="margin-top:0.3rem;">
+							<span style="font-weight:600;">${t.scheduleDate}</span>
+							${t.scheduleConf ? `<span class="schedule-sep">|</span><span style="color:#bfdbfe;">${t.scheduleConf}</span>` : ''}
+							<span class="schedule-sep">|</span>
+							<span style="color:#fde68a;">${t.scheduleTime}</span>
+							<span class="schedule-sep">|</span>
+							<span>${t.scheduleHours}</span>
+						</div>
+					</div>
+				</div>
+				<hr class="detail-divider">
+
+				<!-- Row 3: Address -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Address</span>
+						<span class="detail-value">${t.geocodeAddress && t.geocodeAddress !== '—' ? t.geocodeAddress : t.address}</span>
+					</div>
+				</div>
+
+				<!-- Row 4: Phone / Email + contact buttons -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Phone</span>
+						<span class="detail-value">${t.phone}</span>
+					</div>
+					${t.email ? `<div class="detail-field grow">
+						<span class="detail-label">Email</span>
+						<span class="detail-value">${t.email}</span>
+					</div>` : ''}
+				</div>
+				<hr class="detail-divider">
+
+				<!-- Row 5: Brand / Model / Serial -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Brand</span>
+						<span class="detail-value">${t.brand && t.brand !== '—' ? t.brand : '<span style="color:#475569;">—</span>'}</span>
+					</div>
+					<div class="detail-field grow">
+						<span class="detail-label">Model</span>
+						<span class="detail-value">${t.model && t.model !== '—' ? t.model : '<span style="color:#475569;">—</span>'}</span>
+					</div>
+					<div class="detail-field grow">
+						<span class="detail-label">Serial</span>
+						<span class="detail-value">${t.serial && t.serial !== '—' ? t.serial : '<span style="color:#475569;">—</span>'}</span>
+					</div>
+				</div>
+
+				<!-- Row 6: Repair Type / Repair Status -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Repair Type</span>
+						<span class="detail-value">${t.repairType && t.repairType !== '—' ? t.repairType : '<span style="color:#475569;">—</span>'}</span>
+					</div>
+					<div class="detail-field grow">
+						<span class="detail-label">Repair Status</span>
+						<span class="status-pill-detail" style="background:${color}22; color:${color}; border:1px solid ${color}55; margin-top:0.2rem;">${t.repairStatus}</span>
+					</div>
+				</div>
+
+				<!-- Row 7: Warranty / Technician -->
+				<div class="detail-row">
+					<div class="detail-field grow">
+						<span class="detail-label">Warranty</span>
+						<span class="detail-value">${t.warranty}</span>
+					</div>
+					<div class="detail-field grow">
+						<span class="detail-label">Technician</span>
+						<span class="detail-value">${t.techName}</span>
+					</div>
+				</div>
+
+				<!-- Row 8: Triage Note / Claim Note -->
+				${(t.triageNote || t.claimNote) ? `<hr class="detail-divider">
+				<div class="detail-row">
+					${t.triageNote ? `<div class="detail-field grow">
+						<span class="detail-label">Triage Note</span>
+						<div class="internal-note-box">${t.triageNote}</div>
+					</div>` : ''}
+					${t.claimNote ? `<div class="detail-field grow">
+						<span class="detail-label">Claim Note</span>
+						<div class="internal-note-box">${t.claimNote}</div>
+					</div>` : ''}
+				</div>` : ''}
+			`;
+
+			document.getElementById('detailOverlay').classList.add('open');
+		}
+
+		/* ── Close modal ── */
+		function closeModal() {
+			document.getElementById('detailOverlay').classList.remove('open');
+			selectedTicketId = null;
+			activeTicket = null;
+			renderFilteredTickets();
+		}
+
+		document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+		document.getElementById('detailOverlay').addEventListener('click', function (e) {
+			if (e.target === this) closeModal();
+		});
+
+		/* ── Google button → open address in Google Maps ── */
+		document.getElementById('googleBtn').addEventListener('click', () => {
+			if (!activeTicket) return;
+			const q = encodeURIComponent(activeTicket.geocodeAddress || activeTicket.address);
+			window.open('https://maps.google.com/?q=' + q, '_blank', 'noopener');
+		});
+
+		/* ── Date navigation ── */
+		document.getElementById('prevDayBtn').addEventListener('click', () => shiftDate(-1));
+		document.getElementById('nextDayBtn').addEventListener('click', () => shiftDate(1));
+
+		function shiftDate(offset) {
+			const input = document.getElementById('mapDate');
+			const d = new Date((input.value || new Date().toISOString().slice(0, 10)) + 'T00:00:00');
+			d.setDate(d.getDate() + offset);
+			input.value = d.toISOString().slice(0, 10);
+			updateDateFilters();
+		}
+
+		function updateDateFilters() {
+			const val = document.getElementById('mapDate').value;
+			dateFilterFrom = val || null;
+			dateFilterTo = val || null;
+			renderFilteredTickets();
+		}
+
+		document.getElementById('mapDate').addEventListener('change', updateDateFilters);
+
+		/* ── Map/Satellite toggle — wired inside initMap after Google Maps loads ── */
+
+		/* ── Location dropdown — reload tickets & map on change ── */
+		document.getElementById('locationSelect').addEventListener('change', () => {
+			if (window._workMapInitialLocationLoading) return;
+			// Immediately pan+zoom to the selected location before geocoding completes
+			const sel = document.getElementById('locationSelect');
+			const locationValue = sel.value || '';
+			const locationName = sel.options[sel.selectedIndex]?.text;
+			if (locationValue && locationName && locationName !== 'Loading...' && window._gMapReady && window._gMap) {
+				const gc = getGeocoder();
+				if (gc) {
+					gc.geocode({ address: locationName + ', USA' }, (results, status) => {
+						if (status === 'OK' && results[0]) {
+							window._workMapSelectedLocationCenter = results[0].geometry.location;
+							window._gMap.panTo(results[0].geometry.location);
+							window._gMap.setZoom(11);
+						}
+					});
+				}
+			}
+			loadMapFromDatabase();
+		});
+
+		/* ── Color mode radio ── */
+		document.querySelectorAll('input[name="colorBy"]').forEach(r => {
+			r.addEventListener('change', () => {
+				colorMode = document.querySelector('input[name="colorBy"]:checked').value;
+				renderFilteredTickets();
+			});
+		});
+
+		/* ── Filter checkboxes ── */
+		['filterTech', 'filterReady', 'filterCLNeed', 'filterComp'].forEach(id => {
+			document.getElementById(id).addEventListener('change', () => {
+				renderFilteredTickets();
+			});
+		});
+
+		/* ── Sidebar tabs ── */
+		document.getElementById('tabTickets').addEventListener('click', () => {
+			currentTab = 'tickets';
+			document.getElementById('tabTickets').classList.add('active');
+			document.getElementById('tabStatus').classList.remove('active');
+			document.getElementById('ticketList').style.display = '';
+			document.getElementById('statusView').classList.remove('visible');
+		});
+		document.getElementById('tabStatus').addEventListener('click', () => {
+			currentTab = 'status';
+			document.getElementById('tabStatus').classList.add('active');
+			document.getElementById('tabTickets').classList.remove('active');
+			document.getElementById('ticketList').style.display = 'none';
+			document.getElementById('statusView').classList.add('visible');
+		});
+
+		/* ── Init ── */
+		applyPrettyUrl('workMap');
+		
+		// Set default date (today)
+		const today = new Date().toISOString().slice(0, 10);
+		document.getElementById('mapDate').value = today;
+		dateFilterFrom = today;
+		dateFilterTo = today;
+		
+		// Add debug buttons
+		const debugContainer = document.createElement('div');
+		debugContainer.style.position = 'fixed';
+		debugContainer.style.bottom = '10px';
+		debugContainer.style.right = '10px';
+		debugContainer.style.zIndex = '1000';
+		debugContainer.style.display = 'flex';
+		debugContainer.style.flexDirection = 'column';
+		debugContainer.style.gap = '5px';
+		
+		const debugBtn = document.createElement('button');
+		debugBtn.textContent = 'Debug: Test Query';
+		debugBtn.style.padding = '5px 10px';
+		debugBtn.style.background = '#f59e0b';
+		debugBtn.style.color = 'white';
+		debugBtn.style.border = 'none';
+		debugBtn.style.borderRadius = '4px';
+		debugBtn.style.cursor = 'pointer';
+		debugBtn.onclick = async () => {
+			console.log('=== DEBUG: Testing Supabase Queries ===');
+			
+			// Test tickets query
+			const userCompanyId = localStorage.getItem('userCompanyId') || 'USAPP';
+			const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+			const activeCompanyDbId = co ? co.id : null;
+			
+			let query = supabaseClient
+				.from('tickets')
+				.select('ticket_no, technician_name, customer_name, customer_address, customer_city, customer_zip, customer_state, customer_cell_phone_1, repair_status, schedule_date, call_taken_date, warranty_type, assigned_area, model, problem_description')
+				.not('repair_status', 'ilike', '%cancel%')
+				.order('created_at', { ascending: false })
+				.limit(10);
+			
+			if (activeCompanyDbId) {
+				query = query.or(`company_id.eq.${activeCompanyDbId},company_id.is.null`);
+			}
+			
+			const { data: tickets, error: ticketsError } = await query;
+			console.log('Tickets query result:', ticketsError ? ticketsError : { count: tickets?.length });
+			
+			// Show all tickets
+			if (tickets && tickets.length > 0) {
+				console.log('All tickets:');
+				tickets.forEach((t, i) => {
+					console.log(`${i + 1}. ${t.ticket_no}: ${t.customer_name} - ${t.repair_status} - Area: ${t.assigned_area || 'null'} - City: ${t.customer_city || 'null'}`);
+					// Check for test tickets
+					if (t.ticket_no && t.ticket_no.toLowerCase().includes('test')) {
+						console.log(`   ^ TEST TICKET - problem_description type: ${typeof t.problem_description}, length: ${t.problem_description?.length || 0}`);
+					}
+				});
+			}
+			
+			// Test ticket_details query
+			if (tickets && tickets.length > 0) {
+				const ticketNo = 'test0526'; // Specifically test this ticket
+				const { data: details, error: detailsError } = await supabaseClient
+					.from('ticket_details')
+					.select('ticket_no, detail_json')
+					.eq('ticket_no', ticketNo)
+					.limit(1);
+				console.log(`Ticket details for ${ticketNo}:`, detailsError ? detailsError : { found: details?.length > 0, sample: details?.[0]?.detail_json ? 'Has detail_json' : 'No detail_json' });
+			}
+			
+			alert('Check browser console for debug results');
+		};
+		
+		const showAllBtn = document.createElement('button');
+		showAllBtn.textContent = 'Show All Tickets';
+		showAllBtn.style.padding = '5px 10px';
+		showAllBtn.style.background = '#3b82f6';
+		showAllBtn.style.color = 'white';
+		showAllBtn.style.border = 'none';
+		showAllBtn.style.borderRadius = '4px';
+		showAllBtn.style.cursor = 'pointer';
+		showAllBtn.onclick = () => {
+			// Force reload without location filter
+			const locationSelect = document.getElementById('locationSelect');
+			if (locationSelect) {
+				locationSelect.value = '';
+			}
+			loadMapFromDatabase();
+			alert('Showing all tickets (no location filter)');
+		};
+		
+		debugContainer.appendChild(debugBtn);
+		debugContainer.appendChild(showAllBtn);
+		document.body.appendChild(debugContainer);
+		
+		loadMapFromDatabase();
+
+		/* ── Google Maps init ── */
+		window.initMap = function () {
+			const mapDiv = document.getElementById('googleMap');
+			const gMap = new google.maps.Map(mapDiv, {
+				zoom: 8,
+				center: { lat: 34.97, lng: -82.65 },
+				mapTypeId: google.maps.MapTypeId.ROADMAP
+			});
+			window._googleMap = gMap;
+			window._gMap = gMap;
+			const infoWindow = new google.maps.InfoWindow();
+
+			function getMarkerIconByStatus(statusGroup) {
+				switch (statusGroup) {
+					case 'ready': return 'blue';
+					case 'cl-need': return 'red';
+					case 'comp': return 'green';
+					default: return 'yellow';
+				}
+			}
+
+			function createTicketMarker(ticket, map) {
+				const color = getColor(ticket);
+				const initials = getTechInitials(ticket.techCode);
+
+				class CustomMarkerOverlay extends google.maps.OverlayView {
+					constructor(ticket, initials, color, map) {
+						super();
+						this.ticket = ticket;
+						this.initials = initials;
+						this.color = color;
+						this.div = null;
+						this.setMap(map);
+					}
+
+					onAdd() {
+						const div = document.createElement('div');
+						div.setAttribute('data-marker-overlay', 'true');
+						div.className = 'map-pin';
+						div.innerHTML = `
+							<div class="pin-bubble" style="background:${this.color};">
+								<span class="pin-initials">${this.initials}</span>
+								<span class="pin-time">${this.ticket.ticketNo}</span>
+							</div>
+							<div class="pin-tail" style="border-top:8px solid ${this.color};"></div>
+						`;
+						div.addEventListener('click', (e) => {
+							e.stopPropagation();
+							openDetail(this.ticket.id);
+						});
+						div.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+						this.div = div;
+						this.getPanes().overlayMouseTarget.appendChild(div);
+					}
+
+					draw() {
+						const proj = this.getProjection();
+						if (!proj || !this.div) return;
+						const pos = proj.fromLatLngToDivPixel(new google.maps.LatLng(this.ticket.lat, this.ticket.lng));
+						if (pos) {
+							this.div.style.left = pos.x + 'px';
+							this.div.style.top = pos.y + 'px';
+						}
+					}
+
+					onRemove() {
+						if (this.div && this.div.parentNode) {
+							this.div.parentNode.removeChild(this.div);
+							this.div = null;
+						}
+					}
+				}
+
+				return new CustomMarkerOverlay(ticket, initials, color, map);
+			}
+
+			window._TicketMarkerFactory = createTicketMarker;
+			window._gMapReady = true;
+			// Geocode + display currently filtered tickets
+			renderFilteredTickets();
+
+			document.getElementById('mapModeBtn').addEventListener('click', () => {
+				gMap.setMapTypeId(google.maps.MapTypeId.ROADMAP);
+				document.getElementById('mapModeBtn').classList.add('active');
+				document.getElementById('satModeBtn').classList.remove('active');
+			});
+			document.getElementById('satModeBtn').addEventListener('click', () => {
+				gMap.setMapTypeId(google.maps.MapTypeId.SATELLITE);
+				document.getElementById('satModeBtn').classList.add('active');
+				document.getElementById('mapModeBtn').classList.remove('active');
+			});
+
+			// ── Haversine distance (miles) ──
+			function haversineMi(lat1, lng1, lat2, lng2) {
+				const R = 3958.8;
+				const toRad = x => x * Math.PI / 180;
+				const dLat = toRad(lat2 - lat1);
+				const dLng = toRad(lng2 - lng1);
+				const a = Math.sin(dLat / 2) ** 2 +
+					Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+				return R * 2 * Math.asin(Math.sqrt(a));
+			}
+
+			// ── Location jump dropdown ──
+			// Handled by the main-thread listener which calls loadMapFromDatabase().
+		};
+
+		// Add cache-busting meta tag
+		const meta = document.createElement('meta');
+		meta.httpEquiv = 'Cache-Control';
+		meta.content = 'no-cache, no-store, must-revalidate';
+		document.head.appendChild(meta);
+		
+		const meta2 = document.createElement('meta');
+		meta2.httpEquiv = 'Pragma';
+		meta2.content = 'no-cache';
+		document.head.appendChild(meta2);
+		
+		const meta3 = document.createElement('meta');
+		meta3.httpEquiv = 'Expires';
+		meta3.content = '0';
+		document.head.appendChild(meta3);
+
+		(function loadGoogleMapsAPI() {
+			const s = document.createElement('script');
+			s.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc&callback=initMap&v=3.52';
+			s.async = true;
+			s.defer = true;
+			document.head.appendChild(s);
+		})();
+	</script>
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

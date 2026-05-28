@@ -1,3 +1,5 @@
+import { PARTS_FROM_OPTIONS, WORK_MAP_LOCATIONS } from "@/lib/locations";
+
 // Module + sub-module registry. Drives the generic CRUD page.
 export type FieldType = "text" | "number" | "date" | "select";
 export interface FieldDef {
@@ -260,6 +262,8 @@ const partsMod: ModuleDef = {
       title: "Part Receive",
       description: "Receive parts into inventory.",
       fields: partsCommonFields([
+        { key: "location", label: "Location", type: "select", options: [...WORK_MAP_LOCATIONS], editable: true, filterable: true },
+        { key: "partsFrom", label: "Parts From", type: "select", options: [...PARTS_FROM_OPTIONS], editable: true, filterable: true },
         { key: "qty", label: "Qty", type: "number", editable: true },
         { key: "received", label: "Received", type: "date" },
         { key: "by", label: "Received By", type: "select", options: TECHS, editable: true },
@@ -268,6 +272,8 @@ const partsMod: ModuleDef = {
         partNo: "RC-" + pad(9000 + i),
         description: pick(PARTS, i),
         vendor: pick(VENDORS, i),
+        location: pick([...WORK_MAP_LOCATIONS], i),
+        partsFrom: pick([...PARTS_FROM_OPTIONS], i),
         qty: (i%6)+1,
         received: dateStr(-(i%10)),
         by: pick(TECHS, i),

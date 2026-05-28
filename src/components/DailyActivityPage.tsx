@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Search } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTickets } from "@/lib/db-api";
 import type { DashboardOverallStatus, LocationRankingRecord, ModuleDef, SubModuleDef, TechRankingRecord, Ticket } from "@/lib/db";
+import { WORK_MAP_LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 
 type ActivityRow = {
   user: string;
@@ -84,7 +85,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
     const officeSet = new Set<string>();
     locationRanking.forEach((record) => officeSet.add(record.office));
     techRanking.forEach((record) => officeSet.add(record.office));
-    return ["ALL", ...Array.from(officeSet).sort((a, b) => a.localeCompare(b))];
+    return mergeLocationOptions(["ALL"], WORK_MAP_LOCATIONS, Array.from(officeSet).sort((a, b) => a.localeCompare(b)));
   }, [locationRanking, techRanking]);
 
   const rows = useMemo<ActivityRow[]>(() => {

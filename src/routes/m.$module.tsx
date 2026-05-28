@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Navigate, notFound, Outlet, useMatchRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate, notFound, Outlet } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
@@ -36,14 +36,12 @@ export const Route = createFileRoute("/m/$module")({
 function ModuleIndex() {
   const { ready, email } = useAuth();
   const { module: m } = Route.useLoaderData();
-  const matchRoute = useMatchRoute();
-  
+
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" />;
-  
-  // Check if a child route is currently matched (has a submodule)
-  const hasChildRoute = matchRoute({ to: "/m/$module/$submodule" });
-  
+
+  const hasChildRoute = typeof window !== "undefined" && window.location.pathname.split("/").filter(Boolean).length > 2;
+
   if (hasChildRoute) {
     // Render the child route (submodule detail page)
     return <Outlet />;
