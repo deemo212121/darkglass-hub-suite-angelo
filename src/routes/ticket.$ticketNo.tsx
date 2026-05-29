@@ -42,6 +42,19 @@ interface TicketData {
   servicerNotes: Array<{ notes: string; by: string }>;
 }
 
+interface CompensationRow {
+  id: string;
+  item: string;
+  beneficiary: string;
+  amount: string;
+  rate: string;
+  activityDate: string;
+  requiresClaimOrCxPayment: string;
+  comment: string;
+  createdBy: string;
+  lastModifiedBy: string;
+}
+
 const DEFAULT_TICKET: TicketData = {
   ticketNo: "017151274136",
   account: "SQUARE TRADE",
@@ -274,6 +287,21 @@ function TicketDetailsPage() {
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
+  const currentEditor = "Current User";
+  const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
+    {
+      id: "comp-1",
+      item: "Extra Labor",
+      beneficiary: "Anna Seo",
+      amount: "1",
+      rate: "",
+      activityDate: "05/29/2026",
+      requiresClaimOrCxPayment: "",
+      comment: "",
+      createdBy: currentEditor,
+      lastModifiedBy: currentEditor,
+    },
+  ]);
 
   const handleTicketChange = (newTicketNo: string) => {
     if (newTicketNo.trim()) {
@@ -307,6 +335,38 @@ function TicketDetailsPage() {
       });
       setNewServicerNote("");
     }
+  };
+
+  const addCompensationRow = () => {
+    setCompensationRows((rows) => [
+      ...rows,
+      {
+        id: `comp-${Date.now()}`,
+        item: "",
+        beneficiary: "",
+        amount: "",
+        rate: "",
+        activityDate: "05/29/2026",
+        requiresClaimOrCxPayment: "",
+        comment: "",
+        createdBy: currentEditor,
+        lastModifiedBy: currentEditor,
+      },
+    ]);
+  };
+
+  const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
+    setCompensationRows((rows) =>
+      rows.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              [field]: value,
+              lastModifiedBy: currentEditor,
+            }
+          : row,
+      ),
+    );
   };
 
   return (
@@ -758,7 +818,10 @@ function TicketDetailsPage() {
                   <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">Today</div>
                 </div>
                 <div className="flex items-end">
-                  <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded text-sm transition">
+                  <button
+                    onClick={addCompensationRow}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded text-sm transition"
+                  >
                     Add
                   </button>
                 </div>
@@ -782,11 +845,71 @@ function TicketDetailsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-4 py-3 text-slate-300" colSpan={10}>
-                      No compensation records yet
-                    </td>
-                  </tr>
+                  {compensationRows.map((row) => (
+                    <tr key={row.id} className="border-b border-white/5 align-top hover:bg-white/5">
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.item}
+                          onChange={(e) => updateCompensationRow(row.id, "item", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Compensation item"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.beneficiary}
+                          onChange={(e) => updateCompensationRow(row.id, "beneficiary", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Beneficiary"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.amount}
+                          onChange={(e) => updateCompensationRow(row.id, "amount", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Amount"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.rate}
+                          onChange={(e) => updateCompensationRow(row.id, "rate", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Rate"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.activityDate}
+                          onChange={(e) => updateCompensationRow(row.id, "activityDate", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Activity date"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.requiresClaimOrCxPayment}
+                          onChange={(e) => updateCompensationRow(row.id, "requiresClaimOrCxPayment", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Yes / No"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.comment}
+                          onChange={(e) => updateCompensationRow(row.id, "comment", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Comment"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{row.createdBy}</td>
+                      <td className="px-4 py-3 text-slate-300">{row.lastModifiedBy}</td>
+                      <td className="px-4 py-3 text-slate-300">
+                        <button className="text-blue-400 hover:text-blue-300 font-semibold">Edit</button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
