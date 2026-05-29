@@ -1,4 +1,4 @@
-import { PARTS_FROM_OPTIONS, WORK_MAP_LOCATIONS } from "@/lib/locations";
+import { ALL_TECHNICIANS, PARTS_FROM_OPTIONS, WORK_MAP_LOCATIONS } from "@/lib/locations";
 
 // Module + sub-module registry. Drives the generic CRUD page.
 export type FieldType = "text" | "number" | "date" | "select";
@@ -31,7 +31,7 @@ export interface ModuleDef {
 
 const STATUS = ["Open", "In Progress", "Closed", "On Hold", "Cancelled"];
 const PRIORITY = ["Low", "Medium", "High", "Urgent"];
-const TECHS = ["A. Reyes", "M. Patel", "J. Kim", "S. Brown", "L. Ortiz", "R. Chen"];
+const TECHS = ALL_TECHNICIANS;
 const VENDORS = ["Encompass", "Marcone", "Reliable Parts", "1stSourceServall", "V&V Appliance"];
 const PARTS = ["Drain Pump", "Door Gasket", "Control Board", "Thermistor", "Heating Element", "Compressor", "Inverter Board", "Door Switch", "Ice Maker", "Belt Kit"];
 const CUSTOMERS = ["John Doe", "Jane Smith", "Acme LLC", "Beth Larsen", "Carlos Mora", "Priya Shah", "Tom O'Neil", "Lily Park"];

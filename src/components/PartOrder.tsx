@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
+import { ALL_TECHNICIANS, LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface OrderItem {
@@ -15,7 +16,6 @@ interface OrderItem {
 }
 
 const PART_DIST_OPTIONS = ["LG", "Encompass", "SS", "Marcone-162468", "Encompass-Birmingham/Montgomery"];
-const LOCATIONS = ["Philippines", "Tallahassee", "Memphis", "Atlanta", "Dallas", "San Antonio", "Lake Charles", "Destin"];
 const WARRANTY_TYPES = [
   "Concession LP", "Concession L", "Concession P", "In warranty", "Labor only Wty",
   "Out-of-warranty", "Part only Wty", "Special Part 5 year", "Unknown", "Ext Wty",
@@ -93,7 +93,12 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
 
               <div className="form-group">
                 <label>Technician</label>
-                <input type="text" placeholder="Enter technician name" value={technician} onChange={(e) => setTechnician(e.target.value)} className="glass-input" />
+                <select value={technician} onChange={(e) => setTechnician(e.target.value)} className="glass-input">
+                  <option value="">Select Technician</option>
+                  {ALL_TECHNICIANS.map((tech) => (
+                    <option key={tech} value={tech}>{tech}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="form-group">

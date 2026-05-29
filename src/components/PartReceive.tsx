@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
+import { ALL_TECHNICIANS, LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface ReceiveItem {
@@ -24,15 +25,6 @@ interface ReceiveItem {
   received: boolean;
 }
 
-const LOCATIONS = [
-  "Asheville", "Atlanta", "Birmingham", "Cape Girardeau", "Chattanooga",
-  "Columbus", "Dallas", "Destin", "Huntsville", "Jackson, MS",
-  "Jackson, TN", "Jacksonville", "Jonesboro", "Knoxville", "Lake Charles",
-  "Little Rock", "Louisville", "Memphis", "Mobile", "Montgomery",
-  "Nashville", "New Orleans", "Norfolk", "Philippines", "Raleigh",
-  "Richmond", "San Antonio", "Savannah", "St. Louis", "Tallahassee", "Wilmington"
-];
-
 const PART_FROM_OPTIONS = [
   "AIG", "Electrolux", "Encompass", "Encompass-Birmingham/Montgomery",
   "GE", "LG", "Marcone-Birmingham/Montgomery", "Marcone-162468",
@@ -40,7 +32,7 @@ const PART_FROM_OPTIONS = [
 ];
 
 const TICKET_STATUS_OPTIONS = ["Open", "In Progress", "Ready", "Completed", "On Hold"];
-const TECH_OPTIONS = ["A. Reyes", "M. Patel", "J. Kim", "S. Brown", "L. Ortiz", "R. Chen"];
+const TECH_OPTIONS = ALL_TECHNICIANS;
 
 const SAMPLE_RECEIVES: ReceiveItem[] = [
   {
