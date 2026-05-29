@@ -491,25 +491,6 @@ const ticketsMod: ModuleDef = {
       }),
     },
     {
-      slug: "followup",
-      title: "Follow-up Dashboard",
-      description: "Outstanding follow-ups and callbacks.",
-      fields: [
-        { key: "id", label: "Ticket #", filterable: true },
-        { key: "customer", label: "Customer", filterable: true },
-        { key: "due", label: "Due", type: "date" },
-        { key: "owner", label: "Owner", type: "select", options: TECHS, editable: true, filterable: true },
-        { key: "note", label: "Note", editable: true },
-      ],
-      seed: (i) => ({
-        id: "T-" + pad(20000 + i),
-        customer: pick(CUSTOMERS, i),
-        due: dateStr((i%10)),
-        owner: pick(TECHS, i),
-        note: ["Awaiting part","Customer callback","Quote pending","Reschedule"][i%4],
-      }),
-    },
-    {
       slug: "sms-list",
       title: "SMS List",
       description: "SMS conversations with customers.",
