@@ -1,5 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -100,8 +99,24 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
+  const [selectedTicket, setSelectedTicket] = useState(ticketNo);
+
+  // Sample ticket numbers for dropdown
+  const availableTickets = [
+    "017151274136",
+    "039873174136",
+    "026000671769DF1",
+    "SA-3458831",
+    "26000679102DF",
+  ];
+
+  const handleTicketChange = (newTicketNo: string) => {
+    setSelectedTicket(newTicketNo);
+    navigate({ to: `/ticket/${newTicketNo}` });
+  };
 
   // In production, fetch ticket by ticketNo
   const ticket = SAMPLE_TICKET;
@@ -121,7 +136,19 @@ function TicketDetailsPage() {
       <AppHeader />
       <main className="flex-1 bg-slate-950">
         <div className="bg-slate-900/95 backdrop-blur border-b border-white/10 p-6">
-          <div className="max-w-6xl mx-auto flex justify-between items-start">
+          <div className="max-w-6xl mx-auto">
+            <div className="mb-4 flex items-center gap-4">
+              <label className="text-slate-400 font-semibold">Select Ticket:</label>
+              <select
+                value={selectedTicket}
+                onChange={(e) => handleTicketChange(e.target.value)}
+                className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+              >
+                {availableTickets.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
             <div>
               <h1 className="text-3xl font-bold text-white">Ticket #{ticket.ticketNo}</h1>
               <div className="flex gap-6 mt-2 text-sm text-slate-400">
@@ -362,8 +389,169 @@ function TicketDetailsPage() {
         )}
 
         {activeTab === "tracking" && (
-          <div className="text-slate-400 py-12 text-center">
-            <p>Service Tracking information coming soon...</p>
+          <div className="space-y-8">
+            {/* Related Tickets */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Related Tickets</h4>
+              <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3 mb-3 text-sm text-slate-400">
+                1 distinct record found
+              </div>
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket No</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Matched</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Src/Acct</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Name</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Zip</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Phone</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Type</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Schedule</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Brands</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Model</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Tech Name</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-mono text-blue-400">039873174136</td>
+                      <td className="px-4 py-3 text-slate-300">Same Email</td>
+                      <td className="px-4 py-3 text-slate-300">SQUARE TRADE</td>
+                      <td className="px-4 py-3 text-slate-300">Robert Chance</td>
+                      <td className="px-4 py-3 text-slate-300">77614</td>
+                      <td className="px-4 py-3 text-slate-300">409.221.5089</td>
+                      <td className="px-4 py-3 text-slate-300">IH</td>
+                      <td className="px-4 py-3 text-slate-300">2026-05-28 09:30 AM</td>
+                      <td className="px-4 py-3 text-slate-300">CL-Claimed</td>
+                      <td className="px-4 py-3 text-slate-300">GENERAL ELECTRIC</td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-300">GTX33EASK1WW</td>
+                      <td className="px-4 py-3 text-slate-300">Danny Thornton</td>
+                      <td className="px-4 py-3 text-slate-300">05/20/26</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Attachments */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Attachments</h4>
+              <div className="bg-slate-900/50 border border-white/10 rounded p-4 space-y-4">
+                <div className="text-sm text-slate-400">No file chosen</div>
+                <button className="text-blue-400 hover:text-blue-300 text-sm font-semibold">+ Add</button>
+              </div>
+            </div>
+
+            {/* Visit Log */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
+              <div className="space-y-4 text-sm">
+                <div>
+                  <label className="text-slate-500 font-semibold">Phone</label>
+                  <div className="text-white mt-1">409-221-5089</div>
+                </div>
+                <div>
+                  <label className="text-slate-500 font-semibold">Chat</label>
+                  <button className="text-blue-400 hover:text-blue-300 font-semibold">Open Chat</button>
+                </div>
+                <div>
+                  <label className="text-slate-500 font-semibold">Redo Ticket #</label>
+                  <div className="text-white mt-1">NONE</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Visit Details Table */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Visit Details</h4>
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">ID</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Schedule Date</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Technician*</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Symptom (Cx)</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Diagnosis</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Repair Type</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Status*</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 text-slate-300">V1</td>
+                      <td className="px-4 py-3 text-slate-300">05/28/2026</td>
+                      <td className="px-4 py-3 text-slate-300">Danny Thornton</td>
+                      <td className="px-4 py-3 text-slate-300">THE START BUTTON IS NOT WORKING</td>
+                      <td className="px-4 py-3 text-slate-300">Faulty control board</td>
+                      <td className="px-4 py-3 text-slate-300">Board Replacement</td>
+                      <td className="px-4 py-3 text-blue-300 font-semibold">Completed</td>
+                      <td className="px-4 py-3">
+                        <button className="text-blue-400 hover:text-blue-300 text-sm">View</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Part Transaction */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Part Transaction</h4>
+              <div className="space-y-4 mb-4">
+                <div>
+                  <label className="text-slate-500 font-semibold">Model Code</label>
+                  <div className="text-white mt-1">GTX33EASKWW</div>
+                </div>
+              </div>
+              <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3 mb-3 text-sm text-slate-400">
+                0 distinct record found
+              </div>
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">ID</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Part No*</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Desc</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">PO No</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Qty*</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Status*</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-white/5 hover:bg-white/5">
+                      <td colSpan={7} className="px-4 py-8 text-center text-slate-400">No parts recorded</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Comments */}
+            <div>
+              <h4 className="font-semibold text-slate-300 mb-4">Comments</h4>
+              <div className="space-y-3 mb-4">
+                <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
+                  <div className="text-slate-400 mb-2">No comments yet</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <textarea
+                  placeholder="Add a comment..."
+                  className="flex-1 bg-slate-900 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  rows={3}
+                />
+                <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded text-sm transition">
+                  Add
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
