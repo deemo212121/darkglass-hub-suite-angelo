@@ -42,7 +42,7 @@ interface TicketData {
   servicerNotes: Array<{ notes: string; by: string }>;
 }
 
-const SAMPLE_TICKET: TicketData = {
+const DEFAULT_TICKET: TicketData = {
   ticketNo: "017151274136",
   account: "SQUARE TRADE",
   warranty: "IW",
@@ -87,6 +87,137 @@ const SAMPLE_TICKET: TicketData = {
   servicerNotes: [],
 };
 
+const TICKET_DATA: Record<string, TicketData> = {
+  "017151274136": DEFAULT_TICKET,
+  "039873174136": {
+    ...DEFAULT_TICKET,
+    ticketNo: "039873174136",
+    account: "SQUARE TRADE",
+    product: "Dryer",
+    status: "CL-Claimed",
+    schedule: "2026-05-28 09:30 AM",
+    firstName: "ROBERT",
+    lastName: "CHANCE",
+    city: "DEWEYVILLE",
+    problemDescription: "CLAIMED TICKET FOR THE SAME CUSTOMER EMAIL.",
+    callNo: "039873174136",
+    customerNotes: [
+      {
+        date: "05/20/2026 09:12:02",
+        notes: "Related claim created and linked to the same customer profile.",
+        by: "SQTRADE1",
+      },
+    ],
+  },
+  "026000671769DF1": {
+    ...DEFAULT_TICKET,
+    ticketNo: "026000671769DF1",
+    account: "GSL00002",
+    warranty: "IW",
+    product: "Washer",
+    tat: "3d",
+    status: "OP-Waiting for Part",
+    schedule: "05/18/26",
+    contact: "Y",
+    location: "Atlanta",
+    firstName: "ROSE",
+    lastName: "PHILLIPS",
+    city: "ELLENWOOD",
+    zip: "30294",
+    homePhone: "404.640.7141",
+    cellPhone: "404.640.7141",
+    email: "rose.phillips@example.com",
+    brand: "IH",
+    model: "DV45K7600EW",
+    productCategory: "Washer",
+    warrantyType: "In warranty",
+    claimCompany: "GSL00002",
+    accountNo: "GSL00002",
+    callNo: "026000671769DF1",
+    callType: "In warranty",
+    callStatus: "ACCEPTED / ACCEPTED",
+    postingDate: "2026-05-15",
+    scheduleDate: "2026-05-18",
+    schedulePeriod: "08:00 - 12:00 MORNING",
+    technician: "Nathan Napora",
+    problemDescription: "WASHER IS NOT SPINNING.",
+  },
+  "SA-3458831": {
+    ...DEFAULT_TICKET,
+    ticketNo: "SA-3458831",
+    account: "GSL00002",
+    warranty: "IW",
+    product: "Dryer",
+    tat: "0d",
+    status: "CSR-Assigned to ASC",
+    schedule: "05/21/26",
+    contact: "N",
+    location: "Atlanta",
+    firstName: "NEAL",
+    lastName: "MARKET",
+    city: "GREENSBORO",
+    state: "GA",
+    homePhone: "706.817.2900",
+    cellPhone: "706.817.2900",
+    email: "neal.market@example.com",
+    brand: "IH",
+    model: "GNE27JYMFFS",
+    productCategory: "Dryer",
+    warrantyType: "In warranty",
+    claimCompany: "GSL00002",
+    accountNo: "GSL00002",
+    callNo: "SA-3458831",
+    callType: "SMS",
+    callStatus: "CSR-Assigned to ASC",
+    postingDate: "2026-05-18",
+    scheduleDate: "2026-05-21",
+    schedulePeriod: "N/A",
+    technician: "",
+    problemDescription: "TICKET FROM THE LIST VIEW: NEEDS FULL DETAILS TO OPEN HERE.",
+    customerNotes: [
+      {
+        date: "05/18/2026 08:14:11",
+        notes: "Ticket entered from list view and opened from the ticket number field.",
+        by: "SYSTEM",
+      },
+    ],
+  },
+  "26000679102DF": {
+    ...DEFAULT_TICKET,
+    ticketNo: "26000679102DF",
+    account: "GSL00002",
+    warranty: "IW",
+    product: "Cooktop",
+    tat: "1d",
+    status: "CSR-Assigned to ASC",
+    schedule: "05/19/26",
+    contact: "N",
+    location: "Atlanta",
+    firstName: "BRIAN",
+    lastName: "ROWE",
+    city: "SHADY DALE",
+    state: "GA",
+    zip: "30071",
+    homePhone: "706.366.1043",
+    cellPhone: "706.366.1043",
+    email: "brian.rowe@example.com",
+    brand: "IH",
+    model: "FCRE3083AS",
+    productCategory: "Cooktop",
+    warrantyType: "In warranty",
+    claimCompany: "GSL00002",
+    accountNo: "GSL00002",
+    callNo: "26000679102DF",
+    callType: "SMS",
+    callStatus: "CSR-Assigned to ASC",
+    postingDate: "2026-05-17",
+    scheduleDate: "2026-05-19",
+    schedulePeriod: "N/A",
+    technician: "",
+    problemDescription: "COOKTOP IS NOT HEATING CORRECTLY.",
+  },
+};
+
 export const Route = createFileRoute("/ticket/$ticketNo")({
   ssr: false,
   head: () => ({
@@ -126,8 +257,7 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
-  // In production, fetch ticket by ticketNo
-  const ticket = SAMPLE_TICKET;
+  const ticket = TICKET_DATA[ticketNo];
 
   const addServicerNote = () => {
     if (newServicerNote.trim()) {
@@ -158,11 +288,17 @@ function TicketDetailsPage() {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
-              <div className="flex gap-6 mt-2 text-sm text-slate-400">
-                <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
-                <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
-                <div><span className="font-semibold text-blue-400">Status:</span> <span className="text-blue-300">{ticket.status}</span></div>
-              </div>
+              {ticket ? (
+                <div className="flex gap-6 mt-2 text-sm text-slate-400">
+                  <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
+                  <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
+                  <div><span className="font-semibold text-blue-400">Status:</span> <span className="text-blue-300">{ticket.status}</span></div>
+                </div>
+              ) : (
+                <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                  No ticket data is available for this number yet.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -188,7 +324,14 @@ function TicketDetailsPage() {
 
         {/* Content */}
         <div className="max-w-6xl mx-auto p-6">
-        {activeTab === "general" && (
+        {!ticket ? (
+          <div className="rounded-lg border border-white/10 bg-slate-900/50 p-6 text-slate-300">
+            <p className="text-lg font-semibold text-white">Ticket not found</p>
+            <p className="mt-2 text-sm text-slate-400">
+              The ticket number {ticketNo} does not have a matching record in the current sample data.
+            </p>
+          </div>
+        ) : activeTab === "general" && (
           <div className="space-y-8">
             {/* Quick Info Grid */}
             <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
