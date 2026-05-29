@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
-import { useTicketDetails } from "@/lib/ticket-details-context";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface TicketItem {
@@ -242,7 +241,6 @@ const SAMPLE_TICKETS: TicketItem[] = [
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  const { setSelectedTicketNo } = useTicketDetails();
 
   const filteredItems = useMemo(() => {
     if (!searchQuery) return SAMPLE_TICKETS;
@@ -346,12 +344,14 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       />
                     </td>
                     <td className="px-4 py-3 font-mono text-blue-400 font-semibold sticky left-12 bg-slate-900/30">
-                      <button
-                        onClick={() => setSelectedTicketNo(ticket.ticketNo)}
+                      <a
+                        href={`/ticket/${ticket.ticketNo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="hover:text-blue-300 hover:underline transition cursor-pointer"
                       >
                         {ticket.ticketNo}
-                      </button>
+                      </a>
                     </td>
                     <td className="px-4 py-3 text-slate-300">{ticket.warranty}</td>
                     <td className="px-4 py-3 text-slate-300">{ticket.manufacturer}</td>

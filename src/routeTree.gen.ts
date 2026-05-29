@@ -16,6 +16,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 
@@ -54,6 +55,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TicketTicketNoRoute = TicketTicketNoRouteImport.update({
+  id: '/ticket/$ticketNo',
+  path: '/ticket/$ticketNo',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MModuleRoute = MModuleRouteImport.update({
   id: '/m/$module',
   path: '/m/$module',
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRoutesByTo {
@@ -85,6 +92,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRoutesById {
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRoute
 }
 export interface FileRouteTypes {
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/timecard'
     | '/m/$module'
+    | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/timecard'
     | '/m/$module'
+    | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
   id:
     | '__root__'
@@ -132,6 +143,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/timecard'
     | '/m/$module'
+    | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
   fileRoutesById: FileRoutesById
 }
@@ -144,6 +156,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   TimecardRoute: typeof TimecardRoute
   MModuleRoute: typeof MModuleRouteWithChildren
+  TicketTicketNoRoute: typeof TicketTicketNoRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -197,6 +210,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ticket/$ticketNo': {
+      id: '/ticket/$ticketNo'
+      path: '/ticket/$ticketNo'
+      fullPath: '/ticket/$ticketNo'
+      preLoaderRoute: typeof TicketTicketNoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/m/$module': {
       id: '/m/$module'
       path: '/m/$module'
@@ -234,6 +254,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   TimecardRoute: TimecardRoute,
   MModuleRoute: MModuleRouteWithChildren,
+  TicketTicketNoRoute: TicketTicketNoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
