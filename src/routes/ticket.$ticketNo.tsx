@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 
@@ -104,19 +104,27 @@ function TicketDetailsPage() {
   const [newServicerNote, setNewServicerNote] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
 
-  // Sample ticket numbers for dropdown
-  const availableTickets = [
-    "017151274136",
-    "039873174136",
-    "026000671769DF1",
-    "SA-3458831",
-    "26000679102DF",
-  ];
-
   const handleTicketChange = (newTicketNo: string) => {
-    setSelectedTicket(newTicketNo);
-    navigate({ to: `/ticket/${newTicketNo}` });
+    if (newTicketNo.trim()) {
+      setSelectedTicket(newTicketNo);
+      navigate({ to: `/ticket/${newTicketNo}` });
+    }
   };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedTicket(e.target.value);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleTicketChange(selectedTicket);
+    }
+  };
+
+  // Sync selected ticket with URL parameter
+  useEffect(() => {
+    setSelectedTicket(ticketNo);
+  }, [ticketNo]);
 
   // In production, fetch ticket by ticketNo
   const ticket = SAMPLE_TICKET;
@@ -139,18 +147,17 @@ function TicketDetailsPage() {
           <div className="max-w-6xl mx-auto">
             <div className="mb-4 flex items-center gap-4">
               <label className="text-slate-400 font-semibold">Select Ticket:</label>
-              <select
+              <input
+                type="text"
                 value={selectedTicket}
-                onChange={(e) => handleTicketChange(e.target.value)}
-                className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
-              >
-                {availableTickets.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+                onChange={handleInputChange}
+                onKeyPress={handleKeyPress}
+                placeholder="Enter ticket number... (Press Enter)"
+                className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+              />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-white">Ticket #{ticket.ticketNo}</h1>
+              <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
               <div className="flex gap-6 mt-2 text-sm text-slate-400">
                 <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
                 <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
