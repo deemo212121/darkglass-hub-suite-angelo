@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list" | "user-management"; // hook for special pages
+  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list" | "user-management" | "account-management" | "location-management"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -1791,32 +1791,20 @@ const adminMod: ModuleDef = {
       },
     },
     {
-      slug: "user-roles",
-      title: "User Roles",
-      description: "Role permission matrix and access control.",
-      fields: [
-        { key: "role", label: "Role", type: "select", options: ROLES, filterable: true },
-        { key: "module", label: "Module", type: "select", options: ["Dashboard","Parts","Tickets","Claims","Report","Admin"], filterable: true },
-        { key: "canView", label: "View", type: "select", options: ["Yes","No"], editable: true },
-        { key: "canEdit", label: "Edit", type: "select", options: ["Yes","No"], editable: true },
-        { key: "canDelete", label: "Delete", type: "select", options: ["Yes","No"], editable: true },
-        { key: "canApprove", label: "Approve", type: "select", options: ["Yes","No"], editable: true },
-      ],
-      count: 36,
-      seed: (i) => {
-        const role = pick(ROLES, i);
-        const isAdmin = role === "Admin";
-        const isManager = role === "Manager";
-        const isSupv = role === "Supervisor";
-        return {
-          role,
-          module: pick(["Dashboard","Parts","Tickets","Claims","Report","Admin"], i),
-          canView: "Yes",
-          canEdit: isAdmin || isManager ? "Yes" : isSupv ? "Yes" : "No",
-          canDelete: isAdmin || isManager ? "Yes" : "No",
-          canApprove: (isAdmin || isManager || isSupv) && (i%2 === 0) ? "Yes" : "No",
-        };
-      },
+      slug: "location-management",
+      title: "Location Management",
+      description: "Manage branch locations and part shipping addresses.",
+      custom: "location-management" as const,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "account-management",
+      title: "Account Management",
+      description: "Store external service accounts used for parts ordering and technician mapping.",
+      custom: "account-management" as const,
+      fields: [],
+      seed: () => ({}),
     },
     {
       slug: "system-settings",

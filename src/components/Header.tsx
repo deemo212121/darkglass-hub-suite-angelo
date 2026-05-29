@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/logo.png";
 import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
@@ -20,9 +20,36 @@ function getInitials(value: string | null) {
   return localPart.slice(0, 2).toUpperCase();
 }
 
+function loadEmployeePhoto(email: string | null) {
+  if (typeof window === "undefined" || !email) return "";
+  const normalizedEmail = email.trim().toLowerCase();
+  const keys = [
+    `ahs:employee-info-email:${normalizedEmail}`,
+    `ahs:employee-info:${normalizedEmail}`,
+  ];
+
+  for (const key of keys) {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as { photoDataUrl?: string };
+      if (typeof parsed.photoDataUrl === "string" && parsed.photoDataUrl) return parsed.photoDataUrl;
+    } catch {
+      continue;
+    }
+  }
+
+  return "";
+}
+
 export function AppHeader() {
   const { email, companyId, logout, ready } = useAuth();
   const navigate = useNavigate();
+  const [photoDataUrl, setPhotoDataUrl] = useState("");
+
+  useEffect(() => {
+    setPhotoDataUrl(loadEmployeePhoto(email));
+  }, [email]);
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[oklch(0.16_0.04_260/0.7)] border-b border-[var(--color-panel-border)]">
@@ -42,8 +69,12 @@ export function AppHeader() {
                   className="group flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] hover:bg-[oklch(0.98_0.005_250/0.1)] transition-colors cursor-pointer"
                   aria-label="Account menu"
                 >
-                  <span className="grid place-items-center h-8 w-8 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold">
-                    {getInitials(email)}
+                  <span className="grid place-items-center h-8 w-8 rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">
+                    {photoDataUrl ? (
+                      <img src={photoDataUrl} alt="Uploaded profile photo" className="h-full w-full object-cover" />
+                    ) : (
+                      getInitials(email)
+                    )}
                   </span>
                   <span className="hidden sm:flex flex-col items-start leading-tight">
                     <span className="text-foreground text-sm truncate max-w-[180px]">{email}</span>
@@ -59,8 +90,12 @@ export function AppHeader() {
               >
                 <DropdownMenuLabel className="px-2 py-2">
                   <div className="flex items-center gap-2.5">
-                    <span className="grid place-items-center h-9 w-9 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold">
-                      {getInitials(email)}
+                    <span className="grid place-items-center h-9 w-9 rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">
+                      {photoDataUrl ? (
+                        <img src={photoDataUrl} alt="Uploaded profile photo" className="h-full w-full object-cover" />
+                      ) : (
+                        getInitials(email)
+                      )}
                     </span>
                     <div className="leading-tight min-w-0">
                       <div className="text-sm font-medium truncate">{email}</div>

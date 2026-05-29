@@ -101,6 +101,22 @@ export const USER_MANAGEMENT_RECORDS: UserManagementRecord[] = Array.from({ leng
 export function getUserManagementRecord(userId: string) {
   const normalized = String(userId || "").toLowerCase();
   return USER_MANAGEMENT_RECORDS.find((record) =>
-    [record.id, record.loginName, record.userName].some((value) => String(value || "").toLowerCase() === normalized),
+    [record.id, record.loginName, record.userName, record.email].some((value) => String(value || "").toLowerCase() === normalized),
   );
+}
+
+const USER_MANAGEMENT_ADMIN_TYPES = new Set(["hr", "manager", "admin", "super admin", "superadmin"]);
+const AHS_SYSTEM_ACCESS_EMAILS = new Set([
+  "admin@ahsolutions.com",
+  "manager@ahsolutions.com",
+  "hr@ahsolutions.com",
+  "superadmin@ahsolutions.com",
+]);
+
+export function canAccessUserManagement(emailOrUserId: string | null | undefined) {
+  const normalized = String(emailOrUserId || "").trim().toLowerCase();
+  if (AHS_SYSTEM_ACCESS_EMAILS.has(normalized)) return true;
+
+  const record = getUserManagementRecord(normalized);
+  return !!record && USER_MANAGEMENT_ADMIN_TYPES.has(record.type.toLowerCase());
 }

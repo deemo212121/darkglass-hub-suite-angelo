@@ -95,8 +95,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <th className="px-4 py-3 text-left">Email</th>
                   <th className="px-4 py-3 text-left">Manager</th>
                   <th className="px-4 py-3 text-left">Technician ID</th>
-                  <th className="px-4 py-3 text-left">Office</th>
-                  <th className="px-4 py-3 text-left">Locations</th>
+                  <th className="px-4 py-3 text-left">Assigned Branch</th>
+                  <th className="px-4 py-3 text-left">Branch Access</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
