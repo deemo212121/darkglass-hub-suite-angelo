@@ -746,8 +746,50 @@ function TicketDetailsPage() {
         )}
 
         {activeTab === "compensation" && (
-          <div className="text-slate-400 py-12 text-center">
-            <p>Compensation details coming soon...</p>
+          <div className="space-y-6">
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <label className="block text-slate-500 font-semibold mb-2">Default Date:</label>
+                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">05/29/2026</div>
+                </div>
+                <div>
+                  <label className="block text-slate-500 font-semibold mb-2">Schedule Date</label>
+                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">Today</div>
+                </div>
+                <div className="flex items-end">
+                  <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded text-sm transition">
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-white/10 rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Compensation Item</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Beneficiary</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Amount</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Rate</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Activity Date</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Requires Approved Claim / Requires Cx Payment</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Comment</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Created by</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Last Modified by</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-4 py-3 text-slate-300" colSpan={10}>
+                      No compensation records yet
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
