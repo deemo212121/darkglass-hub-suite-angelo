@@ -1,7 +1,13 @@
-import appServer from "../src/server";
+import server from "../dist/server/index.js";
 
-export const runtime = "edge";
+const serverEntry = server as {
+  fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
+};
+
+export const config = {
+  runtime: "edge",
+};
 
 export default async function handler(request: Request): Promise<Response> {
-  return appServer.fetch(request, undefined, undefined);
+  return serverEntry.fetch(request, {}, {});
 }
