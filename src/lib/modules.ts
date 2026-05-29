@@ -1167,7 +1167,7 @@ const adminMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, partsMod, ticketsMod, claimsMod, reportMod, adminMod];
+export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);
