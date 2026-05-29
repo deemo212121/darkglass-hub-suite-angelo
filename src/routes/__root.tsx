@@ -8,6 +8,8 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth";
+import { TicketDetailsProvider } from "@/lib/ticket-details-context";
+import { TicketDetailsModal } from "@/components/TicketDetailsModal";
 
 import appCss from "../styles.css?url";
 
@@ -81,7 +83,10 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <Outlet />
+        <TicketDetailsProvider>
+          <Outlet />
+          <TicketDetailsModal />
+        </TicketDetailsProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
