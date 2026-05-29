@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useState } from "react";
+import { AppHeader } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 
 interface TicketData {
   ticketNo: string;
@@ -115,48 +117,43 @@ function TicketDetailsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      {/* Header */}
-      <div className="bg-slate-900/95 backdrop-blur border-b border-white/10 p-6 sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto flex justify-between items-start">
-          <div>
-            <h1 className="text-3xl font-bold text-white">Ticket #{ticket.ticketNo}</h1>
-            <div className="flex gap-6 mt-2 text-sm text-slate-400">
-              <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
-              <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
-              <div><span className="font-semibold text-blue-400">Status:</span> <span className="text-blue-300">{ticket.status}</span></div>
+    <div className="min-h-screen flex flex-col">
+      <AppHeader />
+      <main className="flex-1 bg-slate-950">
+        <div className="bg-slate-900/95 backdrop-blur border-b border-white/10 p-6">
+          <div className="max-w-6xl mx-auto flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold text-white">Ticket #{ticket.ticketNo}</h1>
+              <div className="flex gap-6 mt-2 text-sm text-slate-400">
+                <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
+                <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
+                <div><span className="font-semibold text-blue-400">Status:</span> <span className="text-blue-300">{ticket.status}</span></div>
+              </div>
             </div>
           </div>
-          <button
-            onClick={() => window.close()}
-            className="text-slate-400 hover:text-white transition"
-          >
-            <X className="h-6 w-6" />
-          </button>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="bg-slate-900/50 border-b border-white/10 sticky top-20 z-40">
-        <div className="max-w-6xl mx-auto px-6 flex gap-8">
-          {["general", "tracking", "compensation", "billing"].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`py-4 px-2 font-semibold text-sm transition-all border-b-2 ${
-                activeTab === tab
-                  ? "text-blue-400 border-blue-400"
-                  : "text-slate-400 border-transparent hover:text-slate-300"
-              }`}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
-            </button>
-          ))}
+        {/* Tabs */}
+        <div className="bg-slate-900/50 border-b border-white/10 sticky top-0 z-40">
+          <div className="max-w-6xl mx-auto px-6 flex gap-8">
+            {["general", "tracking", "compensation", "billing"].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as any)}
+                className={`py-4 px-2 font-semibold text-sm transition-all border-b-2 ${
+                  activeTab === tab
+                    ? "text-blue-400 border-blue-400"
+                    : "text-slate-400 border-transparent hover:text-slate-300"
+                }`}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="max-w-6xl mx-auto p-6">
+        {/* Content */}
+        <div className="max-w-6xl mx-auto p-6">
         {activeTab === "general" && (
           <div className="space-y-8">
             {/* Quick Info Grid */}
@@ -381,7 +378,9 @@ function TicketDetailsPage() {
             <p>Billing information coming soon...</p>
           </div>
         )}
-      </div>
+        </div>
+      </main>
+      <Footer />
     </div>
   );
 }

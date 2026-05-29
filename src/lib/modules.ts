@@ -469,25 +469,6 @@ const ticketsMod: ModuleDef = {
       custom: "ticket-list" as const,
     },
     {
-      slug: "ticket-details",
-      title: "Ticket Details",
-      description: "Deep-dive on individual tickets.",
-      fields: [
-        { key: "id", label: "Ticket #", filterable: true },
-        { key: "appliance", label: "Appliance", type: "select", options: ["Washer","Dryer","Fridge","Range","Dishwasher","Microwave"], filterable: true },
-        { key: "symptom", label: "Symptom", editable: true },
-        { key: "diagnosis", label: "Diagnosis", editable: true },
-        { key: "status", label: "Status", type: "select", options: STATUS, editable: true, filterable: true },
-      ],
-      seed: (i) => ({
-        id: "T-" + pad(20000 + i),
-        appliance: pick(["Washer","Dryer","Fridge","Range","Dishwasher","Microwave"], i),
-        symptom: ["Not heating","Leaking","Won't start","Noisy","Error code"][i%5],
-        diagnosis: ["Faulty board","Drain clog","Door switch","Belt worn","Sensor bad"][i%5],
-        status: pick(STATUS, i),
-      }),
-    },
-    {
       slug: "new-ticket",
       title: "Create New Ticket",
       description: "Create and stage new service tickets.",
