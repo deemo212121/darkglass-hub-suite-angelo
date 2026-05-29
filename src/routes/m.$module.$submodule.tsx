@@ -14,6 +14,8 @@ import { ClaimList } from "@/components/ClaimList";
 import { AuthorizationStatus } from "@/components/AuthorizationStatus";
 import { ClaimCalendarMonthly } from "@/components/ClaimCalendarMonthly";
 import { ClaimCalendarWeekly } from "@/components/ClaimCalendarWeekly";
+import { WorkCalendarPage } from "@/components/WorkCalendarPage";
+import { WorkPlannerPage } from "@/components/WorkPlannerPage";
 import { ClaimPlanner } from "@/components/ClaimPlanner";
 import { CreditCardReport } from "@/components/CreditCardReport";
 import { FtfReport } from "@/components/FtfReport";
@@ -21,7 +23,7 @@ import { LtpReport } from "@/components/LtpReport";
 import { TatReport } from "@/components/TatReport";
 import { CsrDailyWork } from "@/components/CsrDailyWork";
 import { DailyActivityReport } from "@/components/DailyActivityReport";
-import { InternalMessageReport } from "@/components/InternalMessageReport";
+import { TeamMessenger } from "@/components/TeamMessenger";
 import { LoginStatistics } from "@/components/LoginStatistics";
 import { LtpProjectionReport } from "@/components/LtpProjectionReport";
 import { ModelDocuments } from "@/components/ModelDocuments";
@@ -43,6 +45,8 @@ import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 import { PartOrder } from "@/components/PartOrder";
 import { PartReceive } from "@/components/PartReceive";
 import { TicketList } from "@/components/TicketList";
+import { NewTicketPage } from "@/components/NewTicketPage";
+import { TodoListPage } from "@/components/TodoListPage";
 import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
@@ -138,6 +142,10 @@ function SubModule() {
         ? <ClaimCalendarMonthly mod={mod} sub={sub} />
         : (sub as any).custom === "claim-calendar-weekly"
         ? <ClaimCalendarWeekly mod={mod} sub={sub} />
+        : sub.slug === "work-calendar"
+        ? <WorkCalendarPage mod={mod} sub={sub} />
+        : sub.slug === "work-planner"
+        ? <WorkPlannerPage mod={mod} sub={sub} />
         : (sub as any).custom === "claim-planner"
         ? <ClaimPlanner mod={mod} sub={sub} />
         : (sub as any).custom === "credit-card-report"
@@ -152,8 +160,8 @@ function SubModule() {
         ? <CsrDailyWork mod={mod} sub={sub} />
         : (sub as any).custom === "daily-activity-report"
         ? <DailyActivityReport mod={mod} sub={sub} />
-        : (sub as any).custom === "internal-message-report"
-        ? <InternalMessageReport mod={mod} sub={sub} />
+        : (sub as any).custom === "internal-message-support"
+        ? <TeamMessenger mod={mod} sub={sub} />
         : (sub as any).custom === "login-statistics"
         ? <LoginStatistics mod={mod} sub={sub} />
         : (sub as any).custom === "ltp-projection-report"
@@ -196,6 +204,10 @@ function SubModule() {
         ? <PartReceive mod={mod} sub={sub} />
         : sub.custom === "ticket-list"
         ? <TicketList mod={mod} sub={sub} />
+        : sub.slug === "new-ticket"
+        ? <NewTicketPage mod={mod} sub={sub} />
+        : sub.slug === "todo-list"
+        ? <TodoListPage mod={mod} sub={sub} />
         : sub.custom === "user-management"
         ? <AdminUserManagementPage mod={mod} sub={sub} />
         : sub.custom === "account-management"

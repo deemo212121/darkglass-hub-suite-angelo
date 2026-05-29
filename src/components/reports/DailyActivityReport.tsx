@@ -36,16 +36,16 @@ function MultiCheckDropdown({ label, options, selected, onChange }: { label: str
   const display = all ? options.join(", ") : selected.join(", ") || "None";
   return (
     <div ref={ref} className="relative flex-1">
-      <button aria-label={`Select ${label}`} aria-expanded={open} onClick={() => setOpen(o => !o)}
+      <button aria-label={`Select ${label}`} onClick={() => setOpen(o => !o)}
         className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2 text-left">
         <span className="truncate text-xs">{display}</span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-50 top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 text-white shadow-xl">
           {options.map(o => (
-            <label key={o} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer text-sm">
-              <input type="checkbox" checked={selected.includes(o)} onChange={() => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o])} className="accent-blue-500" title={o} />
+              <label key={o} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-white/90 hover:bg-white/10">
+                <input type="checkbox" checked={selected.includes(o)} onChange={() => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o])} className="accent-white" title={o} />
               {o}
             </label>
           ))}
@@ -65,16 +65,16 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
   }, []);
   return (
     <div ref={ref} className="relative flex-1 min-w-40">
-      <button aria-label="Select location" aria-expanded={open} onClick={() => setOpen(o => !o)}
+      <button aria-label="Select location" onClick={() => setOpen(o => !o)}
         className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
         <span className={value ? "" : "text-muted-foreground"}>{value || "All Locations"}</span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 text-white shadow-xl">
           {LOCATIONS.map((l, i) => (
             <button key={i} onClick={() => { onChange(l); setOpen(false); }}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${value === l ? "bg-blue-600 text-white" : l === "" ? "text-muted-foreground" : ""}`}>
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${value === l ? "bg-white/10 text-white" : l === "" ? "text-white/60" : "text-white/90"}`}>
               {l || "— All Locations —"}
             </button>
           ))}

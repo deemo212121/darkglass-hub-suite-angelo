@@ -869,6 +869,7 @@ function TicketDetailsPage() {
                         <select
                           value={row.beneficiary}
                           onChange={(e) => updateCompensationRow(row.id, "beneficiary", e.target.value)}
+                          title="Select technician"
                           className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                         >
                           <option value="">Select technician</option>
@@ -1041,6 +1042,7 @@ function TicketDetailsPage() {
         )}
         </div>
       </main>
+
       <Footer />
     </div>
   );

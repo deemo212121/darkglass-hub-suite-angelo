@@ -2,9 +2,11 @@ import { useState, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 
 interface TicketItem {
   ticketNo: string;
+  ticketSource?: string;
   warranty: string;
   manufacturer: string;
   customer: string;
@@ -25,7 +27,57 @@ interface TicketItem {
   created: string;
 }
 
-const SAMPLE_TICKETS: TicketItem[] = [
+const TICKET_SOURCES = ["LG", "Midea-104268", "NSA GSLEE", "NSA MEMPHIS", "SB", "SB-1276506820", "SB-Miele", "SP", "SP1", "SS", "SS-6488757", "EarlyRepair"] as const;
+const REPAIR_STATUS_OPTIONS = [
+  "CL-Need",
+  "Cancel",
+  "CL-Parts Back Ordered",
+  "CL-Ready to Complete",
+  "CSR-Acknowledged",
+  "CSR-Assigned to ASC",
+  "CSR-Left Message for Cx",
+  "CSR-Needs Scheduling",
+  "OP-Ready for Service",
+  "OP-Reschedule Follow up",
+  "OP-UPDATE HOLD",
+  "OP-Waiting for Part",
+  "PT-Need PreAuthorization",
+  "TR-Need PO",
+  "TR-Need Trage",
+] as const;
+const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
+
+function loadSavedLocations(): string[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(LOCATION_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { rows?: Array<{ location?: string }> };
+    return Array.isArray(parsed.rows)
+      ? parsed.rows.map((row) => row.location?.trim()).filter((value): value is string => Boolean(value))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseTicketDate(value: string) {
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  if (!match) return "";
+  const [, month, day, year] = match;
+  return `20${year}-${month}-${day}`;
+}
+
+function isWithinDateRange(value: string, startDate: string, endDate: string) {
+  const normalized = parseTicketDate(value);
+  if (!normalized) return false;
+  if (startDate && normalized < startDate) return false;
+  if (endDate && normalized > endDate) return false;
+  return true;
+}
+
+const RAW_SAMPLE_TICKETS: TicketItem[] = [
   {
     ticketNo: "SA-3458831",
     warranty: "IW",
@@ -238,21 +290,37 @@ const SAMPLE_TICKETS: TicketItem[] = [
   },
 ];
 
+const SAMPLE_TICKETS: TicketItem[] = RAW_SAMPLE_TICKETS.map((ticket, index) => ({
+  ...ticket,
+  ticketSource: TICKET_SOURCES[index % TICKET_SOURCES.length],
+}));
+
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [repairStatusFilter, setRepairStatusFilter] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
+  const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
+  const locationOptions = useMemo(
+    () => mergeLocationOptions(LOCATIONS, loadSavedLocations(), SAMPLE_TICKETS.map((ticket) => ticket.location)),
+    [],
+  );
+  const ticketSourceOptions = useMemo(() => Array.from(new Set(SAMPLE_TICKETS.map((ticket) => ticket.ticketSource || "").filter(Boolean))).sort((a, b) => a.localeCompare(b)), []);
+
   const filteredItems = useMemo(() => {
-    if (!searchQuery) return SAMPLE_TICKETS;
     const query = searchQuery.toLowerCase();
-    return SAMPLE_TICKETS.filter(ticket =>
-      ticket.ticketNo.toLowerCase().includes(query) ||
-      ticket.customer.toLowerCase().includes(query) ||
-      ticket.city.toLowerCase().includes(query) ||
-      ticket.phone.toLowerCase().includes(query) ||
-      ticket.model.toLowerCase().includes(query)
-    );
-  }, [searchQuery]);
+    return SAMPLE_TICKETS.filter((ticket) => {
+      const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((value) => value.toLowerCase().includes(query));
+      const matchesRepairStatus = !repairStatusFilter || ticket.status === repairStatusFilter;
+      const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.schedule, startDateFilter, endDateFilter);
+      const matchesLocation = !locationFilter || ticket.location === locationFilter;
+      const matchesSource = !ticketSourceFilter || (ticket.ticketSource || "") === ticketSourceFilter;
+      return matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource;
+    });
+  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter]);
 
   const toggleItemSelection = (ticketNo: string) => {
     const newSelected = new Set(selectedItems);
@@ -286,16 +354,33 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         </div>
 
         <div className="panel">
-          {/* Search Bar */}
-          <div className="mb-6">
-            <input
-              type="text"
-              placeholder="ticket, zip code, address, name, etc"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="glass-input w-full"
-              style={{ padding: "0.75rem 1rem", fontSize: "0.95rem" }}
-            />
+          <div className="mb-6 space-y-3">
+            <div className="grid gap-3 lg:grid-cols-3">
+              <input
+                type="text"
+                placeholder="ticket, zip code, address, name, etc"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="glass-input w-full"
+                aria-label="Search tickets"
+              />
+              <select aria-label="Repair status filter" value={repairStatusFilter} onChange={(e) => setRepairStatusFilter(e.target.value)} className="glass-input w-full">
+                <option value="">All Repair Status</option>
+                {REPAIR_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select aria-label="Location filter" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="glass-input w-full">
+                <option value="">All Locations</option>
+                {locationOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <input aria-label="Start date" type="date" value={startDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} className="glass-input w-full" />
+              <input aria-label="End date" type="date" value={endDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} className="glass-input w-full" />
+              <select aria-label="Ticket source filter" value={ticketSourceFilter} onChange={(e) => setTicketSourceFilter(e.target.value)} className="glass-input w-full">
+                <option value="">All Ticket Sources</option>
+                {ticketSourceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Ticket Table */}
@@ -308,12 +393,13 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       type="checkbox"
                       checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
                       onChange={toggleAllItems}
+                      aria-label="Select all tickets"
                       className="cursor-pointer"
                     />
                   </th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300 sticky left-12 bg-blue-900/50">Ticket No</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Wty</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Src/Brand</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket Source</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Name</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">City</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Loc</th>
@@ -340,6 +426,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                         type="checkbox"
                         checked={selectedItems.has(ticket.ticketNo)}
                         onChange={() => toggleItemSelection(ticket.ticketNo)}
+                        aria-label={`Select ticket ${ticket.ticketNo}`}
                         className="cursor-pointer"
                       />
                     </td>
@@ -354,7 +441,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       </a>
                     </td>
                     <td className="px-4 py-3 text-slate-300">{ticket.warranty}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.manufacturer}</td>
+                    <td className="px-4 py-3 text-slate-300">{ticket.ticketSource || ticket.manufacturer}</td>
                     <td className="px-4 py-3 text-slate-300">{ticket.customer}</td>
                     <td className="px-4 py-3 text-slate-300">{ticket.city}</td>
                     <td className="px-4 py-3 text-slate-300">{ticket.location}</td>

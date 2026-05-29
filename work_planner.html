@@ -1,0 +1,2234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Work Planner - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../config.js"></script>
+	<style>
+		/* Override module-page display */
+		.module-page {
+			display: flex !important;
+		}
+
+		/* â”€â”€ Work Planner Panel â”€â”€ */
+		.work-planner-container {
+			display: flex;
+			flex-direction: column;
+			gap: 1.5rem;
+			padding: 1.5rem;
+		}
+
+		.work-planner-header {
+			display: flex;
+			gap: 1rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-select, .control-input {
+			padding: 0.5rem 0.7rem;
+			background: rgba(2, 6, 23, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+		}
+
+		.control-select:focus, .control-input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.checkbox-group {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+			margin-top: 0.5rem;
+		}
+
+		.checkbox-group input[type="checkbox"] {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+		}
+
+		.checkbox-group label {
+			color: #e2e8f0;
+			font-size: 0.85rem;
+			cursor: pointer;
+		}
+
+		/* â”€â”€ Status Legend â”€â”€ */
+		.status-legend {
+			background: rgba(17, 24, 39, 0.5);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 6px;
+			padding: 1rem;
+			margin-bottom: 1rem;
+		}
+
+		.legend-title {
+			font-size: 0.75rem;
+			font-weight: 600;
+			color: #94a3b8;
+			text-transform: uppercase;
+			margin-bottom: 0.75rem;
+		}
+
+		.legend-items {
+			display: flex;
+			gap: 1.5rem;
+			flex-wrap: wrap;
+		}
+
+		.legend-item {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+			font-size: 0.8rem;
+			color: #cbd5e1;
+		}
+
+		.legend-color {
+			width: 16px;
+			height: 16px;
+			border-radius: 50%;
+			border: 2px solid rgba(255, 255, 255, 0.2);
+		}
+
+		.color-pending { background: #f59e0b; }
+		.color-ready { background: #10b981; }
+		.color-completed { background: #6366f1; }
+		.color-claimed { background: #ef4444; }
+
+		/* â”€â”€ Date Display â”€â”€ */
+		.schedule-date-control {
+			display: flex;
+			align-items: center;
+			gap: 0.35rem;
+			margin-bottom: 0.85rem;
+		}
+
+		.schedule-date {
+			min-width: 132px;
+			text-align: center;
+			font-size: 0.95rem;
+			font-weight: 600;
+			color: #e0e7ff;
+			background: rgba(99, 102, 241, 0.1);
+			padding: 0.5rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(99, 102, 241, 0.3);
+		}
+
+		.schedule-date-arrow {
+			width: 32px;
+			height: 32px;
+			border-radius: 8px;
+			border: 1px solid rgba(99, 102, 241, 0.35);
+			background: rgba(15, 23, 42, 0.85);
+			color: #e0e7ff;
+			font-size: 0.95rem;
+			font-weight: 700;
+			cursor: pointer;
+			transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+		}
+
+		.schedule-date-arrow:hover {
+			background: rgba(99, 102, 241, 0.18);
+			border-color: rgba(129, 140, 248, 0.65);
+			transform: translateY(-1px);
+		}
+
+		/* â”€â”€ Technician Schedule â”€â”€ */
+		.tech-schedule {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1.5rem;
+		}
+
+		.tech-column {
+			background: rgba(17, 24, 39, 0.5);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 6px;
+			overflow: hidden;
+		}
+
+		.tech-header {
+			background: rgba(99, 102, 241, 0.2);
+			border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+			padding: 0.85rem;
+			font-weight: 600;
+			color: #e0e7ff;
+			font-size: 0.9rem;
+		}
+
+		.time-slot {
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+			padding: 0.75rem;
+		}
+
+		.time-slot-label {
+			font-size: 0.75rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			margin-bottom: 0.5rem;
+			padding: 0.25rem 0;
+		}
+
+		/* â”€â”€ Work Order Card â”€â”€ */
+		.work-order-card {
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.2);
+			border-radius: 4px;
+			padding: 0.65rem;
+			margin-bottom: 0.5rem;
+			font-size: 0.75rem;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+
+		.work-order-card:hover {
+			background: rgba(30, 41, 59, 1);
+			border-color: rgba(148, 163, 184, 0.4);
+		}
+
+		.work-order-card[draggable="true"] {
+			cursor: grab;
+		}
+
+		.work-order-card[draggable="true"]:active {
+			cursor: grabbing;
+		}
+
+		.work-order-card.dragging {
+			opacity: 0.6;
+			background: rgba(96, 165, 250, 0.3);
+			border-color: rgba(96, 165, 250, 0.6);
+			transform: scale(0.98);
+		}
+
+		.time-slot.drag-over {
+			background: rgba(96, 165, 250, 0.15);
+			border-radius: 4px;
+			border: 2px dashed rgba(96, 165, 250, 0.5);
+		}
+
+		.work-order-status {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.4rem;
+			padding: 0.2rem 0.45rem;
+			background: rgba(59, 130, 246, 0.12);
+			border-radius: 999px;
+			color: #cfe3ff;
+			font-weight: 600;
+			margin-bottom: 0.25rem;
+			line-height: 1.2;
+		}
+
+		.work-order-status-dot {
+			width: 8px;
+			height: 8px;
+			border-radius: 999px;
+			flex: 0 0 8px;
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+		}
+
+		.work-order-ticket {
+			display: block;
+			font-weight: 600;
+			color: #60a5fa;
+			margin-bottom: 0.2rem;
+			cursor: pointer;
+			text-decoration: underline;
+			transition: all 0.2s;
+		}
+
+		.work-order-ticket:hover {
+			color: #93c5fd;
+			text-decoration-thickness: 2px;
+		}
+
+		.work-order-address {
+			color: #cbd5e1;
+			font-size: 0.7rem;
+		}
+
+		.work-order-customer {
+			color: #94a3b8;
+			font-size: 0.7rem;
+			margin-top: 0.2rem;
+		}
+
+		/* â”€â”€ Summary Table â”€â”€ */
+		.summary-section {
+			background: rgba(17, 24, 39, 0.5);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 6px;
+			padding: 1rem;
+			margin-bottom: 1.5rem;
+		}
+
+		.section-title {
+			font-size: 0.85rem;
+			font-weight: 700;
+			color: #e0e7ff;
+			text-transform: uppercase;
+			margin-bottom: 1rem;
+		}
+
+		.summary-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.8rem;
+		}
+
+		.summary-table thead {
+			background: rgba(99, 102, 241, 0.1);
+		}
+
+		.summary-table th {
+			text-align: left;
+			padding: 0.6rem;
+			color: #93c5fd;
+			font-weight: 600;
+			border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+		}
+
+		.summary-table td {
+			padding: 0.6rem;
+			color: #cbd5e1;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		.summary-table tbody tr:hover {
+			background: rgba(99, 102, 241, 0.1);
+		}
+
+		/* â”€â”€ Changed Tickets â”€â”€ */
+		.changed-tickets-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.8rem;
+		}
+
+		.changed-tickets-table thead {
+			background: rgba(99, 102, 241, 0.1);
+		}
+
+		.changed-tickets-table th {
+			text-align: left;
+			padding: 0.6rem;
+			color: #93c5fd;
+			font-weight: 600;
+			border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+		}
+
+		.changed-tickets-table td {
+			padding: 0.6rem;
+			color: #cbd5e1;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+		}
+
+		.no-records {
+			text-align: center;
+			color: #64748b;
+			padding: 1.5rem;
+			font-style: italic;
+		}
+
+		/* â”€â”€ Unverified Address â”€â”€ */
+		.unverified-section {
+			background: rgba(239, 68, 68, 0.1);
+			border: 1px solid rgba(239, 68, 68, 0.3);
+			border-radius: 6px;
+			padding: 1rem;
+		}
+
+		.unverified-section .section-title {
+			color: #fca5a5;
+		}
+
+		.unverified-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.8rem;
+		}
+
+		.unverified-table th {
+			text-align: left;
+			padding: 0.6rem;
+			color: #fca5a5;
+			font-weight: 600;
+			border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+		}
+
+		.unverified-table td {
+			padding: 0.6rem;
+			color: #cbd5e1;
+			border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+		}
+
+		/* â”€â”€ Responsive â”€â”€ */
+		@media (max-width: 1024px) {
+			.tech-schedule {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		/* â”€â”€ Map Section â”€â”€ */
+		.map-section {
+			background: rgba(17, 24, 39, 0.5);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 6px;
+			padding: 1rem;
+			margin-bottom: 1.5rem;
+			min-height: 500px;
+			position: relative;
+			overflow: hidden;
+		}
+
+		.map-section-title {
+			font-size: 0.85rem;
+			font-weight: 700;
+			color: #e0e7ff;
+			text-transform: uppercase;
+			margin-bottom: 1rem;
+		}
+
+		.map-container {
+			width: 100%;
+			height: 100%;
+			min-height: 450px;
+			position: relative;
+			border-radius: 4px;
+			overflow: hidden;
+			background: #e5e3df;
+		}
+
+		#googleMap {
+			width: 100%;
+			height: 100%;
+			min-height: 450px;
+		}
+
+		.map-pins-container {
+			position: absolute;
+			inset: 0;
+			pointer-events: none;
+		}
+
+		.map-pin {
+			position: absolute;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			cursor: pointer;
+			pointer-events: all;
+			transform: translate(-50%, -100%);
+			transition: transform 0.15s;
+		}
+
+		.map-pin:hover {
+			transform: translate(-50%, -105%) scale(1.15);
+			z-index: 10;
+		}
+
+		.pin-bubble {
+			padding: 0.35rem 0.75rem;
+			border-radius: 4px;
+			font-size: 0.75rem;
+			font-weight: 700;
+			color: #fff;
+			white-space: nowrap;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+			display: flex;
+			align-items: center;
+			gap: 0.3rem;
+			flex-direction: column;
+		}
+
+		.pin-initials {
+			min-width: 1rem;
+			line-height: 1;
+		}
+
+		.pin-time {
+			font-size: 0.65rem;
+			opacity: 0.9;
+			line-height: 1;
+		}
+
+		.pin-tail {
+			width: 0;
+			height: 0;
+			border-left: 5px solid transparent;
+			border-right: 5px solid transparent;
+			margin-top: -1px;
+		}
+
+		.legend-for-map {
+			position: absolute;
+			top: 1rem;
+			right: 1rem;
+			background: rgba(10, 15, 30, 0.95);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 4px;
+			padding: 0.75rem 1rem;
+			font-size: 0.75rem;
+			color: #cbd5e1;
+			z-index: 20;
+			max-width: 200px;
+		}
+
+		.legend-for-map-item {
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+			margin-bottom: 0.4rem;
+		}
+
+		.legend-for-map-item:last-child {
+			margin-bottom: 0;
+		}
+
+		.legend-color-dot {
+			width: 12px;
+			height: 12px;
+			border-radius: 50%;
+			display: inline-block;
+		}
+
+		/* â”€â”€ Detail Modal â”€â”€ */
+		.detail-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.55);
+			z-index: 200;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.detail-overlay.open {
+			display: flex;
+		}
+
+		.detail-modal {
+			background: #1e293b;
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			width: 700px;
+			max-width: 95vw;
+			max-height: 92vh;
+			overflow-y: auto;
+			color: #f1f5f9;
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+		}
+
+		.detail-modal-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			padding: 0.85rem 1.1rem;
+			background: #0f172a;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.detail-title-row {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+		}
+
+		.detail-ticket-no {
+			font-size: 1.1rem;
+			font-weight: 700;
+			color: #fff;
+		}
+
+		.detail-ticket-link {
+			text-decoration: underline;
+			text-underline-offset: 2px;
+		}
+
+		.detail-ticket-link:hover {
+			color: #93c5fd;
+		}
+
+		.google-btn {
+			padding: 0.28rem 0.7rem;
+			background: #4285f4;
+			color: #fff;
+			border: none;
+			border-radius: 4px;
+			font-size: 0.76rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.google-btn:hover {
+			background: #3b78de;
+		}
+
+		.modal-close-btn {
+			background: transparent;
+			border: none;
+			color: #64748b;
+			font-size: 1.4rem;
+			cursor: pointer;
+			line-height: 1;
+			padding: 0.1rem 0.3rem;
+		}
+
+		.modal-close-btn:hover {
+			color: #fff;
+		}
+
+		.detail-body {
+			padding: 1rem 1.1rem;
+		}
+
+		.detail-row {
+			display: flex;
+			gap: 1.5rem;
+			margin-bottom: 0.65rem;
+			flex-wrap: wrap;
+			align-items: flex-start;
+		}
+
+		.detail-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.detail-field.grow {
+			flex: 1;
+		}
+
+		.detail-label {
+			font-size: 0.75rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.detail-value {
+			font-size: 0.9rem;
+			color: #e2e8f0;
+		}
+
+		.detail-divider {
+			border: none;
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+		}
+	</style>
+</head>
+<body>
+	<div class="module-page">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='index.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Tickets
+			</button>
+			<h2 style="color: white; margin: 0;">Work Planner</h2>
+		</div>
+
+		<div class="work-planner-container">
+			<!-- Controls Section -->
+			<div style="background: rgba(17, 24, 39, 0.75); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1.25rem;">
+				<div class="work-planner-header">
+					<div class="control-group">
+						<label class="control-label">Location</label>
+						<select id="locationSelect" class="control-select" title="Location" aria-label="Location" onchange="updatePlanner()">
+							<option value="Asheville">Asheville</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Cape Girardeau">Cape Girardeau</option>
+							<option value="Chattanooga">Chattanooga</option>
+							<option value="Columbus">Columbus</option>
+							<option value="Dallas">Dallas</option>
+							<option value="Destin">Destin</option>
+							<option value="Huntsville">Huntsville</option>
+							<option value="Jackson, MS">Jackson, MS</option>
+							<option value="Jackson, TN">Jackson, TN</option>
+							<option value="Jacksonville">Jacksonville</option>
+							<option value="Jonesboro">Jonesboro</option>
+							<option value="Knoxville">Knoxville</option>
+							<option value="Lake Charles">Lake Charles</option>
+							<option value="Little Rock">Little Rock</option>
+							<option value="Louisville">Louisville</option>
+							<option value="Memphis">Memphis</option>
+							<option value="Mobile">Mobile</option>
+							<option value="Montgomery">Montgomery</option>
+							<option value="Nashville">Nashville</option>
+							<option value="New Orleans">New Orleans</option>
+							<option value="Norfolk">Norfolk</option>
+							<option value="Philippines">Philippines</option>
+							<option value="Raleigh">Raleigh</option>
+							<option value="Richmond">Richmond</option>
+							<option value="San Antonio">San Antonio</option>
+							<option value="Savannah">Savannah</option>
+							<option value="St. Louis">St. Louis</option>
+							<option value="Tallahassee">Tallahassee</option>
+							<option value="Wilmington">Wilmington</option>
+						</select>
+					</div>
+					<div class="control-group" style="display:none;">
+						<label class="control-label" for="scheduleDateInput">Date</label>
+						<input id="scheduleDateInput" class="control-input" type="date" title="Schedule Date" aria-label="Schedule Date" onchange="updatePlanner()">
+					</div>
+
+					<div class="checkbox-group">
+						<input type="checkbox" id="rescheduledVisit" onchange="updatePlanner()">
+						<label for="rescheduledVisit">Show rescheduled visit</label>
+					</div>
+				</div>
+			</div>
+
+			<!-- Status Legend -->
+			<div class="status-legend">
+				<div class="legend-title">Overall Status: Repair Status (customizable in Admin > Repair Statuses)</div>
+				<div class="legend-items">
+					<div class="legend-item">
+						<div class="legend-color color-pending"></div>
+						<span>Pending</span>
+					</div>
+					<div class="legend-item">
+						<div class="legend-color color-ready"></div>
+						<span>Ready for Service</span>
+					</div>
+					<div class="legend-item">
+						<div class="legend-color color-completed"></div>
+						<span>Completed</span>
+					</div>
+					<div class="legend-item">
+						<div class="legend-color color-claimed"></div>
+						<span>Claimed</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Schedule Date -->
+			<div class="schedule-date-control" aria-label="Quick date navigation">
+				<button class="schedule-date-arrow" id="prevScheduleDateBtn" type="button" aria-label="Previous date">❮</button>
+				<div class="schedule-date" id="scheduleDate">05/20/2026</div>
+				<button class="schedule-date-arrow" id="nextScheduleDateBtn" type="button" aria-label="Next date">❯</button>
+			</div>
+
+			<!-- Technician Schedule -->
+			<div class="tech-schedule" id="techSchedule">
+				<div style="padding: 2rem; text-align: center; color: #94a3b8;">Loading real technician schedule...</div>
+			</div>
+
+			<!-- Map Section -->
+			<div class="map-section">
+				<div class="map-section-title">Assigned Locations Map</div>
+				<div style="position: relative; width: 100%; height: 100%;">
+					<!-- Map Type Toggle -->
+					<div class="map-type-toggle" style="position: absolute; top: 1rem; left: 1rem; z-index: 10; display: flex; gap: 0.5rem;">
+						<button class="map-type-btn active" id="mapModeBtn" type="button" style="padding: 0.5rem 1rem; background: rgba(2, 6, 23, 0.9); color: #fff; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; cursor: pointer; font-weight: 500;">Map</button>
+						<button class="map-type-btn" id="satModeBtn" type="button" style="padding: 0.5rem 1rem; background: rgba(2, 6, 23, 0.7); color: #94a3b8; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px; cursor: pointer; font-weight: 500;">Satellite</button>
+					</div>
+					
+					<!-- Pin Navigator -->
+					<div class="pin-navigator" style="position: absolute; bottom: 1rem; right: 1rem; z-index: 10; display: flex; gap: 0.75rem; align-items: center; background: rgba(2, 6, 23, 0.85); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);">
+						<button class="pin-nav-btn" id="prevPinBtn" type="button" title="Previous pin" style="padding: 0.4rem 0.6rem; background: rgba(255, 255, 255, 0.1); color: #94a3b8; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; cursor: pointer;">&#x276E;</button>
+						<span class="pin-nav-info" id="pinNavInfo" style="color: #94a3b8; font-size: 0.85rem; min-width: 80px; text-align: center;">â€”</span>
+						<button class="pin-nav-btn" id="nextPinBtn" type="button" title="Next pin" style="padding: 0.4rem 0.6rem; background: rgba(255, 255, 255, 0.1); color: #94a3b8; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; cursor: pointer;">&#x276F;</button>
+					</div>
+					
+					<div class="map-container" id="mapContainer" style="width: 100%; height: 100%;"></div>
+					<div class="legend-for-map" id="mapLegend"></div>
+				</div>
+			</div>
+
+			<!-- Technician Summary -->
+			<div class="summary-section">
+				<div class="section-title">Technicians</div>
+				<table class="summary-table">
+					<thead>
+						<tr>
+							<th>Color</th>
+							<th>Tech Name</th>
+							<th>Ready</th>
+							<th>Pend.</th>
+							<th>Comp.</th>
+						</tr>
+					</thead>
+					<tbody id="techSummaryBody">
+						<tr>
+							<td colspan="5" class="no-records">Loading technician summary...</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<!-- Unverified Address -->
+			<div class="summary-section unverified-section">
+				<div class="section-title">Unverified Address</div>
+				<table class="unverified-table">
+					<thead>
+						<tr>
+							<th>#</th>
+							<th>Ticket No</th>
+							<th>Type</th>
+							<th>Tech</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td colspan="4" class="no-records">No unverified addresses</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<!-- Changed Tickets -->
+			<div class="summary-section">
+				<div class="section-title">Changed Tickets</div>
+				<table class="changed-tickets-table">
+					<thead>
+						<tr>
+							<th>Type</th>
+							<th>Ticket No</th>
+							<th>Schedule Date</th>
+							<th>Time Slot</th>
+							<th>Technician</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td colspan="5" class="no-records">0 records found</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<!-- Ticket Detail Modal -->
+	<div class="detail-overlay" id="detailOverlay">
+		<div class="detail-modal" id="detailModal">
+			<div class="detail-modal-header">
+				<div class="detail-title-row">
+					<a class="detail-ticket-no detail-ticket-link" id="dtTicketNo" href="ticket_details.html" title="Open ticket details" target="_blank" rel="noopener noreferrer"></a>
+					<button class="google-btn" id="googleBtn" type="button">Google</button>
+				</div>
+				<button class="modal-close-btn" id="closeModalBtn" type="button" aria-label="Close">&#x2715;</button>
+			</div>
+			<div class="detail-body" id="detailBody"></div>
+		</div>
+	</div>
+
+	<footer id="contact" style="background: rgba(17, 24, 39, 0.75); border-top: 1px solid rgba(255, 255, 255, 0.1); padding: 2rem 1.5rem; margin-top: 2rem; text-align: center; color: #94a3b8; font-size: 0.9rem;">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com" style="color: #60a5fa; text-decoration: none;">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">Â© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="../../supabase.min.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		const CANONICAL_LOCATIONS = [
+			'Asheville', 'Atlanta', 'Birmingham', 'Cape Girardeau', 'Chattanooga',
+			'Columbus', 'Dallas', 'Destin', 'Huntsville', 'Jackson,MS', 'Jackson, TN',
+			'Jacksonville', 'Jonesboro', 'Knoxville', 'Lake Charles', 'Little Rock',
+			'Louisville', 'Memphis', 'Mobile', 'Montgomery', 'Nashville', 'New Orleans',
+			'Norfolk', 'Philippines', 'Raleigh', 'Richmond', 'San Antonio', 'Savannah',
+			'St. Louis', 'Tallanassee', 'Wilmington'
+		];
+
+		const userEmail = localStorage.getItem('userEmail');
+		const userCompanyId = localStorage.getItem('userCompanyId');
+		if (!userEmail || !userCompanyId) window.location.href = '../../landing.html';
+
+		// Drag and Drop State
+		let draggedCard = null;
+		let draggedFrom = null;
+		let changedTickets = [];
+		let activeTicket = null;
+		let selectedLocationTickets = [];
+		let selectedLocationIndex = 0;
+
+		// Initialize drag and drop
+		function initializeDragAndDrop() {
+			const cards = document.querySelectorAll('.work-order-card');
+			const timeSlots = document.querySelectorAll('.time-slot');
+
+			// Add drag handlers to cards
+			cards.forEach(card => {
+				card.addEventListener('dragstart', handleCardDragStart);
+				card.addEventListener('dragend', handleCardDragEnd);
+			});
+
+			// Add drop zone handlers to time slots
+			timeSlots.forEach(slot => {
+				slot.addEventListener('dragover', handleDragOver);
+				slot.addEventListener('drop', handleDrop);
+				slot.addEventListener('dragleave', handleDragLeave);
+			});
+		}
+
+		// Initialize ticket click handlers
+		function initializeTicketClicks() {
+			const tickets = document.querySelectorAll('.work-order-ticket-link');
+			tickets.forEach(ticket => {
+				ticket.addEventListener('click', function(e) {
+					e.stopPropagation(); // Prevent drag from triggering
+				});
+			});
+		}
+
+		// Handle drag start
+		function handleCardDragStart(e) {
+			draggedCard = this;
+			draggedFrom = this.closest('.time-slot');
+			this.classList.add('dragging');
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/html', this.innerHTML);
+		}
+
+		// Handle drag end
+		function handleCardDragEnd(e) {
+			this.classList.remove('dragging');
+			document.querySelectorAll('.time-slot').forEach(slot => {
+				slot.classList.remove('drag-over');
+			});
+			draggedCard = null;
+		}
+
+		async function syncDraggedTicketTechnician(ticketNo, techName) {
+			if (!ticketNo || !techName) return false;
+
+			try {
+				let activeCompanyDbId = null;
+				if (userCompanyId) {
+					const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+					activeCompanyDbId = co ? co.id : null;
+				}
+
+				let query = supabaseClient
+					.from('tickets')
+					.update({ technician_name: techName })
+					.eq('ticket_no', ticketNo);
+
+				if (activeCompanyDbId) {
+					query = query.eq('company_id', activeCompanyDbId);
+				}
+
+				const { data: updated, error } = await query.select('ticket_no, technician_name');
+				if (error) throw new Error(error.message || 'Failed to update ticket technician.');
+				if (!updated || updated.length === 0) throw new Error('Ticket technician update blocked by RLS or missing ticket.');
+
+				const ticket = allTickets.find((row) => row.ticketNo === ticketNo);
+				if (ticket) {
+					ticket.techName = techName;
+				}
+				return true;
+			} catch (error) {
+				console.warn('Ticket technician sync failed:', error.message);
+				return false;
+			}
+		}
+
+		// Handle drag over
+		function handleDragOver(e) {
+			if (draggedCard) {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = 'move';
+				this.classList.add('drag-over');
+			}
+		}
+
+		// Handle drag leave
+		function handleDragLeave(e) {
+			if (e.target === this) {
+				this.classList.remove('drag-over');
+			}
+		}
+
+		// Handle drop
+		async function handleDrop(e) {
+			e.preventDefault();
+			e.stopPropagation();
+
+			if (!draggedCard) return;
+
+			this.classList.remove('drag-over');
+
+			// If dropping on a different time slot, move the card
+			if (this !== draggedFrom) {
+				// Get ticket info
+				const ticketNum = draggedCard.querySelector('.work-order-ticket').textContent;
+				const techName = this.closest('.tech-column')?.querySelector('.tech-header')?.textContent.split(' (')[0] || '';
+				const timeSlot = this.querySelector('.time-slot-label').textContent;
+				const prevTimeSlot = draggedFrom.querySelector('.time-slot-label').textContent;
+
+				// Log the change
+				const change = {
+					type: 'Reassignment',
+					ticketNum: ticketNum,
+					scheduleDate: document.getElementById('scheduleDate').textContent,
+					newTimeSlot: timeSlot,
+					previousTimeSlot: prevTimeSlot,
+					technician: techName,
+					timestamp: new Date().toLocaleTimeString()
+				};
+
+				changedTickets.push(change);
+				console.log('Ticket moved:', change);
+
+				// Clone and move the card
+				const cardClone = draggedCard.cloneNode(true);
+				cardClone.addEventListener('dragstart', handleCardDragStart);
+				cardClone.addEventListener('dragend', handleCardDragEnd);
+
+				// Remove from old location
+				draggedCard.remove();
+
+				// Add to new location
+				this.appendChild(cardClone);
+
+				// Animate the card
+				cardClone.style.animation = 'none';
+				setTimeout(() => {
+					cardClone.style.animation = '';
+				}, 10);
+
+				// Update changed tickets table
+				updateChangedTicketsTable();
+				// Persist technician change to the master ticket row, then rebuild from database
+				await syncDraggedTicketTechnician(ticketNum, techName);
+				await updatePlanner();
+			}
+
+			draggedCard = null;
+		}
+
+		// Update the changed tickets table
+		function updateChangedTicketsTable() {
+			const tableBody = document.querySelector('.changed-tickets-table tbody');
+
+			if (changedTickets.length === 0) {
+				tableBody.innerHTML = '<tr><td colspan="5" class="no-records">0 records found</td></tr>';
+				return;
+			}
+
+			tableBody.innerHTML = changedTickets.map(change => `
+				<tr>
+					<td>${change.type}</td>
+					<td>${change.ticketNum}</td>
+					<td>${change.scheduleDate}</td>
+					<td>${change.previousTimeSlot} â†’ ${change.newTimeSlot}</td>
+					<td>${change.technician}</td>
+				</tr>
+			`).join('');
+		}
+
+		// Location coordinates mapping
+		const LOCATION_COORDS = {
+			'ASHEVILLE NC': { x: 38, y: 25 },
+			'GREENVILLE SC': { x: 55, y: 35 },
+			'CANTON NC': { x: 42, y: 28 },
+			'RUTHERFORDTON NC': { x: 45, y: 32 },
+			'CHARLOTTE NC': { x: 50, y: 40 },
+			'RALEIGH NC': { x: 60, y: 32 },
+			'BUCKHEAD GA': { x: 55, y: 45 },
+			'CANTON GA': { x: 48, y: 42 },
+			'CARTERSVILLE GA': { x: 45, y: 48 },
+			'WALESKA GA': { x: 42, y: 50 },
+			'GREENSBORO GA': { x: 60, y: 52 },
+			'EATONTON GA': { x: 65, y: 55 },
+			'JEFFERSON GA': { x: 62, y: 48 },
+			'SHADY DALE GA': { x: 68, y: 58 },
+			'MANSFIELD GA': { x: 50, y: 40 },
+			'ELLENWOOD GA': { x: 58, y: 38 },
+			'ACWORTH GA': { x: 48, y: 45 },
+			'NEWBORN GA': { x: 62, y: 42 },
+			'JONESBORO GA': { x: 60, y: 40 },
+			'KENNESAW GA': { x: 46, y: 46 },
+			'ROCKMART GA': { x: 40, y: 50 },
+			'VILLA RICA GA': { x: 42, y: 48 }
+		};
+
+		// Tech color mapping
+		const TECH_COLOR_MAP = {
+			'Daven Hodge': '#f59e0b',
+			'Johnathan Wesley Allen': '#10b981',
+			'Jordan Koetsier': '#6366f1',
+			'Abel Severino': '#f59e0b',
+			'Abraham Im': '#10b981',
+			'Gerrell Berg': '#6366f1',
+			'Jordan Brown': '#8b5cf6',
+			'Joshua Silva': '#ec4899',
+			'Kevin Khaiphanliane': '#f97316',
+			'Nathan Napora': '#3b82f6'
+		};
+
+		// Tech initials mapping
+		const TECH_INITIALS = {
+			'Daven Hodge': 'DH',
+			'Johnathan Wesley Allen': 'JWA',
+			'Jordan Koetsier': 'JK',
+			'Abel Severino': 'AS',
+			'Abraham Im': 'AI',
+			'Gerrell Berg': 'GB',
+			'Jordan Brown': 'JB',
+			'Joshua Silva': 'JS',
+			'Kevin Khaiphanliane': 'KK',
+			'Nathan Napora': 'NN'
+		};
+
+		const LOCATION_TECH_ROSTER = {
+			'Asheville': ['Daven Hodge', 'Jordan Koetsier'],
+			'Atlanta': ['Abel Severino', 'Abraham Im', 'Gerrell Berg', 'Jordan Brown', 'Joshua Silva', 'Kevin Khaiphanliane', 'Nathan Napora'],
+			'Birmingham': ['David Sims', 'Kenny Shin', 'Zonate Grant'],
+			'Cape Girardeau': ['Alaska Olinger', 'Deprece Harris', 'Matthew Nichols'],
+			'Chattanooga': ['Austin Ferguson', 'Christian Andrews', 'Seven Grinis'],
+			'Columbus': ['A\'Dejaun Tyson', 'Matt Simmons', 'Percy Smith'],
+			'Dallas': ['Lashamus Dowell'],
+			'Destin': ['Garrett McCarley'],
+			'Huntsville': ['Dylan Lano', 'Jordan Stanley', 'Nathan Wagner'],
+			'Jackson,MS': ['Anthony Leonard Cavett', 'Antonio Smith', 'Mikkel Brown', 'Terry Davis', 'Tywon Ross'],
+			'Jackson, TN': ['Brandon Phillips', 'Christian Clark', 'Gabriel Talley', 'Jaylon Yarbrough', 'Justin Parker'],
+			'Jacksonville': ['Bradley Hollowell', 'Zakarya Moradi'],
+			'Jonesboro': ['Jason Bateman'],
+			'Knoxville': ['Alex Myles', 'Joshua Rhinehart', 'Zac Coisman'],
+			'Lake Charles': ['Danny Thornton'],
+			'Little Rock': ['Andre Riddle', 'Darius Brown', 'Jonathan Knox', 'Nocona Detten'],
+			'Memphis': ['Darrin Stewart', 'Darryel Burdette', 'Jeff Lucas', 'Memphis Admin', 'Rico Shaw', 'Sean Smith'],
+			'Mobile': ['Dominic Holman', 'Jonathan Colquett', 'Jonathon Allen', 'Thaddaeus Springfield'],
+			'Montgomery': ['Andy Oh'],
+			'Nashville': ['Baolin Henry Zhang', 'John Godfrey', 'Justin Robertson', 'Leo Sun', 'Nashville Admin', 'Steven Kurvink'],
+			'New Orleans': ['Cole Mushinsky', 'Cooper Shaffett', 'Corey Cage', 'Joseph Wease', 'Kurt Merckel', 'Ryder Tourere'],
+			'Norfolk': ['Chris Simpson', 'Edward Lindsey'],
+			'Raleigh': ['Alexxis Henry', 'Damon Ottley', 'Javier Camel', 'Marc James'],
+			'Richmond': ['Zachary Gonzalez'],
+			'San Antonio': ['Erick Guzman Juarez'],
+			'Savannah': ['Carlos Ramirez', 'Dustin Earls', 'Lance Novak'],
+			'St. Louis': ['Demarkco Cody', 'Derious Nichols', 'Jacob Rhodes', 'Memphis Admin', 'Tony Nguyen', 'Troy Willis'],
+			'Tallahassee': ['Hunter Burch', 'Matthew Mccrary'],
+			'Wilmington': ['Brye\'shawn Butler', 'Jordan Davis', 'Josh Malloch', 'Justin Alverez']
+		};
+
+		function normalizeLocationName(location) {
+			const raw = String(location || '').trim();
+			if (!raw) return 'Unknown';
+			return raw.replace(/\s*,\s*/g, ', ');
+		}
+
+		function getStaticRosterForLocation(location) {
+			const keys = [
+				location,
+				normalizeLocationName(location),
+				String(location || '').trim().replace(/\s*,\s*/g, ','),
+				String(location || '').trim().replace(/\s*,\s*/g, ', ')
+			].filter(Boolean);
+			for (const key of keys) {
+				if (LOCATION_TECH_ROSTER[key]) return LOCATION_TECH_ROSTER[key];
+			}
+			return null;
+		}
+
+		function getLocalDateStr(date = new Date()) {
+			const year = date.getFullYear();
+			const month = String(date.getMonth() + 1).padStart(2, '0');
+			const day = String(date.getDate()).padStart(2, '0');
+			return `${year}-${month}-${day}`;
+		}
+
+		function getPlannerSelectedDate() {
+			const input = document.getElementById('scheduleDateInput');
+			return input && input.value ? input.value : getLocalDateStr();
+		}
+
+		function isWeekdayDate(dateStr) {
+			const date = new Date(`${dateStr}T00:00:00`);
+			const day = date.getDay();
+			return day >= 1 && day <= 5;
+		}
+
+		function getDisplayTechRoster(location, locationData) {
+			const dynamicRoster = (locationData?.technicians || []).map((tech) => tech.name).filter(Boolean);
+			const roster = getStaticRosterForLocation(location);
+			const mergedRoster = [...new Set([...dynamicRoster, ...(roster || [])])];
+			if (normalizeLocationName(location) === 'Asheville' && mergedRoster.length > 0) {
+				return isWeekdayDate(getPlannerSelectedDate()) ? mergedRoster : [];
+			}
+			return mergedRoster;
+		}
+
+		function shiftPlannerDate(offsetDays) {
+			const input = document.getElementById('scheduleDateInput');
+			const currentValue = input && input.value ? input.value : getLocalDateStr();
+			const nextDate = new Date(`${currentValue}T00:00:00`);
+			nextDate.setDate(nextDate.getDate() + offsetDays);
+			if (input) input.value = getLocalDateStr(nextDate);
+			updatePlanner();
+		}
+
+	// Get colored marker icon
+	function getColoredMarkerIcon(color) {
+		if (color === '#f59e0b') {
+			return 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png';
+		} else if (color === '#10b981') {
+			return 'http://maps.google.com/mapfiles/ms/icons/green-dot.png';
+		} else if (color === '#6366f1') {
+			return 'http://maps.google.com/mapfiles/ms/icons/purple-dot.png';
+		}
+		return 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png';
+	}
+
+	// Pin navigation variables
+	let allMapMarkers = [];
+	let selectedMarkerIndex = -1;
+
+	// Update pin navigator display
+	function updatePinNavigator() {
+		const pinInfo = document.getElementById('pinNavInfo');
+		if (allMapMarkers.length === 0) {
+			pinInfo.textContent = 'â€”';
+		} else {
+			pinInfo.textContent = `${selectedMarkerIndex + 1} / ${allMapMarkers.length}`;
+		}
+	}
+
+	// Navigate to next pin
+	function nextPin() {
+		if (allMapMarkers.length === 0) return;
+		selectedMarkerIndex = (selectedMarkerIndex + 1) % allMapMarkers.length;
+		const marker = allMapMarkers[selectedMarkerIndex];
+		window.googleMap.setCenter(marker.getPosition());
+		window.googleMap.setZoom(10);
+		updatePinNavigator();
+	}
+
+	// Navigate to previous pin
+	function prevPin() {
+		if (allMapMarkers.length === 0) return;
+		selectedMarkerIndex = (selectedMarkerIndex - 1 + allMapMarkers.length) % allMapMarkers.length;
+		const marker = allMapMarkers[selectedMarkerIndex];
+		window.googleMap.setCenter(marker.getPosition());
+		window.googleMap.setZoom(10);
+		updatePinNavigator();
+	}
+
+	// Switch map type
+	function switchMapType(type) {
+		if (!window.googleMap) return;
+		window.googleMap.setMapTypeId(type);
+		
+		const mapBtn = document.getElementById('mapModeBtn');
+		const satBtn = document.getElementById('satModeBtn');
+		
+		if (type === 'terrain' || type === 'roadmap') {
+			mapBtn.style.background = 'rgba(2, 6, 23, 0.9)';
+			mapBtn.style.color = '#fff';
+			satBtn.style.background = 'rgba(2, 6, 23, 0.7)';
+			satBtn.style.color = '#94a3b8';
+		} else if (type === 'satellite') {
+			satBtn.style.background = 'rgba(2, 6, 23, 0.9)';
+			satBtn.style.color = '#fff';
+			mapBtn.style.background = 'rgba(2, 6, 23, 0.7)';
+			mapBtn.style.color = '#94a3b8';
+		}
+	}
+
+	// Initialize map controls
+	function initializeMapControls() {
+		const prevBtn = document.getElementById('prevPinBtn');
+		const nextBtn = document.getElementById('nextPinBtn');
+		const mapBtn = document.getElementById('mapModeBtn');
+		const satBtn = document.getElementById('satModeBtn');
+		
+		if (prevBtn) prevBtn.addEventListener('click', prevPin);
+		if (nextBtn) nextBtn.addEventListener('click', nextPin);
+		if (mapBtn) mapBtn.addEventListener('click', () => switchMapType('terrain'));
+		if (satBtn) satBtn.addEventListener('click', () => switchMapType('satellite'));
+	}
+
+// Static map center coordinates per location
+	const LOCATION_MAP_CENTERS = {
+		'Asheville':      { lat: 35.6,    lng: -82.55  },
+		'Atlanta':        { lat: 33.75,   lng: -84.39  },
+		'Birmingham':     { lat: 33.5186, lng: -86.8104 },
+		'Cape Girardeau': { lat: 37.3054, lng: -89.5186 },
+		'Chattanooga':    { lat: 35.0456, lng: -85.2672 },
+		'Columbus':       { lat: 32.4613, lng: -84.9281 },
+		'Dallas':         { lat: 32.7767, lng: -96.7970 },
+		'Destin':         { lat: 30.3938, lng: -86.4886 },
+		'Huntsville':     { lat: 34.7304, lng: -86.5861 },
+		'Jackson, MS':    { lat: 32.2988, lng: -90.1848 },
+		'Jackson, TN':    { lat: 35.6149, lng: -88.8134 },
+		'Jacksonville':   { lat: 30.3322, lng: -81.6557 },
+		'Jonesboro':      { lat: 35.8413, lng: -90.7041 },
+		'Knoxville':      { lat: 35.9606, lng: -83.9207 },
+		'Lake Charles':   { lat: 30.2246, lng: -93.2181 },
+		'Little Rock':    { lat: 34.7465, lng: -92.2896 },
+		'Louisville':     { lat: 38.2527, lng: -85.7585 },
+		'Memphis':        { lat: 35.1495, lng: -90.0490 },
+		'Mobile':         { lat: 30.6954, lng: -88.2398 },
+		'Montgomery':     { lat: 32.3792, lng: -86.3077 },
+		'Nashville':      { lat: 36.1627, lng: -86.7816 },
+		'New Orleans':    { lat: 29.9511, lng: -90.2623 },
+		'Norfolk':        { lat: 36.8508, lng: -76.2859 },
+		'Philippines':    { lat: 12.8797, lng: 121.7740 },
+		'Raleigh':        { lat: 35.7796, lng: -78.6382 },
+		'Richmond':       { lat: 37.5407, lng: -77.4360 },
+		'San Antonio':    { lat: 29.4241, lng: -98.4936 },
+		'Savannah':       { lat: 32.0809, lng: -81.0912 },
+		'St. Louis':      { lat: 38.6270, lng: -90.1994 },
+		'Tallahassee':    { lat: 30.4383, lng: -84.2807 },
+		'Wilmington':     { lat: 34.2238, lng: -77.9482 }
+	};
+
+	// Detailed ticket data â€” populated from DB in loadPlannerFromDatabase()
+	let DETAILED_TICKETS = {};
+
+	// Location-specific data â€” populated from DB in loadPlannerFromDatabase()
+	let LOCATION_SPECIFIC_DATA = {};
+
+	// Extract all work order tickets from the DOM
+	function getAllTickets() {
+		const tickets = [];
+		const techColumns = document.querySelectorAll('.tech-column');
+
+		techColumns.forEach(column => {
+			const techHeader = column.querySelector('.tech-header').textContent;
+			const techName = techHeader.split(' (')[0];
+			const cards = column.querySelectorAll('.work-order-card');
+
+			cards.forEach(card => {
+				const ticketNo = card.querySelector('.work-order-ticket')?.textContent || '';
+				const address = card.querySelector('.work-order-address')?.textContent || '';
+				const status = card.querySelector('.work-order-status')?.textContent || '';
+
+				if (ticketNo) {
+					const details = DETAILED_TICKETS[ticketNo.trim()] || {};
+					tickets.push({
+						ticketNo,
+						address: address.trim(),
+						techName,
+						status,
+						...details
+					});
+				}
+			});
+		});
+
+		return tickets;
+	}
+
+	// Get coordinates for an address
+	function getCoordinates(address) {
+		for (const key in LOCATION_COORDS) {
+			if (address.includes(key)) {
+				return LOCATION_COORDS[key];
+			}
+		}
+		return { x: Math.random() * 80 + 10, y: Math.random() * 80 + 10 };
+	}
+
+	function getStatusDotColor(status) {
+		const value = String(status || '').toLowerCase();
+		if (value.includes('ready for service') || value === 'ready') return '#10b981';
+		if (value.includes('completed') || value.includes('closed')) return '#10b981';
+		if (value.includes('claimed')) return '#ef4444';
+		if (value.includes('waiting') || value.includes('part')) return '#f59e0b';
+		if (value.includes('reschedule')) return '#8b5cf6';
+		return '#94a3b8';
+	}
+
+	function renderStatusBadge(status) {
+		const label = String(status || 'Unknown');
+		const color = getStatusDotColor(label);
+		return `
+			<span class="work-order-status" title="${label.replace(/"/g, '&quot;')}">
+				<span class="work-order-status-dot" style="background:${color};"></span>
+				<span>${label}</span>
+			</span>
+		`;
+	}
+
+	// Initialize Map (no Google API needed)
+	function initializeGoogleMap() {
+		// Custom map initialization - pins will be rendered in renderMapPins
+		const mapContainer = document.getElementById('mapContainer');
+		if (mapContainer) {
+			// Style the container as a terrain-like map
+			mapContainer.style.background = 'linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%)';
+		}
+	}
+
+	// Initialize Google Map when API loads
+	function initGoogleMap() {
+		try {
+			const mapContainer = document.getElementById('mapContainer');
+			if (!mapContainer) return;
+
+			// Get the selected location for map center
+			const selectedLocation = document.getElementById('locationSelect')?.value || 'Asheville';
+			const locationData = LOCATION_SPECIFIC_DATA[selectedLocation];
+			const center = locationData?.mapCenter || { lat: 35.6, lng: -82.55 };
+
+			// Initialize actual Google Map
+			const map = new google.maps.Map(mapContainer, {
+				center: center,
+				zoom: 8,
+				mapTypeControl: true,
+				zoomControl: true,
+				scaleControl: true,
+				streetViewControl: false,
+				mapTypeId: 'terrain'
+			});
+
+			window.googleMap = map;
+			window.currentMapCenter = center;
+			renderMapPins(selectedLocation);
+		} catch (e) {
+			console.error('Google Maps initialization error:', e);
+		}
+	}
+
+	// Render map pins - show ALL tickets individually with custom overlay markers
+	function renderMapPins(location) {
+		// Guard: Check if Google Maps API is loaded
+		if (typeof google === 'undefined' || !window.googleMap) {
+			console.warn('Google Maps API not loaded yet');
+			return;
+		}
+
+		if (!location) {
+			location = document.getElementById('locationSelect')?.value || 'Asheville';
+		}
+
+		// Get location center coordinates or use default
+		const locationData = LOCATION_SPECIFIC_DATA[location];
+		const mapCenter = locationData?.mapCenter || { lat: 35.6, lng: -82.55 };
+
+		// Update map center and zoom
+		window.googleMap.setCenter(mapCenter);
+		window.googleMap.setZoom(8);
+		window.currentMapCenter = mapCenter;
+
+		// Clear existing custom markers from DOM
+		const existingMarkers = document.querySelectorAll('[data-marker-overlay="true"]');
+		existingMarkers.forEach(m => m.remove());
+
+		allMapMarkers = []; // Reset markers
+		selectedMarkerIndex = -1;
+		updatePinNavigator();
+		
+		const tickets = getAllTickets();
+		const legend = document.getElementById('mapLegend');
+
+		if (tickets.length === 0) {
+			legend.innerHTML = '<div style="color: #64748b; font-size: 0.9rem;">No tickets assigned</div>';
+			return;
+		}
+
+		// Count tickets per technician to generate sequential numbers
+		const techTicketCount = {};
+		const techTickets = {};
+
+		tickets.forEach(ticket => {
+			const techName = ticket.techName;
+			if (!techTicketCount[techName]) {
+				techTicketCount[techName] = 0;
+				techTickets[techName] = [];
+			}
+			techTicketCount[techName]++;
+			techTickets[techName].push(ticket);
+		});
+
+		// Custom overlay marker class
+		class CustomMarkerOverlay extends google.maps.OverlayView {
+			constructor(ticket, initials, color, ticketNum, map) {
+				super();
+				this.ticket = ticket;
+				this.initials = initials;
+				this.color = color;
+				this.ticketNum = ticketNum;
+				this.div = null;
+				this.setMap(map);
+			}
+
+			onAdd() {
+				const div = document.createElement('div');
+				div.setAttribute('data-marker-overlay', 'true');
+				div.style.cssText = [
+					'position:absolute',
+					'background:' + this.color,
+					'color:#fff',
+					'padding:4px 8px',
+					'border-radius:4px',
+					'font-weight:700',
+					'font-size:12px',
+					'font-family:Arial,sans-serif',
+					'border:2px solid #fff',
+					'box-shadow:0 2px 6px rgba(0,0,0,.5)',
+					'cursor:pointer',
+					'white-space:nowrap',
+					'transform:translate(-50%,-100%)',
+					'z-index:999'
+				].join(';');
+				div.innerText = `${this.initials}${this.ticketNum}`;
+				div.addEventListener('click', (e) => {
+					e.stopPropagation();
+					selectedMarkerIndex = allMapMarkers.indexOf(this);
+					updatePinNavigator();
+					openLocationModal(this.ticket.address, [this.ticket]);
+				});
+				div.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+				this.div = div;
+				this.getPanes().overlayMouseTarget.appendChild(div);
+			}
+
+			draw() {
+				const proj = this.getProjection();
+				if (!proj || !this.div) return;
+				const coords = getCoordinates(this.ticket.address);
+				const center = window.currentMapCenter || { lat: 35.6, lng: -82.55 };
+				const lat = center.lat + (50 - coords.y) * 0.03;
+				const lng = center.lng + (coords.x - 50) * 0.03;
+				const pos = proj.fromLatLngToDivPixel(new google.maps.LatLng(lat, lng));
+				if (pos) {
+					this.div.style.left = pos.x + 'px';
+					this.div.style.top = pos.y + 'px';
+				}
+			}
+
+			onRemove() {
+				if (this.div && this.div.parentNode) {
+					this.div.parentNode.removeChild(this.div);
+					this.div = null;
+				}
+			}
+		}
+
+		// Create markers on Google Map
+		if (window.googleMap) {
+			const uniqueTechs = new Set();
+
+			for (const techName in techTickets) {
+				const tickets = techTickets[techName];
+				const color = TECH_COLOR_MAP[techName] || '#60a5fa';
+				const initials = TECH_INITIALS[techName] || 'TK';
+				uniqueTechs.add(techName);
+
+				// Create a marker for each ticket
+				tickets.forEach((ticket, index) => {
+					const ticketNum = index + 1;
+					const marker = new CustomMarkerOverlay(ticket, initials, color, ticketNum, window.googleMap);
+					allMapMarkers.push(marker); // Track marker for navigation
+				});
+			}
+
+			// Render legend
+			let legendHTML = '<div style="font-weight: 600; margin-bottom: 0.5rem; color: #e2e8f0; font-size: 0.75rem;">Technicians:</div>';
+			uniqueTechs.forEach(tech => {
+				const color = TECH_COLOR_MAP[tech] || '#60a5fa';
+				const count = techTicketCount[tech] || 0;
+				legendHTML += `
+					<div class="legend-for-map-item">
+						<span class="legend-color-dot" style="background: ${color};"></span>
+						<span>${tech} (${count})</span>
+					</div>
+				`;
+			});
+			legend.innerHTML = legendHTML;
+		}
+	}
+
+	// Open location modal with ticket details
+	function openLocationModal(address, tickets) {
+			selectedLocationTickets = Array.isArray(tickets) ? tickets : [tickets];
+			selectedLocationIndex = 0;
+			showTicketDetail();
+		}
+
+		// Show current ticket detail
+		function showTicketDetail() {
+			if (selectedLocationTickets.length === 0) return;
+
+			const ticket = selectedLocationTickets[selectedLocationIndex];
+			activeTicket = ticket;
+			
+			document.getElementById('dtTicketNo').textContent = ticket.ticketNo;
+			
+			const color = TECH_COLOR_MAP[ticket.techName] || '#60a5fa';
+			const body = document.getElementById('detailBody');
+			
+		const scheduleBox = `
+			<div style="background: rgba(59, 130, 246, 0.1); padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem; display: flex; gap: 0.25rem; align-items: center;">
+				<span style="font-weight: 600;">${ticket.scheduleDate}</span>
+				<span style="color: #64748b;">|</span>
+				<span>${ticket.scheduleCxConf}</span>
+				<span style="color: #64748b;">|</span>
+				<span style="color: #fde68a; font-weight: 600;">${ticket.scheduleTime}</span>
+				<span style="color: #64748b;">|</span>
+				<span>${ticket.scheduleHours}</span>
+			</div>
+		`;
+
+		const contactButtons = `
+			<div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+				<button style="padding: 0.35rem 0.65rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;" onclick="alert('Chat feature coming soon')">Chat</button>
+				<button style="padding: 0.35rem 0.65rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;" onclick="alert('Send customer email')">Send Email</button>
+				<button style="padding: 0.35rem 0.65rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;" onclick="alert('Send prepared text')">Send Text</button>
+				<button style="padding: 0.35rem 0.65rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600;" onclick="alert('Self-schedule SMS coming soon')">Self-schedule SMS</button>
+			</div>
+		`;
+
+		body.innerHTML = `
+			<!-- Row 1: Customer / Posting Date / Cx Pref Date / REDO -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Customer</span>
+					<span class="detail-value">${ticket.customer}</span>
+				</div>
+				<div class="detail-field">
+					<span class="detail-label">Posting Date</span>
+					<span class="detail-value">${ticket.postingDate} <span style="color:#64748b; font-size:0.8rem;">(${ticket.agingDays} days)</span></span>
+				</div>
+				<div class="detail-field">
+					<span class="detail-label">Cx Preferred Date</span>
+					<span class="detail-value">${ticket.cxPrefDate}</span>
+				</div>
+				<div class="detail-field" style="min-width:60px;">
+					<span class="detail-label">REDO</span>
+					<input type="checkbox" ${ticket.redo ? 'checked' : ''} style="margin-top:0.3rem; width:16px; height:16px; cursor:pointer;">
+				</div>
+			</div>
+
+			<!-- Row 2: Schedule -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Schedule</span>
+					${scheduleBox}
+				</div>
+			</div>
+			<hr class="detail-divider">
+
+			<!-- Row 3: Address -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Address</span>
+					<span class="detail-value">${ticket.address}</span>
+				</div>
+			</div>
+
+			<!-- Row 4: Phone / Email + contact buttons -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Phone / Email</span>
+					<span class="detail-value" style="font-weight: 600;">828-555-7007 (cell)</span>
+					${contactButtons}
+				</div>
+			</div>
+			<hr class="detail-divider">
+
+			<!-- Row 5: Model / Serial -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Model</span>
+					<span class="detail-value">${ticket.model}</span>
+				</div>
+				<div class="detail-field grow">
+					<span class="detail-label">Serial</span>
+					<span class="detail-value">${ticket.serial}</span>
+				</div>
+			</div>
+
+			<!-- Row 6: Repair Type / Repair Status (EDITABLE) -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Repair Type</span>
+					<span class="detail-value">${ticket.repairType || 'â€”'}</span>
+				</div>
+				<div class="detail-field grow">
+					<span class="detail-label">Repair Status</span>
+					<select id="repairStatusSelect" onchange="updateTicketRepairStatus('${ticket.ticketNo}', this.value)" style="padding: 0.35rem 0.5rem; background: rgba(2, 6, 23, 0.8); border: 1px solid rgba(148, 163, 184, 0.35); color: #e2e8f0; border-radius: 4px; font-size: 0.8rem;">
+						<option value="OP-Ready for Service" ${ticket.status === 'OP-Ready for Service' ? 'selected' : ''}>OP-Ready for Service</option>
+						<option value="OP-Waiting for Part" ${ticket.status === 'OP-Waiting for Part' ? 'selected' : ''}>OP-Waiting for Part</option>
+						<option value="OP-Reschedule" ${ticket.status === 'OP-Reschedule' ? 'selected' : ''}>OP-Reschedule</option>
+						<option value="CL-Need Parts" ${ticket.status === 'CL-Need Parts' ? 'selected' : ''}>CL-Need Parts</option>
+						<option value="Completed" ${ticket.status === 'Completed' ? 'selected' : ''}>Completed</option>
+					</select>
+				</div>
+			</div>
+
+			<!-- Row 7: Warranty / Technician (EDITABLE) -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Warranty</span>
+					<span class="detail-value">${ticket.warranty}</span>
+				</div>
+				<div class="detail-field grow">
+					<span class="detail-label">Technician</span>
+					<select id="technicianSelect" onchange="updateTicketTechnician('${ticket.ticketNo}', this.value)" style="padding: 0.35rem 0.5rem; background: rgba(2, 6, 23, 0.8); border: 1px solid rgba(148, 163, 184, 0.35); color: #e2e8f0; border-radius: 4px; font-size: 0.8rem;">
+						<option value="Daven Hodge" ${ticket.techName === 'Daven Hodge' ? 'selected' : ''}>Daven Hodge</option>
+						<option value="Johnathan Wesley Allen" ${ticket.techName === 'Johnathan Wesley Allen' ? 'selected' : ''}>Johnathan Wesley Allen</option>
+						<option value="Jordan Koetsier" ${ticket.techName === 'Jordan Koetsier' ? 'selected' : ''}>Jordan Koetsier</option>
+					</select>
+				</div>
+			</div>
+
+			<!-- Row 8: Cx Notice / Triage Note -->
+			<div class="detail-row">
+				<div class="detail-field grow">
+					<span class="detail-label">Cx Notice</span>
+					<span class="detail-value">${ticket.cxNotice || 'â€”'}</span>
+				</div>
+				<div class="detail-field grow">
+					<span class="detail-label">Triage Note</span>
+					<span class="detail-value">${ticket.triageNote || 'â€”'}</span>
+				</div>
+			</div>
+
+			${ticket.internalNote ? `
+			<hr class="detail-divider">
+			<div class="detail-row">
+				<div class="detail-field" style="width:100%;">
+					<span class="detail-label">Internal Note</span>
+					<div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 0.65rem 0.9rem; color: #cbd5e1; font-size: 0.82rem; line-height: 1.65; white-space: pre-wrap; margin-top: 0.4rem;">${ticket.internalNote}</div>
+				</div>
+			</div>` : ''}
+
+			<!-- Navigation Controls -->
+			<div style="display: flex; gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+				<button onclick="prevTicket()" style="flex: 1; padding: 0.5rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer;">â† Prev</button>
+				<span style="align-self: center; color: #94a3b8; font-size: 0.85rem;">
+					<strong style="color: #60a5fa;">${selectedLocationIndex + 1}</strong> of <strong>${selectedLocationTickets.length}</strong>
+				</span>
+				<button onclick="nextTicket()" style="flex: 1; padding: 0.5rem; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.35); color: #60a5fa; border-radius: 4px; cursor: pointer;">Next â†’</button>
+			</div>
+		`;
+
+		document.getElementById('detailOverlay').classList.add('open');
+	}
+
+		function openTicketFromQuery() {
+			const params = new URLSearchParams(window.location.search);
+			const ticketNo = normalizeTicket(params.get('ticket') || '');
+			if (!ticketNo) {
+				return;
+			}
+
+			const tickets = getAllTickets();
+			const match = tickets.find((ticket) => normalizeTicket(ticket.ticketNo || '') === ticketNo);
+			if (!match) {
+				return;
+			}
+
+			selectedLocationTickets = [match];
+			selectedLocationIndex = 0;
+			showTicketDetail();
+
+			const card = document.querySelector(`[data-ticket="${match.ticketNo}"]`);
+			if (card && typeof card.scrollIntoView === 'function') {
+				card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
+		}
+
+		// Navigate to previous ticket
+		function prevTicket() {
+			if (selectedLocationIndex > 0) {
+				selectedLocationIndex--;
+			} else {
+				selectedLocationIndex = selectedLocationTickets.length - 1;
+			}
+			showTicketDetail();
+		}
+
+		// Navigate to next ticket
+		function nextTicket() {
+			if (selectedLocationIndex < selectedLocationTickets.length - 1) {
+				selectedLocationIndex++;
+			} else {
+				selectedLocationIndex = 0;
+			}
+			showTicketDetail();
+		}
+
+		// Close modal
+		function closeModal() {
+			document.getElementById('detailOverlay').classList.remove('open');
+			selectedLocationTickets = [];
+			selectedLocationIndex = 0;
+			activeTicket = null;
+		}
+
+		// Initialize modal event listeners
+		function initializeModal() {
+			const closeBtn = document.getElementById('closeModalBtn');
+			const overlay = document.getElementById('detailOverlay');
+			const googleBtn = document.getElementById('googleBtn');
+			
+			if (closeBtn) {
+				closeBtn.addEventListener('click', closeModal);
+			}
+			
+			if (overlay) {
+				overlay.addEventListener('click', function (e) {
+					if (e.target === this) closeModal();
+				});
+			}
+
+			// Google button event listener
+			if (googleBtn) {
+				googleBtn.addEventListener('click', () => {
+					if (!activeTicket) return;
+					const q = encodeURIComponent(activeTicket.address);
+					window.open('https://maps.google.com/?q=' + q, '_blank', 'noopener');
+				});
+			}
+		}
+
+		// Rebuild schedule grid based on location data
+		function rebuildScheduleGrid(location) {
+			const locationData = LOCATION_SPECIFIC_DATA[location];
+			const displayTechNames = getDisplayTechRoster(location, locationData);
+			const sourceTickets = locationData?.tickets || {};
+			
+			const techSchedule = document.getElementById('techSchedule');
+			if (!techSchedule) {
+				console.warn('Tech schedule container not found');
+				return;
+			}
+
+			// Clear existing tech columns
+			techSchedule.innerHTML = '';
+
+			// If no data for this location, show empty message
+			if (displayTechNames.length === 0) {
+				const emptyMessage = document.createElement('div');
+				emptyMessage.style.cssText = 'padding: 2rem; text-align: center; color: #94a3b8; font-size: 1rem;';
+				emptyMessage.textContent = location === 'Asheville'
+					? 'Daven Hodge and Jordan Koetsier are available Monday-Friday only'
+					: `No technicians or tickets scheduled for ${location}`;
+				techSchedule.appendChild(emptyMessage);
+				return;
+			}
+
+			const displayLocationData = {
+				technicians: displayTechNames.map((techName) => ({
+					name: techName,
+					initials: TECH_INITIALS[techName] || techName.slice(0, 2).toUpperCase(),
+					color: TECH_COLOR_MAP[techName] || '#60a5fa'
+				})),
+				tickets: sourceTickets
+			};
+
+			// Create columns for each technician
+			displayTechNames.forEach((techName) => {
+				const tech = displayLocationData.technicians.find((entry) => entry.name === techName) || {
+					name: techName,
+					initials: TECH_INITIALS[techName] || techName.slice(0, 2).toUpperCase(),
+					color: TECH_COLOR_MAP[techName] || '#60a5fa'
+				};
+				const techTickets = displayLocationData.tickets[tech.name] || { AM: [], PM: [], TBA: [] };
+				const totalTickets = (techTickets.AM?.length || 0) + (techTickets.PM?.length || 0) + (techTickets.TBA?.length || 0);
+
+				const techColumn = document.createElement('div');
+				techColumn.className = 'tech-column';
+
+				// Tech header
+				const techHeader = document.createElement('div');
+				techHeader.className = 'tech-header';
+				techHeader.textContent = `${tech.name} (${totalTickets}/${totalTickets})`;
+				techColumn.appendChild(techHeader);
+
+				// Time slots: TBA, AM, PM
+				['TBA', 'AM', 'PM'].forEach(timeSlot => {
+					const timeSlotDiv = document.createElement('div');
+					timeSlotDiv.className = 'time-slot';
+
+					const timeLabel = document.createElement('div');
+					timeLabel.className = 'time-slot-label';
+					timeLabel.textContent = timeSlot;
+					timeSlotDiv.appendChild(timeLabel);
+
+					// Add tickets for this time slot
+					const tickets = techTickets[timeSlot] || [];
+					tickets.forEach(ticket => {
+						const card = document.createElement('div');
+						card.className = 'work-order-card';
+						card.draggable = true;
+						card.setAttribute('data-ticket', ticket.no);
+
+						card.innerHTML = `
+							${renderStatusBadge(ticket.status)}
+							<a class="work-order-ticket work-order-ticket-link" href="ticket_details.html?ticket=${encodeURIComponent(ticket.no)}" target="_blank" rel="noopener noreferrer">${ticket.no}</a>
+							<div class="work-order-address">${ticket.addr}</div>
+							<div class="work-order-customer">${ticket.cust}</div>
+						`;
+
+						timeSlotDiv.appendChild(card);
+					});
+
+					techColumn.appendChild(timeSlotDiv);
+				});
+
+				techSchedule.appendChild(techColumn);
+			});
+
+			// Re-initialize drag and drop for new cards
+			initializeDragAndDrop();
+		}
+
+		function renderTechnicianSummary(location) {
+			const tbody = document.getElementById('techSummaryBody');
+			const locationData = LOCATION_SPECIFIC_DATA[location];
+			const displayTechNames = getDisplayTechRoster(location, locationData);
+			const sourceTickets = locationData?.tickets || {};
+			if (!tbody) return;
+
+			if (displayTechNames.length === 0) {
+				tbody.innerHTML = location === 'Asheville'
+					? '<tr><td colspan="5" class="no-records">Daven Hodge and Jordan Koetsier are available Monday-Friday only</td></tr>'
+					: '<tr><td colspan="5" class="no-records">No technician data for this location</td></tr>';
+				return;
+			}
+
+			const rows = displayTechNames.map((techName) => {
+				const tech = {
+					name: techName,
+					initials: TECH_INITIALS[techName] || techName.slice(0, 2).toUpperCase(),
+					color: TECH_COLOR_MAP[techName] || '#60a5fa'
+				};
+				const techTickets = sourceTickets[tech.name] || { AM: [], PM: [], TBA: [] };
+				const allTickets = [...(techTickets.AM || []), ...(techTickets.PM || []), ...(techTickets.TBA || [])];
+				const counts = allTickets.reduce((acc, ticket) => {
+					const status = String(ticket.status || '').toLowerCase();
+					if (status.includes('complete') || status.includes('closed')) acc.comp += 1;
+					else if (status.includes('ready')) acc.ready += 1;
+					else acc.pend += 1;
+					return acc;
+				}, { ready: 0, pend: 0, comp: 0 });
+				return `
+					<tr>
+						<td><span style="display: inline-block; width: 12px; height: 12px; background: ${tech.color}; border-radius: 2px;"></span></td>
+						<td>${tech.initials} - ${tech.name}</td>
+						<td>${counts.ready}</td>
+						<td>${counts.pend}</td>
+						<td>${counts.comp}</td>
+					</tr>`;
+			}).join('');
+
+			tbody.innerHTML = rows || '<tr><td colspan="5" class="no-records">No technician data for this location</td></tr>';
+		}
+
+		async function updatePlanner() {
+			const location = document.getElementById('locationSelect').value;
+			const showRescheduled = document.getElementById('rescheduledVisit').checked;
+			const scheduleDateInput = document.getElementById('scheduleDateInput');
+			const selectedDate = scheduleDateInput && scheduleDateInput.value ? scheduleDateInput.value : getLocalDateStr();
+			console.log('Planner updated:', { location, showRescheduled });
+			await loadPlannerFromDatabase();
+			document.getElementById('scheduleDate').textContent = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+			
+			// Rebuild schedule grid based on selected location
+			rebuildScheduleGrid(location);
+			renderTechnicianSummary(location);
+			
+			// Update map center and render pins
+			renderMapPins(location);
+		}
+
+		// Update ticket repair status and refresh UI
+		function updateTicketRepairStatus(ticketNo, newStatus) {
+			const tickets = getAllTickets();
+			const ticket = tickets.find(t => t.ticketNo === ticketNo);
+			if (ticket) {
+				ticket.status = newStatus;
+				// Update the DOM
+				const statusElement = document.querySelector(`[data-ticket="${ticketNo}"] .work-order-status`);
+				if (statusElement) {
+					statusElement.outerHTML = renderStatusBadge(newStatus);
+				}
+				// Re-render map
+				renderMapPins();
+				// Update modal to reflect change
+				showTicketDetail();
+			}
+		}
+
+		// Update ticket technician assignment and refresh UI
+		function updateTicketTechnician(ticketNo, newTechName) {
+			const techColumns = document.querySelectorAll('.tech-column');
+			let ticketCard = null;
+			let oldTechColumn = null;
+			
+			// Find the ticket card and old technician column
+			techColumns.forEach(column => {
+				const card = column.querySelector(`[data-ticket="${ticketNo}"]`);
+				if (card) {
+					ticketCard = card;
+					oldTechColumn = column;
+				}
+			});
+
+			if (ticketCard && oldTechColumn) {
+				// Update ticket data
+				const tickets = getAllTickets();
+				const ticket = tickets.find(t => t.ticketNo === ticketNo);
+				if (ticket) {
+					ticket.techName = newTechName;
+				}
+
+				// Find new technician column
+				const newTechColumn = Array.from(techColumns).find(col => {
+					const header = col.querySelector('.tech-header');
+					return header && header.textContent.includes(newTechName);
+				});
+
+				if (newTechColumn) {
+					// Get the current time slot (AM/PM/TBA)
+					const timeSlot = ticketCard.closest('.time-slot');
+					const timeSlotLabel = timeSlot?.querySelector('.time-slot-label')?.textContent || 'AM';
+					
+					// Find matching time slot in new technician column
+					const newTimeSlot = Array.from(newTechColumn.querySelectorAll('.time-slot')).find(ts => 
+						ts.querySelector('.time-slot-label')?.textContent === timeSlotLabel
+					);
+
+					if (newTimeSlot) {
+						// Move the card to the new technician's time slot
+						const cardClone = ticketCard.cloneNode(true);
+						newTimeSlot.appendChild(cardClone);
+						
+						// Re-initialize drag handlers for the cloned card
+						cardClone.addEventListener('dragstart', handleCardDragStart);
+						cardClone.addEventListener('dragend', handleCardDragEnd);
+						
+						// Remove from old location
+						ticketCard.remove();
+						
+						// Update modal
+						showTicketDetail();
+						// Re-render map
+						renderMapPins();
+					}
+				}
+			}
+		}
+
+		// Initialize on DOM ready
+		document.addEventListener('DOMContentLoaded', async function() {
+			const scheduleDateInput = document.getElementById('scheduleDateInput');
+			if (scheduleDateInput && !scheduleDateInput.value) {
+				scheduleDateInput.value = getLocalDateStr();
+			}
+			const queryParams = new URLSearchParams(window.location.search);
+			const requestedLocation = (queryParams.get('location') || '').trim();
+			const locationSelect = document.getElementById('locationSelect');
+			if (locationSelect && requestedLocation) {
+				const options = Array.from(locationSelect.options || []);
+				const matchedOption = options.find((option) => option.value === requestedLocation || option.textContent.trim() === requestedLocation);
+				if (matchedOption) {
+					locationSelect.value = matchedOption.value;
+				}
+			}
+			const prevScheduleDateBtn = document.getElementById('prevScheduleDateBtn');
+			const nextScheduleDateBtn = document.getElementById('nextScheduleDateBtn');
+			if (prevScheduleDateBtn) prevScheduleDateBtn.addEventListener('click', () => shiftPlannerDate(-1));
+			if (nextScheduleDateBtn) nextScheduleDateBtn.addEventListener('click', () => shiftPlannerDate(1));
+			// Load DB data then update planner
+			await updatePlanner();
+			initializeDragAndDrop();
+			initializeTicketClicks();
+			initializeModal();
+			initializeMapControls();
+			openTicketFromQuery();
+			if (window.googleMap) renderMapPins();
+		});
+
+		async function loadPlannerFromDatabase() {
+			// Show loading state
+			const techSchedule = document.getElementById('techSchedule');
+			if (techSchedule) {
+				techSchedule.innerHTML = '<div style="padding:2rem;text-align:center;color:#94a3b8;">Loading scheduleâ€¦</div>';
+			}
+
+			let activeCompanyDbId = null;
+			if (userCompanyId) {
+				const { data: co } = await supabaseClient.from('companies').select('id').eq('company_id', userCompanyId).maybeSingle();
+				activeCompanyDbId = co ? co.id : null;
+			}
+
+			let locationTechnicians = [];
+			if (activeCompanyDbId) {
+				const { data: userRows, error: userError } = await supabaseClient
+					.from('users')
+					.select('first_name,last_name,location,role,status')
+					.eq('company_id', activeCompanyDbId)
+					.eq('role', 'technician')
+					.eq('status', 'active');
+				if (userError) {
+					console.warn('Planner technician roster fetch failed:', userError.message);
+				} else {
+					locationTechnicians = userRows || [];
+				}
+			}
+			const scheduleDateInput = document.getElementById('scheduleDateInput');
+			const selectedDate = scheduleDateInput && scheduleDateInput.value ? scheduleDateInput.value : getLocalDateStr();
+			let query = supabaseClient.from('tickets')
+				.select('ticket_no, technician_name, customer_name, customer_address, repair_status, assigned_area, schedule_date, call_taken_date, cx_preferred_date, model, serial_no, brand, warranty_type')
+				.eq('schedule_date', selectedDate)
+				.order('schedule_date', { ascending: true })
+				.limit(2000);
+			if (activeCompanyDbId) query = query.eq('company_id', activeCompanyDbId);
+			const { data, error } = await query;
+			if (error) { console.error('Planner fetch error:', error); return; }
+
+			const ticketNos = (data || []).map((t) => t.ticket_no).filter(Boolean);
+			const detailMap = {};
+			if (ticketNos.length > 0) {
+				for (let i = 0; i < ticketNos.length; i += 200) {
+					const chunk = ticketNos.slice(i, i + 200);
+					const { data: detailRows, error: detailError } = await supabaseClient
+						.from('ticket_details')
+						.select('ticket_no, detail_json')
+						.in('ticket_no', chunk);
+					if (detailError) {
+						console.warn('Planner ticket_details fetch failed:', detailError.message);
+						continue;
+					}
+					(detailRows || []).forEach((row) => {
+						if (row.ticket_no) detailMap[row.ticket_no] = row.detail_json || null;
+					});
+				}
+			}
+
+			const TECH_COLORS = ['#f59e0b','#10b981','#6366f1','#8b5cf6','#ec4899','#f97316','#3b82f6','#ef4444'];
+			const newData = {};
+			const newDetailedTickets = {};
+			const rosterCursor = {};
+
+			(locationTechnicians || []).forEach((user) => {
+				const loc = normalizeLocationName(user.location || 'Unknown');
+				const tech = [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || 'Unassigned';
+				if (!newData[loc]) {
+					newData[loc] = { mapCenter: LOCATION_MAP_CENTERS[loc] || null, technicians: [], tickets: {} };
+				}
+				if (!newData[loc].tickets[tech]) {
+					const idx = newData[loc].technicians.length;
+					const words = tech.trim().split(/\s+/);
+					const initials = words.length >= 2
+						? words[0][0].toUpperCase() + words[words.length - 1][0].toUpperCase()
+						: tech.slice(0, 2).toUpperCase();
+					newData[loc].technicians.push({ name: tech, initials, color: TECH_COLORS[idx % TECH_COLORS.length] });
+					newData[loc].tickets[tech] = { AM: [], PM: [], TBA: [] };
+				}
+			});
+
+			(data || []).forEach((t) => {
+				const detail = detailMap[t.ticket_no] || {};
+				const mapped = detail?.general_information?.mapped || detail?.general_information?.fields || detail?.er || {};
+				const loc = normalizeLocationName(mapped.er_location || mapped.assigned_area || t.assigned_area || 'Unknown');
+				const roster = getStaticRosterForLocation(loc);
+				let tech = mapped.technician || mapped.Technician || mapped.technician_name || t.technician_name || 'Unassigned';
+				if (roster && roster.length > 0 && !roster.includes(tech)) {
+					const index = rosterCursor[loc] || 0;
+					tech = roster[index % roster.length];
+					rosterCursor[loc] = index + 1;
+				}
+				if (!newData[loc]) {
+					newData[loc] = { mapCenter: LOCATION_MAP_CENTERS[loc] || null, technicians: [], tickets: {} };
+				}
+				if (!newData[loc].tickets[tech]) {
+					const idx = newData[loc].technicians.length;
+					const words = tech.trim().split(/\s+/);
+					const initials = words.length >= 2
+						? words[0][0].toUpperCase() + words[words.length-1][0].toUpperCase()
+						: tech.slice(0,2).toUpperCase();
+					newData[loc].technicians.push({ name: tech, initials, color: TECH_COLORS[idx % TECH_COLORS.length] });
+					newData[loc].tickets[tech] = { AM: [], PM: [], TBA: [] };
+				}
+				newData[loc].tickets[tech].TBA.push({
+					no: t.ticket_no || 'â€”',
+					cust: t.customer_name || 'â€”',
+					addr: t.customer_address || 'â€”',
+					status: t.repair_status || 'â€”'
+				});
+				// Build DETAILED_TICKETS entry from DB fields
+				if (t.ticket_no) {
+					const postDate = t.call_taken_date ? new Date(t.call_taken_date) : null;
+					const schedDate = t.schedule_date ? new Date(t.schedule_date) : null;
+					const today2 = new Date();
+					const agingDays = postDate ? Math.round((today2 - postDate) / 86400000) : 'â€”';
+					const fmt = d => d ? d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' }) : 'â€”';
+					newDetailedTickets[t.ticket_no] = {
+						customer: t.customer_name || 'â€”',
+						postingDate: fmt(postDate),
+						agingDays,
+						cxPrefDate: fmt(t.cx_preferred_date ? new Date(t.cx_preferred_date) : null),
+						redo: false,
+						scheduleDate: fmt(schedDate),
+						scheduleCxConf: 'â€”',
+						scheduleTime: 'TBA',
+						scheduleHours: 'â€”',
+						model: t.model || 'â€”',
+						serial: t.serial_no || 'â€”',
+						brand: t.brand || 'â€”',
+						repairType: mapped.repair_type || mapped.repairType || 'â€”',
+						warranty: t.warranty_type || 'â€”',
+						cxNotice: 'â€”',
+						triageNote: detail?.service_tracking?.mapped?.triage_note || 'â€”',
+						internalNote: 'â€”'
+					};
+				}
+			});
+			LOCATION_SPECIFIC_DATA = newData;
+			DETAILED_TICKETS = newDetailedTickets;
+			// Update location dropdown
+			const sel = document.getElementById('locationSelect');
+			if (sel) {
+				const current = sel.value || sel.getAttribute('data-preselect') || 'Asheville';
+				sel.innerHTML = CANONICAL_LOCATIONS.map(loc =>
+					`<option value="${loc}"${loc === current ? ' selected' : ''}>${loc}</option>`
+				).join('');
+			}
+			const scheduleDateEl = document.getElementById('scheduleDate');
+			if (scheduleDateEl) {
+				scheduleDateEl.textContent = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+			}
+		}
+	</script>
+
+	<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc&callback=initGoogleMap" async defer></script>
+</body>
+</html>

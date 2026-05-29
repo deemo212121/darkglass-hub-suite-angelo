@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import ashevilleCoverageCsv from "../../grid_coverage/asheville.csv?raw";
 import memphisCoverageCsv from "../../grid_coverage/memphis.csv?raw";
+import { normalizeLocationName } from "@/lib/locations";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
@@ -49,6 +50,10 @@ const PART_ADDRESS_STORAGE_KEY = "ahs:location-management:part-addresses";
 const COVERAGE_STORAGE_KEY = "ahs:location-management:coverage";
 
 const YES_NO_OPTIONS = ["Y", "N"] as const;
+
+function normalizeLocationKey(value: string) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 
 function buildEmptyLocationRow(): LocationRow {
   return {
@@ -148,6 +153,34 @@ const DEFAULT_LOCATION_ROWS: LocationRow[] = [
   { id: "59", location: "Dallas", address1: "4347 W Northwest Hwy", address2: "Suite 130, Box 114", city: "Dallas", state: "TX", zipCode: "75220", office: "Dallas", phoneNo: "", email: "naveen.lakhani@usinhomeservices.com", defaultPartDist: "Encompass", repTech: "Lashamus Dowell", sms: "Y", emailFlag: "N", autoTriage: "N" },
   { id: "60", location: "Philippines", address1: "", address2: "", city: "Philippines", state: "WY", zipCode: "", office: "Philippines", phoneNo: "", email: "", defaultPartDist: "", repTech: "", sms: "Y", emailFlag: "N", autoTriage: "N" },
 ];
+
+export function getLocationManagementZoomAddress(location: string) {
+  const normalizedLocation = normalizeLocationName(location);
+  if (!normalizedLocation) return "";
+  const normalizedLocationKey = normalizeLocationKey(normalizedLocation);
+
+  const matchesLocation = (candidate: string) => normalizeLocationKey(candidate) === normalizedLocationKey;
+
+  const raw = typeof window !== "undefined" ? window.localStorage.getItem(LOCATION_STORAGE_KEY) : null;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { rows?: LocationRow[] };
+      const savedRow = parsed.rows?.find((row) => matchesLocation(row.location));
+      if (savedRow) {
+        return [savedRow.address1, savedRow.address2, savedRow.city, savedRow.state, savedRow.zipCode, "USA"].filter(Boolean).join(", ") || savedRow.location;
+      }
+    } catch {
+      // fall back to defaults below
+    }
+  }
+
+  const defaultRow = DEFAULT_LOCATION_ROWS.find((row) => matchesLocation(row.location));
+  if (defaultRow) {
+    return [defaultRow.address1, defaultRow.address2, defaultRow.city, defaultRow.state, defaultRow.zipCode, "USA"].filter(Boolean).join(", ") || defaultRow.location;
+  }
+
+  return normalizedLocation;
+}
 
 const DEFAULT_PART_ADDRESS_ROWS: PartAddressRow[] = [
   { id: "36", name: "Nashville", address1: "163 N MOUNT JULIET RD", address2: "", city: "Mount Juliet", state: "Tennessee", zipCode: "37122", location: "Nashville" },

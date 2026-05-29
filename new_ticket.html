@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Create New Ticket - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<script src="../../supabase.min.js"></script>
+	<script src="../../config.js"></script>
+	<style>
+		.ticket-form-container {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 2rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+			margin: 0;
+		}
+
+		.form-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 2rem;
+			padding-bottom: 1rem;
+			border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+		}
+
+		.form-header h2 {
+			color: #60a5fa;
+			margin: 0;
+			font-size: 1.8rem;
+		}
+
+		.form-section {
+			background: rgba(30, 41, 59, 0.5);
+			border: 1px solid rgba(96, 165, 250, 0.2);
+			border-radius: 8px;
+			padding: 1.5rem;
+			margin-bottom: 1.5rem;
+		}
+
+		.form-section-title {
+			color: #60a5fa;
+			font-size: 1.2rem;
+			font-weight: 600;
+			margin: 0 0 1.5rem 0;
+			padding-bottom: 0.5rem;
+			border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+		}
+
+		.form-grid {
+			display: grid;
+			grid-template-columns: repeat(4, 1fr);
+			gap: 1.5rem;
+		}
+
+		.form-grid-3 {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 1.5rem;
+		}
+
+		.form-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.form-group.full-width {
+			grid-column: 1 / -1;
+		}
+
+		.form-label {
+			color: #cbd5e1;
+			font-size: 0.9rem;
+			font-weight: 500;
+		}
+
+		.form-label.required::after {
+			content: ' *';
+			color: #ef4444;
+		}
+
+		.form-input,
+		.form-select,
+		.form-textarea {
+			padding: 0.75rem;
+			background: rgba(15, 23, 42, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			border-radius: 6px;
+			color: #e2e8f0;
+			font-size: 0.95rem;
+			outline: none;
+			transition: all 0.2s;
+		}
+
+		.form-input:focus,
+		.form-select:focus,
+		.form-textarea:focus {
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+		}
+
+		.form-select {
+			cursor: pointer;
+		}
+
+		.form-select option {
+			background: #1e293b;
+			color: #e2e8f0;
+		}
+
+		.form-textarea {
+			min-height: 120px;
+			resize: vertical;
+			font-family: inherit;
+		}
+
+		.form-checkbox-group {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+			padding: 0.5rem 0;
+		}
+
+		.form-checkbox {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+			accent-color: #3b82f6;
+		}
+
+		.form-actions {
+			display: flex;
+			gap: 1rem;
+			justify-content: flex-end;
+			margin-top: 2rem;
+			padding-top: 1.5rem;
+			border-top: 1px solid rgba(96, 165, 250, 0.2);
+		}
+
+		.btn {
+			padding: 0.75rem 2rem;
+			border: none;
+			border-radius: 6px;
+			font-size: 1rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+
+		.btn-primary {
+			background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+			color: white;
+		}
+
+		.btn-primary:hover {
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			transform: translateY(-1px);
+			box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+		}
+
+		.btn-secondary {
+			background: rgba(71, 85, 105, 0.8);
+			color: #e2e8f0;
+			border: 1px solid rgba(148, 163, 184, 0.3);
+		}
+
+		.btn-secondary:hover {
+			background: rgba(100, 116, 139, 0.8);
+		}
+
+		@media (max-width: 768px) {
+			.form-grid-3 {
+				grid-template-columns: 1fr;
+			}
+		}
+
+		.footer-copy {
+			margin-top: 1rem;
+			opacity: 0.7;
+		}
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+	<script src="../../routes.js"></script>
+	<script>
+		const userEmail = localStorage.getItem('userEmail');
+		const userCompanyId = localStorage.getItem('userCompanyId');
+		const SUPABASE_URL = 'https://vqdxwnrrhuxcxjurcerq.supabase.co';
+		const SUPABASE_ANON_KEY = 'sb_publishable_i7pdQxEY0WqLFjpss2HrPg_ZaXyG-3B';
+		const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+		const LOCAL_API_BASE = 'http://127.0.0.1:3100';
+
+		if (!userEmail || !userCompanyId) {
+			window.location.href = '../../landing.html';
+		}
+
+		const appContainer = document.getElementById('appContainer');
+		appContainer.innerHTML = `
+			<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+				<div class="dashboard-header">
+					<a href="index.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+						<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+						<h1 class="dashboard-title">Admin Hub Solutions</h1>
+					</a>
+					<div class="user-info">
+						<div>
+							<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+							<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+						</div>
+						<button class="logout-btn" onclick="logout()">Logout</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="module-page" style="display: flex; flex-direction: column;">
+				<div class="module-header">
+					<button class="back-btn" onclick="window.location.href='index.html'">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="19" y1="12" x2="5" y2="12"></line>
+							<polyline points="12 19 5 12 12 5"></polyline>
+						</svg>
+						Back to Tickets
+					</button>
+					<h2 style="color: white; margin: 0;">Create New Ticket</h2>
+				</div>
+
+				<div class="ticket-form-container">
+					<form id="ticketForm">
+						<!-- Customer Information Section -->
+						<div class="form-section">
+							<h3 class="form-section-title">Customer Information</h3>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">Ticket No</label>
+									<input type="text" class="form-input" id="ticketNo" required>
+								</div>
+								<div class="form-group" style="justify-content: flex-end; padding-top: 0.25rem;">
+									<div class="form-checkbox-group">
+										<input type="checkbox" class="form-checkbox" id="fakeTicket">
+										<label class="form-label" for="fakeTicket">Fake Ticket (not included statistically)</label>
+									</div>
+								</div>
+							</div>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">Source</label>
+									<select class="form-select" id="source" required>
+										<option value="">Select Source</option>
+										<option value="Call in">Call in</option>
+										<option value="Centricity">Centricity</option>
+										<option value="Duplicate">Duplicate</option>
+										<option value="Facebook">Facebook</option>
+										<option value="Fidelity Home Insurance">Fidelity Home Insurance</option>
+										<option value="Google Search">Google Search</option>
+										<option value="Redo">Redo</option>
+										<option value="Website Sales">Website Sales</option>
+									</select>
+								</div>
+								<div class="form-group">
+									<label class="form-label required">Name</label>
+									<input type="text" class="form-input" id="customerName" required>
+								</div>
+							</div>
+							<div class="form-grid-3">
+								<div class="form-group">
+									<label class="form-label">Primary Phone</label>
+									<input type="tel" class="form-input" id="primaryPhone">
+								</div>
+								<div class="form-group">
+									<label class="form-label">Secondary Phone</label>
+									<input type="tel" class="form-input" id="secondaryPhone">
+								</div>
+								<div class="form-group">
+									<label class="form-label">Email</label>
+									<input type="email" class="form-input" id="email1">
+								</div>
+							</div>
+							<div class="form-grid">
+								<div class="form-group full-width">
+									<label class="form-label required">Address</label>
+									<input type="text" class="form-input" id="address" required>
+								</div>
+							</div>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">City</label>
+									<input type="text" class="form-input" id="city" placeholder="e.g. Franklin" required>
+								</div>
+								<div class="form-group">
+									<label class="form-label required">Zip Code</label>
+									<input type="text" class="form-input" id="zipCode" placeholder="e.g. 28734" maxlength="10" required>
+								</div>
+								<div class="form-group">
+									<label class="form-label required">State</label>
+									<select class="form-select" id="state" required>
+										<option value="">Select State</option>
+										<option value="Alabama">Alabama</option>
+										<option value="Alaska">Alaska</option>
+										<option value="Arizona">Arizona</option>
+										<option value="Arkansas">Arkansas</option>
+										<option value="California">California</option>
+										<option value="Colorado">Colorado</option>
+										<option value="Connecticut">Connecticut</option>
+										<option value="Delaware">Delaware</option>
+										<option value="District of Columbia">District of Columbia</option>
+										<option value="Florida">Florida</option>
+										<option value="Georgia">Georgia</option>
+										<option value="Hawaii">Hawaii</option>
+										<option value="Idaho">Idaho</option>
+										<option value="Illinois">Illinois</option>
+										<option value="Indiana">Indiana</option>
+										<option value="Iowa">Iowa</option>
+										<option value="Kansas">Kansas</option>
+										<option value="Kentucky">Kentucky</option>
+										<option value="Louisiana">Louisiana</option>
+										<option value="Maine">Maine</option>
+										<option value="Maryland">Maryland</option>
+										<option value="Massachusetts">Massachusetts</option>
+										<option value="Michigan">Michigan</option>
+										<option value="Minnesota">Minnesota</option>
+										<option value="Mississippi">Mississippi</option>
+										<option value="Missouri">Missouri</option>
+										<option value="Montana">Montana</option>
+										<option value="Nebraska">Nebraska</option>
+										<option value="Nevada">Nevada</option>
+										<option value="New Hampshire">New Hampshire</option>
+										<option value="New Jersey">New Jersey</option>
+										<option value="New Mexico">New Mexico</option>
+										<option value="New York">New York</option>
+										<option value="North Carolina">North Carolina</option>
+										<option value="North Dakota">North Dakota</option>
+										<option value="Ohio">Ohio</option>
+										<option value="Oklahoma">Oklahoma</option>
+										<option value="Oregon">Oregon</option>
+										<option value="Pennsylvania">Pennsylvania</option>
+										<option value="Puerto Rico">Puerto Rico</option>
+										<option value="Rhode Island">Rhode Island</option>
+										<option value="South Carolina">South Carolina</option>
+										<option value="South Dakota">South Dakota</option>
+										<option value="Tennessee">Tennessee</option>
+										<option value="Texas">Texas</option>
+										<option value="Utah">Utah</option>
+										<option value="Vermont">Vermont</option>
+										<option value="Virginia">Virginia</option>
+										<option value="Washington">Washington</option>
+										<option value="West Virginia">West Virginia</option>
+										<option value="Wisconsin">Wisconsin</option>
+										<option value="Wyoming">Wyoming</option>
+									</select>
+								</div>
+							</div>
+							<div class="form-group full-width">
+								<label class="form-label">Address Note</label>
+								<textarea class="form-textarea" id="addressNote" rows="3"></textarea>
+							</div>
+						</div>
+
+						<!-- Product Information Section -->
+						<div class="form-section">
+							<h3 class="form-section-title">Product Information</h3>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">Model</label>
+									<input type="text" class="form-input" id="model" required>
+								</div>
+								<div class="form-group">
+									<label class="form-label required">Serial</label>
+									<input type="text" class="form-input" id="serialNo" required>
+								</div>
+								<div class="form-group">
+									<label class="form-label">Model Version</label>
+									<input type="text" class="form-input" id="modelVersion">
+								</div>
+							</div>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">Brand</label>
+									<input type="text" class="form-input" id="brand" required>
+								</div>
+								<div class="form-group">
+									<label class="form-label required">Product Category</label>
+									<select class="form-select" id="productCategory" required>
+										<option value="">Select Category</option>
+										<option value="Air Conditioner">Air Conditioner</option>
+										<option value="Bed">Bed</option>
+										<option value="Coffee Machines">Coffee Machines</option>
+										<option value="Compactor">Compactor</option>
+										<option value="Cooktop">Cooktop</option>
+										<option value="Dehumidifier">Dehumidifier</option>
+										<option value="Dishwasher">Dishwasher</option>
+										<option value="Disposer">Disposer</option>
+										<option value="Drawer">Drawer</option>
+										<option value="Dresser">Dresser</option>
+										<option value="Dryer">Dryer</option>
+										<option value="Duct">Duct</option>
+										<option value="Electric Cooktop">Electric Cooktop</option>
+										<option value="Electric Oven range">Electric Oven range</option>
+										<option value="Electrical System">Electrical System</option>
+										<option value="Evaporator">Evaporator</option>
+										<option value="Fan">Fan</option>
+										<option value="Food Center">Food Center</option>
+										<option value="Furnace">Furnace</option>
+										<option value="Heater">Heater</option>
+										<option value="Home Theather">Home Theather</option>
+										<option value="Hood">Hood</option>
+										<option value="Ice Maker">Ice Maker</option>
+										<option value="Laundry">Laundry</option>
+										<option value="LCD TV">LCD TV</option>
+										<option value="LED TV">LED TV</option>
+										<option value="Matress">Matress</option>
+										<option value="Microwave">Microwave</option>
+										<option value="Mobile">Mobile</option>
+										<option value="Monitor">Monitor</option>
+										<option value="OLED TV">OLED TV</option>
+										<option value="Oven">Oven</option>
+										<option value="PDP TV">PDP TV</option>
+										<option value="Plasma TV">Plasma TV</option>
+										<option value="Projection TV">Projection TV</option>
+										<option value="Range">Range</option>
+										<option value="Refrigerator">Refrigerator</option>
+										<option value="Trash Compactor">Trash Compactor</option>
+										<option value="TV">TV</option>
+										<option value="Vacuum Cleaner">Vacuum Cleaner</option>
+										<option value="Vent">Vent</option>
+										<option value="Washer">Washer</option>
+										<option value="Washer Dryer">Washer Dryer</option>
+										<option value="Window">Window</option>
+										<option value="Wine Cellar">Wine Cellar</option>
+									</select>
+								</div>
+							</div>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label">Purchase Date</label>
+									<input type="date" class="form-input" id="purchaseDate">
+								</div>
+								<div class="form-group">
+									<label class="form-label required">Warranty Type</label>
+									<select class="form-select" id="warrantyType" required>
+										<option value="">Select Warranty Type</option>
+										<option value="Concession L">Concession L</option>
+										<option value="Concession LP">Concession LP</option>
+										<option value="Concession P">Concession P</option>
+										<option value="Ext Labor Wty">Ext Labor Wty</option>
+										<option value="Ext Part Wty">Ext Part Wty</option>
+										<option value="Ext Wty">Ext Wty</option>
+										<option value="In warranty">In warranty</option>
+										<option value="Labor only Wty">Labor only Wty</option>
+										<option value="Out-of-warranty">Out-of-warranty</option>
+										<option value="Part only Wty">Part only Wty</option>
+										<option value="Special Part 5 year">Special Part 5 year</option>
+										<option value="Unknown">Unknown</option>
+									</select>
+								</div>
+							</div>
+							<div class="form-grid-3">
+								<div class="form-group">
+									<label class="form-label">Cx Preferred Date</label>
+									<input type="date" class="form-input" id="cxPreferredDate">
+								</div>
+							</div>
+						</div>
+
+						<!-- Call (Service) Information Section -->
+						<div class="form-section">
+							<h3 class="form-section-title">Call (Service) Information</h3>
+							<div class="form-grid">
+								<div class="form-group">
+									<label class="form-label required">Call Received Date</label>
+									<input type="date" class="form-input" id="callTakenDate" required>
+								</div>
+							</div>
+							</div>
+							<div class="form-group full-width">
+								<label class="form-label required">Problem Description</label>
+								<textarea class="form-textarea" id="problemDescription" rows="5" required></textarea>
+							</div>
+						</div>
+
+						<!-- Form Actions -->
+						<div class="form-actions">
+							<p id="formStatus" style="margin-right: auto; align-self: center; color: #bfdbfe; font-weight: 600;"></p>
+							<button type="button" class="btn btn-secondary" onclick="goBack()">Cancel</button>
+							<button type="submit" class="btn btn-primary">Create Ticket</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		`;
+
+		document.getElementById('userDisplayName').textContent = userEmail || '';
+		document.getElementById('companyDisplayId').textContent = userCompanyId || '';
+
+		function goBack() {
+			window.location.href = 'index.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function setFormStatus(message, type = 'info') {
+			const statusEl = document.getElementById('formStatus');
+			if (!statusEl) return;
+			statusEl.textContent = message || '';
+			if (type === 'error') {
+				statusEl.style.color = '#fca5a5';
+			} else if (type === 'ok') {
+				statusEl.style.color = '#86efac';
+			} else {
+				statusEl.style.color = '#bfdbfe';
+			}
+		}
+
+		async function getCompanyDbId(companyCode) {
+			if (!companyCode) return null;
+			const { data, error } = await supabaseClient
+				.from('companies')
+				.select('id')
+				.eq('company_id', companyCode)
+				.maybeSingle();
+			if (error) {
+				throw new Error(error.message || 'Failed to resolve company id.');
+			}
+			return data?.id || null;
+		}
+
+		function toIsoOrNull(value) {
+			if (!value) return null;
+			const dt = new Date(value);
+			if (Number.isNaN(dt.getTime())) return null;
+			return dt.toISOString();
+		}
+
+		// Form submission handler
+		document.getElementById('ticketForm').addEventListener('submit', async function(e) {
+			e.preventDefault();
+			
+			// Collect form data
+			const formData = {
+				ticketNo: document.getElementById('ticketNo').value.trim().toUpperCase(),
+				fakeTicket: document.getElementById('fakeTicket').checked,
+				source: document.getElementById('source').value,
+				customerName: document.getElementById('customerName').value,
+					primaryPhone: document.getElementById('primaryPhone').value,
+					secondaryPhone: document.getElementById('secondaryPhone').value,
+				email1: document.getElementById('email1').value,
+				address: document.getElementById('address').value,
+				city: document.getElementById('city').value,
+				zipCode: document.getElementById('zipCode').value,
+				state: document.getElementById('state').value,
+				addressNote: document.getElementById('addressNote').value,
+				model: document.getElementById('model').value,
+				serialNo: document.getElementById('serialNo').value,
+				modelVersion: document.getElementById('modelVersion').value,
+				brand: document.getElementById('brand').value,
+				productCategory: document.getElementById('productCategory').value,
+				purchaseDate: document.getElementById('purchaseDate').value,
+				warrantyType: document.getElementById('warrantyType').value,
+				cxPreferredDate: document.getElementById('cxPreferredDate').value,
+				callTakenDate: document.getElementById('callTakenDate').value,
+				problemDescription: document.getElementById('problemDescription').value
+			};
+
+			try {
+				setFormStatus('Saving ticket to database...', 'info');
+				if (!userCompanyId) {
+					throw new Error('Missing company code. Please login again.');
+				}
+
+				// Resolve company UUID from company_id code
+				const { data: co, error: coErr } = await supabaseClient
+					.from('companies')
+					.select('id')
+					.eq('company_id', userCompanyId)
+					.maybeSingle();
+				if (coErr) throw new Error(coErr.message);
+				const companyUuid = co?.id || null;
+
+				// Generate UUID client-side so we never need .select() after insert
+				// (avoids SELECT RLS policy check on the returning clause)
+				const ticketUuid = crypto.randomUUID();
+
+				// --- Insert ticket row ---
+				const payload = {
+					id: ticketUuid,
+					ticket_no: formData.ticketNo,
+					is_fake_ticket: formData.fakeTicket,
+					source: formData.source,
+					customer_name: formData.customerName,
+					customer_address: formData.address,
+					customer_city: formData.city,
+					customer_zip: formData.zipCode,
+					customer_state: formData.state,
+					customer_home_phone: formData.primaryPhone || null,
+					customer_cell_phone_1: formData.secondaryPhone || null,
+					customer_email_1: formData.email1 || null,
+					customer_address_note: formData.addressNote || null,
+					model: formData.model,
+					serial_no: formData.serialNo,
+					model_version: formData.modelVersion || null,
+					brand: formData.brand,
+					product_category: formData.productCategory,
+					purchase_date: formData.purchaseDate || null,
+					warranty_type: formData.warrantyType,
+					cx_preferred_date: formData.cxPreferredDate || null,
+					call_taken_date: formData.callTakenDate,
+					repair_status: 'CSR-Acknowledged',
+					problem_description: formData.problemDescription,
+					company_id: companyUuid
+				};
+
+				const { error: insertErr } = await supabaseClient
+					.from('tickets')
+					.insert(payload);
+
+				if (insertErr) throw new Error(insertErr.message || 'Failed to save ticket.');
+
+				// --- Write rich detail data to ticket_details (same format as ER sync) ---
+				if (ticketUuid) {
+					const detail_json = {
+						title: `Ticket #${formData.ticketNo}`,
+						href: '',
+						capturedAt: new Date().toISOString(),
+						source: 'manual',
+						general_information: {
+							fields: {
+								TicketNumber: formData.ticketNo,
+								CxAddress1: formData.address,
+								CxAddress2: '',
+								CxCity: formData.city,
+								CxState: formData.state,
+								CxZipCode: formData.zipCode,
+								CxHomePhone: formData.primaryPhone || '',
+								CxCellPhone: formData.secondaryPhone || '',
+								CxAddressNote: formData.addressNote || '',
+								CxEmail: formData.email1 || '',
+								Brand: formData.brand || '',
+								ModelCode: formData.model,
+								SerialNo: formData.serialNo || '',
+								ModelVersion: formData.modelVersion || '',
+								ProductCategory: formData.productCategory,
+								PurchaseDate: formData.purchaseDate || '',
+								WarrantyType: formData.warrantyType
+							},
+							mapped: {
+								ticket_no: formData.ticketNo,
+								customer_first_name: '',
+								customer_last_name: '',
+								customer_full_name: formData.customerName,
+								customer_address_1: formData.address,
+								customer_address_2: '',
+								customer_city: formData.city,
+								customer_state: formData.state,
+								customer_zip: formData.zipCode,
+								customer_home_phone: formData.primaryPhone || '',
+								customer_cell_phone: formData.secondaryPhone || '',
+								customer_email_1: formData.email1 || '',
+								customer_address_note: formData.addressNote || '',
+								brand: formData.brand || '',
+								model: formData.model,
+								serial_no: formData.serialNo || '',
+								product_category: formData.productCategory,
+								purchase_date: formData.purchaseDate || '',
+								warranty_type: formData.warrantyType,
+								resolution: ''
+							},
+							labels: [],
+							tables: []
+						},
+						service_tracking: {
+							fields: {
+								TriageNote: formData.problemDescription,
+								ClaimNote: ''
+							},
+							mapped: {
+								triage_note: formData.problemDescription,
+								claim_note: '',
+								part_not_needed: '',
+								show_historical_record: ''
+							},
+							labels: [],
+							tables: []
+						}
+					};
+
+					const { error: tdErr } = await supabaseClient.from('ticket_details').insert({
+						ticket_id: ticketUuid,
+						ticket_no: formData.ticketNo,
+						company_id: companyUuid,
+						detail_json,
+						source_url: 'manual'
+					});
+					if (tdErr) console.warn('ticket_details insert failed (non-critical):', tdErr.message);
+				}
+
+				setFormStatus(`Ticket ${formData.ticketNo} saved successfully. Redirecting...`, 'ok');
+				setTimeout(() => {
+					window.location.href = `ticket_list.html?ticket=${encodeURIComponent(formData.ticketNo)}`;
+				}, 900);
+			} catch (error) {
+				setFormStatus(error.message || 'Failed to create ticket.', 'error');
+			}
+		});
+
+		// Set default date to today for Call Received Date
+		document.getElementById('callTakenDate').valueAsDate = new Date();
+	</script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p class="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+</body>
+</html>

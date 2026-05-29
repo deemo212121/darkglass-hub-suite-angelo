@@ -37,20 +37,20 @@ function MultiCheckDropdown({ label, options, selected, onChange }: { label: str
           <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,20rem)] sm:w-80 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) p-0 shadow-xl backdrop-blur-md">
-        <label className="flex items-center gap-2 border-b border-white/10 px-3 py-2 text-sm font-medium text-foreground hover:bg-white/5 cursor-pointer">
+      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,20rem)] sm:w-80 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 p-0 text-white shadow-xl">
+        <label className="flex cursor-pointer items-center gap-2 border-b border-white/10 px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10">
           <input
             type="checkbox"
             checked={all}
             onChange={() => onChange(all ? [] : [...options])}
-            className="accent-blue-500"
+            className="accent-white"
             title="Select all target users"
           />
           Select All
         </label>
         {options.map(o => (
-          <label key={o} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer text-sm">
-            <input type="checkbox" checked={selected.includes(o)} onChange={() => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o])} className="accent-blue-500" title={o} />
+          <label key={o} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-white/90 hover:bg-white/10">
+            <input type="checkbox" checked={selected.includes(o)} onChange={() => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o])} className="accent-white" title={o} />
             {o}
           </label>
         ))}
@@ -69,10 +69,10 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
           <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,16rem)] sm:w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) p-0 shadow-xl backdrop-blur-md">
+      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,16rem)] sm:w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 p-0 text-white shadow-xl">
         {LOCATIONS.map((l, i) => (
           <button key={i} onClick={() => { onChange(l); setOpen(false); }}
-            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${value === l ? "bg-blue-600 text-white" : l === "" ? "text-muted-foreground" : ""}`}>
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${value === l ? "bg-white/10 text-white" : l === "" ? "text-white/60" : "text-white/90"}`}>
             {l || "— All Locations —"}
           </button>
         ))}
