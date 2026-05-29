@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { ALL_TECHNICIANS } from "@/lib/locations";
 
 interface TicketData {
   ticketNo: string;
@@ -372,10 +373,10 @@ function TicketDetailsPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <AppHeader />
-      <main className="flex-1 bg-slate-950">
-        <div className="bg-slate-900/95 backdrop-blur border-b border-white/10 p-6">
-          <div className="max-w-6xl mx-auto">
-            <div className="mb-4 flex items-center gap-4">
+      <main className="flex-1 bg-slate-950 py-6">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
+            <div className="mb-4 flex flex-wrap items-center gap-4">
               <label className="text-slate-400 font-semibold">Select Ticket:</label>
               <input
                 type="text"
@@ -389,13 +390,22 @@ function TicketDetailsPage() {
             <div>
               <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
               {ticket ? (
-                <div className="flex gap-6 mt-2 text-sm text-slate-400">
-                  <div><span className="font-semibold text-blue-400">Account:</span> {ticket.account}</div>
-                  <div><span className="font-semibold text-blue-400">Wty:</span> {ticket.warranty}</div>
-                  <div><span className="font-semibold text-blue-400">Status:</span> <span className="text-blue-300">{ticket.status}</span></div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Account</div>
+                    <div className="text-sm font-semibold text-white">{ticket.account}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Warranty</div>
+                    <div className="text-sm font-semibold text-white">{ticket.warranty}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Status</div>
+                    <div className="text-sm font-semibold text-blue-300">{ticket.status}</div>
+                  </div>
                 </div>
               ) : (
-                <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
                   No ticket data is available for this number yet.
                 </div>
               )}
@@ -404,16 +414,16 @@ function TicketDetailsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="bg-slate-900/50 border-b border-white/10 sticky top-0 z-40">
-          <div className="max-w-6xl mx-auto px-6 flex gap-8">
+        <div className="max-w-6xl mx-auto px-6 mt-3">
+          <div className="flex flex-wrap gap-2.5">
             {["general", "tracking", "compensation", "billing"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
-                className={`py-4 px-2 font-semibold text-sm transition-all border-b-2 ${
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${
                   activeTab === tab
-                    ? "text-blue-400 border-blue-400"
-                    : "text-slate-400 border-transparent hover:text-slate-300"
+                    ? "border-blue-400/60 bg-blue-500/25 text-white"
+                    : "border-white/20 bg-slate-900/90 text-slate-300 hover:border-slate-200/30 hover:text-white"
                 }`}
               >
                 {tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
@@ -423,7 +433,7 @@ function TicketDetailsPage() {
         </div>
 
         {/* Content */}
-        <div className="max-w-6xl mx-auto p-6">
+        <div className="max-w-6xl mx-auto px-6 py-6">
         {!ticket ? (
           <div className="rounded-lg border border-white/10 bg-slate-900/50 p-6 text-slate-300">
             <p className="text-lg font-semibold text-white">Ticket not found</p>
@@ -856,12 +866,18 @@ function TicketDetailsPage() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <input
+                        <select
                           value={row.beneficiary}
                           onChange={(e) => updateCompensationRow(row.id, "beneficiary", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Beneficiary"
-                        />
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">Select technician</option>
+                          {ALL_TECHNICIANS.map((technician) => (
+                            <option key={technician} value={technician}>
+                              {technician}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-4 py-3">
                         <input
@@ -917,8 +933,110 @@ function TicketDetailsPage() {
         )}
 
         {activeTab === "billing" && (
-          <div className="text-slate-400 py-12 text-center">
-            <p>Billing information coming soon...</p>
+          <div className="space-y-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+              <div className="text-lg font-semibold text-blue-200">Billing Information</div>
+              <div className="mt-3 rounded-md border border-white/10 bg-slate-900/90 px-3 py-2 text-sm font-semibold text-white">Paid in full</div>
+              <div className="mt-2 text-sm font-semibold text-blue-200/90">0 distinct record found</div>
+              <div className="mt-4 max-w-sm">
+                <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">search in result</label>
+                <input
+                  type="text"
+                  readOnly
+                  value=""
+                  className="mt-2 w-full rounded-md border border-white/15 bg-slate-900/90 px-3 py-2 text-sm text-white focus:outline-none"
+                />
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full min-w-[1400px] text-left text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 text-blue-200">
+                      <th className="px-4 py-3">ID</th>
+                      <th className="px-4 py-3">Visit ID*</th>
+                      <th className="px-4 py-3">Cx Email</th>
+                      <th className="px-4 py-3">Cx Name*</th>
+                      <th className="px-4 py-3">Labor Fee*</th>
+                      <th className="px-4 py-3">Part Fee*</th>
+                      <th className="px-4 py-3">Diag(Trip) Fee*</th>
+                      <th className="px-4 py-3">Others Fee*</th>
+                      <th className="px-4 py-3">Tax Rate*</th>
+                      <th className="px-4 py-3">Tax</th>
+                      <th className="px-4 py-3">Deduction</th>
+                      <th className="px-4 py-3">Total</th>
+                      <th className="px-4 py-3">Payment*</th>
+                      <th className="px-4 py-3">C. Card #</th>
+                      <th className="px-4 py-3">App. Code</th>
+                      <th className="px-4 py-3">Sign</th>
+                      <th className="px-4 py-3">Comment</th>
+                      <th className="px-4 py-3">Tx Date</th>
+                      <th className="px-4 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    <tr className="bg-slate-900/70 text-slate-200">
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3">V1</td>
+                      <td className="px-4 py-3">jonshaw@lakesidechurch.ws</td>
+                      <td className="px-4 py-3">Jon Shaw</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">%</td>
+                      <td className="px-4 py-3">$0.00</td>
+                      <td className="px-4 py-3">0.00</td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3">05/14/2026</td>
+                      <td className="px-4 py-3 text-blue-300 font-semibold">Add</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+              <div className="text-lg font-semibold text-blue-200">Estimations</div>
+              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full min-w-[1100px] text-left text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 text-blue-200">
+                      <th className="px-4 py-3">ID</th>
+                      <th className="px-4 py-3">Estimated</th>
+                      <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Labor Fee</th>
+                      <th className="px-4 py-3">Part Fee</th>
+                      <th className="px-4 py-3">Diagnose Fee</th>
+                      <th className="px-4 py-3">Others Fee</th>
+                      <th className="px-4 py-3">Tax Rate (%)</th>
+                      <th className="px-4 py-3">Tax Fee</th>
+                      <th className="px-4 py-3">Deduction</th>
+                      <th className="px-4 py-3">Refund</th>
+                      <th className="px-4 py-3">Total</th>
+                      <th className="px-4 py-3">Confirmed</th>
+                      <th className="px-4 py-3">Created by</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    <tr className="bg-slate-900/70 text-slate-200">
+                      <td className="px-4 py-3" colSpan={14}></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
+                  Close
+                </button>
+                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
+                  List
+                </button>
+              </div>
+            </div>
           </div>
         )}
         </div>

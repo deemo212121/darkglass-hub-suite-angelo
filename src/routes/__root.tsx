@@ -8,6 +8,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth";
+import { TicketSearchFab } from "@/components/TicketSearchFab";
 
 import appCss from "../styles.css?url";
 
@@ -82,6 +83,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Outlet />
+        <TicketSearchFab />
       </AuthProvider>
     </QueryClientProvider>
   );

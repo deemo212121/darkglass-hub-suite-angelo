@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Navigate, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { OverallStatusPage } from "@/components/OverallStatusPage";
@@ -13,6 +13,7 @@ import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 import { PartOrder } from "@/components/PartOrder";
 import { PartReceive } from "@/components/PartReceive";
 import { TicketList } from "@/components/TicketList";
+import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -49,8 +50,16 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 function SubModule() {
   const { ready, email, companyId } = useAuth();
   const { mod, sub } = Route.useLoaderData();
+  const location = useLocation();
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" />;
+
+  const hasNestedUserRoute = sub.custom === "user-management" && location.pathname.split("/").filter(Boolean).length > 3;
+
+  if (hasNestedUserRoute) {
+    return <Outlet />;
+  }
+
   return (
     <>
       <AppHeader />
@@ -72,6 +81,8 @@ function SubModule() {
         ? <PartReceive mod={mod} sub={sub} />
         : sub.custom === "ticket-list"
         ? <TicketList mod={mod} sub={sub} />
+        : sub.custom === "user-management"
+        ? <AdminUserManagementPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
       <Footer />
     </>

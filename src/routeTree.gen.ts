@@ -19,6 +19,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
+import { Route as MModuleSubmoduleUserIdRouteImport } from './routes/m.$module.$submodule.$userId'
 
 const TimecardRoute = TimecardRouteImport.update({
   id: '/timecard',
@@ -70,6 +71,11 @@ const MModuleSubmoduleRoute = MModuleSubmoduleRouteImport.update({
   path: '/$submodule',
   getParentRoute: () => MModuleRoute,
 } as any)
+const MModuleSubmoduleUserIdRoute = MModuleSubmoduleUserIdRouteImport.update({
+  id: '/$userId',
+  path: '/$userId',
+  getParentRoute: () => MModuleSubmoduleRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -81,7 +87,8 @@ export interface FileRoutesByFullPath {
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
-  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
+  '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -93,7 +100,8 @@ export interface FileRoutesByTo {
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
-  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
+  '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -106,7 +114,8 @@ export interface FileRoutesById {
   '/timecard': typeof TimecardRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
-  '/m/$module/$submodule': typeof MModuleSubmoduleRoute
+  '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
+    | '/m/$module/$submodule/$userId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
+    | '/m/$module/$submodule/$userId'
   id:
     | '__root__'
     | '/'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/m/$module'
     | '/ticket/$ticketNo'
     | '/m/$module/$submodule'
+    | '/m/$module/$submodule/$userId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -231,15 +243,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MModuleSubmoduleRouteImport
       parentRoute: typeof MModuleRoute
     }
+    '/m/$module/$submodule/$userId': {
+      id: '/m/$module/$submodule/$userId'
+      path: '/$userId'
+      fullPath: '/m/$module/$submodule/$userId'
+      preLoaderRoute: typeof MModuleSubmoduleUserIdRouteImport
+      parentRoute: typeof MModuleSubmoduleRoute
+    }
   }
 }
 
+interface MModuleSubmoduleRouteChildren {
+  MModuleSubmoduleUserIdRoute: typeof MModuleSubmoduleUserIdRoute
+}
+
+const MModuleSubmoduleRouteChildren: MModuleSubmoduleRouteChildren = {
+  MModuleSubmoduleUserIdRoute: MModuleSubmoduleUserIdRoute,
+}
+
+const MModuleSubmoduleRouteWithChildren =
+  MModuleSubmoduleRoute._addFileChildren(MModuleSubmoduleRouteChildren)
+
 interface MModuleRouteChildren {
-  MModuleSubmoduleRoute: typeof MModuleSubmoduleRoute
+  MModuleSubmoduleRoute: typeof MModuleSubmoduleRouteWithChildren
 }
 
 const MModuleRouteChildren: MModuleRouteChildren = {
-  MModuleSubmoduleRoute: MModuleSubmoduleRoute,
+  MModuleSubmoduleRoute: MModuleSubmoduleRouteWithChildren,
 }
 
 const MModuleRouteWithChildren =

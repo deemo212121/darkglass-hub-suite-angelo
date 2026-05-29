@@ -15,6 +15,7 @@ export const TICKET_SEARCH_INDEX: TicketSearchEntry[] = [
   { ticketNo: "7039321404BL-13", customer: "Melissa Beaver", city: "EATONTON", zip: "", status: "OP-Waiting for Part" },
   { ticketNo: "SA-3433383", customer: "Accent Overlook", city: "CANTON", zip: "", status: "CSR-Left Message for Cx" },
   { ticketNo: "SA-3431358", customer: "Evelin Tirado", city: "EATONTON", zip: "", status: "CSR-Left Message for Cx" },
+  { ticketNo: "SA-3458831", customer: "Neal Market", city: "GREENSBORO", zip: "", status: "CSR-Assigned to ASC" },
   { ticketNo: "3850106E11", customer: "Tricon Propertymanager", city: "DALLAS", zip: "", status: "OP-UPDATE HOLD" },
   { ticketNo: "26000663669DF1", customer: "Shirley Gentry", city: "TAYLORSVILLE", zip: "", status: "TR-Need Triage" },
   { ticketNo: "SA-34125461", customer: "Mike Daly", city: "ACWORTH", zip: "", status: "TR-Need Triage" },

@@ -4,11 +4,10 @@ import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Footer } from "@/components/Footer";
-import { ArrowRight, Search } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { getUsers } from "@/lib/db-api";
 import { LOGIN_COMPANY_OPTIONS } from "@/lib/modules";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TICKET_SEARCH_INDEX, normalizeTicketSearchValue } from "@/lib/ticket-search";
 
 export const Route = createFileRoute("/landing")({
   head: () => ({ meta: [{ title: "Sign in — Admin Hub Solutions" }] }),
@@ -22,22 +21,6 @@ function Landing() {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [emailOptions, setEmailOptions] = useState<string[]>([]);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchText, setSearchText] = useState("");
-
-  const searchResults = TICKET_SEARCH_INDEX.filter((entry) => {
-    const query = normalizeTicketSearchValue(searchText);
-    if (!query) return true;
-    return [entry.ticketNo, entry.customer, entry.city, entry.zip, entry.status].some((value) =>
-      normalizeTicketSearchValue(value).includes(query),
-    );
-  }).slice(0, 8);
-
-  const openTicket = (ticketNo: string) => {
-    setSearchOpen(false);
-    setSearchText("");
-    navigate({ to: `/ticket/${ticketNo}` });
-  };
 
   useEffect(() => {
     if (form.remember) {
@@ -91,14 +74,6 @@ function Landing() {
             <span className="font-display font-semibold text-lg">Admin Hub Solutions</span>
           </div>
           <nav className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setSearchOpen(true)}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition-colors"
-              aria-label="Search tickets"
-            >
-              <Search className="h-4 w-4 text-muted-foreground" />
-            </button>
             <button onClick={() => setOpen(true)} className="btn btn-primary">Login</button>
           </nav>
         </div>
@@ -179,51 +154,6 @@ function Landing() {
               Demo only — any email/password works.
             </p>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
-        <DialogContent className="sm:max-w-xl bg-card border-white/10">
-          <DialogHeader>
-            <DialogTitle className="font-display">Search ticket</DialogTitle>
-            <DialogDescription>Search by ticket number or zip code. Press Enter or click View.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (searchResults[0]) openTicket(searchResults[0].ticketNo);
-                }
-              }}
-              placeholder="Ticket number or zip code"
-              className="glass-input w-full"
-              autoFocus
-            />
-            <div className="max-h-80 overflow-auto rounded-xl border border-white/10">
-              {searchResults.length > 0 ? (
-                <div className="divide-y divide-white/10">
-                  {searchResults.map((result) => (
-                    <div key={result.ticketNo} className="flex items-center gap-3 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold text-sm">{result.ticketNo}</div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {result.customer} • {result.city}{result.zip ? ` • ${result.zip}` : ""} • {result.status}
-                        </div>
-                      </div>
-                      <button type="button" onClick={() => openTicket(result.ticketNo)} className="btn btn-primary text-xs px-3 py-2">
-                        View
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="px-4 py-8 text-sm text-muted-foreground text-center">No tickets match that search.</div>
-              )}
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
     </div>

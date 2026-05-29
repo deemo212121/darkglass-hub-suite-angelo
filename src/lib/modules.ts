@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list"; // hook for special pages
+  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list" | "user-management"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -1033,6 +1033,7 @@ const adminMod: ModuleDef = {
       slug: "user-management",
       title: "User Management",
       description: "User accounts administration.",
+      custom: "user-management" as const,
       fields: [
         { key: "userId", label: "User ID", filterable: true },
         { key: "name", label: "Name", filterable: true, editable: true },
@@ -1042,7 +1043,7 @@ const adminMod: ModuleDef = {
         { key: "status", label: "Status", type: "select", options: ["Active","Inactive"], editable: true, filterable: true },
         { key: "lastLogin", label: "Last Login", type: "date" },
       ],
-      count: 24,
+      count: 177,
       seed: (i) => {
         const name = pick(CUSTOMERS, i);
         return {
