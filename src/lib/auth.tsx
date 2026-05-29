@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
+import { getFirebaseAnalytics } from "./firebase";
 
 type AuthState = {
   email: string | null;
@@ -20,6 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
       initDatabase().then(() => {
+        void getFirebaseAnalytics();
         setEmail(localStorage.getItem("userEmail"));
         setCompanyId(localStorage.getItem("userCompanyId"));
         setReady(true);
