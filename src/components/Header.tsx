@@ -1,7 +1,9 @@
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/logo.png";
-import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
+import { Search, ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TICKET_SEARCH_INDEX, normalizeTicketSearchValue } from "@/lib/ticket-search";
 
 function getInitials(value: string | null) {
   if (!value) return "U";
@@ -22,6 +25,34 @@ function getInitials(value: string | null) {
 export function AppHeader() {
   const { email, companyId, logout, ready } = useAuth();
   const navigate = useNavigate();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+
+  const searchResults = useMemo(() => {
+    const query = normalizeTicketSearchValue(searchText);
+    if (!query) return TICKET_SEARCH_INDEX.slice(0, 8);
+    return TICKET_SEARCH_INDEX.filter((entry) =>
+      [entry.ticketNo, entry.customer, entry.city, entry.zip, entry.status].some((value) =>
+        normalizeTicketSearchValue(value).includes(query),
+      ),
+    ).slice(0, 8);
+  }, [searchText]);
+
+  const openTicket = (ticketNo: string) => {
+    setSearchOpen(false);
+    setSearchText("");
+    navigate({ to: `/ticket/${ticketNo}` });
+  };
+
+  const handleSubmit = () => {
+    const firstMatch = searchResults[0];
+    if (firstMatch) openTicket(firstMatch.ticketNo);
+  };
+
+  useEffect(() => {
+    if (!searchOpen) setSearchText("");
+  }, [searchOpen]);
+
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[oklch(0.16_0.04_260/0.7)] border-b border-[var(--color-panel-border)]">
       <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
@@ -33,6 +64,14 @@ export function AppHeader() {
           </div>
         </Link>
         <div className="ml-auto flex items-center gap-3 text-sm">
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] hover:bg-[oklch(0.98_0.005_250/0.1)] transition-colors"
+            aria-label="Search tickets"
+          >
+            <Search className="h-4 w-4 text-muted-foreground" />
+          </button>
           {ready && email && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -94,6 +133,51 @@ export function AppHeader() {
           )}
         </div>
       </div>
+
+      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <DialogContent className="sm:max-w-xl border border-[var(--color-panel-border)] bg-[oklch(0.18_0.03_260/0.98)] text-foreground">
+          <DialogHeader className="text-left">
+            <DialogTitle className="font-display text-xl">Search ticket</DialogTitle>
+            <DialogDescription>Search by ticket number or zip code. Press Enter or click View.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              placeholder="Ticket number or zip code"
+              className="glass-input w-full"
+              autoFocus
+            />
+            <div className="max-h-80 overflow-auto rounded-xl border border-[var(--color-panel-border)]">
+              {searchResults.length > 0 ? (
+                <div className="divide-y divide-[var(--color-panel-border)]">
+                  {searchResults.map((result) => (
+                    <div key={result.ticketNo} className="flex items-center gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-sm text-white">{result.ticketNo}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {result.customer} • {result.city}{result.zip ? ` • ${result.zip}` : ""} • {result.status}
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => openTicket(result.ticketNo)} className="btn btn-primary text-xs px-3 py-2">
+                        View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-8 text-sm text-muted-foreground text-center">No tickets match that search.</div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }
