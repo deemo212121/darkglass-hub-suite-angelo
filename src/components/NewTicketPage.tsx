@@ -42,7 +42,6 @@ const WARRANTY_TYPES = [
 
 const DEFAULT_FORM = {
   ticketNo: "",
-  fakeTicket: false,
   source: "",
   customerName: "",
   primaryPhone: "",
@@ -100,20 +99,11 @@ export function NewTicketPage({ mod, sub }: Props) {
         <form className="ticket-form">
           <section className="ticket-form-section">
             <h3 className="ticket-form-section-title">Customer Information</h3>
-            <div className="ticket-form-grid">
+            <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
                 <label className="form-label required" htmlFor="ticketNo">Ticket No</label>
                 <input id="ticketNo" className="form-input" value={form.ticketNo} onChange={(event) => update("ticketNo", event.target.value)} required />
               </div>
-              <div className="form-group form-group-inline">
-                <div className="form-checkbox-group">
-                  <input id="fakeTicket" type="checkbox" className="form-checkbox" checked={form.fakeTicket} onChange={(event) => update("fakeTicket", event.target.checked)} />
-                  <label className="form-label" htmlFor="fakeTicket">Fake Ticket (not included statistically)</label>
-                </div>
-              </div>
-            </div>
-
-            <div className="ticket-form-grid">
               <div className="form-group">
                 <label className="form-label required" htmlFor="source">Source</label>
                 <select id="source" className="form-select" value={form.source} onChange={(event) => update("source", event.target.value)} required>
@@ -129,8 +119,8 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
-                <label className="form-label" htmlFor="primaryPhone">Primary Phone</label>
-                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} />
+                <label className="form-label required" htmlFor="primaryPhone">Primary Number</label>
+                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="secondaryPhone">Secondary Phone</label>

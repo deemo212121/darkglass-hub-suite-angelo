@@ -377,8 +377,9 @@ function TicketDetailsPage() {
         <div className="max-w-6xl mx-auto px-6">
           <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
             <div className="mb-4 flex flex-wrap items-center gap-4">
-              <label className="text-slate-400 font-semibold">Select Ticket:</label>
+              <label htmlFor="ticket-selector" className="text-slate-400 font-semibold">Select Ticket:</label>
               <input
+                id="ticket-selector"
                 type="text"
                 value={selectedTicket}
                 onChange={handleInputChange}
@@ -426,7 +427,7 @@ function TicketDetailsPage() {
                     : "border-white/20 bg-slate-900/90 text-slate-300 hover:border-slate-200/30 hover:text-white"
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
+                {tab === "tracking" ? "Service Tracking" : tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
               </button>
             ))}
           </div>
@@ -940,8 +941,9 @@ function TicketDetailsPage() {
               <div className="mt-3 rounded-md border border-white/10 bg-slate-900/90 px-3 py-2 text-sm font-semibold text-white">Paid in full</div>
               <div className="mt-2 text-sm font-semibold text-blue-200/90">0 distinct record found</div>
               <div className="mt-4 max-w-sm">
-                <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">search in result</label>
+                <label htmlFor="billing-search" className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">search in result</label>
                 <input
+                  id="billing-search"
                   type="text"
                   readOnly
                   value=""

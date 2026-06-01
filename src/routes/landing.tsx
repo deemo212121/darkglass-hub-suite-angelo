@@ -9,25 +9,25 @@ import { getUsers } from "@/lib/db-api";
 import { LOGIN_COMPANY_OPTIONS } from "@/lib/modules";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-export const Route = createFileRoute("/landing")({
-  head: () => ({ meta: [{ title: "Sign in — Admin Hub Solutions" }] }),
-  component: Landing,
-});
-
-const DEFAULT_ACCOUNTS = [
+const DEFAULT_LOGIN_EMAILS = [
   "admin@ahsolutions.com",
   "manager@ahsolutions.com",
   "tech@ahsolutions.com",
   "viewer@ahsolutions.com",
 ];
 
+export const Route = createFileRoute("/landing")({
+  head: () => ({ meta: [{ title: "Sign in — Admin Hub Solutions" }] }),
+  component: Landing,
+});
+
 function Landing() {
   const { login, email, ready } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: DEFAULT_ACCOUNTS[0], password: "", company: "4930403", remember: true });
+  const [form, setForm] = useState({ email: DEFAULT_LOGIN_EMAILS[0], password: "", company: "4930403", remember: true });
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [emailOptions, setEmailOptions] = useState<string[]>(DEFAULT_ACCOUNTS);
+  const [emailOptions, setEmailOptions] = useState<string[]>(DEFAULT_LOGIN_EMAILS);
 
   useEffect(() => {
     if (form.remember) {
@@ -44,7 +44,7 @@ function Landing() {
         const savedEmail = localStorage.getItem("ahs:lastEmail");
         const nextOptions = Array.from(
           new Set([
-            ...DEFAULT_ACCOUNTS,
+            ...DEFAULT_LOGIN_EMAILS,
             ...users.map((user) => user.email).filter(Boolean),
             savedEmail,
           ].filter((value): value is string => Boolean(value)))
@@ -52,10 +52,10 @@ function Landing() {
         setEmailOptions(nextOptions);
         setForm((current) => ({
           ...current,
-          email: current.email || nextOptions[0] || DEFAULT_ACCOUNTS[0],
+          email: current.email || savedEmail || nextOptions[0] || DEFAULT_LOGIN_EMAILS[0],
         }));
       })
-      .catch(() => setEmailOptions(DEFAULT_ACCOUNTS));
+      .catch(() => setEmailOptions(DEFAULT_LOGIN_EMAILS));
 
     return () => {
       active = false;
@@ -125,7 +125,7 @@ function Landing() {
               <span className="text-muted-foreground text-xs">Email</span>
               <Select value={form.email} onValueChange={(value) => setForm({ ...form, email: value })}>
                 <SelectTrigger className="glass-input mt-1 w-full">
-                  <SelectValue placeholder={emailOptions.length ? "Select email" : "No accounts loaded"} />
+                  <SelectValue placeholder="Select email" />
                 </SelectTrigger>
                 <SelectContent>
                   {emailOptions.map((option) => (
