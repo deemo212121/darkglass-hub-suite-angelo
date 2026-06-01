@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/logo.png";
-import { Bell, ChevronDown, Clock, LogOut, MessageCircle, Settings as SettingsIcon, Shield, User } from "lucide-react";
+import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
 
 function getInitials(value: string | null) {
   if (!value) return "U";
@@ -62,27 +63,7 @@ export function AppHeader() {
           </div>
         </Link>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          {ready && email && (
-            <button
-              type="button"
-              className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
-              aria-label="Notifications"
-              title="Notifications"
-            >
-              <Bell className="h-4 w-4" />
-            </button>
-          )}
-          {ready && email && (
-            <Link
-              to="/m/$module/$submodule"
-              params={{ module: "admin", submodule: "internal-message-support" }}
-              className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
-              aria-label="Open Team Messenger"
-              title="Team Messenger"
-            >
-              <MessageCircle className="h-4 w-4" />
-            </Link>
-          )}
+          {ready && email && <AnnouncementsMenu />}
           {ready && email && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
