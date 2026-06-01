@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Return & Pickup - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			margin-bottom: 1.5rem;
+			backdrop-filter: blur(10px);
+			color: #fff;
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: repeat(4, minmax(160px, 1fr));
+			grid-auto-rows: max-content;
+			gap: 0.75rem;
+			margin-bottom: 1rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.3rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 700;
+			color: #e5e7eb;
+		}
+
+		.field input,
+		.field select {
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.action-buttons {
+			display: flex;
+			gap: 0.75rem;
+			flex-wrap: wrap;
+			margin-bottom: 1rem;
+		}
+
+		.btn {
+			padding: 0.6rem 1rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.86rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.btn:hover {
+			border-color: rgba(96, 165, 250, 0.7);
+			background: rgba(30, 64, 175, 0.35);
+		}
+
+		.btn.primary {
+			background: #1d4ed8;
+			border-color: #1d4ed8;
+		}
+
+		.btn.primary:hover {
+			background: #1e40af;
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.75rem;
+			margin-bottom: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.result-info {
+			font-size: 0.8rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.search-input {
+			width: 260px;
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.table-wrap {
+			overflow: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 10px;
+			background: #fff;
+		}
+
+		table.data-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+		}
+
+		.data-table th,
+		.data-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.65rem 0.75rem;
+			font-size: 0.82rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.data-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.data-table td:first-child,
+		.data-table td:nth-child(2),
+		.data-table td:nth-child(4),
+		.data-table td:nth-child(5) {
+			text-align: left;
+		}
+
+		@media (max-width: 1200px) {
+			.controls-grid {
+				grid-template-columns: repeat(2, minmax(160px, 1fr));
+			}
+		}
+
+		@media (max-width: 768px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.search-input {
+				width: 100%;
+			}
+
+			.action-buttons {
+				flex-direction: column;
+			}
+
+			.btn {
+				width: 100%;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Return & Pickup</h2>
+		</div>
+
+		<div class="panel">
+			<div class="controls-grid">
+				<div class="field">
+					<label for="branchFilter">Branch*</label>
+					<select id="branchFilter">
+						<option value="">Select Branch</option>
+						<option value="4930403">4930403</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="raNoFilter">RA No</label>
+					<input id="raNoFilter" type="text" placeholder="RA No">
+				</div>
+				<div class="field">
+					<label for="invoiceNoFilter">Invoice No</label>
+					<input id="invoiceNoFilter" type="text" placeholder="Invoice No">
+				</div>
+				<div class="field">
+					<label for="uniqueIdFilter">Unique ID</label>
+					<input id="uniqueIdFilter" type="text" placeholder="Unique ID">
+				</div>
+			</div>
+
+			<div class="action-buttons">
+				<button class="btn primary" onclick="refreshData()">Refresh</button>
+				<button class="btn primary" onclick="saveData()">Save</button>
+				<button class="btn" onclick="addPart()">Add Part</button>
+			</div>
+
+			<div class="meta-row">
+				<div id="recordInfo" class="result-info">18 records found</div>
+				<input id="resultSearch" class="search-input" type="text" placeholder="search in result">
+			</div>
+
+			<div class="table-wrap">
+				<table class="data-table">
+					<thead>
+						<tr>
+							<th>RA #</th>
+							<th>Seq #</th>
+							<th>Return Date</th>
+							<th>Part No</th>
+							<th>Ship To</th>
+							<th>UniqueId</th>
+							<th>Invoice No</th>
+							<th>Item No</th>
+							<th>Return Qty</th>
+							<th>Scan Out Qty</th>
+							<th>Return Reason</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>723490378</td>
+							<td>10</td>
+							<td>04/06/2026</td>
+							<td>DA96-00845G</td>
+							<td>4930403</td>
+							<td>7328836016000010</td>
+							<td>7328836016</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723490378</td>
+							<td>20</td>
+							<td>04/06/2026</td>
+							<td>DA97-20114B</td>
+							<td>4930403</td>
+							<td>7328836016000020</td>
+							<td>7328836016</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723473781</td>
+							<td>10</td>
+							<td>04/03/2026</td>
+							<td>DA62-04678B</td>
+							<td>4930403</td>
+							<td>7329777582000010</td>
+							<td>7329777582</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723472354</td>
+							<td>10</td>
+							<td>04/03/2026</td>
+							<td>DA91-06418A</td>
+							<td>4930403</td>
+							<td>7330293693000010</td>
+							<td>7330293693</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723489905</td>
+							<td>20</td>
+							<td>04/06/2026</td>
+							<td>DE94-05151A</td>
+							<td>4930403</td>
+							<td>7331228495000020</td>
+							<td>7331228495</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841458</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DD81-02259A</td>
+							<td>4930403</td>
+							<td>7340272868000010</td>
+							<td>7340272868</td>
+							<td>10</td>
+							<td>2</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840499</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DC97-22579B</td>
+							<td>4930403</td>
+							<td>7340738529000010</td>
+							<td>7340738529</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840612</td>
+							<td>20</td>
+							<td>05/04/2026</td>
+							<td>DG44-01009B</td>
+							<td>4930403</td>
+							<td>7341050732000020</td>
+							<td>7341050732</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840881</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DG47-00067A</td>
+							<td>4930403</td>
+							<td>7341050732000010</td>
+							<td>7341050732</td>
+							<td>10</td>
+							<td>2</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840893</td>
+							<td>20</td>
+							<td>05/04/2026</td>
+							<td>DA81-06007B</td>
+							<td>4930403</td>
+							<td>7341697196000020</td>
+							<td>7341697196</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840002</td>
+							<td>20</td>
+							<td>05/04/2026</td>
+							<td>DC31-00080B</td>
+							<td>4930403</td>
+							<td>7341874972000010</td>
+							<td>7341874972</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723840208</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DC97-20272F</td>
+							<td>4930403</td>
+							<td>7341871770000010</td>
+							<td>7341871770</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841470</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DE66-00283A</td>
+							<td>4930403</td>
+							<td>7341859966000010</td>
+							<td>7341859966</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841470</td>
+							<td>20</td>
+							<td>05/04/2026</td>
+							<td>DE94-05824A</td>
+							<td>4930403</td>
+							<td>7341859966000020</td>
+							<td>7341859966</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841192</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DA31-00334C</td>
+							<td>4930403</td>
+							<td>7342037523000010</td>
+							<td>7342037523</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841192</td>
+							<td>20</td>
+							<td>05/04/2026</td>
+							<td>DA31-00334D</td>
+							<td>4930403</td>
+							<td>7342037523000020</td>
+							<td>7342037523</td>
+							<td>20</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723842031</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DA96-01581A</td>
+							<td>4930403</td>
+							<td>7342026615000010</td>
+							<td>7342026615</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+						<tr>
+							<td>723841467</td>
+							<td>10</td>
+							<td>05/04/2026</td>
+							<td>DD82-01588A</td>
+							<td>4930403</td>
+							<td>7342036374000010</td>
+							<td>7342036374</td>
+							<td>10</td>
+							<td>1</td>
+							<td>0</td>
+							<td>PARTS NOT NEEDED (SUB.CHARGEABLE)</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="../../routes.js"></script>
+	<script>
+		let pickupData = [
+			{ raNo: '723490378', seqNo: '10', returnDate: '04/06/2026', partNo: 'DA96-00845G', shipTo: '4930403', uniqueId: '7328836016000010', invoiceNo: '7328836016', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723490378', seqNo: '20', returnDate: '04/06/2026', partNo: 'DA97-20114B', shipTo: '4930403', uniqueId: '7328836016000020', invoiceNo: '7328836016', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723473781', seqNo: '10', returnDate: '04/03/2026', partNo: 'DA62-04678B', shipTo: '4930403', uniqueId: '7329777582000010', invoiceNo: '7329777582', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723472354', seqNo: '10', returnDate: '04/03/2026', partNo: 'DA91-06418A', shipTo: '4930403', uniqueId: '7330293693000010', invoiceNo: '7330293693', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723489905', seqNo: '20', returnDate: '04/06/2026', partNo: 'DE94-05151A', shipTo: '4930403', uniqueId: '7331228495000020', invoiceNo: '7331228495', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841458', seqNo: '10', returnDate: '05/04/2026', partNo: 'DD81-02259A', shipTo: '4930403', uniqueId: '7340272868000010', invoiceNo: '7340272868', itemNo: '10', returnQty: '2', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840499', seqNo: '10', returnDate: '05/04/2026', partNo: 'DC97-22579B', shipTo: '4930403', uniqueId: '7340738529000010', invoiceNo: '7340738529', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840612', seqNo: '20', returnDate: '05/04/2026', partNo: 'DG44-01009B', shipTo: '4930403', uniqueId: '7341050732000020', invoiceNo: '7341050732', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840881', seqNo: '10', returnDate: '05/04/2026', partNo: 'DG47-00067A', shipTo: '4930403', uniqueId: '7341050732000010', invoiceNo: '7341050732', itemNo: '10', returnQty: '2', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840893', seqNo: '20', returnDate: '05/04/2026', partNo: 'DA81-06007B', shipTo: '4930403', uniqueId: '7341697196000020', invoiceNo: '7341697196', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840002', seqNo: '20', returnDate: '05/04/2026', partNo: 'DC31-00080B', shipTo: '4930403', uniqueId: '7341874972000010', invoiceNo: '7341874972', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723840208', seqNo: '10', returnDate: '05/04/2026', partNo: 'DC97-20272F', shipTo: '4930403', uniqueId: '7341871770000010', invoiceNo: '7341871770', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841470', seqNo: '10', returnDate: '05/04/2026', partNo: 'DE66-00283A', shipTo: '4930403', uniqueId: '7341859966000010', invoiceNo: '7341859966', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841470', seqNo: '20', returnDate: '05/04/2026', partNo: 'DE94-05824A', shipTo: '4930403', uniqueId: '7341859966000020', invoiceNo: '7341859966', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841192', seqNo: '10', returnDate: '05/04/2026', partNo: 'DA31-00334C', shipTo: '4930403', uniqueId: '7342037523000010', invoiceNo: '7342037523', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841192', seqNo: '20', returnDate: '05/04/2026', partNo: 'DA31-00334D', shipTo: '4930403', uniqueId: '7342037523000020', invoiceNo: '7342037523', itemNo: '20', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723842031', seqNo: '10', returnDate: '05/04/2026', partNo: 'DA96-01581A', shipTo: '4930403', uniqueId: '7342026615000010', invoiceNo: '7342026615', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' },
+			{ raNo: '723841467', seqNo: '10', returnDate: '05/04/2026', partNo: 'DD82-01588A', shipTo: '4930403', uniqueId: '7342036374000010', invoiceNo: '7342036374', itemNo: '10', returnQty: '1', scanOutQty: '0', returnReason: 'PARTS NOT NEEDED (SUB.CHARGEABLE)' }
+		];
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../home.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function applyFilters() {
+			const branchFilter = document.getElementById('branchFilter').value.toLowerCase();
+			const raNoFilter = document.getElementById('raNoFilter').value.toLowerCase();
+			const invoiceNoFilter = document.getElementById('invoiceNoFilter').value.toLowerCase();
+			const uniqueIdFilter = document.getElementById('uniqueIdFilter').value.toLowerCase();
+			const searchFilter = document.getElementById('resultSearch').value.toLowerCase();
+
+			let filtered = pickupData.filter(row => {
+				const matchBranch = !branchFilter || row.shipTo.toLowerCase().includes(branchFilter);
+				const matchRaNo = !raNoFilter || row.raNo.toLowerCase().includes(raNoFilter);
+				const matchInvoiceNo = !invoiceNoFilter || row.invoiceNo.toLowerCase().includes(invoiceNoFilter);
+				const matchUniqueId = !uniqueIdFilter || row.uniqueId.toLowerCase().includes(uniqueIdFilter);
+				const matchSearch = !searchFilter || 
+					Object.values(row).some(val => val.toLowerCase().includes(searchFilter));
+
+				return matchBranch && matchRaNo && matchInvoiceNo && matchUniqueId && matchSearch;
+			});
+
+			renderTable(filtered);
+			updateRecordCount(filtered.length);
+		}
+
+		function renderTable(data) {
+			const tbody = document.querySelector('.data-table tbody');
+			tbody.innerHTML = '';
+
+			data.forEach(row => {
+				const tr = document.createElement('tr');
+				tr.innerHTML = `
+					<td>${row.raNo}</td>
+					<td>${row.seqNo}</td>
+					<td>${row.returnDate}</td>
+					<td>${row.partNo}</td>
+					<td>${row.shipTo}</td>
+					<td>${row.uniqueId}</td>
+					<td>${row.invoiceNo}</td>
+					<td>${row.itemNo}</td>
+					<td>${row.returnQty}</td>
+					<td>${row.scanOutQty}</td>
+					<td>${row.returnReason}</td>
+				`;
+				tbody.appendChild(tr);
+			});
+		}
+
+		function updateRecordCount(count) {
+			document.getElementById('recordInfo').textContent = `${count} record${count !== 1 ? 's' : ''} found`;
+		}
+
+		function refreshData() {
+			document.getElementById('branchFilter').value = '';
+			document.getElementById('raNoFilter').value = '';
+			document.getElementById('invoiceNoFilter').value = '';
+			document.getElementById('uniqueIdFilter').value = '';
+			document.getElementById('resultSearch').value = '';
+			applyFilters();
+		}
+
+		function saveData() {
+			localStorage.setItem('returnPickupFilters', JSON.stringify({
+				branch: document.getElementById('branchFilter').value,
+				raNo: document.getElementById('raNoFilter').value,
+				invoiceNo: document.getElementById('invoiceNoFilter').value,
+				uniqueId: document.getElementById('uniqueIdFilter').value
+			}));
+			alert('Filters saved successfully');
+		}
+
+		function addPart() {
+			const raNo = prompt('Enter RA Number:');
+			if (raNo) {
+				const newPart = {
+					raNo: raNo,
+					seqNo: '',
+					returnDate: new Date().toLocaleDateString() || '',
+					partNo: '',
+					shipTo: document.getElementById('branchFilter').value || '',
+					uniqueId: '',
+					invoiceNo: '',
+					itemNo: '',
+					returnQty: '',
+					scanOutQty: '',
+					returnReason: ''
+				};
+				pickupData.push(newPart);
+				applyFilters();
+			}
+		}
+
+		document.addEventListener('DOMContentLoaded', function () {
+			loadUserInfo();
+			applyPrettyUrl('returnPickup');
+			renderTable(pickupData);
+			updateRecordCount(pickupData.length);
+
+			// Add event listeners for filters
+			document.getElementById('branchFilter').addEventListener('change', applyFilters);
+			document.getElementById('raNoFilter').addEventListener('input', applyFilters);
+			document.getElementById('invoiceNoFilter').addEventListener('input', applyFilters);
+			document.getElementById('uniqueIdFilter').addEventListener('input', applyFilters);
+			document.getElementById('resultSearch').addEventListener('input', applyFilters);
+		});
+	</script>
+</body>
+</html>

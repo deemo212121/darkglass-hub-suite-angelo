@@ -44,6 +44,16 @@ import { TriagePerformanceReport } from "@/components/TriagePerformanceReport";
 import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 import { PartOrder } from "@/components/PartOrder";
 import { PartReceive } from "@/components/PartReceive";
+import { PartCollectionPage } from "@/components/PartCollectionPage";
+import { PartFootprintPage } from "@/components/PartFootprintPage";
+import { PartHistoryPage } from "@/components/PartHistoryPage";
+import { PartInventoryPage } from "@/components/PartInventoryPage";
+import { PartManagementPage } from "@/components/PartManagementPage";
+import { PartPickupPage } from "@/components/PartPickupPage";
+import { PartReturnPage } from "@/components/PartReturnPage";
+import { PoStatusPage } from "@/components/PoStatusPage";
+import { ReturnPickupPage } from "@/components/ReturnPickupPage";
+import { RepairStatusesPage } from "@/components/RepairStatusesPage";
 import { TicketList } from "@/components/TicketList";
 import { NewTicketPage } from "@/components/NewTicketPage";
 import { TodoListPage } from "@/components/TodoListPage";
@@ -202,6 +212,26 @@ function SubModule() {
         ? <PartOrder mod={mod} sub={sub} />
         : sub.custom === "part-receive"
         ? <PartReceive mod={mod} sub={sub} />
+        : sub.custom === "part-return"
+        ? <PartReturnPage mod={mod} sub={sub} />
+        : sub.custom === "return-pickup"
+        ? <ReturnPickupPage />
+        : sub.custom === "repair-statuses"
+        ? <RepairStatusesPage />
+        : sub.slug === "po-status"
+        ? <PoStatusPage />
+        : sub.slug === "part-collection"
+        ? <PartCollectionPage mod={mod} sub={sub} />
+        : sub.slug === "part-footprint"
+        ? <PartFootprintPage mod={mod} sub={sub} />
+        : sub.slug === "part-history"
+        ? <PartHistoryPage mod={mod} sub={sub} />
+        : sub.slug === "part-inventory"
+        ? <PartInventoryPage mod={mod} sub={sub} />
+        : sub.slug === "part-management"
+        ? <PartManagementPage mod={mod} sub={sub} />
+        : sub.slug === "part-pickup"
+        ? <PartPickupPage mod={mod} sub={sub} />
         : sub.custom === "ticket-list"
         ? <TicketList mod={mod} sub={sub} />
         : sub.slug === "new-ticket"

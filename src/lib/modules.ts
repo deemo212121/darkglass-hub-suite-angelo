@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "ticket-list" | "user-management" | "account-management" | "location-management"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -296,6 +296,7 @@ const partsMod: ModuleDef = {
         reason: pick(REASONS, i),
         ra: "RA-" + pad(500 + i),
       }),
+      custom: "part-return",
     },
     {
       slug: "part-return-status",
@@ -342,6 +343,7 @@ const partsMod: ModuleDef = {
         tracking: "1Z" + pad(1000000 + i*37, 8),
         pickupDate: dateStr((i%14)-3),
       }),
+      custom: "return-pickup",
     },
   ],
 };
@@ -1693,84 +1695,50 @@ const adminMod: ModuleDef = {
       }),
     },
     {
-      slug: "system-settings",
-      title: "System Settings",
-      description: "Application configuration and system parameters.",
+      slug: "repair-statuses",
+      title: "Repair Statuses",
+      description: "Manage repair status labels and display colors.",
+      custom: "repair-statuses",
       fields: [
-        { key: "id", label: "Setting ID", filterable: true },
-        { key: "setting", label: "Setting", filterable: true },
-        { key: "category", label: "Category", type: "select", options: ["Company","Regional","Email","Backup","API","Security"], filterable: true },
-        { key: "value", label: "Value", editable: true },
-        { key: "type", label: "Type", type: "select", options: ["Text","Number","URL","Toggle"] },
+        { key: "id", label: "Status ID", filterable: true },
+        { key: "status", label: "Status", filterable: true, editable: true },
+        { key: "group", label: "Group", type: "select", options: ["Open","Working","Waiting","Complete","Closed"], filterable: true },
+        { key: "color", label: "Color", editable: true },
+        { key: "active", label: "Active", type: "select", options: ["Yes","No"], editable: true, filterable: true },
         { key: "updated", label: "Updated", type: "date" },
       ],
-      count: 28,
+      count: 18,
       seed: (i) => {
-        const settings = [
-          { name: "Company Name", cat: "Company", val: "Admin Hub Solutions" },
-          { name: "Company Logo", cat: "Company", val: "/logo.png" },
-          { name: "Support Email", cat: "Company", val: "support@adminhub.io" },
-          { name: "Timezone", cat: "Regional", val: "UTC-6" },
-          { name: "Currency", cat: "Regional", val: "USD" },
-          { name: "Language", cat: "Regional", val: "en-US" },
-          { name: "SMTP Host", cat: "Email", val: "smtp.mail.io" },
-          { name: "SMTP Port", cat: "Email", val: "587" },
-          { name: "From Email", cat: "Email", val: "noreply@adminhub.io" },
-          { name: "Email Encryption", cat: "Email", val: "TLS" },
-          { name: "Backup Schedule", cat: "Backup", val: "Daily 02:00" },
-          { name: "Backup Retention", cat: "Backup", val: "90 days" },
-          { name: "Backup Location", cat: "Backup", val: "AWS S3" },
-          { name: "API Key", cat: "API", val: "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" },
-          { name: "API Endpoint", cat: "API", val: "https://api.adminhub.io" },
-          { name: "Webhook URL", cat: "API", val: "https://hooks.example.com" },
-          { name: "Rate Limiting", cat: "Security", val: "100 req/min" },
-          { name: "Session Timeout", cat: "Security", val: "30 minutes" },
-          { name: "Max Login Attempts", cat: "Security", val: "5" },
-          { name: "2FA Required", cat: "Security", val: "Enabled" },
-          { name: "SSO Enabled", cat: "Security", val: "Disabled" },
-          { name: "Date Format", cat: "Regional", val: "MM/DD/YYYY" },
-          { name: "Number Format", cat: "Regional", val: "1,234.56" },
-          { name: "Audit Retention", cat: "Backup", val: "1 year" },
-          { name: "Data Encryption", cat: "Security", val: "AES-256" },
-          { name: "IP Whitelist", cat: "Security", val: "Disabled" },
-          { name: "Auto Logout", cat: "Security", val: "30 min" },
-          { name: "PDF Export Quality", cat: "Company", val: "High" },
+        const statuses = [
+          { status: "CSR-Assigned", group: "Open", color: "#2563eb", active: "Yes" },
+          { status: "CSR-Needs Scheduling", group: "Open", color: "#0ea5e9", active: "Yes" },
+          { status: "OP-Waiting for Part", group: "Waiting", color: "#f59e0b", active: "Yes" },
+          { status: "OP-Ready for Service", group: "Working", color: "#22c55e", active: "Yes" },
+          { status: "CL-Claimed", group: "Working", color: "#14b8a6", active: "Yes" },
+          { status: "PT-Need PreAuthorization", group: "Waiting", color: "#8b5cf6", active: "Yes" },
+          { status: "TR-Need PO", group: "Waiting", color: "#f97316", active: "Yes" },
+          { status: "Complete", group: "Complete", color: "#16a34a", active: "Yes" },
+          { status: "Closed", group: "Closed", color: "#6b7280", active: "Yes" },
+          { status: "On Hold", group: "Working", color: "#eab308", active: "Yes" },
+          { status: "Cancelled", group: "Closed", color: "#dc2626", active: "Yes" },
+          { status: "Customer Contact", group: "Open", color: "#0284c7", active: "Yes" },
+          { status: "Diagnostics", group: "Working", color: "#0891b2", active: "Yes" },
+          { status: "Parts Pending", group: "Waiting", color: "#c084fc", active: "Yes" },
+          { status: "In Transit", group: "Working", color: "#3b82f6", active: "Yes" },
+          { status: "Refund Pending", group: "Complete", color: "#10b981", active: "No" },
+          { status: "Escalated", group: "Working", color: "#ef4444", active: "Yes" },
+          { status: "Archived", group: "Closed", color: "#9ca3af", active: "No" },
         ];
-        const s = settings[i % settings.length];
-        const types = ["Text","Number","URL","Toggle"];
+        const s = statuses[i % statuses.length];
         return {
-          id: "SET-" + pad(1000 + i),
-          setting: s.name,
-          category: s.cat,
-          value: s.val,
-          type: types[(i*7) % types.length],
-          updated: dateStr(-(i%90)),
+          id: "RST-" + pad(100 + i),
+          status: s.status,
+          group: s.group,
+          color: s.color,
+          active: s.active,
+          updated: dateStr(-(i % 30)),
         };
       },
-    },
-    {
-      slug: "audit-log",
-      title: "Audit Log",
-      description: "Activity audit trail.",
-      fields: [
-        { key: "timestamp", label: "Timestamp", type: "date", filterable: true },
-        { key: "user", label: "User", filterable: true },
-        { key: "action", label: "Action", type: "select", options: ["Create","Update","Delete","Login","Logout","Export"], filterable: true },
-        { key: "module", label: "Module", type: "select", options: ["Dashboard","Parts","Tickets","Claims","Report","Admin"], filterable: true },
-        { key: "details", label: "Details" },
-        { key: "ip", label: "IP Address" },
-        { key: "status", label: "Status", type: "select", options: ["Success","Failed"], filterable: true },
-      ],
-      count: 60,
-      seed: (i) => ({
-        timestamp: dateStr(-(i%30)),
-        user: pick(CUSTOMERS, i),
-        action: pick(["Create","Update","Delete","Login","Logout","Export"], i),
-        module: pick(["Dashboard","Parts","Tickets","Claims","Report","Admin"], i),
-        details: ["Updated record","Viewed report","Removed item","Session start","Session end","Generated export"][i%6] + " #" + (i+1),
-        ip: `10.0.${(i*7)%255}.${(i*13)%255}`,
-        status: i%9 === 0 ? "Failed" : "Success",
-      }),
     },
   ],
 };

@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part In/Out History - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.history-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+		}
+
+		.page-title {
+			font-size: 1.1rem;
+			font-weight: 700;
+			margin: 0 0 0.8rem;
+			color: #dbeafe;
+		}
+
+		.top-controls {
+			display: grid;
+			grid-template-columns: minmax(280px, 420px);
+			gap: 0.6rem;
+			align-items: end;
+			margin-bottom: 0.7rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 600;
+			color: #e5e7eb;
+			letter-spacing: 0.02em;
+		}
+
+		.field input {
+			width: 100%;
+			padding: 0.55rem 0.65rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.85rem;
+			font-family: inherit;
+		}
+
+		.field input:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.16);
+		}
+
+		.section-title {
+			margin: 0.6rem 0 0.4rem;
+			font-size: 0.95rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.meta-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.8rem;
+			flex-wrap: wrap;
+			margin-bottom: 0.6rem;
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.search-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.search-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 210px;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			background: #fff;
+		}
+
+		table.history-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.74rem;
+			color: #111827;
+			min-width: 1900px;
+		}
+
+		.history-table th,
+		.history-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.4rem;
+			text-align: left;
+			vertical-align: top;
+			white-space: nowrap;
+		}
+
+		.history-table thead th {
+			background: #1f2937;
+			color: #f9fafb;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.history-table thead tr.subhead th {
+			background: #374151;
+			font-size: 0.7rem;
+			font-weight: 600;
+		}
+
+		.history-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.qty,
+		.qty-change,
+		.current-qty,
+		.aging {
+			text-align: right;
+		}
+
+		.footer-actions {
+			display: flex;
+			gap: 0.6rem;
+			margin-top: 0.8rem;
+		}
+
+		.footer-actions button {
+			padding: 0.5rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.22);
+			background: rgba(255, 255, 255, 0.1);
+			color: #fff;
+			cursor: pointer;
+			font-weight: 600;
+		}
+
+		@media (max-width: 900px) {
+			.top-controls {
+				grid-template-columns: 1fr;
+			}
+
+			.search-inline input {
+				min-width: 170px;
+			}
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='part_inventory.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Part Inventory
+			</button>
+			<h2 style="color: white; margin: 0;">Part In/Out History</h2>
+		</div>
+
+		<div class="history-panel">
+			<h3 class="page-title">Part In/Out History</h3>
+
+			<div class="top-controls">
+				<div class="field">
+					<label for="uniqueIdFilter">Unique ID</label>
+					<input id="uniqueIdFilter" type="text" value="BM_TS 140137975102-140137975102">
+				</div>
+			</div>
+
+			<h4 class="section-title">I/O History</h4>
+			<div class="meta-row">
+				<div class="record-count"><span id="historyRecordCount">0</span> records found</div>
+				<div class="search-inline">
+					<span>search in result</span>
+					<input id="historySearch" type="text" placeholder="Search in result">
+				</div>
+			</div>
+
+			<div id="historyTableWrap" class="table-wrap table-scroll-wrapper">
+				<table class="history-table">
+					<thead>
+						<tr>
+							<th rowspan="2">Event Date</th>
+							<th rowspan="2">Part #</th>
+							<th rowspan="2">Unique ID</th>
+							<th rowspan="2">Event</th>
+							<th rowspan="2">Qty</th>
+							<th rowspan="2">Qty Change</th>
+							<th rowspan="2">Current Qty</th>
+							<th colspan="6">Related Ticket Information</th>
+							<th rowspan="2">Reference</th>
+							<th rowspan="2">Comment</th>
+						</tr>
+						<tr class="subhead">
+							<th>Ticket #</th>
+							<th>Scheduled (Past)</th>
+							<th>Repair Status (Past)</th>
+							<th>Scheduled (Current)</th>
+							<th>Repair Status (Current)</th>
+							<th>Branch</th>
+						</tr>
+					</thead>
+					<tbody id="historyBody"></tbody>
+				</table>
+			</div>
+
+			<h4 class="section-title">Part Inventory Information</h4>
+			<div class="table-wrap table-scroll-wrapper">
+				<table class="history-table" style="min-width: 1300px;">
+					<thead>
+						<tr>
+							<th>#</th>
+							<th>Location</th>
+							<th>Part #</th>
+							<th>Unique ID</th>
+							<th>Lot #</th>
+							<th>Invoice Date</th>
+							<th>Qty</th>
+							<th>Status</th>
+							<th>Aging</th>
+							<th>TicketNo</th>
+							<th>Technician</th>
+							<th>Retail</th>
+							<th>Core</th>
+							<th>Po #</th>
+						</tr>
+					</thead>
+					<tbody id="inventoryInfoBody"></tbody>
+				</table>
+			</div>
+
+			<div class="footer-actions">
+				<button type="button" onclick="window.location.href='part_inventory.html'">Return</button>
+			</div>
+
+			<div id="historyFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="historyFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="./dummy_data/part_history_dummy_data.js"></script>
+	<script src="../../supabase.min.js"></script>
+	<script src="../../js/app-config.js"></script>
+	<script src="../../js/app-data.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return false;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return true;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function esc(value) {
+			return String(value || '').replace(/[&<>"']/g, function (ch) {
+				return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+			});
+		}
+
+		function historySearchBlob(row) {
+			return [
+				row.eventDate, row.partNo, row.uniqueId, row.event, row.qty, row.qtyChange,
+				row.currentQty, row.ticketNo, row.scheduledPast, row.repairStatusPast,
+				row.scheduledCurrent, row.repairStatusCurrent, row.branch, row.reference, row.comment
+			].join(' ').toLowerCase();
+		}
+
+		function applyHistoryFilters(rows) {
+			const uniqueIdFilter = document.getElementById('uniqueIdFilter').value.trim().toLowerCase();
+			const search = document.getElementById('historySearch').value.trim().toLowerCase();
+			return rows.filter((row) => {
+				if (uniqueIdFilter && !String(row.uniqueId || '').toLowerCase().includes(uniqueIdFilter)) {
+					return false;
+				}
+				if (search && !historySearchBlob(row).includes(search)) {
+					return false;
+				}
+				return true;
+			});
+		}
+
+		let ioHistoryRows = [];
+		let inventoryInfoRows = [];
+		let historyDataSource = 'seed';
+
+		async function loadHistoryFromDatabase() {
+			const companyId = localStorage.getItem('userCompanyId');
+			const uniqueId = document.getElementById('uniqueIdFilter').value.trim();
+			if (!window.AdminHubData) {
+				ioHistoryRows = Array.isArray(window.PART_HISTORY_DUMMY_DATA?.ioHistory)
+					? window.PART_HISTORY_DUMMY_DATA.ioHistory
+					: [];
+				inventoryInfoRows = Array.isArray(window.PART_HISTORY_DUMMY_DATA?.inventoryInfo)
+					? window.PART_HISTORY_DUMMY_DATA.inventoryInfo
+					: [];
+				historyDataSource = 'seed';
+				return;
+			}
+			try {
+				const history = await AdminHubData.fetchPartHistory({
+					companyCode: companyId,
+					uniqueId: uniqueId || undefined
+				});
+				const info = await AdminHubData.fetchPartInventoryInfo({
+					companyCode: companyId,
+					uniqueId: uniqueId || undefined
+				});
+				if (history.length) {
+					ioHistoryRows = history;
+					historyDataSource = 'database';
+				} else {
+					ioHistoryRows = window.PART_HISTORY_DUMMY_DATA?.ioHistory || [];
+					historyDataSource = 'seed';
+				}
+				inventoryInfoRows = info.length
+					? info
+					: (window.PART_HISTORY_DUMMY_DATA?.inventoryInfo || []);
+			} catch (error) {
+				console.warn('History DB load failed:', error);
+				ioHistoryRows = window.PART_HISTORY_DUMMY_DATA?.ioHistory || [];
+				inventoryInfoRows = window.PART_HISTORY_DUMMY_DATA?.inventoryInfo || [];
+				historyDataSource = 'seed';
+			}
+		}
+
+		function renderHistoryTable() {
+			const rows = applyHistoryFilters(ioHistoryRows);
+			const tbody = document.getElementById('historyBody');
+			tbody.innerHTML = rows.map((row) => `
+				<tr>
+					<td>${esc(row.eventDate)}</td>
+					<td>${esc(row.partNo)}</td>
+					<td>${esc(row.uniqueId)}</td>
+					<td>${esc(row.event)}</td>
+					<td class="qty">${esc(row.qty)}</td>
+					<td class="qty-change">${esc(row.qtyChange)}</td>
+					<td class="current-qty">${esc(row.currentQty)}</td>
+					<td>${esc(row.ticketNo)}</td>
+					<td>${esc(row.scheduledPast)}</td>
+					<td>${esc(row.repairStatusPast)}</td>
+					<td>${esc(row.scheduledCurrent)}</td>
+					<td>${esc(row.repairStatusCurrent)}</td>
+					<td>${esc(row.branch)}</td>
+					<td>${esc(row.reference)}</td>
+					<td>${esc(row.comment)}</td>
+				</tr>
+			`).join('');
+
+			const suffix = historyDataSource === 'database' ? '' : ' (sample)';
+			document.getElementById('historyRecordCount').textContent = rows.length + suffix;
+		}
+
+		function renderInventoryInfo() {
+			const uniqueIdFilter = document.getElementById('uniqueIdFilter').value.trim().toLowerCase();
+			const rows = inventoryInfoRows.filter((row) => {
+				if (!uniqueIdFilter) return true;
+				return String(row.uniqueId || '').toLowerCase().includes(uniqueIdFilter);
+			});
+
+			document.getElementById('inventoryInfoBody').innerHTML = rows.map((row) => `
+				<tr>
+					<td>${esc(row.index)}</td>
+					<td>${esc(row.location)}</td>
+					<td>${esc(row.partNo)}</td>
+					<td>${esc(row.uniqueId)}</td>
+					<td>${esc(row.lotNo)}</td>
+					<td>${esc(row.invoiceDate)}</td>
+					<td class="qty">${esc(row.qty)}</td>
+					<td>${esc(row.status)}</td>
+					<td class="aging">${esc(row.aging)}</td>
+					<td>${esc(row.ticketNo)}</td>
+					<td>${esc(row.technician)}</td>
+					<td>${esc(row.retail)}</td>
+					<td>${esc(row.core)}</td>
+					<td>${esc(row.poNo)}</td>
+				</tr>
+			`).join('');
+		}
+
+		async function refreshAll() {
+			await loadHistoryFromDatabase();
+			renderHistoryTable();
+			renderInventoryInfo();
+		}
+
+		function syncHistoryFloatingScrollbar() {
+			const tableWrap = document.getElementById('historyTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.history-table') : null;
+			const floatingBar = document.getElementById('historyFloatingScrollbar');
+			const floatingInner = document.getElementById('historyFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateHistoryFloatingScrollbarVisibility() {
+			const tableWrap = document.getElementById('historyTableWrap');
+			const floatingBar = document.getElementById('historyFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncHistoryFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupHistoryFloatingScrollbar() {
+			const tableWrap = document.getElementById('historyTableWrap');
+			const floatingBar = document.getElementById('historyFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) {
+					syncingFromTable = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateHistoryFloatingScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncHistoryFloatingScrollbar();
+				updateHistoryFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateHistoryFloatingScrollbarVisibility, { passive: true });
+			syncHistoryFloatingScrollbar();
+			updateHistoryFloatingScrollbarVisibility();
+		}
+
+		function applyUniqueIdFromQuery() {
+			const params = new URLSearchParams(window.location.search);
+			const uniqueId = params.get('uniqueId');
+			if (!uniqueId) return;
+			document.getElementById('uniqueIdFilter').value = uniqueId;
+		}
+
+		const AUTO_REFRESH_MS = 5000;
+
+		document.addEventListener('DOMContentLoaded', async function () {
+			if (!loadUserInfo()) return;
+			applyPrettyUrl('partHistory');
+			applyUniqueIdFromQuery();
+
+			document.getElementById('historySearch').addEventListener('input', function () {
+				renderHistoryTable();
+			});
+			document.getElementById('uniqueIdFilter').addEventListener('input', function () {
+				refreshAll();
+			});
+
+			await refreshAll();
+			setupHistoryFloatingScrollbar();
+			setInterval(refreshAll, AUTO_REFRESH_MS);
+		});
+	</script>
+</body>
+</html>

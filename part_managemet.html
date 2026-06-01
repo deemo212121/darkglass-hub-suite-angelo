@@ -1,0 +1,679 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Parts PO & Management - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.dashboard {
+			min-height: auto;
+		}
+
+		.panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 12px;
+			padding: 1.25rem;
+			margin-bottom: 1.5rem;
+			backdrop-filter: blur(10px);
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: repeat(4, minmax(160px, 1fr));
+			gap: 0.75rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.3rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 700;
+			color: #e5e7eb;
+		}
+
+		.field input,
+		.field select {
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.controls-row {
+			display: flex;
+			align-items: flex-end;
+			justify-content: space-between;
+			gap: 0.75rem;
+			flex-wrap: wrap;
+		}
+
+		.left-controls,
+		.right-controls {
+			display: flex;
+			gap: 0.6rem;
+			align-items: flex-end;
+			flex-wrap: wrap;
+		}
+
+		.date-range {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.btn {
+			height: 34px;
+			padding: 0 0.85rem;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			border-radius: 6px;
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.78rem;
+			font-weight: 600;
+			cursor: pointer;
+		}
+
+		.btn.primary {
+			background: #1d4ed8;
+			border-color: #1d4ed8;
+			color: #fff;
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.75rem;
+			margin-bottom: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.result-info {
+			font-size: 0.8rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.search-input {
+			width: 260px;
+			height: 34px;
+			padding: 0.35rem 0.5rem;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 6px;
+			font-size: 0.8rem;
+			color: #fff;
+			background: rgba(17, 24, 39, 0.95);
+		}
+
+		.table-wrap {
+			overflow: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 10px;
+			background: #fff;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 0;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: 100vw;
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.po-table {
+			width: 100%;
+			min-width: 2650px;
+			border-collapse: collapse;
+			font-size: 0.74rem;
+			color: #111827;
+		}
+
+		.po-table th,
+		.po-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.4rem;
+			white-space: nowrap;
+			vertical-align: top;
+		}
+
+		.po-table th {
+			background: #1f2937;
+			color: #f8fafc;
+			text-align: left;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.po-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.money,
+		.qty {
+			text-align: right;
+		}
+
+		.ticket-link {
+			color: #1e3a8a;
+			text-decoration: none;
+			font-weight: 700;
+		}
+
+		.ticket-link:hover {
+			text-decoration: underline;
+		}
+
+		.action-btn {
+			height: 28px;
+			padding: 0 0.55rem;
+			border: 1px solid #1d4ed8;
+			background: #eff6ff;
+			color: #1d4ed8;
+			border-radius: 5px;
+			font-size: 0.72rem;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.table-input,
+		.table-select {
+			width: 100%;
+			padding: 0.25rem 0.35rem;
+			border: 1px solid #cbd5e1;
+			border-radius: 4px;
+			font-size: 0.74rem;
+			box-sizing: border-box;
+		}
+
+		.table-input {
+			color: #111827;
+			background: #fff;
+		}
+
+		.table-input.money {
+			text-align: right;
+		}
+
+		.table-select {
+			color: #111827;
+			background: #fff;
+		}
+
+		@media (max-width: 1100px) {
+			.controls-grid {
+				grid-template-columns: repeat(2, minmax(160px, 1fr));
+			}
+		}
+
+		@media (max-width: 700px) {
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.search-input {
+				width: 100%;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button onclick="logout()" class="logout-btn">Logout</button>
+			</div>
+		</div>
+
+		<div class="dashboard-content">
+			<div class="module-header">
+				<button class="back-btn" onclick="window.location.href='../../home.html'">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="19" y1="12" x2="5" y2="12"></line>
+						<polyline points="12 19 5 12 12 5"></polyline>
+					</svg>
+					Back to Dashboard
+				</button>
+				<h2 style="color: white; margin: 0;">Parts PO & Management</h2>
+			</div>
+
+			<div class="panel">
+				<div class="controls-grid">
+					<div class="field">
+						<label for="locationFilter">Location*</label>
+						<select id="locationFilter">
+							<option value="Asheville" selected>Asheville</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Atlanta">Atlanta</option>
+						</select>
+					</div>
+					<div class="field">
+						<label for="repairStatusFilter">Repair Status</label>
+						<select id="repairStatusFilter"><option value="">All</option></select>
+					</div>
+					<div class="field">
+						<label for="partStatusFilter">Part Status</label>
+						<select id="partStatusFilter"><option value="">All</option></select>
+					</div>
+					<div class="field">
+						<label for="ticketFilter">Ticket #</label>
+						<input id="ticketFilter" type="text" placeholder="Ticket #">
+					</div>
+				</div>
+
+				<div class="controls-row">
+					<div class="left-controls">
+						<div class="field">
+							<label for="fromDate">Receive Date</label>
+							<div class="date-range">
+								<input id="fromDate" type="date" value="2026-05-14">
+								<span>~</span>
+								<input id="toDate" type="date" value="2026-05-15">
+							</div>
+						</div>
+					</div>
+					<div class="right-controls">
+						<button id="refreshBtn" type="button" class="btn">Refresh</button>
+						<button id="saveBtn" type="button" class="btn primary">Save</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="panel">
+				<div class="meta-row">
+					<div id="recordInfo" class="result-info">0 records found</div>
+					<input id="resultSearch" class="search-input" type="text" placeholder="search in result">
+				</div>
+
+				<div id="partManagementTableWrap" class="table-wrap">
+					<table class="po-table">
+						<thead>
+							<tr>
+								<th>Ticket #</th>
+								<th>Repair Status</th>
+								<th>Location</th>
+								<th>Schedule</th>
+								<th>Wty</th>
+								<th>P. ID</th>
+								<th>Part Dist.*</th>
+								<th>Part No*</th>
+								<th>Description</th>
+								<th>PO #</th>
+								<th>P/O Date</th>
+								<th>Order#</th>
+								<th>Invoice#</th>
+								<th>Part Status</th>
+								<th>Note</th>
+								<th>Unit $*</th>
+								<th>Core $</th>
+								<th>Qty</th>
+								<th>Lot</th>
+								<th>Symptom</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody id="poBody"></tbody>
+					</table>
+				</div>
+
+				<div id="partManagementFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+					<div id="partManagementFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">&copy; 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="../../routes.js"></script>
+	<script>
+		const baseRows = [
+			{ ticketNo: '066098174139', repairStatus: 'TR-Need Triage', location: 'Asheville', schedule: '05/22', wty: 'IW', partId: 'P1', partDist: '', partNo: '5221DD1001E', description: 'VALVE ASSEMBLY INLET', poNo: '066098174139', poDate: '', orderNo: '', invoiceNo: '', partStatus: 'CX Home', note: 'If used during repair requires return: No Shipping Provider: FedEx', unit: 0, core: 0, qty: 1, lot: '', symptom: '05/15 - Customer called in stating blinking 1E error code for 2 days.', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '1006772961-10', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '04/22', wty: 'IW', partId: 'P10', partDist: 'Marcone-162468', partNo: '5304485759', description: 'TAPE', poNo: '1006772961-10-AV', poDate: '2026-04-27', orderNo: '73538313', invoiceNo: '73586196-2', partStatus: 'Part Ready', note: '', unit: 0.39, core: 0, qty: 4, lot: '', symptom: 'Need to rediag the unit.', action: 'Part Order', receiveDate: '2026-05-14' },
+			{ ticketNo: '1006772961-10', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '04/22', wty: 'IW', partId: 'P11', partDist: 'Marcone-162468', partNo: '140134075039', description: 'HARNESS', poNo: '1006772961-10-AV-2', poDate: '2026-05-01', orderNo: '73692049', invoiceNo: '73692049-3', partStatus: 'Part Ready', note: '', unit: 16.33, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-14' },
+			{ ticketNo: '1006772961-10', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '04/22', wty: 'IW', partId: 'P14', partDist: 'Marcone-162468', partNo: '5304530680', description: 'EVAPORATOR ASSEMBLY', poNo: '1006772961-10-AV-2', poDate: '2026-05-01', orderNo: '73692047', invoiceNo: '', partStatus: 'PO Made', note: '05/04 - Sent cancelation email to Marcone.', unit: 75.28, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-14' },
+			{ ticketNo: '1007064721-10', repairStatus: 'OP-Ready for Service', location: 'Asheville', schedule: '05/19', wty: 'IW', partId: 'P1', partDist: 'Marcone-162468', partNo: '140171068053', description: 'PC BOARD,OVC RELAY -PUR', poNo: '1007064721-10-AV', poDate: '2026-05-11', orderNo: '73900963', invoiceNo: '73900963-1', partStatus: 'Part Ready', note: '', unit: 77.33, core: 0, qty: 1, lot: '', symptom: 'Customer reached and scheduled for 5/20.', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '1007067554-10', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Marcone-162468', partNo: '5304539722', description: 'COMPRESSOR', poNo: '1007067554-10-AV', poDate: '2026-05-13', orderNo: '73970124', invoiceNo: '', partStatus: 'PO Made', note: 'Electrolux 5304537774', unit: 102.3, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '1007098724-10', repairStatus: 'TR-Need PO', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Marcone-162468', partNo: '5304532919', description: 'CONTROL BOARD,ASSEMBLY,LED POW', poNo: '(PO #)', poDate: '', orderNo: '', invoiceNo: '', partStatus: 'Need PO', note: '', unit: 163.66, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '1007129133-10', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Marcone-162468', partNo: '5304520495', description: 'SWITCH,DOOR', poNo: '1007129133-10-AV', poDate: '2026-05-15', orderNo: '74044248', invoiceNo: '', partStatus: 'PO Made', note: '', unit: 9.4, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000609490DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P2', partDist: 'Encompass', partNo: 'EBR43511201', description: 'PCB ASSEMBLY,MAIN', poNo: '26000609490DF-AV-2', poDate: '2026-05-15', orderNo: '6-63518', invoiceNo: '', partStatus: 'PO Made', note: '', unit: 167.69, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000611935DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P3', partDist: 'OW', partNo: 'WH22X38697', description: 'MAIN CONTROL BOARD FL WASHER', poNo: '26000611935DF-AV', poDate: '2026-05-15', orderNo: '', invoiceNo: '', partStatus: 'PO Made', note: 'NO_TS ; GE WH22X36858', unit: 108.75, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000632161DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '05/20', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: 'WP3387747', description: 'DRYER HEATING ELEMENT', poNo: '26000632161DF-AV', poDate: '2026-05-14', orderNo: '1-93868', invoiceNo: '', partStatus: 'PO Made', note: '', unit: 32.57, core: 0, qty: 1, lot: '', symptom: 'Unit turns on but not heating.', action: 'Part Order', receiveDate: '2026-05-14' },
+			{ ticketNo: '26000632974DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '05/08', wty: 'IW', partId: 'P1', partDist: 'OW', partNo: 'W11047722', description: 'SURFACE ELEMENT', poNo: '26000632974DF-AV', poDate: '2026-05-13', orderNo: '', invoiceNo: '', partStatus: 'PO Made', note: 'JS TS', unit: 58.22, core: 0, qty: 1, lot: '', symptom: 'P2 Tracking Number 381292513024', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000647179DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: 'WH01X29528', description: 'DOOR LOCK', poNo: '26000647179DF-AV', poDate: '2026-05-15', orderNo: '1-00398', invoiceNo: '', partStatus: 'PO Made', note: '', unit: 33.76, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000648670DF', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '05/13', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: 'WB07X47345', description: 'OVERLAY', poNo: '26000648670DF-AV', poDate: '2026-05-15', orderNo: '1-00193', invoiceNo: '', partStatus: 'PO Made', note: '', unit: 6.82, core: 0, qty: 1, lot: '', symptom: 'Clock shuts off intermittently.', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000650750DF', repairStatus: 'PT-Need PreAuthorization', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: 'ADJ74812516', description: 'DUCT ASSEMBLY,MULTI', poNo: '(PO #)', poDate: '', orderNo: '', invoiceNo: '', partStatus: 'Need PO', note: '', unit: 178.27, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '26000652384DF', repairStatus: 'CL-Parts Back Ordered', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: '17431000030843', description: 'WIRES, HARNESS', poNo: '26000652384DF-AV', poDate: '2026-05-15', orderNo: '', invoiceNo: '', partStatus: 'Cancelled', note: 'low in stock, order goes to BO', unit: 13.83, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: '726901', repairStatus: 'PT-Need PreAuthorization', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'SP', partNo: '6113310100', description: 'K76_ICE_MACHINE_ASSY_SILICONE', poNo: '(PO #)', poDate: '', orderNo: '', invoiceNo: '', partStatus: 'Need PO', note: '', unit: 77.96, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-15' },
+			{ ticketNo: 'HSV20260433501379', repairStatus: 'PT-Need PreAuthorization', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: '218976409', description: 'TUBE,WATER,60\",NATURAL,DOOR', poNo: '(PO #)', poDate: '', orderNo: '', invoiceNo: '', partStatus: 'Need PO', note: '', unit: 29.23, core: 0, qty: 1, lot: '', symptom: 'Waiting for cx approval for OOW fees.', action: 'Part Order', receiveDate: '2026-05-14' },
+			{ ticketNo: 'HSV20260433579870', repairStatus: 'OP-Waiting for Part', location: 'Asheville', schedule: '', wty: 'IW', partId: 'P1', partDist: 'Encompass', partNo: '242193212', description: 'GASKET-REFR DOOR,BLACK,MAGNETI', poNo: 'HSV20260433579870-AV', poDate: '2026-05-06', orderNo: '1-66290', invoiceNo: '1-309600-0526-1', partStatus: 'Part Ready', note: '', unit: 87.45, core: 0, qty: 1, lot: '', symptom: '', action: 'Part Order', receiveDate: '2026-05-14' }
+		];
+
+		// Expand seed rows to 84 records for UI parity with sample screen.
+		const rows = [];
+		for (let i = 0; rows.length < 84; i += 1) {
+			const seed = baseRows[i % baseRows.length];
+			rows.push({ ...seed, _idx: i + 1 });
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return false;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return true;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function formatMoney(value) {
+			const num = Number(value || 0);
+			return Number.isFinite(num) ? num.toFixed(2) : '0.00';
+		}
+
+		function populateFilters() {
+			const repairSelect = document.getElementById('repairStatusFilter');
+			const partSelect = document.getElementById('partStatusFilter');
+			const requiredRepairStatuses = [
+				'CL-Claimed',
+				'CL-Data-Closed',
+				'CL-Need Cancel',
+				'CL-Parts Back Ordered',
+				'CL-Ready to Complete',
+				'CSR-Acknowledged',
+				'CSR-Assigned to ASC',
+				'CSR-Left Message for Cx',
+				'CSR-Needs Scheduling',
+				'OP-Ready for Service',
+				'OP-Reschedule Follow up',
+				'OP-UPDATE HOLD',
+				'OP-Waiting for Part',
+				'3 PT-Need PreAuthorization',
+				'TR-Need PO',
+				'TR-Need Triage'
+			];
+			const dynamicRepairValues = Array.from(new Set(rows.map(r => r.repairStatus).filter(Boolean))).sort();
+			const repairValues = [...new Set([...requiredRepairStatuses, ...dynamicRepairValues])];
+			const requiredPartStatuses = [
+				'Back Order',
+				'Cancelled',
+				'Claimed',
+				'CX Home',
+				'Cx Received',
+				'Defective',
+				'Hold for Estimation',
+				'Hold for next vist',
+				'Lost',
+				'Need PO',
+				'Not Used & Stocked',
+				'PAID',
+				'Part Ready',
+				'PO Made',
+				'RA - Defect',
+				'RA - DMG',
+				'RA - PNN',
+				'RA - Qty Discrepancy',
+				'SQT Received',
+				'Tech Pickup',
+				'Transfered to other ticket',
+				'Used'
+			];
+			const dynamicPartValues = Array.from(new Set(rows.map(r => r.partStatus).filter(Boolean))).sort();
+			const partValues = [...new Set([...requiredPartStatuses, ...dynamicPartValues])];
+			repairValues.forEach(v => repairSelect.insertAdjacentHTML('beforeend', `<option value="${v}">${v}</option>`));
+			partValues.forEach(v => partSelect.insertAdjacentHTML('beforeend', `<option value="${v}">${v}</option>`));
+		}
+
+		function getFilteredRows() {
+			const location = document.getElementById('locationFilter').value.trim();
+			const repairStatus = document.getElementById('repairStatusFilter').value.trim();
+			const partStatus = document.getElementById('partStatusFilter').value.trim();
+			const ticket = document.getElementById('ticketFilter').value.trim().toLowerCase();
+			const search = document.getElementById('resultSearch').value.trim().toLowerCase();
+			const fromDate = document.getElementById('fromDate').value;
+			const toDate = document.getElementById('toDate').value;
+
+			return rows.filter((row) => {
+				if (location && row.location !== location) return false;
+				if (repairStatus && row.repairStatus !== repairStatus) return false;
+				if (partStatus && row.partStatus !== partStatus) return false;
+				if (ticket && !String(row.ticketNo || '').toLowerCase().includes(ticket)) return false;
+				if (fromDate && row.receiveDate < fromDate) return false;
+				if (toDate && row.receiveDate > toDate) return false;
+				if (search) {
+					const blob = [
+						row.ticketNo, row.repairStatus, row.location, row.schedule, row.wty, row.partId,
+						row.partDist, row.partNo, row.description, row.poNo, row.poDate, row.orderNo,
+						row.invoiceNo, row.partStatus, row.note, row.symptom
+					].join(' ').toLowerCase();
+					if (!blob.includes(search)) return false;
+				}
+				return true;
+			});
+		}
+
+		function renderRows() {
+			const body = document.getElementById('poBody');
+			const filtered = getFilteredRows();
+			document.getElementById('recordInfo').textContent = `${filtered.length} records found`;
+
+			if (!filtered.length) {
+				body.innerHTML = '<tr><td colspan="21" style="text-align:center; color:#64748b;">No records found.</td></tr>';
+				queuePartManagementScrollbarRefresh();
+				return;
+			}
+
+			const requiredRepairStatuses = [
+				'CL-Claimed', 'CL-Data-Closed', 'CL-Need Cancel', 'CL-Parts Back Ordered', 'CL-Ready to Complete',
+				'CSR-Acknowledged', 'CSR-Assigned to ASC', 'CSR-Left Message for Cx', 'CSR-Needs Scheduling',
+				'OP-Ready for Service', 'OP-Reschedule Follow up', 'OP-UPDATE HOLD', 'OP-Waiting for Part',
+				'3 PT-Need PreAuthorization', 'TR-Need PO', 'TR-Need Triage'
+			];
+			const partDistOptions = [
+				'You, Now', 'AIG', 'Electrolux', 'Encompass', 'Encompass-Birmingham l Montgomery',
+				'GE', 'LG', 'Marcone- Birmingham / Montgomery', 'Marcone-162468', 'Midea', 'Miele',
+				'NSA', 'OW', 'SB', 'Sharp', 'SP', 'Squaretrade', 'SS'
+			];
+			const requiredPartStatuses = [
+				'Back Order', 'Cancelled', 'Claimed', 'CX Home', 'Cx Received', 'Defective', 'Hold for Estimation',
+				'Hold for next vist', 'Lost', 'Need PO', 'Not Used & Stocked', 'PAID', 'Part Ready', 'PO Made',
+				'RA - Defect', 'RA - DMG', 'RA - PNN', 'RA - Qty Discrepancy', 'SQT Received', 'Tech Pickup',
+				'Transfered to other ticket', 'Used'
+			];
+			const lotOptions = ['A1', 'A2', 'A3', 'A4', 'A5', 'B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'C3', 'C4', 'C5', 'D1', 'D2', 'D3', 'D4', 'D5', 'Return'];
+
+			body.innerHTML = filtered.map((row, idx) => {
+				const originalRowIdx = rows.findIndex(r => r._idx === row._idx);
+				const repairStatusOpts = requiredRepairStatuses.map(s => `<option value="${s}" ${s === row.repairStatus ? 'selected' : ''}>${s}</option>`).join('');
+				const partDistOpts = partDistOptions.map(p => `<option value="${p}" ${p === row.partDist ? 'selected' : ''}>${p}</option>`).join('');
+				const partStatusOpts = requiredPartStatuses.map(ps => `<option value="${ps}" ${ps === row.partStatus ? 'selected' : ''}>${ps}</option>`).join('');
+				const lotOpts = lotOptions.map(lot => `<option value="${lot}" ${lot === row.lot ? 'selected' : ''}>${lot}</option>`).join('');
+				const formattedPoDate = row.poDate && row.poDate.match(/^\d{4}-\d{2}-\d{2}$/) ? row.poDate : '';
+
+				return `
+					<tr>
+						<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=${encodeURIComponent(row.ticketNo)}" target="_blank" rel="noopener noreferrer">${row.ticketNo || ''}</a></td>
+						<td><select class="table-select" data-row-idx="${originalRowIdx}" data-field="repairStatus" onchange="updateRowField(this)">${repairStatusOpts}</select></td>
+						<td>${row.location || ''}</td>
+						<td>${row.schedule || ''}</td>
+						<td>${row.wty || ''}</td>
+						<td>${row.partId || ''}</td>
+						<td><select class="table-select" data-row-idx="${originalRowIdx}" data-field="partDist" onchange="updateRowField(this)">${partDistOpts}</select></td>
+						<td><input type="text" class="table-input" data-row-idx="${originalRowIdx}" data-field="partNo" value="${row.partNo || ''}" onchange="updateRowField(this)" /></td>
+						<td>${row.description || ''}</td>
+						<td><input type="text" class="table-input" data-row-idx="${originalRowIdx}" data-field="poNo" value="${row.poNo || ''}" onchange="updateRowField(this)" /></td>
+						<td><input type="date" class="table-input" data-row-idx="${originalRowIdx}" data-field="poDate" value="${formattedPoDate}" onchange="updateRowField(this)" /></td>
+						<td><input type="text" class="table-input" data-row-idx="${originalRowIdx}" data-field="orderNo" value="${row.orderNo || ''}" onchange="updateRowField(this)" /></td>
+						<td><input type="text" class="table-input" data-row-idx="${originalRowIdx}" data-field="invoiceNo" value="${row.invoiceNo || ''}" onchange="updateRowField(this)" /></td>
+						<td><select class="table-select" data-row-idx="${originalRowIdx}" data-field="partStatus" onchange="updateRowField(this)">${partStatusOpts}</select></td>
+						<td><input type="text" class="table-input" data-row-idx="${originalRowIdx}" data-field="note" value="${row.note || ''}" onchange="updateRowField(this)" /></td>
+						<td><input type="number" class="table-input money" data-row-idx="${originalRowIdx}" data-field="unit" value="${row.unit || 0}" step="0.01" onchange="updateRowField(this)" /></td>
+						<td class="money">${formatMoney(row.core)}</td>
+						<td class="qty">${row.qty || 0}</td>
+						<td><select class="table-select" data-row-idx="${originalRowIdx}" data-field="lot" onchange="updateRowField(this)">${lotOpts}</select></td>
+						<td>${row.symptom || ''}</td>
+						<td><button type="button" class="action-btn">${row.action || 'Part Order'}</button></td>
+					</tr>
+				`;
+			}).join('');
+			queuePartManagementScrollbarRefresh();
+		}
+
+		function updateRowField(element) {
+			const rowIdx = parseInt(element.getAttribute('data-row-idx'), 10);
+			const field = element.getAttribute('data-field');
+			let value = element.value;
+			if (field === 'unit') {
+				value = parseFloat(value) || 0;
+			}
+			if (rowIdx >= 0 && rowIdx < rows.length) {
+				rows[rowIdx][field] = value;
+			}
+		}
+
+		function queuePartManagementScrollbarRefresh() {
+			requestAnimationFrame(function () {
+				requestAnimationFrame(function () {
+					syncPartManagementFloatingScrollbar();
+					updatePartManagementFloatingScrollbarVisibility();
+				});
+			});
+		}
+
+		function syncPartManagementFloatingScrollbar() {
+			const tableWrap = document.getElementById('partManagementTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.po-table') : null;
+			const floatingBar = document.getElementById('partManagementFloatingScrollbar');
+			const floatingInner = document.getElementById('partManagementFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(0, Math.floor(rect.left)) + 'px';
+			floatingBar.style.bottom = '0px';
+		}
+
+		function updatePartManagementFloatingScrollbarVisibility() {
+			const tableWrap = document.getElementById('partManagementTableWrap');
+			const floatingBar = document.getElementById('partManagementFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const viewportBottom = window.innerHeight;
+			const scrollbarInViewport = rect.bottom <= viewportBottom && rect.bottom >= 0;
+			const tableIntersectsViewport = rect.top < viewportBottom && rect.bottom > 0;
+			const shouldShow = hasHorizontalOverflow && tableIntersectsViewport && !scrollbarInViewport;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncPartManagementFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupPartManagementFloatingScrollbar() {
+			const tableWrap = document.getElementById('partManagementTableWrap');
+			const floatingBar = document.getElementById('partManagementFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+
+			if (floatingBar.parentElement !== document.body) {
+				document.body.appendChild(floatingBar);
+			}
+
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) {
+					syncingFromTable = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updatePartManagementFloatingScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncPartManagementFloatingScrollbar();
+				updatePartManagementFloatingScrollbarVisibility();
+			});
+
+			window.addEventListener('scroll', updatePartManagementFloatingScrollbarVisibility, { passive: true });
+			queuePartManagementScrollbarRefresh();
+		}
+
+		document.addEventListener('DOMContentLoaded', function () {
+			if (!loadUserInfo()) return;
+			applyPrettyUrl('partManagement');
+			populateFilters();
+			setupPartManagementFloatingScrollbar();
+			renderRows();
+
+			[
+				'locationFilter', 'repairStatusFilter', 'partStatusFilter',
+				'ticketFilter', 'fromDate', 'toDate', 'resultSearch'
+			].forEach((id) => {
+				const el = document.getElementById(id);
+				el.addEventListener('input', renderRows);
+				el.addEventListener('change', renderRows);
+			});
+
+			document.getElementById('refreshBtn').addEventListener('click', renderRows);
+			document.getElementById('saveBtn').addEventListener('click', function () {
+				localStorage.setItem('partManagementRows', JSON.stringify(rows));
+			});
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>
