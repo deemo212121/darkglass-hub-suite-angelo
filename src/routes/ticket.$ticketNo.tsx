@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
+import { Copy } from "lucide-react";
 
 interface TicketData {
   ticketNo: string;
@@ -55,6 +56,32 @@ interface CompensationRow {
   createdBy: string;
   lastModifiedBy: string;
 }
+
+type TicketCopyPayload = {
+  ticketNo: string;
+  source: string;
+  customerName: string;
+  primaryPhone: string;
+  secondaryPhone: string;
+  email1: string;
+  address: string;
+  city: string;
+  zipCode: string;
+  state: string;
+  addressNote: string;
+  model: string;
+  serialNo: string;
+  modelVersion: string;
+  brand: string;
+  productCategory: string;
+  purchaseDate: string;
+  warrantyType: string;
+  cxPreferredDate: string;
+  callTakenDate: string;
+  problemDescription: string;
+};
+
+const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 
 const DEFAULT_TICKET: TicketData = {
   ticketNo: "017151274136",
@@ -272,6 +299,33 @@ const TICKET_DATA: Record<string, TicketData> = {
   },
 };
 
+function buildTicketCopyPayload(ticket: TicketData): TicketCopyPayload {
+  const customerName = `${ticket.firstName} ${ticket.lastName}`.trim();
+  return {
+    ticketNo: `a-${ticket.ticketNo}`,
+    source: "Redo",
+    customerName,
+    primaryPhone: ticket.homePhone || ticket.cellPhone,
+    secondaryPhone: ticket.cellPhone === ticket.homePhone ? "" : ticket.cellPhone,
+    email1: ticket.email,
+    address: ticket.address,
+    city: ticket.city,
+    zipCode: ticket.zip,
+    state: ticket.state,
+    addressNote: `Copied from ticket ${ticket.ticketNo}`,
+    model: ticket.model,
+    serialNo: ticket.serialNo,
+    modelVersion: "",
+    brand: ticket.brand,
+    productCategory: ticket.productCategory,
+    purchaseDate: ticket.purchaseDate,
+    warrantyType: ticket.warrantyType,
+    cxPreferredDate: ticket.scheduleDate || "",
+    callTakenDate: ticket.postingDate,
+    problemDescription: ticket.problemDescription,
+  };
+}
+
 export const Route = createFileRoute("/ticket/$ticketNo")({
   ssr: false,
   head: () => ({
@@ -356,6 +410,17 @@ function TicketDetailsPage() {
     ]);
   };
 
+  const copyToNewTicket = () => {
+    if (!ticket) return;
+
+    const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const payload: TicketCopyPayload = buildTicketCopyPayload(ticket);
+    window.localStorage.setItem(`${TICKET_COPY_KEY_PREFIX}${token}`, JSON.stringify(payload));
+    window.open(`/m/tickets/new-ticket?copyToken=${encodeURIComponent(token)}`, "_blank", "noopener,noreferrer");
+  };
+
   const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
     setCompensationRows((rows) =>
       rows.map((row) =>
@@ -387,6 +452,16 @@ function TicketDetailsPage() {
                 placeholder="Enter ticket number... (Press Enter)"
                 className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
               />
+              <button
+                type="button"
+                onClick={copyToNewTicket}
+                disabled={!ticket}
+                title="Copy to new ticket"
+                aria-label="Copy to new ticket"
+                className="inline-flex items-center justify-center rounded border border-blue-400/40 bg-blue-500/15 p-2 text-blue-200 transition hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
             </div>
             <div>
               <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
