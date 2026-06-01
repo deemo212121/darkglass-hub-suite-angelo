@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, initializeDummyData } from "./db";
 
 // Initialize database on app start (client-side only)
 export async function initDatabase() {
@@ -7,6 +7,7 @@ export async function initDatabase() {
 
   try {
     await db.open();
+    await initializeDummyData();
   } catch (error) {
     console.error("Failed to initialize database:", error);
   }

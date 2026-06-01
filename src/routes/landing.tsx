@@ -14,13 +14,20 @@ export const Route = createFileRoute("/landing")({
   component: Landing,
 });
 
+const DEFAULT_ACCOUNTS = [
+  "admin@ahsolutions.com",
+  "manager@ahsolutions.com",
+  "tech@ahsolutions.com",
+  "viewer@ahsolutions.com",
+];
+
 function Landing() {
   const { login, email, ready } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: "", password: "", company: "4930403", remember: true });
+  const [form, setForm] = useState({ email: DEFAULT_ACCOUNTS[0], password: "", company: "4930403", remember: true });
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [emailOptions, setEmailOptions] = useState<string[]>([]);
+  const [emailOptions, setEmailOptions] = useState<string[]>(DEFAULT_ACCOUNTS);
 
   useEffect(() => {
     if (form.remember) {
@@ -37,6 +44,7 @@ function Landing() {
         const savedEmail = localStorage.getItem("ahs:lastEmail");
         const nextOptions = Array.from(
           new Set([
+            ...DEFAULT_ACCOUNTS,
             ...users.map((user) => user.email).filter(Boolean),
             savedEmail,
           ].filter((value): value is string => Boolean(value)))
@@ -44,10 +52,10 @@ function Landing() {
         setEmailOptions(nextOptions);
         setForm((current) => ({
           ...current,
-          email: current.email || nextOptions[0] || "",
+          email: current.email || nextOptions[0] || DEFAULT_ACCOUNTS[0],
         }));
       })
-      .catch(() => setEmailOptions((current) => current));
+      .catch(() => setEmailOptions(DEFAULT_ACCOUNTS));
 
     return () => {
       active = false;
