@@ -6,6 +6,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface ReceiveItem {
   id: string;
+  partFrom: string;
   poNumber: string;
   poDate: string;
   orderNo: string;
@@ -29,14 +30,35 @@ const PART_FROM_OPTIONS = [
   "AIG", "Electrolux", "Encompass", "Encompass-Birmingham/Montgomery",
   "GE", "LG", "Marcone-Birmingham/Montgomery", "Marcone-162468",
   "Midea", "Miele", "NSA", "OW", "SB", "Sharp", "SP", "Squaretrade", "SS"
+  ,"UPS"
 ];
 
 const TICKET_STATUS_OPTIONS = ["Open", "In Progress", "Ready", "Completed", "On Hold"];
 const TECH_OPTIONS = ALL_TECHNICIANS;
 
+function getTrackingUrl(tracking: string, partFrom: string) {
+  const value = tracking.trim();
+  const source = partFrom.trim().toLowerCase();
+  if (!value) return "#";
+  if (source.includes("marcone")) {
+    return `https://www.google.com/search?q=${encodeURIComponent(`site:marcone.com ${value} tracking`)}`;
+  }
+  if (value.startsWith("1Z")) {
+    return `https://www.ups.com/track?track=yes&trackNums=${encodeURIComponent(value)}`;
+  }
+  if (/^\d{12,14}$/.test(value)) {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(value)}`;
+  }
+  if (/^(94|93|92|95|96)/.test(value)) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(value)}`;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(value + " tracking")}`;
+}
+
 const SAMPLE_RECEIVES: ReceiveItem[] = [
   {
     id: "RCV-001",
+    partFrom: "UPS",
     poNumber: "PO-7001",
     poDate: "2026-04-28",
     orderNo: "ORD-2301",
@@ -57,6 +79,7 @@ const SAMPLE_RECEIVES: ReceiveItem[] = [
   },
   {
     id: "RCV-002",
+    partFrom: "Encompass",
     poNumber: "PO-7002",
     poDate: "2026-04-25",
     orderNo: "ORD-2302",
@@ -77,6 +100,7 @@ const SAMPLE_RECEIVES: ReceiveItem[] = [
   },
   {
     id: "RCV-003",
+    partFrom: "LG",
     poNumber: "PO-7003",
     poDate: "2026-04-20",
     orderNo: "ORD-2303",
@@ -97,6 +121,7 @@ const SAMPLE_RECEIVES: ReceiveItem[] = [
   },
   {
     id: "RCV-004",
+    partFrom: "AIG",
     poNumber: "PO-7004",
     poDate: "2026-05-01",
     orderNo: "ORD-2304",
@@ -125,6 +150,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   const [showNotReceived, setShowNotReceived] = useState(true);
   const [showReceived, setShowReceived] = useState(true);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [receiveItems, setReceiveItems] = useState<ReceiveItem[]>(SAMPLE_RECEIVES);
 
   const toggleItemSelection = (id: string) => {
     const newSelected = new Set(selectedItems);
@@ -144,7 +170,25 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     }
   };
 
-  const filteredItems = SAMPLE_RECEIVES.filter(item => {
+  const updateReceivedQuantity = (id: string, value: string) => {
+    const nextValue = Number.parseInt(value, 10);
+    setReceiveItems((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              rcvd: Number.isNaN(nextValue) ? 0 : Math.min(item.total, Math.max(0, nextValue)),
+              received: Number.isNaN(nextValue) ? false : nextValue > 0,
+            }
+          : item,
+      ),
+    );
+  };
+
+  const filteredItems = receiveItems.filter(item => {
+    if (partFrom && item.partFrom !== partFrom) {
+      return false;
+    }
     const receivedFilter = item.received ? showReceived : showNotReceived;
     return receivedFilter;
   });
@@ -189,8 +233,8 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
             <h3 className="form-section-title">Filters</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div className="form-group">
-                <label className="required">Location</label>
-                <select value={location} onChange={(e) => setLocation(e.target.value)} className="glass-input">
+                <label className="required" htmlFor="part-receive-location">Location</label>
+                <select id="part-receive-location" value={location} onChange={(e) => setLocation(e.target.value)} className="glass-input">
                   {LOCATIONS.map(loc => (
                     <option key={loc} value={loc}>{loc}</option>
                   ))}
@@ -198,8 +242,8 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </div>
 
               <div className="form-group">
-                <label>Part From</label>
-                <select value={partFrom} onChange={(e) => setPartFrom(e.target.value)} className="glass-input">
+                <label htmlFor="part-receive-part-from">Part From</label>
+                <select id="part-receive-part-from" value={partFrom} onChange={(e) => setPartFrom(e.target.value)} className="glass-input">
                   <option value="">Select Source</option>
                   {PART_FROM_OPTIONS.map(src => (
                     <option key={src} value={src}>{src}</option>
@@ -210,9 +254,11 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               <div className="form-group">
                 <label className="required">Date Range</label>
                 <div className="date-range">
-                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input" />
+                  <label htmlFor="part-receive-date-from" className="sr-only">Date from</label>
+                  <input id="part-receive-date-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input" />
                   <span className="date-range-sep">~</span>
-                  <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input" />
+                  <label htmlFor="part-receive-date-to" className="sr-only">Date to</label>
+                  <input id="part-receive-date-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input" />
                 </div>
               </div>
 
@@ -250,6 +296,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">
                     <input
                       type="checkbox"
+                      aria-label="Select all rows"
                       checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
                       onChange={toggleAllItems}
                       className="cursor-pointer"
@@ -258,6 +305,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Comp*</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Unique ID*</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">PO Number</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part From</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">P/O Date</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Order No</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Number*</th>
@@ -266,13 +314,13 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Receive Date</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Tracking</th>
                   <th colSpan={4} className="px-4 py-3 text-center font-semibold text-blue-300">Ticket</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Total</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Rcvd*</th>
+                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Quantity Ordered</th>
+                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Quantity Received</th>
                   <th className="px-4 py-3 text-center font-semibold text-blue-300">$ Part</th>
                   <th className="px-4 py-3 text-center font-semibold text-blue-300">$ Core</th>
                 </tr>
                 <tr className="bg-blue-900/30 border-b border-blue-500/20">
-                  <th colSpan={11} className="px-4 py-2"></th>
+                  <th colSpan={12} className="px-4 py-2"></th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Ticket No</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Status</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Tech</th>
@@ -286,29 +334,46 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     <td className="px-4 py-3 text-center">
                       <input
                         type="checkbox"
+                        aria-label={`Select row ${item.id}`}
                         checked={selectedItems.has(item.id)}
                         onChange={() => toggleItemSelection(item.id)}
                         className="cursor-pointer"
                       />
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <input type="checkbox" checked={item.received} readOnly className="cursor-not-allowed" />
+                      <input type="checkbox" checked={item.received} readOnly aria-label={`Received status for ${item.id}`} className="cursor-not-allowed" />
                     </td>
                     <td className="px-4 py-3 font-mono text-slate-300">{item.id}</td>
                     <td className="px-4 py-3 text-slate-300">{item.poNumber}</td>
+                    <td className="px-4 py-3 text-slate-300">{item.partFrom}</td>
                     <td className="px-4 py-3 text-slate-300">{item.poDate}</td>
                     <td className="px-4 py-3 text-slate-300">{item.orderNo}</td>
                     <td className="px-4 py-3 font-mono text-slate-300">{item.partNumber}</td>
                     <td className="px-4 py-3 text-slate-300">{item.partDesc}</td>
                     <td className="px-4 py-3 text-slate-300">{item.eta}</td>
                     <td className="px-4 py-3 text-slate-300">{item.receiveDate || "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{item.tracking}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                      <a href={getTrackingUrl(item.tracking, item.partFrom)} target="_blank" rel="noreferrer" className="text-blue-300 underline decoration-dotted underline-offset-4 hover:text-blue-200">
+                        {item.tracking}
+                      </a>
+                    </td>
                     <td className="px-4 py-3 text-slate-300">{item.ticketNo}</td>
                     <td className="px-4 py-3 text-blue-400 font-semibold">{item.ticketStatus}</td>
                     <td className="px-4 py-3 text-slate-300">{item.tech}</td>
                     <td className="px-4 py-3 text-slate-300">{item.schedule}</td>
                     <td className="px-4 py-3 text-center font-semibold text-slate-300">{item.total}</td>
-                    <td className="px-4 py-3 text-center font-semibold text-green-400">{item.rcvd}</td>
+                    <td className="px-4 py-3 text-center font-semibold text-green-400">
+                      <label className="sr-only" htmlFor={`received-qty-${item.id}`}>Quantity received for {item.id}</label>
+                      <input
+                        id={`received-qty-${item.id}`}
+                        type="number"
+                        min={0}
+                        max={item.total}
+                        value={item.rcvd}
+                        onChange={(event) => updateReceivedQuantity(item.id, event.target.value)}
+                        className="w-20 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-center text-sm font-semibold text-green-400 outline-none transition focus:border-green-400"
+                      />
+                    </td>
                     <td className="px-4 py-3 text-right text-slate-300">${item.partCost.toFixed(2)}</td>
                     <td className="px-4 py-3 text-right text-slate-300">${item.coreCost.toFixed(2)}</td>
                   </tr>
@@ -316,7 +381,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </tbody>
               <tfoot>
                 <tr className="bg-blue-900/50 border-t-2 border-blue-500/30 font-semibold text-blue-300">
-                  <td colSpan={14} className="px-4 py-3 text-right">Totals:</td>
+                  <td colSpan={16} className="px-4 py-3 text-right">Totals:</td>
                   <td className="px-4 py-3 text-center">{totals.total}</td>
                   <td className="px-4 py-3 text-center text-green-400">{totals.rcvd}</td>
                   <td className="px-4 py-3 text-right">${totals.partCost.toFixed(2)}</td>

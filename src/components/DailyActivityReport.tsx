@@ -1,182 +1,309 @@
-import { useState, useMemo, useRef, useEffect } from "react";
-import { ChevronLeft, ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, RefreshCw, Search, Users, ClipboardList, BarChart3 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { LOCATIONS, USER_TYPES, SERVICE_TYPES_SS, pick, pad, todayStr, offsetStr } from "@/components/shared";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatCsrCell, getColumnIndex, loadCsrWorkbook, type CsrWorkbookBlock, type CsrWorkbookSheet } from "@/lib/csr-workbook";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
-const TARGET_USERS = ["Claim Manager","CSR","HR","Manager","Part Manager","Superuser","Tech Manager","Technician"];
-const TIMES = ["00:00 AM","06:00 AM","07:00 AM","08:00 AM","09:00 AM","10:00 AM","11:00 AM","12:00 PM","01:00 PM","02:00 PM","03:00 PM","04:00 PM","05:00 PM","06:00 PM"];
-const ACTIONS = ["Login","Logout","View Ticket","Create Ticket","Update Ticket","Schedule","Cancel","Part Order","Note","Status Change"];
-
-function generateRows(count = 80) {
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (i % 3));
-    return {
-      id: i + 1, ticketNo: i % 5 === 0 ? "" : "TK-2026-" + pad(3000 + i),
-      location: pick(LOCATIONS.slice(1), i), userType: pick(TARGET_USERS, i),
-      workDate: d.toISOString().slice(0, 10), time: pick(TIMES.slice(3), i),
-      action: pick(ACTIONS, i), user: pick(["J. Lucas","A. Simmons","E. Guzman","D. Ottley","C. Forrest"], i),
-      ticketsTodo: 5 + (i % 12),
-    };
-  });
-}
-const ALL_ROWS = generateRows(80);
-
-function MultiCheckDropdown({ label, options, selected, onChange }: { label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void }) {
-  const [open, setOpen] = useState(false);
-  const all = selected.length === options.length;
-  const display = all ? options.join(", ") : selected.join(", ") || "None";
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button aria-label={`Select ${label}`} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2 text-left">
-          <span className="truncate text-xs">{display}</span>
-          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,20rem)] sm:w-80 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 p-0 text-white shadow-xl">
-        <label className="flex cursor-pointer items-center gap-2 border-b border-white/10 px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10">
-          <input
-            type="checkbox"
-            checked={all}
-            onChange={() => onChange(all ? [] : [...options])}
-            className="accent-white"
-            title="Select all target users"
-          />
-          Select All
-        </label>
-        {options.map(o => (
-          <label key={o} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-white/90 hover:bg-white/10">
-            <input type="checkbox" checked={selected.includes(o)} onChange={() => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o])} className="accent-white" title={o} />
-            {o}
-          </label>
-        ))}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function LocationDropdown({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button aria-label="Select location" className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
-          <span className={value ? "" : "text-muted-foreground"}>{value || "All Locations"}</span>
-          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[min(90vw,16rem)] sm:w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-slate-950 p-0 text-white shadow-xl">
-        {LOCATIONS.map((l, i) => (
-          <button key={i} onClick={() => { onChange(l); setOpen(false); }}
-            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${value === l ? "bg-white/10 text-white" : l === "" ? "text-white/60" : "text-white/90"}`}>
-            {l || "— All Locations —"}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-export function DailyActivityReport({ mod, sub }: Props) {
-  const [location, setLocation] = useState("");
-  const [startDate, setStartDate] = useState(todayStr());
-  const [startTime, setStartTime] = useState("00:00 AM");
-  const [endDate, setEndDate] = useState(offsetStr(1));
-  const [endTime, setEndTime] = useState("00:00 AM");
-  const [targetUsers, setTargetUsers] = useState<string[]>([...TARGET_USERS]);
-  const [applied, setApplied] = useState({ location: "", startDate: todayStr(), endDate: offsetStr(1), targetUsers: [...TARGET_USERS] });
+function useCsrWorkbook() {
+  const [sheetData, setSheetData] = useState<CsrWorkbookSheet[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    setApplied({ location, startDate, endDate, targetUsers });
-  }, [location, startDate, endDate, targetUsers]);
+    let active = true;
+    setStatus("loading");
 
-  const rows = useMemo(() => {
-    let r = ALL_ROWS;
-    if (applied.location) r = r.filter(x => x.location === applied.location);
-    r = r.filter(x => applied.targetUsers.includes(x.userType));
-    if (applied.startDate) r = r.filter(x => x.workDate >= applied.startDate);
-    if (applied.endDate) r = r.filter(x => x.workDate <= applied.endDate);
-    return r;
-  }, [applied]);
+    loadCsrWorkbook()
+      .then((workbook) => {
+        if (!active) return;
+        setSheetData(workbook.sheets);
+        setStatus("ready");
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Failed to load workbook");
+        setStatus("error");
+      });
 
-  const totalTicketsTodo = rows.reduce((s, r) => s + r.ticketsTodo, 0);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return { sheetData, status, error };
+}
+
+function SummaryCard({ label, value, icon: Icon }: { label: string; value: string | number; icon: typeof Users }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.12)] backdrop-blur-md">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div>
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-white/55">{label}</p>
+          <p className="text-lg font-bold text-white">{value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BlockTable({ block, search, person }: { block: CsrWorkbookBlock; search: string; person: string }) {
+  const columns = block.columns;
+  const nameIndex = getColumnIndex(columns, ["Full Name", "Name"]);
+
+  const rows = block.rows.filter((row) => {
+    const rowName = formatCsrCell(row.values[nameIndex === -1 ? 0 : nameIndex]);
+    const matchesPerson = !person || rowName === person;
+    const matchesSearch = !search || block.teamName.toLowerCase().includes(search.toLowerCase()) || row.searchText.includes(search.toLowerCase());
+    return matchesPerson && matchesSearch;
+  });
+
+  if (rows.length === 0) return null;
 
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">Report</Link><span>›</span>
-        <span className="text-foreground font-medium">Daily Activity Report</span>
-      </div>
-      <div className="flex items-center gap-3 mb-5">
-        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
-        <h1 className="text-xl font-bold">Daily Activity Report</h1>
-      </div>
-
-      <div className="panel mb-5 overflow-x-auto">
-        <div className="flex min-w-max items-end gap-4">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Location</span>
-            <LocationDropdown value={location} onChange={setLocation} />
-          </div>
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Work Date</span>
-            <div className="flex items-center gap-2 whitespace-nowrap">
-              <label htmlFor="dar-start" className="sr-only">Start date</label>
-              <input id="dar-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} title="Start date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-32" />
-              <select value={startTime} onChange={e => setStartTime(e.target.value)} title="Start time" aria-label="Start time" className="glass-input text-sm py-1.5 px-2 rounded-md w-28 min-w-0">
-                {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <span className="text-muted-foreground text-xs shrink-0">~</span>
-              <label htmlFor="dar-end" className="sr-only">End date</label>
-              <input id="dar-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} title="End date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-32" />
-              <select value={endTime} onChange={e => setEndTime(e.target.value)} title="End time" aria-label="End time" className="glass-input text-sm py-1.5 px-2 rounded-md w-28 min-w-0">
-                {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Target Users</span>
-            <MultiCheckDropdown label="Target Users" options={TARGET_USERS} selected={targetUsers} onChange={setTargetUsers} />
-          </div>
+    <section className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_18px_40px_rgba(0,0,0,0.16)] backdrop-blur-md">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 pb-4">
+        <div>
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.2em] text-white/55">Team</p>
+          <h2 className="text-xl font-bold text-white">{block.teamName}</h2>
+          <p className="mt-1 text-sm text-white/60">
+            {rows.length} matching member{rows.length === 1 ? "" : "s"} • Schedule {block.totals.schedule.toLocaleString()} • Attempt {block.totals.attempt.toLocaleString()}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs font-medium text-white/75">
+          <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1">Rows {rows.length}</span>
+          <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1">Update {block.totals.update.toLocaleString()}</span>
         </div>
       </div>
 
-      <div className="flex justify-end mb-2">
-        <span className="text-sm text-muted-foreground">TOTAL # of TICKETS TO DO: <span className="text-foreground font-bold text-lg">{totalTicketsTodo.toLocaleString()}</span></span>
-      </div>
-
-      <div className="panel overflow-x-auto p-0">
+      <div className="mt-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-white/10 bg-white/5">
-              {["#","Ticket No","User","User Type","Location","Date","Time","Action","Tickets To Do"].map(h => (
-                <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-white/60">#</th>
+              {columns.map((column) => (
+                <th key={`${block.teamName}-${column.index}`} className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-white/60 whitespace-nowrap">
+                  {column.label}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0
-              ? <tr><td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">No records. Adjust filters and click Refresh.</td></tr>
-              : rows.map((r, idx) => (
-                <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx % 2 !== 0 ? "bg-white/2" : ""}`}>
-                  <td className="px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
-                  <td className="px-3 py-2.5 font-mono text-blue-400">{r.ticketNo || "—"}</td>
-                  <td className="px-3 py-2.5">{r.user}</td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.userType}</td>
-                  <td className="px-3 py-2.5">{r.location}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{r.workDate}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{r.time}</td>
-                  <td className="px-3 py-2.5"><span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">{r.action}</span></td>
-                  <td className="px-3 py-2.5 text-right font-medium">{r.ticketsTodo}</td>
-                </tr>
-              ))}
+            {rows.map((row, rowIndex) => (
+              <tr key={`${block.teamName}-${rowIndex}`} className="border-b border-white/5 hover:bg-white/5">
+                <td className="px-3 py-2.5 text-white/55">{rowIndex + 1}</td>
+                {columns.map((column) => (
+                  <td key={`${block.teamName}-${rowIndex}-${column.index}`} className="px-3 py-2.5 text-white/85 whitespace-nowrap">
+                    {formatCsrCell(row.values[columns.findIndex((candidate) => candidate.index === column.index)])}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+export function DailyActivityReport({ mod, sub }: Props) {
+  const { sheetData, status, error } = useCsrWorkbook();
+  const [sheetName, setSheetName] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [personName, setPersonName] = useState("");
+  const [search, setSearch] = useState("");
+  const hasInitializedTeam = useRef(false);
+  const hasInitializedPerson = useRef(false);
+
+  useEffect(() => {
+    if (!sheetName && sheetData.length > 0) {
+      setSheetName(sheetData[0].sheetName);
+    }
+  }, [sheetData, sheetName]);
+
+  const activeSheet = useMemo(
+    () => sheetData.find((sheet) => sheet.sheetName === sheetName) ?? sheetData[0] ?? null,
+    [sheetData, sheetName],
+  );
+
+  const teamOptions = useMemo(() => activeSheet?.blocks.map((block) => block.teamName) ?? [], [activeSheet]);
+  const personOptions = useMemo(() => {
+    if (!activeSheet) return [];
+    const rows = activeSheet.blocks
+      .filter((block) => !teamName || block.teamName === teamName)
+      .flatMap((block) => {
+        const nameIndex = getColumnIndex(block.columns, ["Full Name", "Name"]);
+        return block.rows.map((row) => formatCsrCell(row.values[nameIndex === -1 ? 0 : nameIndex]));
+      })
+      .filter(Boolean);
+
+    return Array.from(new Set(rows));
+  }, [activeSheet, teamName]);
+
+  useEffect(() => {
+    if (!activeSheet) return;
+    if (teamName && !teamOptions.includes(teamName)) {
+      setTeamName(teamOptions[0] ?? "");
+      return;
+    }
+    if (!hasInitializedTeam.current && !teamName && teamOptions.length > 0) {
+      hasInitializedTeam.current = true;
+      setTeamName(teamOptions[0] ?? "");
+    }
+  }, [activeSheet, teamName, teamOptions]);
+
+  useEffect(() => {
+    if (personName && !personOptions.includes(personName)) {
+      setPersonName(personOptions[0] ?? "");
+      return;
+    }
+    if (!hasInitializedPerson.current && !personName && personOptions.length > 0) {
+      hasInitializedPerson.current = true;
+      setPersonName(personOptions[0] ?? "");
+    }
+  }, [personName, personOptions]);
+
+  const visibleBlocks = useMemo(() => {
+    if (!activeSheet) return [];
+    const searchValue = search.toLowerCase();
+    return activeSheet.blocks.filter((block) => {
+      if (teamName && block.teamName !== teamName) return false;
+      const nameIndex = getColumnIndex(block.columns, ["Full Name", "Name"]);
+      return block.rows.some((row) => {
+        const rowName = formatCsrCell(row.values[nameIndex === -1 ? 0 : nameIndex]);
+        const matchesPerson = !personName || rowName === personName;
+        const matchesSearch = !searchValue || block.teamName.toLowerCase().includes(searchValue) || row.searchText.includes(searchValue);
+        return matchesPerson && matchesSearch;
+      });
+    });
+  }, [activeSheet, personName, search, teamName]);
+
+  const summary = useMemo(() => {
+    const rows = visibleBlocks.flatMap((block) => block.rows);
+    return {
+      teams: visibleBlocks.length,
+      members: rows.length,
+      schedule: visibleBlocks.reduce((sum, block) => sum + block.totals.schedule, 0),
+      attempt: visibleBlocks.reduce((sum, block) => sum + block.totals.attempt, 0),
+      update: visibleBlocks.reduce((sum, block) => sum + block.totals.update, 0),
+    };
+  }, [visibleBlocks]);
+
+  if (status === "loading") {
+    return (
+      <main className="max-w-350 mx-auto px-4 py-6">
+        <div className="panel text-center py-16 text-muted-foreground">Loading CSR workbook…</div>
+      </main>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <main className="max-w-350 mx-auto px-4 py-6">
+        <div className="panel text-center py-16 text-red-300">{error}</div>
+      </main>
+    );
+  }
+
+  const sheetLabel = activeSheet ? `${activeSheet.label} (${activeSheet.sheetName})` : "Workbook";
+
+  return (
+    <main className="max-w-350 mx-auto px-4 py-6 space-y-5">
+      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
+        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">Report</Link><span>›</span>
+        <span className="text-foreground font-medium">CSR Individual Report</span>
+      </div>
+      <div className="flex items-center gap-3 mb-5">
+        <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4" /></Link>
+        <div>
+          <h1 className="text-xl font-bold">CSR Individual Report</h1>
+          <p className="text-sm text-muted-foreground">Workbook view for {sheetLabel}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+        <SummaryCard label="Teams" value={summary.teams} icon={Users} />
+        <SummaryCard label="Members" value={summary.members} icon={ClipboardList} />
+        <SummaryCard label="Schedule" value={summary.schedule.toLocaleString()} icon={BarChart3} />
+        <SummaryCard label="Update" value={summary.update.toLocaleString()} icon={BarChart3} />
+      </div>
+
+      <div className="panel space-y-4">
+        <div className="grid gap-3 lg:grid-cols-4">
+          <div className="space-y-1.5">
+            <label htmlFor="csr-sheet" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date Sheet</label>
+            <select id="csr-sheet" value={sheetName} onChange={(event) => setSheetName(event.target.value)} className="glass-input w-full rounded-md px-3 py-2 text-sm">
+              {sheetData.map((sheet) => (
+                <option key={sheet.sheetName} value={sheet.sheetName}>
+                  {sheet.label} ({sheet.sheetName})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="csr-team" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Team</label>
+            <select id="csr-team" value={teamName} onChange={(event) => setTeamName(event.target.value)} className="glass-input w-full rounded-md px-3 py-2 text-sm">
+              <option value="">All teams</option>
+              {teamOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="csr-person" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">CSR</label>
+            <select id="csr-person" value={personName} onChange={(event) => setPersonName(event.target.value)} className="glass-input w-full rounded-md px-3 py-2 text-sm">
+              <option value="">All CSRs</option>
+              {personOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="csr-search" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Search</label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                id="csr-search"
+                type="search"
+                placeholder="Search rows"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="glass-input w-full rounded-md py-2 pl-9 pr-3 text-sm"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setTeamName("");
+              setPersonName("");
+              if (sheetData[0]) setSheetName(sheetData[0].sheetName);
+            }}
+            className="btn btn-primary flex items-center gap-2 px-5"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />Reset filters
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {visibleBlocks.length === 0 ? (
+          <div className="panel py-16 text-center text-muted-foreground">No CSR rows match the current filters.</div>
+        ) : (
+          visibleBlocks.map((block) => <BlockTable key={block.teamName} block={block} search={search} person={personName} />)
+        )}
       </div>
     </main>
   );

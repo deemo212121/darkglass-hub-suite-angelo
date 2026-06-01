@@ -1,9 +1,35 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
+
+type TicketCopyPayload = {
+  ticketNo: string;
+  source: string;
+  customerName: string;
+  primaryPhone: string;
+  secondaryPhone: string;
+  email1: string;
+  address: string;
+  city: string;
+  zipCode: string;
+  state: string;
+  addressNote: string;
+  model: string;
+  serialNo: string;
+  modelVersion: string;
+  brand: string;
+  productCategory: string;
+  purchaseDate: string;
+  warrantyType: string;
+  cxPreferredDate: string;
+  callTakenDate: string;
+  problemDescription: string;
+};
+
+const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 
 const SOURCES = [
   "Call in",
@@ -74,6 +100,31 @@ export function NewTicketPage({ mod, sub }: Props) {
   const update = <K extends keyof typeof DEFAULT_FORM>(key: K, value: (typeof DEFAULT_FORM)[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const copyToken = searchParams.get("copyToken");
+    if (!copyToken) return;
+
+    const storageKey = `${TICKET_COPY_KEY_PREFIX}${copyToken}`;
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return;
+
+    try {
+      const payload = JSON.parse(raw) as TicketCopyPayload;
+      setForm((current) => ({
+        ...current,
+        ...payload,
+      }));
+      setStatus(`Loaded from copied ticket ${payload.ticketNo}.`);
+    } catch {
+      setStatus("Unable to load copied ticket data.");
+    } finally {
+      window.localStorage.removeItem(storageKey);
+    }
+  }, []);
 
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-6">

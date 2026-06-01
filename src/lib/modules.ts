@@ -716,7 +716,7 @@ const claimsMod: ModuleDef = {
     },
     {
       slug: "authorization-status",
-      title: "Authorization Statusá´¸á´¾",
+      title: "Authorization Status",
       description: "Track authorization requests and approval status.",
       custom: "authorization-status" as any,
       fields: [
@@ -824,7 +824,7 @@ const claimsMod: ModuleDef = {
     },
     {
       slug: "encompass-claim-audit",
-      title: "Encompass Claim Audit Reportá´¸á´¸",
+      title: "Encompass Claim Audit Report",
       description: "Encompass claim audit and reconciliation report.",
       fields: [
         { key: "claimNo", label: "Claim No", filterable: true },
@@ -906,7 +906,7 @@ const claimsMod: ModuleDef = {
     },
     {
       slug: "repair-code-restriction",
-      title: "(A) Repair Code Restrictioná´¸á´¸",
+      title: "(A) Repair Code Restriction",
       description: "Admin repair code restriction rules by claim company.",
       fields: [
         { key: "claimCompany", label: "Claim Company", type: "select", options: CLAIM_COMPANIES, filterable: true },
@@ -1125,8 +1125,8 @@ const reportMod: ModuleDef = {
     },
     {
       slug: "daily-activity-report",
-      title: "Daily Activity Report",
-      description: "Daily operational activities and totals.",
+      title: "CSR Individual Report",
+      description: "Workbook-backed individual CSR activity details.",
       custom: "daily-activity-report" as any,
       fields: [
         { key: "date", label: "Date", type: "date", filterable: true },
@@ -1148,8 +1148,8 @@ const reportMod: ModuleDef = {
     },
     {
       slug: "csr-daily-work",
-      title: "CSR Daily Work",
-      description: "Customer service representative daily log.",
+      title: "CSR Team Report",
+      description: "Workbook-backed team activity and summary view.",
       custom: "csr-daily-work" as any,
       fields: [
         { key: "date", label: "Date", type: "date", filterable: true },

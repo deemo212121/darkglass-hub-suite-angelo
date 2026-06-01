@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
 import { Copy } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 interface TicketData {
   ticketNo: string;
@@ -57,6 +58,76 @@ interface CompensationRow {
   lastModifiedBy: string;
 }
 
+interface PartTransactionRow {
+  id: string;
+  partNo: string;
+  partDist: string;
+  partDesc: string;
+  poNo: string;
+  poDate: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  quantity: string;
+  partPrice: string;
+  coreValue: string;
+  shipCost: string;
+  markup: string;
+  totalMarkup: string;
+  claimTo: string;
+  status: string;
+  note: string;
+  visitId: string;
+  orderNo: string;
+  eta: string;
+  inTracking: string;
+  raDate: string;
+  raNo: string;
+  outTracking: string;
+  creditNo: string;
+  hold: string;
+  cxPaid: string;
+  createdBy: string;
+  lastModifiedBy: string;
+}
+
+type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">;
+
+interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  by: string;
+  action: string;
+  field: string;
+  before: string;
+  after: string;
+}
+
+interface VisitLogEntry {
+  id: string;
+  visitNo: string;
+  timestamp: string;
+  updatedAt?: string;
+  by: string;
+  scheduleDate: string;
+  technician: string;
+  timeSlot: string;
+  activity: string;
+  actionType: string;
+  repairStatus: string;
+  repairType: string;
+  reclaim: string;
+  visited: string;
+  notCompleted: string;
+  symptomCx: string;
+  diagnosis: string;
+  symptomTech: string;
+  resolution: string;
+  nonCompletionReason: string;
+  triageNote: string;
+  status: string;
+  note: string;
+}
+
 type TicketCopyPayload = {
   ticketNo: string;
   source: string;
@@ -82,6 +153,303 @@ type TicketCopyPayload = {
 };
 
 const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
+const TICKET_AUDIT_KEY_PREFIX = "ahs:ticket-audit:";
+const TICKET_VISIT_LOG_KEY_PREFIX = "ahs:ticket-visit-log:";
+const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
+
+function formatAuditValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function getAuditKey(ticketNo: string) {
+  return `${TICKET_AUDIT_KEY_PREFIX}${ticketNo}`;
+}
+
+function loadAuditEntries(ticketNo: string) {
+  if (typeof window === "undefined") return [] as AuditLogEntry[];
+
+  const raw = window.localStorage.getItem(getAuditKey(ticketNo));
+  if (!raw) return [] as AuditLogEntry[];
+
+  try {
+    const parsed = JSON.parse(raw) as AuditLogEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as AuditLogEntry[];
+  }
+}
+
+function saveAuditEntries(ticketNo: string, entries: AuditLogEntry[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getAuditKey(ticketNo), JSON.stringify(entries));
+}
+
+function getVisitLogKey(ticketNo: string) {
+  return `${TICKET_VISIT_LOG_KEY_PREFIX}${ticketNo}`;
+}
+
+function getPartLogKey(ticketNo: string) {
+  return `${TICKET_PART_LOG_KEY_PREFIX}${ticketNo}`;
+}
+
+function createEmptyPartDraft(): PartTransactionDraft {
+  return {
+    partNo: "",
+    partDist: "",
+    partDesc: "",
+    poNo: "",
+    poDate: "",
+    invoiceNo: "",
+    invoiceDate: "",
+    quantity: "1",
+    partPrice: "",
+    coreValue: "",
+    shipCost: "",
+    markup: "",
+    totalMarkup: "",
+    claimTo: "",
+    status: "",
+    note: "",
+    visitId: "",
+    orderNo: "",
+    eta: "",
+    inTracking: "",
+    raDate: "",
+    raNo: "",
+    outTracking: "",
+    creditNo: "",
+    hold: "No",
+    cxPaid: "No",
+  };
+}
+
+function loadVisitLogEntries(ticketNo: string) {
+  if (typeof window === "undefined") return [] as VisitLogEntry[];
+
+  const raw = window.localStorage.getItem(getVisitLogKey(ticketNo));
+  if (!raw) return [] as VisitLogEntry[];
+
+  try {
+    const parsed = JSON.parse(raw) as VisitLogEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as VisitLogEntry[];
+  }
+}
+
+function saveVisitLogEntries(ticketNo: string, entries: VisitLogEntry[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getVisitLogKey(ticketNo), JSON.stringify(entries));
+}
+
+function loadPartRows(ticketNo: string) {
+  if (typeof window === "undefined") return [] as PartTransactionRow[];
+
+  const raw = window.localStorage.getItem(getPartLogKey(ticketNo));
+  if (!raw) return [] as PartTransactionRow[];
+
+  try {
+    const parsed = JSON.parse(raw) as PartTransactionRow[];
+    return Array.isArray(parsed) ? parsed.map((row) => normalizePartRow(row)) : [];
+  } catch {
+    return [] as PartTransactionRow[];
+  }
+}
+
+function savePartRows(ticketNo: string, rows: PartTransactionRow[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getPartLogKey(ticketNo), JSON.stringify(rows));
+}
+
+function normalizePartRow(row: Partial<PartTransactionRow> & { id: string }): PartTransactionRow {
+  return {
+    id: row.id,
+    partNo: row.partNo || "",
+    partDist: row.partDist || "",
+    partDesc: row.partDesc || "",
+    poNo: row.poNo || "",
+    poDate: row.poDate || "",
+    invoiceNo: row.invoiceNo || "",
+    invoiceDate: row.invoiceDate || "",
+    quantity: row.quantity || "",
+    partPrice: row.partPrice || "",
+    coreValue: row.coreValue || "",
+    shipCost: row.shipCost || "",
+    markup: row.markup || "",
+    totalMarkup: row.totalMarkup || "",
+    claimTo: row.claimTo || "",
+    status: row.status || "",
+    note: row.note || "",
+    visitId: row.visitId || "",
+    orderNo: row.orderNo || "",
+    eta: row.eta || "",
+    inTracking: row.inTracking || "",
+    raDate: row.raDate || "",
+    raNo: row.raNo || "",
+    outTracking: row.outTracking || "",
+    creditNo: row.creditNo || "",
+    hold: row.hold || "No",
+    cxPaid: row.cxPaid || "No",
+    createdBy: row.createdBy || "Current User",
+    lastModifiedBy: row.lastModifiedBy || row.createdBy || "Current User",
+  };
+}
+
+function getNextVisitNumber(entries: VisitLogEntry[]) {
+  const nextIndex = entries.reduce((max, entry) => {
+    const numeric = Number.parseInt(entry.visitNo.replace(/\D/g, ""), 10);
+    return Number.isFinite(numeric) ? Math.max(max, numeric) : max;
+  }, 0) + 1;
+
+  return `V${nextIndex}`;
+}
+
+function createVisitLogEntry(params: Omit<VisitLogEntry, "id" | "timestamp">): VisitLogEntry {
+  return {
+    id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    timestamp: new Date().toISOString(),
+    ...params,
+  };
+}
+
+function createPartRow(params: Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy"> & { createdBy: string; lastModifiedBy: string }): PartTransactionRow {
+  return {
+    id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    ...params,
+  };
+}
+
+function summarizeVisitEntry(entry: VisitLogEntry) {
+  return [
+    ["Visit No", entry.visitNo],
+    ["Schedule Date", entry.scheduleDate],
+    ["Technician", entry.technician],
+    ["Time Slot", entry.timeSlot],
+    ["Activity", entry.activity],
+    ["Action Type", entry.actionType],
+    ["Repair Status", entry.repairStatus],
+    ["Repair Type", entry.repairType],
+    ["Reclaim", entry.reclaim],
+    ["Visited", entry.visited],
+    ["Not Completed", entry.notCompleted],
+    ["Symptom (Cx)", entry.symptomCx],
+    ["Diagnosis", entry.diagnosis],
+    ["Symptom (Tech)", entry.symptomTech],
+    ["Resolution", entry.resolution],
+    ["Non-Completion Reason", entry.nonCompletionReason],
+    ["Triage Note", entry.triageNote],
+    ["Internal Note", entry.note],
+  ]
+    .map(([label, value]) => `${label}: ${formatAuditValue(value)}`)
+    .join(" | ");
+}
+
+function renderVisitSummary(summary: string, comparedSummary?: string) {
+  const summaryParts = summary.split(" | ");
+  const comparedParts = comparedSummary?.split(" | ") ?? [];
+
+  return summaryParts.map((part, index) => {
+    const isChanged = comparedSummary ? comparedParts[index] !== part : false;
+
+    return (
+      <span
+        key={`${part}-${index}`}
+        className={isChanged
+          ? "mt-1 block rounded-md bg-amber-500/10 px-1.5 py-0.5 font-semibold text-amber-200"
+          : "block whitespace-pre-wrap text-slate-200"}
+      >
+        {isChanged ? part : part}
+      </span>
+    );
+  });
+}
+
+function summarizePartRow(row: PartTransactionRow) {
+  return [
+    ["Part No", row.partNo],
+    ["Part Dist", row.partDist],
+    ["Part Desc", row.partDesc],
+    ["PO No", row.poNo],
+    ["P/O Date", row.poDate],
+    ["Invoice No", row.invoiceNo],
+    ["Invoice Date", row.invoiceDate],
+    ["Qty", row.quantity],
+    ["Part Price", row.partPrice],
+    ["Core Value", row.coreValue],
+    ["Ship Cost", row.shipCost],
+    ["Markup", row.markup],
+    ["Total (Markup)", row.totalMarkup],
+    ["Claim To", row.claimTo],
+    ["Status", row.status],
+    ["Note", row.note],
+    ["Visit ID", row.visitId],
+    ["Order #", row.orderNo],
+    ["ETA", row.eta],
+    ["In Tracking #", row.inTracking],
+    ["RA Date", row.raDate],
+    ["RA #", row.raNo],
+    ["Out Tracking #", row.outTracking],
+    ["Credit #", row.creditNo],
+    ["Hold", row.hold],
+    ["Cx Paid", row.cxPaid],
+  ]
+    .map(([label, value]) => `${label}: ${formatAuditValue(value)}`)
+    .join(" | ");
+}
+
+function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): AuditLogEntry {
+  return {
+    id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    timestamp: new Date().toISOString(),
+    ...params,
+  };
+}
+
+const COMPENSATION_FIELD_LABELS: Record<keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
+  item: "Compensation Item",
+  beneficiary: "Beneficiary",
+  amount: "Amount",
+  rate: "Rate",
+  activityDate: "Activity Date",
+  requiresClaimOrCxPayment: "Requires Approved Claim / Requires Cx Payment",
+  comment: "Comment",
+};
+
+const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
+  partNo: "Part No",
+  partDist: "Part Dist.",
+  partDesc: "Part Desc",
+  poNo: "PO No",
+  poDate: "P/O Date",
+  invoiceNo: "Invoice No",
+  invoiceDate: "Invoice Date",
+  quantity: "Qty",
+  partPrice: "Part Price",
+  coreValue: "Core Value",
+  shipCost: "Ship Cost",
+  markup: "Markup",
+  totalMarkup: "Total (Markup)",
+  claimTo: "Claim To",
+  status: "Status",
+  note: "Note",
+  visitId: "Visit ID",
+  orderNo: "Order #",
+  eta: "ETA",
+  inTracking: "In Tracking #",
+  raDate: "RA Date",
+  raNo: "RA #",
+  outTracking: "Out Tracking #",
+  creditNo: "Credit #",
+  hold: "Hold",
+  cxPaid: "Cx Paid",
+};
 
 const DEFAULT_TICKET: TicketData = {
   ticketNo: "017151274136",
@@ -339,10 +707,39 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
+  const { email: currentUserEmail } = useAuth();
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
+  const [newVisitStatus, setNewVisitStatus] = useState("Visited");
+  const [newVisitNote, setNewVisitNote] = useState("");
+  const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
+  const [newVisitTechnician, setNewVisitTechnician] = useState("");
+  const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
+  const [newVisitActivity, setNewVisitActivity] = useState("");
+  const [newVisitActionType, setNewVisitActionType] = useState("Visited");
+  const [newVisitRepairStatus, setNewVisitRepairStatus] = useState("");
+  const [newVisitRepairType, setNewVisitRepairType] = useState("");
+  const [newVisitReclaim, setNewVisitReclaim] = useState("");
+  const [newVisitVisited, setNewVisitVisited] = useState("Visited");
+  const [newVisitNotCompleted, setNewVisitNotCompleted] = useState("No");
+  const [newVisitSymptomCx, setNewVisitSymptomCx] = useState("");
+  const [newVisitDiagnosis, setNewVisitDiagnosis] = useState("");
+  const [newVisitSymptomTech, setNewVisitSymptomTech] = useState("");
+  const [newVisitResolution, setNewVisitResolution] = useState("");
+  const [newVisitNonCompletionReason, setNewVisitNonCompletionReason] = useState("");
+  const [newVisitTriageNote, setNewVisitTriageNote] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
-  const currentEditor = "Current User";
+  const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
+  const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
+  const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
+  const [viewingVisitEntry, setViewingVisitEntry] = useState<VisitLogEntry | null>(null);
+  const currentEditor = currentUserEmail ?? "Current User";
+  const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
+  const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
+  const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
+  const [partRowsLoaded, setPartRowsLoaded] = useState(false);
+  const [editingPartId, setEditingPartId] = useState<string | null>(null);
+  const [partDraft, setPartDraft] = useState<PartTransactionDraft>(createEmptyPartDraft());
   const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
     {
       id: "comp-1",
@@ -357,6 +754,46 @@ function TicketDetailsPage() {
       lastModifiedBy: currentEditor,
     },
   ]);
+
+  useEffect(() => {
+    setAuditEntries(loadAuditEntries(ticketNo));
+    setVisitLogEntries(loadVisitLogEntries(ticketNo));
+    setPartRowsLoaded(false);
+    setPartRows(loadPartRows(ticketNo));
+    setEditingPartId(null);
+    setPartDraft(createEmptyPartDraft());
+  }, [ticketNo]);
+
+  useEffect(() => {
+    saveAuditEntries(ticketNo, auditEntries);
+  }, [auditEntries, ticketNo]);
+
+  useEffect(() => {
+    saveVisitLogEntries(ticketNo, visitLogEntries);
+  }, [ticketNo, visitLogEntries]);
+
+  useEffect(() => {
+    if (!partRowsLoaded) {
+      setPartRowsLoaded(true);
+      return;
+    }
+
+    savePartRows(ticketNo, partRows);
+  }, [partRows, partRowsLoaded, ticketNo]);
+
+  const appendAuditEntry = (entry: Omit<AuditLogEntry, "id" | "timestamp">) => {
+    setAuditEntries((entries) => [createAuditEntry(entry), ...entries]);
+  };
+
+  const auditCountLabel = useMemo(() => `${auditEntries.length} change${auditEntries.length === 1 ? "" : "s"} logged`, [auditEntries.length]);
+  const partAuditEntries = useMemo(
+    () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
+    [auditEntries],
+  );
+  const partCountLabel = useMemo(
+    () => `${partRows.length} distinct record${partRows.length === 1 ? "" : "s"} found`,
+    [partRows.length],
+  );
 
   const handleTicketChange = (newTicketNo: string) => {
     if (newTicketNo.trim()) {
@@ -388,11 +825,313 @@ function TicketDetailsPage() {
         notes: newServicerNote,
         by: "Current User",
       });
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Added servicer note",
+        field: "Servicer Notes",
+        before: "—",
+        after: newServicerNote.trim(),
+      });
       setNewServicerNote("");
     }
   };
 
+  const addVisitLogEntry = () => {
+    if (visitFormMode === "view") {
+      return;
+    }
+
+    const trimmedNote = newVisitNote.trim();
+    if (!newVisitScheduleDate || !newVisitTechnician) return;
+
+    const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
+
+    const visitEntry: VisitLogEntry = {
+      ...(existingVisit ?? createVisitLogEntry({
+        visitNo: getNextVisitNumber(visitLogEntries),
+        by: currentEditor,
+        scheduleDate: newVisitScheduleDate,
+        technician: newVisitTechnician,
+        timeSlot: newVisitTimeSlot,
+        activity: newVisitActivity,
+        actionType: newVisitActionType,
+        repairStatus: newVisitRepairStatus,
+        repairType: newVisitRepairType,
+        reclaim: newVisitReclaim,
+        visited: newVisitVisited,
+        notCompleted: newVisitNotCompleted,
+        symptomCx: newVisitSymptomCx,
+        diagnosis: newVisitDiagnosis,
+        symptomTech: newVisitSymptomTech,
+        resolution: newVisitResolution,
+        nonCompletionReason: newVisitNonCompletionReason,
+        triageNote: newVisitTriageNote,
+        status: newVisitStatus,
+        note: trimmedNote,
+      })),
+      by: currentEditor,
+      scheduleDate: newVisitScheduleDate,
+      technician: newVisitTechnician,
+      timeSlot: newVisitTimeSlot,
+      activity: newVisitActivity,
+      actionType: newVisitActionType,
+      repairStatus: newVisitRepairStatus,
+      repairType: newVisitRepairType,
+      reclaim: newVisitReclaim,
+      visited: newVisitVisited,
+      notCompleted: newVisitNotCompleted,
+      symptomCx: newVisitSymptomCx,
+      diagnosis: newVisitDiagnosis,
+      symptomTech: newVisitSymptomTech,
+      resolution: newVisitResolution,
+      nonCompletionReason: newVisitNonCompletionReason,
+      triageNote: newVisitTriageNote,
+      status: newVisitStatus,
+      note: trimmedNote,
+    };
+
+    visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
+
+    setVisitLogEntries((entries) => {
+      if (editingVisitId) {
+        return entries.map((entry) => (entry.id === editingVisitId ? visitEntry : entry));
+      }
+
+      return [visitEntry, ...entries];
+    });
+    appendAuditEntry({
+      by: currentEditor,
+      action: editingVisitId ? "Updated visit log" : "Added visit log",
+      field: "Visit Log",
+      before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
+      after: summarizeVisitEntry(visitEntry),
+    });
+    clearVisitForm();
+    setIsVisitModalOpen(false);
+  };
+
+  const clearVisitForm = () => {
+    setEditingVisitId(null);
+    setVisitFormMode("edit");
+    setNewVisitNote("");
+    setNewVisitStatus("Visited");
+    setNewVisitScheduleDate("");
+    setNewVisitTechnician("");
+    setNewVisitTimeSlot("");
+    setNewVisitActivity("");
+    setNewVisitActionType("Visited");
+    setNewVisitRepairStatus("");
+    setNewVisitRepairType("");
+    setNewVisitReclaim("");
+    setNewVisitVisited("Visited");
+    setNewVisitNotCompleted("No");
+    setNewVisitSymptomCx("");
+    setNewVisitDiagnosis("");
+    setNewVisitSymptomTech("");
+    setNewVisitResolution("");
+    setNewVisitNonCompletionReason("");
+    setNewVisitTriageNote("");
+  };
+
+  const openVisitCreateModal = () => {
+    clearVisitForm();
+    setIsVisitModalOpen(true);
+  };
+
+  const openVisitEditModal = (entry: VisitLogEntry) => {
+    loadVisitForEdit(entry);
+    setIsVisitModalOpen(true);
+  };
+
+  const loadVisitForEdit = (entry: VisitLogEntry) => {
+    setVisitFormMode("edit");
+    setEditingVisitId(entry.id);
+    setNewVisitStatus(entry.status || "Visited");
+    setNewVisitNote(entry.note || "");
+    setNewVisitScheduleDate(entry.scheduleDate || "");
+    setNewVisitTechnician(entry.technician || "");
+    setNewVisitTimeSlot(entry.timeSlot || "");
+    setNewVisitActivity(entry.activity || "");
+    setNewVisitActionType(entry.actionType || "Visited");
+    setNewVisitRepairStatus(entry.repairStatus || "");
+    setNewVisitRepairType(entry.repairType || "");
+    setNewVisitReclaim(entry.reclaim || "");
+    setNewVisitVisited(entry.visited || "Visited");
+    setNewVisitNotCompleted(entry.notCompleted || "No");
+    setNewVisitSymptomCx(entry.symptomCx || "");
+    setNewVisitDiagnosis(entry.diagnosis || "");
+    setNewVisitSymptomTech(entry.symptomTech || "");
+    setNewVisitResolution(entry.resolution || "");
+    setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
+    setNewVisitTriageNote(entry.triageNote || "");
+  };
+
+  const loadVisitForView = (entry: VisitLogEntry) => {
+    setVisitFormMode("view");
+    setEditingVisitId(null);
+    setViewingVisitEntry(entry);
+  };
+
+  const deleteVisitLogEntry = (visitId: string) => {
+    if (!confirm("Remove this visit log entry?")) return;
+
+    const entryToDelete = visitLogEntries.find((entry) => entry.id === visitId) ?? null;
+    setVisitLogEntries((entries) => entries.filter((entry) => entry.id !== visitId));
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Deleted visit log",
+      field: "Visit Log",
+      before: entryToDelete ? summarizeVisitEntry(entryToDelete) : "—",
+      after: "Removed",
+    });
+
+    if (editingVisitId === visitId) {
+      clearVisitForm();
+    }
+  };
+
+  const closeVisitView = () => {
+    setViewingVisitEntry(null);
+    setVisitFormMode("edit");
+  };
+
+  const closeVisitModal = () => {
+    setIsVisitModalOpen(false);
+    clearVisitForm();
+  };
+
+  const clearPartForm = () => {
+    setEditingPartId(null);
+    setPartDraft(createEmptyPartDraft());
+  };
+
+  const loadPartForEdit = (row: PartTransactionRow) => {
+    setEditingPartId(row.id);
+    setPartDraft({
+      partNo: row.partNo || "",
+      partDist: row.partDist || "",
+      partDesc: row.partDesc || "",
+      poNo: row.poNo || "",
+      poDate: row.poDate || "",
+      invoiceNo: row.invoiceNo || "",
+      invoiceDate: row.invoiceDate || "",
+      quantity: row.quantity || "1",
+      partPrice: row.partPrice || "",
+      coreValue: row.coreValue || "",
+      shipCost: row.shipCost || "",
+      markup: row.markup || "",
+      totalMarkup: row.totalMarkup || "",
+      claimTo: row.claimTo || "",
+      status: row.status || "",
+      note: row.note || "",
+      visitId: row.visitId || "",
+      orderNo: row.orderNo || "",
+      eta: row.eta || "",
+      inTracking: row.inTracking || "",
+      raDate: row.raDate || "",
+      raNo: row.raNo || "",
+      outTracking: row.outTracking || "",
+      creditNo: row.creditNo || "",
+      hold: row.hold || "No",
+      cxPaid: row.cxPaid || "No",
+    });
+  };
+
+  const savePartRow = () => {
+    if (!partDraft.partNo.trim() || !partDraft.partDist.trim() || !partDraft.quantity.trim() || !partDraft.status.trim() || !partDraft.visitId.trim()) return;
+
+    const rowId = editingPartId ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
+
+    const totalMarkup = partDraft.totalMarkup.trim() || [partDraft.partPrice, partDraft.markup]
+      .filter((value) => value.trim())
+      .join(" + ");
+
+    const nextRow: PartTransactionRow = {
+      id: rowId,
+      partNo: partDraft.partNo.trim(),
+      partDist: partDraft.partDist.trim(),
+      partDesc: partDraft.partDesc.trim(),
+      poNo: partDraft.poNo.trim(),
+      poDate: partDraft.poDate.trim(),
+      invoiceNo: partDraft.invoiceNo.trim(),
+      invoiceDate: partDraft.invoiceDate.trim(),
+      quantity: partDraft.quantity.trim(),
+      partPrice: partDraft.partPrice.trim(),
+      coreValue: partDraft.coreValue.trim(),
+      shipCost: partDraft.shipCost.trim(),
+      markup: partDraft.markup.trim(),
+      totalMarkup,
+      claimTo: partDraft.claimTo.trim(),
+      status: partDraft.status.trim(),
+      note: partDraft.note.trim(),
+      visitId: partDraft.visitId.trim(),
+      orderNo: partDraft.orderNo.trim(),
+      eta: partDraft.eta.trim(),
+      inTracking: partDraft.inTracking.trim(),
+      raDate: partDraft.raDate.trim(),
+      raNo: partDraft.raNo.trim(),
+      outTracking: partDraft.outTracking.trim(),
+      creditNo: partDraft.creditNo.trim(),
+      hold: partDraft.hold.trim() || "No",
+      cxPaid: partDraft.cxPaid.trim() || "No",
+      createdBy: editingPartId ? (partRows.find((row) => row.id === editingPartId)?.createdBy || currentEditor) : currentEditor,
+      lastModifiedBy: currentEditor,
+    };
+
+    setPartRows((rows) => {
+      if (editingPartId) {
+        const existingRow = rows.find((row) => row.id === editingPartId) ?? null;
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Updated part transaction",
+          field: "Part Transaction",
+          before: existingRow ? summarizePartRow(existingRow) : "—",
+          after: summarizePartRow(nextRow),
+        });
+        return rows.map((row) => (row.id === editingPartId ? nextRow : row));
+      }
+
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Added part transaction",
+        field: "Part Transaction",
+        before: "—",
+        after: summarizePartRow(nextRow),
+      });
+      return [nextRow, ...rows];
+    });
+
+    clearPartForm();
+  };
+
+  const deletePartRow = (rowId: string) => {
+    if (!confirm("Remove this part transaction?")) return;
+
+    const rowToDelete = partRows.find((row) => row.id === rowId) ?? null;
+    setPartRows((rows) => rows.filter((row) => row.id !== rowId));
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Deleted part transaction",
+      field: "Part Transaction",
+      before: rowToDelete ? summarizePartRow(rowToDelete) : "—",
+      after: "Removed",
+    });
+
+    if (editingPartId === rowId) {
+      clearPartForm();
+    }
+  };
+
   const addCompensationRow = () => {
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Added compensation row",
+      field: "Compensation Grid",
+      before: "—",
+      after: "Blank row created",
+    });
     setCompensationRows((rows) => [
       ...rows,
       {
@@ -424,19 +1163,30 @@ function TicketDetailsPage() {
   const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
     setCompensationRows((rows) =>
       rows.map((row) =>
-        row.id === rowId
-          ? {
-              ...row,
-              [field]: value,
-              lastModifiedBy: currentEditor,
-            }
-          : row,
+        row.id === rowId ? (() => {
+          const previousValue = row[field];
+          if (previousValue !== value) {
+            appendAuditEntry({
+              by: currentEditor,
+              action: "Updated compensation row",
+              field: COMPENSATION_FIELD_LABELS[field],
+              before: formatAuditValue(previousValue),
+              after: formatAuditValue(value),
+            });
+          }
+
+          return {
+            ...row,
+            [field]: value,
+            lastModifiedBy: currentEditor,
+          };
+        })() : row,
       ),
     );
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <>
       <AppHeader />
       <main className="flex-1 bg-slate-950 py-6">
         <div className="max-w-6xl mx-auto px-6">
@@ -798,7 +1548,327 @@ function TicketDetailsPage() {
                   <div className="text-white mt-1">NONE</div>
                 </div>
               </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" onClick={openVisitCreateModal} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
+                  Add Visit
+                </button>
+              </div>
+              <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+                {visitFormMode === "view" ? (
+                  <div className="mb-3 rounded-md border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-200">
+                    Viewing a saved visit. Use Edit on the row to make changes.
+                  </div>
+                ) : null}
+                
+
+                <div className="mt-4 border-t border-white/10 pt-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Visit History
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      {visitLogEntries.length} record{visitLogEntries.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {visitLogEntries.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-white/10 px-4 py-6 text-center text-sm text-slate-400">
+                        No visit logs yet.
+                      </div>
+                    ) : (
+                      visitLogEntries.map((entry) => (
+                        <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <div className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</div>
+                              <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
+                            </div>
+                            <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
+                          </div>
+                          {entry.updatedAt ? (
+                            <div className="mt-1 text-xs text-amber-200">Edited: {new Date(entry.updatedAt).toLocaleString()}</div>
+                          ) : null}
+                          <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-2 xl:grid-cols-3">
+                            <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Activity:</span> {entry.activity || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Visited:</span> {entry.visited || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Not Completed?:</span> {entry.notCompleted || "—"}</div>
+                          </div>
+                          <div className="mt-3 grid gap-2 text-sm text-slate-200 md:grid-cols-2">
+                            <p><span className="font-semibold text-slate-400">Symptom (Cx):</span> {entry.symptomCx || "—"}</p>
+                            <p><span className="font-semibold text-slate-400">Diagnosis:</span> {entry.diagnosis || "—"}</p>
+                            <p><span className="font-semibold text-slate-400">Symptom (Tech):</span> {entry.symptomTech || "—"}</p>
+                            <p><span className="font-semibold text-slate-400">Resolution:</span> {entry.resolution || "—"}</p>
+                            <p><span className="font-semibold text-slate-400">Repair Type:</span> {entry.repairType || "—"}</p>
+                            <p><span className="font-semibold text-slate-400">Reclaim:</span> {entry.reclaim || "—"}</p>
+                          </div>
+                          <p className="mt-3 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Note:</span> {entry.note || "—"}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {entry.nonCompletionReason || "—"}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Triage Note:</span> {entry.triageNote || "—"}</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button type="button" onClick={() => loadVisitForView(entry)} className="rounded-md border border-white/15 bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-200/40">
+                              View
+                            </button>
+                            <button type="button" onClick={() => openVisitEditModal(entry)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/25">
+                              Edit
+                            </button>
+                            <button type="button" onClick={() => deleteVisitLogEntry(entry.id)} className="rounded-md border border-rose-400/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/25">
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+              {isVisitModalOpen ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                  <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          {editingVisitId ? "Edit Visit" : "Add Visit"}
+                        </p>
+                        <h3 className="text-xl font-bold text-white">
+                          {editingVisitId ? `Visit ${visitLogEntries.find((entry) => entry.id === editingVisitId)?.visitNo || ""}` : getNextVisitNumber(visitLogEntries)}
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={closeVisitModal}
+                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+                      {visitFormMode === "view" ? (
+                        <div className="mb-3 rounded-md border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-200">
+                          Viewing a saved visit. Use Edit on the row to make changes.
+                        </div>
+                      ) : null}
+                      <fieldset disabled={visitFormMode === "view"} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-schedule-date-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule Date *</label>
+                          <input id="visit-schedule-date-modal" type="date" value={newVisitScheduleDate} onChange={(event) => setNewVisitScheduleDate(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Technician *</label>
+                          <select id="visit-technician-modal" value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            {ALL_TECHNICIANS.map((technician) => (
+                              <option key={technician} value={technician}>{technician}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot</label>
+                          <select id="visit-time-slot-modal" value={newVisitTimeSlot} onChange={(event) => setNewVisitTimeSlot(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            <option>AM</option>
+                            <option>PM</option>
+                            <option>ALL DAY</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-activity-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Activity</label>
+                          <input id="visit-activity-modal" type="text" value={newVisitActivity} onChange={(event) => setNewVisitActivity(event.target.value)} placeholder="e.g. 1.0 hr" className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-action-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action Type *</label>
+                          <select id="visit-action-type-modal" value={newVisitActionType} onChange={(event) => setNewVisitActionType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            <option>Visited</option>
+                            <option>Cx Conf.</option>
+                            <option>Not Completed</option>
+                            <option>Cancelled</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Status *</label>
+                          <select id="visit-repair-status-modal" value={newVisitRepairStatus} onChange={(event) => setNewVisitRepairStatus(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            <option>CL-Need Cancel</option>
+                            <option>CL-Parts Back Ordered</option>
+                            <option>CL-Ready to Complete</option>
+                            <option>CSR-Acknowledged</option>
+                            <option>CSR-Assigned to ASC</option>
+                            <option>CSR-Left Message for Cx</option>
+                            <option>CSR-Needs Scheduling</option>
+                            <option>OP-Ready for Service</option>
+                            <option>OP-Reschedule Follow up</option>
+                            <option>OP-UPDATE HOLD</option>
+                            <option>OP-Waiting for Part</option>
+                            <option>PT-Need PreAuthorization</option>
+                            <option>TR-Need PO</option>
+                            <option>TR-Need Triage</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-repair-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Type (2nd Tech)</label>
+                          <input id="visit-repair-type-modal" type="text" value={newVisitRepairType} onChange={(event) => setNewVisitRepairType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-reclaim-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reclaim</label>
+                          <input id="visit-reclaim-modal" type="text" value={newVisitReclaim} onChange={(event) => setNewVisitReclaim(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-visited-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Visited</label>
+                          <select id="visit-visited-modal" value={newVisitVisited} onChange={(event) => setNewVisitVisited(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            <option>Visited</option>
+                            <option>Not Visited</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-not-completed-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Not Completed?</label>
+                          <input id="visit-not-completed-modal" type="text" value={newVisitNotCompleted} onChange={(event) => setNewVisitNotCompleted(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-symptom-cx-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Symptom (Cx)</label>
+                          <textarea id="visit-symptom-cx-modal" value={newVisitSymptomCx} onChange={(event) => setNewVisitSymptomCx(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-diagnosis-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Diagnosis</label>
+                          <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-symptom-tech-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Symptom (Tech)</label>
+                          <textarea id="visit-symptom-tech-modal" value={newVisitSymptomTech} onChange={(event) => setNewVisitSymptomTech(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Resolution</label>
+                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
+                          <textarea id="visit-non-completion-reason-modal" value={newVisitNonCompletionReason} onChange={(event) => setNewVisitNonCompletionReason(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-triage-note-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Triage Note</label>
+                          <textarea id="visit-triage-note-modal" value={newVisitTriageNote} onChange={(event) => setNewVisitTriageNote(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-note-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Internal Note</label>
+                          <textarea id="visit-note-modal" value={newVisitNote} onChange={(event) => setNewVisitNote(event.target.value)} placeholder="Record what happened during the visit" className="min-h-24 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" />
+                        </div>
+                      </fieldset>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {visitFormMode === "view" ? (
+                          <button type="button" onClick={closeVisitModal} className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40">
+                            Close View
+                          </button>
+                        ) : (
+                          <button type="button" onClick={addVisitLogEntry} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
+                            {editingVisitId ? "Update Visit" : "Save Visit"}
+                          </button>
+                        )}
+                        {editingVisitId && visitFormMode !== "view" ? (
+                          <button type="button" onClick={clearVisitForm} className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40">
+                            Cancel Edit
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
             </div>
+
+            {viewingVisitEntry ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Visit Details</p>
+                      <h3 className="text-xl font-bold text-white">{viewingVisitEntry.actionType} / {viewingVisitEntry.repairStatus || "No status"}</h3>
+                      <p className="mt-1 text-sm text-slate-400">{new Date(viewingVisitEntry.timestamp).toLocaleString()} by {viewingVisitEntry.by}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeVisitView}
+                      className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {viewingVisitEntry.updatedAt ? (
+                    <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                      Edited: {new Date(viewingVisitEntry.updatedAt).toLocaleString()}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3 text-sm text-slate-200">
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Schedule Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Activity:</span> {viewingVisitEntry.activity || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Visited:</span> {viewingVisitEntry.visited || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Not Completed?:</span> {viewingVisitEntry.notCompleted || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Symptom (Cx):</span> {viewingVisitEntry.symptomCx || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Diagnosis:</span> {viewingVisitEntry.diagnosis || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Symptom (Tech):</span> {viewingVisitEntry.symptomTech || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Resolution:</span> {viewingVisitEntry.resolution || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Repair Type:</span> {viewingVisitEntry.repairType || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Reclaim:</span> {viewingVisitEntry.reclaim || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Note:</span> {viewingVisitEntry.note || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {viewingVisitEntry.nonCompletionReason || "—"}</div>
+                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Triage Note:</span> {viewingVisitEntry.triageNote || "—"}</div>
+                  </div>
+
+                  <div className="mt-6 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Change Log</div>
+                        <div className="text-sm text-slate-300">Every tracked edit on this ticket</div>
+                      </div>
+                      <div className="text-xs font-semibold text-blue-300">{auditCountLabel}</div>
+                    </div>
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Time</th>
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Changed By</th>
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Action</th>
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Field</th>
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Before</th>
+                            <th className="px-4 py-3 text-left font-semibold text-blue-300">After</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {auditEntries.length === 0 ? (
+                            <tr className="border-b border-white/5">
+                              <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                                No tracked changes yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            auditEntries.map((entry) => (
+                              <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 align-top">
+                                <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{new Date(entry.timestamp).toLocaleString()}</td>
+                                <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{entry.by}</td>
+                                <td className="px-4 py-3 text-slate-300">{entry.action}</td>
+                                <td className="px-4 py-3 text-slate-300">{entry.field}</td>
+                                <td className="px-4 py-3 text-slate-400">{renderVisitSummary(entry.before)}</td>
+                                <td className="px-4 py-3 text-slate-200">{renderVisitSummary(entry.after, entry.before)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {/* Visit Details Table */}
             <div>
@@ -837,35 +1907,271 @@ function TicketDetailsPage() {
 
             {/* Part Transaction */}
             <div>
-              <h4 className="font-semibold text-slate-300 mb-4">Part Transaction</h4>
-              <div className="space-y-4 mb-4">
-                <div>
-                  <label className="text-slate-500 font-semibold">Model Code</label>
-                  <div className="text-white mt-1">GTX33EASKWW</div>
-                </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <h4 className="font-semibold text-slate-300">Part Transaction</h4>
+                <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
               </div>
-              <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3 mb-3 text-sm text-slate-400">
-                0 distinct record found
-              </div>
+
               <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-sm">
+                <table className="w-full text-xs" style={{ minWidth: "1700px" }}>
+                  {/* Two-row header */}
                   <thead>
-                    <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">ID</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Part No*</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Desc</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">PO No</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Qty*</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Status*</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
+                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
+                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part No*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Dist.*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Description</th>
+                      <th className="px-2 py-2 text-left font-semibold">PO No</th>
+                      <th className="px-2 py-2 text-left font-semibold">P/O Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice No</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Qty*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Price</th>
+                      <th className="px-2 py-2 text-left font-semibold">Core Value</th>
+                      <th className="px-2 py-2 text-left font-semibold">Ship Cost</th>
+                      <th className="px-2 py-2 text-left font-semibold">Markup</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim To</th>
+                    </tr>
+                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
+                      <th className="px-2 py-2 text-left font-semibold">Part Status*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Note</th>
+                      <th className="px-2 py-2 text-left font-semibold">Visit ID*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Order #</th>
+                      <th className="px-2 py-2 text-left font-semibold">ETA</th>
+                      <th className="px-2 py-2 text-left font-semibold">In Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Out Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Credit #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Total (Markup)</th>
+                      <th className="px-2 py-2 text-left font-semibold">Hold</th>
+                      <th className="px-2 py-2 text-left font-semibold">Cx Paid</th>
+                      <th className="px-2 py-2 text-left font-semibold">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    <tr className="border-b border-white/5 hover:bg-white/5">
-                      <td colSpan={7} className="px-4 py-8 text-center text-slate-400">No parts recorded</td>
+                  <tbody className="divide-y divide-white/5">
+                    {/* ── Add / Edit inline row ── */}
+                    <tr className="bg-slate-900/60 align-top">
+                      <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Part No*" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+                          <option value="">Dist.*</option>
+                          <option>Encompass</option>
+                          <option>RepairClinic</option>
+                          <option>PartSelect</option>
+                          <option>Marcone</option>
+                          <option>Johnstone</option>
+                          <option>Other</option>
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.partDesc} onChange={(e) => setPartDraft((d) => ({ ...d, partDesc: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.poNo} onChange={(e) => setPartDraft((d) => ({ ...d, poNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="PO No" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input type="date" value={partDraft.poDate} onChange={(e) => setPartDraft((d) => ({ ...d, poDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.invoiceNo} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Invoice No" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input type="date" value={partDraft.invoiceDate} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.quantity} onChange={(e) => setPartDraft((d) => ({ ...d, quantity: e.target.value }))} className="w-20 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Qty*" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.partPrice} onChange={(e) => setPartDraft((d) => ({ ...d, partPrice: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.coreValue} onChange={(e) => setPartDraft((d) => ({ ...d, coreValue: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.shipCost} onChange={(e) => setPartDraft((d) => ({ ...d, shipCost: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.markup} onChange={(e) => setPartDraft((d) => ({ ...d, markup: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="0%" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.claimTo} onChange={(e) => setPartDraft((d) => ({ ...d, claimTo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Claim To" />
+                      </td>
                     </tr>
+                    <tr className="bg-slate-900/40 align-top border-b border-white/10">
+                      <td className="px-1 py-1.5">
+                        <select value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+                          <option value="">Status*</option>
+                          <option>Back Order</option>
+                          <option>Cancelled</option>
+                          <option>Claimed</option>
+                          <option>CX Home</option>
+                          <option>Cx Received</option>
+                          <option>Defective</option>
+                          <option>Hold for Estimation</option>
+                          <option>Hold for next vist</option>
+                          <option>Lost</option>
+                          <option>Need PO</option>
+                          <option>Not Used &amp; Stocked</option>
+                          <option>PAID</option>
+                          <option>Part Ready</option>
+                          <option>PO Made</option>
+                          <option>RA - Defect</option>
+                          <option>RA- DMG</option>
+                          <option>RA - PNN</option>
+                          <option>RA - Qty Discrepancy</option>
+                          <option>SQT Received</option>
+                          <option>Tech Pickup</option>
+                          <option>Used</option>
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.note} onChange={(e) => setPartDraft((d) => ({ ...d, note: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Visit ID*" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.orderNo} onChange={(e) => setPartDraft((d) => ({ ...d, orderNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Order #" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input type="date" value={partDraft.eta} onChange={(e) => setPartDraft((d) => ({ ...d, eta: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.inTracking} onChange={(e) => setPartDraft((d) => ({ ...d, inTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="In Track #" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input type="date" value={partDraft.raDate} onChange={(e) => setPartDraft((d) => ({ ...d, raDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.raNo} onChange={(e) => setPartDraft((d) => ({ ...d, raNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="RA #" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.outTracking} onChange={(e) => setPartDraft((d) => ({ ...d, outTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Out Track #" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={partDraft.creditNo} onChange={(e) => setPartDraft((d) => ({ ...d, creditNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Credit #" />
+                      </td>
+                      <td className="px-2 py-1.5 text-slate-400 text-xs whitespace-nowrap">
+                        {partDraft.totalMarkup ? `$${partDraft.totalMarkup}` : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <input type="checkbox" checked={partDraft.hold === "Hold"} onChange={(e) => setPartDraft((d) => ({ ...d, hold: e.target.checked ? "Hold" : "No" }))} className="accent-blue-500" />
+                        <div className="text-slate-500 text-[10px]">Hold</div>
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <input type="checkbox" checked={partDraft.cxPaid === "Paid"} onChange={(e) => setPartDraft((d) => ({ ...d, cxPaid: e.target.checked ? "Paid" : "No" }))} className="accent-blue-500" />
+                        <div className="text-slate-500 text-[10px]">Paid</div>
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        <button type="button" onClick={savePartRow} className="rounded border border-blue-400/40 bg-blue-600/30 px-3 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-600/50 transition">
+                          {editingPartId ? "Update" : "Add"}
+                        </button>
+                        {editingPartId ? (
+                          <button type="button" onClick={clearPartForm} className="ml-1 rounded border border-white/15 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition">
+                            Cancel
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+
+                    {/* ── Saved rows (2 sub-rows each) ── */}
+                    {partRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
+                      </tr>
+                    ) : (
+                      partRows.map((row, index) => (
+                        <React.Fragment key={row.id}>
+                          <tr className="bg-slate-900/30 align-top" className="bg-slate-900/30 align-top">
+                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>P{index + 1}</td>
+                            <td className="px-2 py-1.5 text-blue-300 font-semibold">{row.partNo}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.partDist || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.partDesc || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.poNo || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.poDate || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.invoiceNo || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.invoiceDate || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.quantity || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.partPrice ? `$${row.partPrice}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.coreValue ? `$${row.coreValue}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.shipCost ? `$${row.shipCost}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.markup ? `${row.markup}%` : "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.claimTo || "—"}</td>
+                          </tr>
+                          <tr className="bg-slate-900/20 align-top border-b border-white/5">
+                            <td className="px-2 py-1.5 text-blue-300 font-semibold">{row.status || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-400 italic">{row.note || ""}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.visitId || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.orderNo || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.eta || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.inTracking || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.raDate || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.raNo || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.outTracking || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.creditNo || "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">{row.totalMarkup ? `Markup: $${row.totalMarkup}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-center text-slate-400">{row.hold === "Hold" ? <span className="rounded bg-amber-500/20 px-1 text-amber-300">Hold</span> : "—"}</td>
+                            <td className="px-2 py-1.5 text-center text-slate-400">{row.cxPaid === "Paid" ? <span className="rounded bg-green-500/20 px-1 text-green-300">Paid</span> : "—"}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              <button type="button" onClick={() => loadPartForEdit(row)} className="rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition mr-1">
+                                Edit
+                              </button>
+                              <button type="button" onClick={() => deletePartRow(row.id)} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/20 transition">
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      ))
+                    )}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="mt-6 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Part Change Log</div>
+                    <div className="text-sm text-slate-300">Every tracked edit on this part transaction list</div>
+                  </div>
+                  <div className="text-xs font-semibold text-blue-300">{partAuditEntries.length} change{partAuditEntries.length === 1 ? "" : "s"} logged</div>
+                </div>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Time</th>
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Changed By</th>
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Action</th>
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Field</th>
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Before</th>
+                        <th className="px-4 py-3 text-left font-semibold text-blue-300">After</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {partAuditEntries.length === 0 ? (
+                        <tr className="border-b border-white/5">
+                          <td colSpan={6} className="px-4 py-8 text-center text-slate-400">No part changes tracked yet.</td>
+                        </tr>
+                      ) : (
+                        partAuditEntries.map((entry) => (
+                          <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 align-top">
+                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{new Date(entry.timestamp).toLocaleString()}</td>
+                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{entry.by}</td>
+                            <td className="px-4 py-3 text-slate-300">{entry.action}</td>
+                            <td className="px-4 py-3 text-slate-300">{entry.field}</td>
+                            <td className="px-4 py-3 text-slate-400">{renderVisitSummary(entry.before)}</td>
+                            <td className="px-4 py-3 text-slate-200">{renderVisitSummary(entry.after, entry.before)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
@@ -1121,6 +2427,6 @@ function TicketDetailsPage() {
       </main>
 
       <Footer />
-    </div>
+    </>
   );
 }

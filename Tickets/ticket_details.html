@@ -2467,10 +2467,28 @@ Tennessee
 		let visitsList = [];
 		let visitsCounter = 0;
 		let currentVisitTicketNo = null;
+		let currentVisitMode = 'edit';
 		const VISIT_TECHNICIANS = [
 			{ name: 'Daven Hodge', label: 'Daven Hodge (3/3)' },
 			{ name: 'Jordan Koetsier', label: 'Jordan Koetsier (2/2)' }
 		];
+
+		function setVisitModalReadonly(isReadonly) {
+			const modal = document.getElementById('visitModal');
+			if (!modal) return;
+			modal.querySelectorAll('input, select, textarea').forEach((el) => {
+				if (el.id === 'vmEditId') return;
+				el.disabled = isReadonly;
+			});
+			const saveBtn = document.getElementById('visitSaveBtn');
+			if (saveBtn) {
+				saveBtn.style.display = isReadonly ? 'none' : '';
+			}
+			const cancelBtn = document.getElementById('visitCancelBtn');
+			if (cancelBtn) {
+				cancelBtn.textContent = isReadonly ? 'Close' : 'Cancel';
+			}
+		}
 
 		async function loadVisitsFromSupabase(ticketNo) {
 			currentVisitTicketNo = ticketNo;
@@ -2557,7 +2575,8 @@ Tennessee
 			}
 		}
 
-		function openVisitModal(editId) {
+		function openVisitModal(editId, mode = 'edit') {
+			currentVisitMode = mode;
 			const overlay = document.getElementById('visitModalOverlay');
 			const title   = document.getElementById('visitModalTitle');
 			const technicianSelect = document.getElementById('vmTechnician');
@@ -2585,7 +2604,7 @@ Tennessee
 				const v = visitsList.find(v => v.id === editId);
 				if (!v) return;
 				document.getElementById('vmEditId').value              = editId;
-				title.textContent                                       = 'Edit Visit';
+				title.textContent                                       = mode === 'view' ? 'View Visit' : 'Edit Visit';
 				document.getElementById('vmScheduleDate').value        = v.scheduleDate || '';
 				if (technicianSelect) technicianSelect.value = v.technician || '';
 				document.getElementById('vmTimeSlot').value            = v.timeSlot || '';
@@ -2607,10 +2626,14 @@ Tennessee
 				title.textContent = 'Add Visit';
 			}
 
+			setVisitModalReadonly(mode === 'view');
+
 			overlay.style.display = 'flex';
 		}
 
 		function closeVisitModal() {
+			setVisitModalReadonly(false);
+			currentVisitMode = 'edit';
 			document.getElementById('visitModalOverlay').style.display = 'none';
 		}
 
@@ -2619,6 +2642,11 @@ Tennessee
 		}
 
 		async function saveVisit() {
+			if (currentVisitMode === 'view') {
+				closeVisitModal();
+				return;
+			}
+
 			const technician = document.getElementById('vmTechnician').value.trim();
 			if (!technician) { alert('Technician is required.'); return; }
 
@@ -2706,6 +2734,7 @@ Tennessee
 					<td>${v.notCompleted}</td>
 					<td>
 						<button class="part-edit-btn" type="button" onclick="openVisitModal('${v.id}')">Edit</button>
+						<button class="part-edit-btn" type="button" onclick="openVisitModal('${v.id}', 'view')">View</button>
 						<button class="part-del-btn"  type="button" onclick="deleteVisit('${v.id}')">Del</button>
 					</td>
 				</tr>`;
@@ -2978,8 +3007,8 @@ Tennessee
 				</div>
 			</div>
 			<div class="pm-actions">
-				<button class="pm-cancel-btn" type="button" onclick="closeVisitModal()">Cancel</button>
-				<button class="pm-save-btn" type="button" onclick="saveVisit()">Save Visit</button>
+				<button id="visitCancelBtn" class="pm-cancel-btn" type="button" onclick="closeVisitModal()">Cancel</button>
+				<button id="visitSaveBtn" class="pm-save-btn" type="button" onclick="saveVisit()">Save Visit</button>
 			</div>
 		</div>
 	</div>

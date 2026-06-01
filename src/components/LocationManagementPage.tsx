@@ -4,7 +4,7 @@ import ashevilleCoverageCsv from "../../grid_coverage/asheville.csv?raw";
 import memphisCoverageCsv from "../../grid_coverage/memphis.csv?raw";
 import { normalizeLocationName } from "@/lib/locations";
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc";
 
 type LocationRow = {
   id: string;
@@ -43,6 +43,33 @@ type CoverageRow = {
   selfSchedule: string;
   daysLater: string;
   tierCode: string;
+};
+
+type MapPoint = {
+  lat: number;
+  lng: number;
+};
+
+type MapZipGeometry = {
+  center: MapPoint;
+  viewport: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  } | null;
+};
+
+type CoverageZipGeoJson = {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    geometry: {
+      type: "Polygon" | "MultiPolygon";
+      coordinates: any;
+    };
+    properties: Record<string, any>;
+  }>;
 };
 
 const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
@@ -257,9 +284,9 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const nextCoverageId = nextNumericId(coverageRows, 1);
   const coverageMapContainerRef = useRef<HTMLDivElement | null>(null);
   const coverageMapRef = useRef<any>(null);
-  const coverageMarkerRefs = useRef<any[]>([]);
-  const coverageCircleRefs = useRef<any[]>([]);
-  const coverageGeocodeCacheRef = useRef(new Map<string, { lat: number; lng: number } | null>());
+  const coverageGeocodeCacheRef = useRef(new Map<string, MapZipGeometry | null>());
+  const coverageZipGeoJsonCacheRef = useRef(new Map<string, CoverageZipGeoJson | null>());
+  const coverageOverlayRefs = useRef<any[]>([]);
 
   const filteredLocations = useMemo(() => {
     const query = locationSearch.trim().toLowerCase();
@@ -325,12 +352,18 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       const maps = (window as Window & { google?: any }).google?.maps;
       if (!maps) return;
 
-      if (!coverageMapRef.current) {
+      // Always re-create the map if the container div has changed (tab remount)
+      if (
+        !coverageMapRef.current ||
+        coverageMapRef.current.getDiv() !== coverageMapContainerRef.current
+      ) {
         coverageMapRef.current = new maps.Map(coverageMapContainerRef.current, {
           center: { lat: 37.0902, lng: -95.7129 },
           zoom: 4,
           mapTypeId: maps.MapTypeId.ROADMAP,
-          disableDefaultUI: true,
+          disableDefaultUI: false,
+          zoomControl: true,
+          mapTypeControl: true,
           gestureHandling: "greedy",
         });
       }
@@ -366,6 +399,9 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
     return () => {
       cancelled = true;
+      // Reset so map re-attaches correctly on next tab visit
+      coverageMapRef.current = null;
+      setCoverageMapReady(false);
     };
   }, [activeTab]);
 
@@ -375,78 +411,137 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     const maps = (window as Window & { google?: any }).google?.maps;
     if (!maps) return;
 
-    coverageMarkerRefs.current.forEach((marker) => marker.setMap(null));
-    coverageCircleRefs.current.forEach((circle) => circle.setMap(null));
-    coverageMarkerRefs.current = [];
-    coverageCircleRefs.current = [];
+    coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
+    coverageOverlayRefs.current = [];
 
-    const geocoder = new maps.Geocoder();
-    const geocode = (address: string) => new Promise<{ lat: number; lng: number } | null>((resolve) => {
-      geocoder.geocode({ address }, (results: any, status: string) => {
-        if (status === "OK" && results?.[0]) {
-          const location = results[0].geometry.location;
-          resolve({ lat: location.lat(), lng: location.lng() });
-          return;
-        }
-        resolve(null);
-      });
-    });
+    const mapData = coverageMapRef.current.data as any;
+    mapData.forEach((feature: any) => mapData.remove(feature));
 
     let cancelled = false;
     const bounds = new maps.LatLngBounds();
+    const geocoder = new maps.Geocoder();
 
-    Promise.all(
-      selectedLocationCoverage.map(async (row) => {
-        const cacheKey = `${row.location}:${row.zipCode}`;
-        if (coverageGeocodeCacheRef.current.has(cacheKey)) {
-          return { row, position: coverageGeocodeCacheRef.current.get(cacheKey) };
-        }
-
-        const position = await geocode(`${row.zipCode}, ${row.city || row.location}`);
-        coverageGeocodeCacheRef.current.set(cacheKey, position);
-        return { row, position };
-      }),
-    ).then((results) => {
-      if (cancelled || !coverageMapRef.current) return;
-
-      results.forEach(({ row, position }, index) => {
-        if (!position) return;
-
-        const marker = new maps.Marker({
-          map: coverageMapRef.current,
-          position,
-          title: `${row.zipCode} ${row.city || row.location}`,
-          label: String(index + 1),
+    const geocodeZip = (zipCode: string) =>
+      new Promise<MapZipGeometry | null>((resolve) => {
+        geocoder.geocode({ address: `${zipCode}, USA` }, (results: any, status: string) => {
+          if (status === "OK" && results?.[0]?.geometry?.location) {
+            const location = results[0].geometry.location;
+            const viewport = results[0].geometry.viewport;
+            resolve({
+              center: { lat: location.lat(), lng: location.lng() },
+              viewport: viewport
+                ? {
+                    north: viewport.getNorthEast().lat(),
+                    east: viewport.getNorthEast().lng(),
+                    south: viewport.getSouthWest().lat(),
+                    west: viewport.getSouthWest().lng(),
+                  }
+                : null,
+            });
+            return;
+          }
+          resolve(null);
         });
-
-        const circle = new maps.Circle({
-          map: coverageMapRef.current,
-          center: position,
-          radius: 2500,
-          fillColor: "#60a5fa",
-          fillOpacity: 0.22,
-          strokeColor: "#93c5fd",
-          strokeOpacity: 0.65,
-          strokeWeight: 1,
-        });
-
-        coverageMarkerRefs.current.push(marker);
-        coverageCircleRefs.current.push(circle);
-        bounds.extend(position);
       });
 
-      if (!bounds.isEmpty()) {
-        coverageMapRef.current.fitBounds(bounds);
-      } else {
-        coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
-        coverageMapRef.current.setZoom(4);
+    const fetchZipPoint = async (zipCode: string): Promise<MapZipGeometry | null> => {
+      if (coverageGeocodeCacheRef.current.has(zipCode)) {
+        return coverageGeocodeCacheRef.current.get(zipCode) ?? null;
       }
-    });
+      const point = await geocodeZip(zipCode);
+      coverageGeocodeCacheRef.current.set(zipCode, point);
+      return point;
+    };
+
+    const fetchZipGeoJson = async (zipCode: string): Promise<CoverageZipGeoJson | null> => {
+      if (coverageZipGeoJsonCacheRef.current.has(zipCode)) {
+        return coverageZipGeoJsonCacheRef.current.get(zipCode) ?? null;
+      }
+
+      try {
+        const where = encodeURIComponent(`ZCTA5='${zipCode}'`);
+        const url =
+          "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Census2020/MapServer/84/query" +
+          `?where=${where}&outFields=ZCTA5&returnGeometry=true&f=geojson&outSR=4326`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          coverageZipGeoJsonCacheRef.current.set(zipCode, null);
+          return null;
+        }
+
+        const geojson = (await response.json()) as CoverageZipGeoJson;
+        const result = Array.isArray(geojson.features) && geojson.features.length > 0 ? geojson : null;
+        coverageZipGeoJsonCacheRef.current.set(zipCode, result);
+        return result;
+      } catch {
+        coverageZipGeoJsonCacheRef.current.set(zipCode, null);
+        return null;
+      }
+    };
+
+    const uniqueZipCodes = Array.from(
+      new Set(selectedLocationCoverage.map((row) => String(row.zipCode || "").trim()).filter(Boolean)),
+    );
+
+    const fillPalette = [
+      "#2d6a4f",
+      "#40916c",
+      "#1b4332",
+      "#52796f",
+      "#2f855a",
+      "#3f8f7a",
+    ];
+
+    Promise.all(
+      uniqueZipCodes.map(async (zipCode) => {
+        const [point, geojson] = await Promise.all([fetchZipPoint(zipCode), fetchZipGeoJson(zipCode)]);
+        return { zipCode, point, geojson };
+      }),
+    ).then((results) => {
+        if (cancelled || !coverageMapRef.current) return;
+
+        const validPoints = results
+          .map((result) => result.point)
+          .filter((point): point is MapZipGeometry => Boolean(point));
+
+        mapData.setStyle((feature: any) => {
+          const zip = String(feature.getProperty("ZCTA5") ?? "");
+          const index = uniqueZipCodes.indexOf(zip);
+          const fillColor = fillPalette[(index >= 0 ? index : 0) % fillPalette.length];
+          return {
+            fillColor,
+            fillOpacity: 0.35,
+            strokeColor: "#0f172a",
+            strokeOpacity: 0.6,
+            strokeWeight: 1,
+          };
+        });
+
+        validPoints.forEach((point) => {
+          bounds.extend(point.center);
+        });
+
+        results.forEach((result) => {
+          if (!result.geojson) return;
+          mapData.addGeoJson(result.geojson);
+        });
+
+        if (!bounds.isEmpty()) {
+          coverageMapRef.current.fitBounds(bounds, { padding: 40 });
+        } else {
+          coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
+          coverageMapRef.current.setZoom(4);
+          setCoverageMapError("No geocodable zip codes found for this location.");
+        }
+      });
 
     return () => {
       cancelled = true;
+      coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
+      coverageOverlayRefs.current = [];
+      mapData.forEach((feature: any) => mapData.remove(feature));
     };
-  }, [activeTab, coverageMapReady, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageMarkerRefs, coverageCircleRefs]);
+  }, [activeTab, coverageMapReady, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef]);
 
   const addLocationRow = () => {
     if (!newLocationRow.location.trim()) return;
