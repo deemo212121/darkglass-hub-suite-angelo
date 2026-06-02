@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import ashevilleCoverageCsv from "../../grid_coverage/asheville.csv?raw";
-import memphisCoverageCsv from "../../grid_coverage/memphis.csv?raw";
 import { normalizeLocationName } from "@/lib/locations";
+
+const coverageCsvModules = import.meta.glob("../../grid_coverage/*.csv", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+}) as Record<string, string>;
 
 const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc";
 
@@ -15,13 +19,22 @@ type LocationRow = {
   state: string;
   zipCode: string;
   office: string;
+  coordinates?: string;
   phoneNo: string;
   email: string;
   defaultPartDist: string;
   repTech: string;
+  officeLocation?: string;
+  checkProcessing?: "Y" | "N";
+  creditCardProcessing?: "Y" | "N";
+  permission?: "Y" | "N";
   sms: "Y" | "N";
   emailFlag: "Y" | "N";
   autoTriage: "Y" | "N";
+  encompassPickupWH?: "Y" | "N";
+  availableDays?: string[];
+  availableTimeSlot?: string;
+  coveredTechnicians?: string[];
 };
 
 type PartAddressRow = {
@@ -78,6 +91,371 @@ const COVERAGE_STORAGE_KEY = "ahs:location-management:coverage";
 
 const YES_NO_OPTIONS = ["Y", "N"] as const;
 
+const STATE_OPTIONS = [
+  { value: "AL", label: "AL - Alabama" },
+  { value: "AK", label: "AK - Alaska" },
+  { value: "AZ", label: "AZ - Arizona" },
+  { value: "AR", label: "AR - Arkansas" },
+  { value: "CA", label: "CA - California" },
+  { value: "CO", label: "CO - Colorado" },
+  { value: "CT", label: "CT - Connecticut" },
+  { value: "DE", label: "DE - Delaware" },
+  { value: "DL", label: "DL" },
+  { value: "DC", label: "DC - District of Columbia" },
+  { value: "FL", label: "FL - Florida" },
+  { value: "GA", label: "GA - Georgia" },
+  { value: "HI", label: "HI - Hawaii" },
+  { value: "ID", label: "ID - Idaho" },
+  { value: "IL", label: "IL - Illinois" },
+  { value: "IN", label: "IN - Indiana" },
+  { value: "IA", label: "IA - Iowa" },
+  { value: "KS", label: "KS - Kansas" },
+  { value: "KY", label: "KY - Kentucky" },
+  { value: "LA", label: "LA - Louisiana" },
+  { value: "ME", label: "ME - Maine" },
+  { value: "MD", label: "MD - Maryland" },
+  { value: "MA", label: "MA - Massachusetts" },
+  { value: "MI", label: "MI - Michigan" },
+  { value: "MN", label: "MN - Minnesota" },
+  { value: "MS", label: "MS - Mississippi" },
+  { value: "MO", label: "MO - Missouri" },
+  { value: "MT", label: "MT - Montana" },
+  { value: "NE", label: "NE - Nebraska" },
+  { value: "NV", label: "NV - Nevada" },
+  { value: "NH", label: "NH - New Hampshire" },
+  { value: "NJ", label: "NJ - New Jersey" },
+  { value: "NM", label: "NM - New Mexico" },
+  { value: "NY", label: "NY - New York" },
+  { value: "NC", label: "NC - North Carolina" },
+  { value: "ND", label: "ND - North Dakota" },
+  { value: "OH", label: "OH - Ohio" },
+  { value: "OK", label: "OK - Oklahoma" },
+  { value: "OR", label: "OR - Oregon" },
+  { value: "PA", label: "PA - Pennsylvania" },
+  { value: "PR", label: "PR - Puerto Rico" },
+  { value: "RI", label: "RI - Rhode Island" },
+  { value: "SC", label: "SC - South Carolina" },
+  { value: "SD", label: "SD - South Dakota" },
+  { value: "TN", label: "TN - Tennessee" },
+  { value: "TX", label: "TX - Texas" },
+  { value: "UT", label: "UT - Utah" },
+  { value: "VT", label: "VT - Vermont" },
+  { value: "VA", label: "VA - Virginia" },
+  { value: "WA", label: "WA - Washington" },
+  { value: "WV", label: "WV - West Virginia" },
+  { value: "WI", label: "WI - Wisconsin" },
+  { value: "WY", label: "WY - Wyoming" },
+];
+
+const DEFAULT_PART_DIST_OPTIONS = [
+  "AIG",
+  "Electrolux",
+  "Encompass",
+  "Encompass-Birmingham / Montgomery",
+  "GE",
+  "LG",
+  "Marcone- Birmingham / Montgomery",
+  "Marcone-162468",
+  "Midea",
+  "Miele",
+  "NSA",
+  "OWS",
+  "B",
+  "Sharp",
+  "SP",
+  "Squaretrade",
+  "SS",
+  "Available",
+].sort((left, right) => left.localeCompare(right));
+
+const AVAILABLE_DAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const AVAILABLE_TIME_SLOT_OPTIONS = ["ANY", "AM", "PM", "EV"];
+
+const OFFICE_LOCATION_OPTIONS = [
+  "Asheville",
+  "Atlanta",
+  "Birmingham",
+  "Cape Girardeau",
+  "Chattanooga",
+  "Columbus",
+  "Dallas",
+  "Destin",
+  "Huntsville",
+  "Jackson,MS",
+  "Jackson,TN",
+  "Jacksonville",
+  "Jonesboro",
+  "Knoxville",
+  "Lake Charles",
+  "Little Rock",
+  "Louisville",
+  "Memphis",
+  "Mobile",
+  "Montgomery",
+  "Nashville",
+  "New Orleans",
+  "Norfolk",
+  "Philippines",
+  "Raleigh",
+  "Richmond",
+  "San Antonio",
+  "Savannah",
+  "St. Louis",
+  "Tallahassee",
+  "Wilmington",
+];
+
+const TECHNICIAN_OPTIONS = [
+  "A'Dejaun Tyson",
+  "Abel Severino",
+  "Abraham Im",
+  "Alaska Olinger",
+  "Aleena Hii",
+  "Alex Myles",
+  "Alexxis Henry",
+  "Alexy Rayos",
+  "Alona Jane Bautista",
+  "Alyssa Diones",
+  "Amanda Simmons",
+  "Ana Jessa Vito",
+  "Andre Riddle",
+  "Andy Oh",
+  "Angelo Husain",
+  "Angelo Mendoza",
+  "Anna Dominique Dimacali",
+  "Anna Seo",
+  "Annan Odongo",
+  "Anne Murray Lorico",
+  "Anthony Leonard Cavett",
+  "Antonio Smith",
+  "Arnulfo Montesclaros Jr",
+  "Ashley Danica Barnuevo",
+  "Austin Ferguson",
+  "Baolin Henry Zhang",
+  "Blake Shinn",
+  "Bradley Hollowell",
+  "Brandon Phillips",
+  "Brye'shawn Butler",
+  "Calvin Nguyen",
+  "Cameron Forrest",
+  "Cheska Timkang",
+  "Chris Simpson",
+  "Christian Andrews",
+  "Christian Clark",
+  "Chrisipher Kennelley",
+  "Cleo Anne Lozano",
+  "Cole Mushinsky",
+  "Colleen Tac-on",
+  "Cooper Shaffett",
+  "Corey Cage",
+  "Crystal Dziedzic",
+  "Damon Ottley",
+  "Daniela Mercado",
+  "Danny Thornton",
+  "Darion Lewis",
+  "Darius Brown",
+  "Darrin Stewart",
+  "Darryel Burdette",
+  "Daven Hodge",
+  "David Lopez",
+  "David Sims",
+  "Demarkco Cody",
+  "Deprece Harris",
+  "Derious Nichols",
+  "Derrick Sargent",
+  "Dominic Holman",
+  "Donna Oliveros",
+  "Dustin Earls",
+  "Dylan Lano",
+  "Earl Eugene Anthony Napier",
+  "Edward Lindsey",
+  "Erick Guzman Juarez",
+  "Farahnaz Qasemi",
+  "Farris Bruce",
+  "Francis John Rebosura",
+  "Frederick Cabilao",
+  "Gabriel Talley",
+  "Garrett McCarley",
+  "Geneva Calomarde",
+  "Gerlyn Garcia",
+  "Gerrell Berg",
+  "Glaiza Marie Laurente",
+  "Hunter Burch",
+  "Ian Montesclaros",
+  "Jacob Christopher Blackburn",
+  "Jacob Reed",
+  "Jacob Rhodes",
+  "James Houston",
+  "Jamie Easter",
+  "Jason Bateman",
+  "Jason Casey",
+  "Javier Camel",
+  "Jaylon Yarbrough",
+  "Jayson Ricana",
+  "Jeff Lucas",
+  "Jenna Kim",
+  "Jenny Boy Ibale",
+  "Jenny Mahawan",
+  "Jerich Leonard",
+  "Jerwin Pineda",
+  "Jeryan Luzano",
+  "Jeselton Chu",
+  "Jhon Norban Rulona",
+  "Jo-Ann Lazarte",
+  "Job Christian Alberto",
+  "John Carl Cabahug",
+  "John Carlo Bicaldo",
+  "John Godfrey",
+  "John Maverick Nieto",
+  "John Oliver Degamo",
+  "Johnathan Wesley Allen",
+  "Jonathan Knox",
+  "Jonathon Allen",
+  "Jordan Brown",
+  "Jordan Calendacion",
+  "Jordan Davis",
+  "Jordan Koetsier",
+  "Jordan Stanley",
+  "Joseph Wease",
+  "Josh Malloch",
+  "Joshua Rhinehart",
+  "Joshua Silva",
+  "Joshua Williamson",
+  "Justin Alverez",
+  "Justin Parker",
+  "Justin Robertson",
+  "Kemuel Tamayo",
+  "Ken Ubay",
+  "Kenny Shin",
+  "Kevin Khaiphanliane",
+  "Kolby Fleck",
+  "Krista Griffiss",
+  "Kurt Merckel",
+  "Kyle Jomarc Sicat",
+  "Lance Novak",
+  "Lashamus Dowell",
+  "Lauren Andrews",
+  "Leo Sun",
+  "Leon Terrell Marsh",
+  "Lloyd Tombiga",
+  "Lois Lezarda",
+  "Lou Basco",
+  "Ma. Kristina Cabural",
+  "MaCzarina Lagumen",
+  "Marc James",
+  "Marie Frances Javier",
+  "Marjorie Valdez",
+  "Mark Marquez",
+  "Mary Renfrow",
+  "Mary Rose Labuanan",
+  "MaryGrace Cosio",
+  "Matt Simmons",
+  "Matthew Mccrary",
+  "Matthew Nichols",
+  "Memphis Admin",
+  "Mikkel Brown",
+  "Moniecris Dumanao",
+  "Mycha Landanganon",
+  "Nashville Admin",
+  "Nathan Napora",
+  "Nathan Wagner",
+  "Naveen Lakhani",
+  "Nicole Noval",
+  "Nocona Detten",
+  "Patrick Tendero",
+  "Percy Smith",
+  "Raul Bayuyos Jr",
+  "Reginald Stewart",
+  "Renz Marion Casilao",
+  "Rhona Lae Solivar",
+  "Richelle Labajo",
+  "Rico Shaw",
+  "Robert Gregory",
+  "Robyn Heredia",
+  "Rochelle Ortiz",
+  "Rocky Deles",
+  "Rogie Oliveros",
+  "Ryan Madison",
+  "Ryder Tourere",
+  "Sean Smith",
+  "Seven Grinis",
+  "Shane Marie Rebadomia",
+  "Shannon Thomas",
+  "Shiela Luciano",
+  "Shiela Marie Estrellado",
+  "Takiea Johnson",
+  "Terry Davis",
+  "Thaddaeus Springfield",
+  "Troy Willis",
+  "Tywon Ross",
+  "Wincel Franz Carusca",
+  "Zac Coisman",
+  "Zachary Gonzalez",
+  "Zakarya Moradi",
+  "Zonate Grant",
+];
+
+const COVERED_TECHNICIAN_OPTIONS = TECHNICIAN_OPTIONS;
+
+function toggleListValue(values: string[] | undefined, value: string) {
+  const current = values ?? [];
+  return current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+}
+
+function checkboxToYN(checked: boolean): "Y" | "N" {
+  return checked ? "Y" : "N";
+}
+
+function ynToCheckbox(value?: "Y" | "N") {
+  return value === "Y";
+}
+
+function findLocationByName(locationRows: LocationRow[], locationName: string) {
+  const normalizedLocationName = normalizeLocationKey(locationName);
+  if (!normalizedLocationName) return null;
+
+  return locationRows.find((row) => normalizeLocationKey(row.location) === normalizedLocationName) ?? DEFAULT_LOCATION_ROWS.find((row) => normalizeLocationKey(row.location) === normalizedLocationName) ?? null;
+}
+
+function applyOfficeLocationSelection(currentRow: LocationRow, officeLocation: string, locationRows: LocationRow[]) {
+  const matchedLocation = findLocationByName(locationRows, officeLocation);
+  if (!matchedLocation) {
+    return {
+      ...currentRow,
+      officeLocation,
+      location: officeLocation || currentRow.location,
+    };
+  }
+
+  return {
+    ...currentRow,
+    id: currentRow.id || matchedLocation.id,
+    location: matchedLocation.location,
+    office: matchedLocation.office || matchedLocation.location,
+    officeLocation: matchedLocation.location,
+    address1: matchedLocation.address1,
+    address2: matchedLocation.address2,
+    city: matchedLocation.city,
+    state: matchedLocation.state,
+    zipCode: matchedLocation.zipCode,
+    coordinates: matchedLocation.coordinates ?? currentRow.coordinates,
+    phoneNo: matchedLocation.phoneNo,
+    email: matchedLocation.email,
+    defaultPartDist: matchedLocation.defaultPartDist,
+    repTech: matchedLocation.repTech,
+    availableDays: matchedLocation.availableDays ?? currentRow.availableDays,
+    availableTimeSlot: matchedLocation.availableTimeSlot ?? currentRow.availableTimeSlot,
+    checkProcessing: matchedLocation.checkProcessing ?? currentRow.checkProcessing,
+    creditCardProcessing: matchedLocation.creditCardProcessing ?? currentRow.creditCardProcessing,
+    permission: matchedLocation.permission ?? currentRow.permission,
+    encompassPickupWH: matchedLocation.encompassPickupWH ?? currentRow.encompassPickupWH,
+    coveredTechnicians: matchedLocation.coveredTechnicians ?? currentRow.coveredTechnicians,
+    sms: matchedLocation.sms,
+    emailFlag: matchedLocation.emailFlag,
+    autoTriage: matchedLocation.autoTriage,
+  };
+}
+
 function normalizeLocationKey(value: string) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -92,13 +470,22 @@ function buildEmptyLocationRow(): LocationRow {
     state: "",
     zipCode: "",
     office: "",
+    coordinates: "",
     phoneNo: "",
     email: "",
     defaultPartDist: "",
     repTech: "",
+    officeLocation: "",
+    checkProcessing: "N",
+    creditCardProcessing: "N",
+    permission: "N",
     sms: "N",
     emailFlag: "N",
     autoTriage: "N",
+    encompassPickupWH: "N",
+    availableDays: [],
+    availableTimeSlot: "ANY",
+    coveredTechnicians: [],
   };
 }
 
@@ -225,11 +612,14 @@ const DEFAULT_PART_ADDRESS_ROWS: PartAddressRow[] = [
 ];
 
 const DEFAULT_COVERAGE_ROWS: CoverageRow[] = [
-  ...parseCoverageCsv(ashevilleCoverageCsv),
-  ...parseCoverageCsv(memphisCoverageCsv).map((row, index) => ({
-    ...row,
-    id: String(parseInt(row.id, 10) + 10000 + index),
-  })),
+  ...Object.entries(coverageCsvModules).flatMap(([filePath, csvText], fileIndex) => {
+    const locationOffset = fileIndex * 10000;
+    return parseCoverageCsv(csvText).map((row, rowIndex) => ({
+      ...row,
+      id: String(locationOffset + rowIndex + 1),
+      location: row.location || filePath.split(/[\\/]/).pop()?.replace(/\.csv$/i, "") || "",
+    }));
+  }),
 ];
 
 function loadRows<T>(key: string, fallback: T[]) {
@@ -274,10 +664,12 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const [partSearch, setPartSearch] = useState("");
   const [coverageSearch, setCoverageSearch] = useState("");
   const [newLocationRow, setNewLocationRow] = useState<LocationRow>(() => buildEmptyLocationRow());
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
   const [newPartRow, setNewPartRow] = useState<PartAddressRow>({ id: "", name: "", address1: "", address2: "", city: "", state: "", zipCode: "", location: "" });
   const [newCoverageRow, setNewCoverageRow] = useState<CoverageRow>(() => buildEmptyCoverageRow());
   const [selectedCoverageLocation, setSelectedCoverageLocation] = useState(() => DEFAULT_COVERAGE_ROWS[0]?.location ?? locationRows[0]?.location ?? "Birmingham");
   const [coverageMapReady, setCoverageMapReady] = useState(false);
+  const [coverageMapLoading, setCoverageMapLoading] = useState(false);
   const [coverageMapError, setCoverageMapError] = useState<string | null>(null);
   const nextLocationId = nextNumericId(locationRows, 1);
   const nextPartAddressId = nextNumericId(partRows, 36);
@@ -323,6 +715,32 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     return coverageRows.filter((row) => row.location === selectedCoverageLocation && matchesQuery([row.id, row.zipCode, row.city, row.location, row.selfSchedule, row.daysLater, row.tierCode], query));
   }, [coverageRows, coverageSearch, selectedCoverageLocation]);
 
+  const selectedLocationRow = useMemo(
+    () => findLocationByName(locationRows, newLocationRow.officeLocation || newLocationRow.location),
+    [locationRows, newLocationRow.location, newLocationRow.officeLocation],
+  );
+
+  const visibleLocationId = selectedLocationRow?.id || editingLocationId || nextLocationId;
+
+  const coverageLocationOptions = useMemo(() => {
+    const locations = new Set<string>();
+
+    for (const row of locationRows) {
+      const location = row.location.trim();
+      if (location) locations.add(location);
+    }
+
+    for (const row of coverageRows) {
+      const location = row.location.trim();
+      if (location) locations.add(location);
+    }
+
+    const selectedLocation = selectedCoverageLocation.trim();
+    if (selectedLocation) locations.add(selectedLocation);
+
+    return Array.from(locations).sort((left, right) => left.localeCompare(right));
+  }, [coverageRows, locationRows, selectedCoverageLocation]);
+
   useEffect(() => {
     if (activeTab !== "coverage") return;
     const matchedLocation = resolveCoverageLocation(locationSearch, locationRows, coverageRows);
@@ -332,10 +750,35 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     }
   }, [activeTab, coverageRows, locationRows, locationSearch, selectedCoverageLocation]);
 
+  useEffect(() => {
+    if (!selectedCoverageLocation) return;
+    setNewCoverageRow((current) => (current.location === selectedCoverageLocation ? current : { ...current, location: selectedCoverageLocation }));
+  }, [selectedCoverageLocation]);
+
+  useEffect(() => {
+    if (!selectedCoverageLocation) return;
+    setNewLocationRow((current) => applyOfficeLocationSelection(current, selectedCoverageLocation, locationRows));
+  }, [locationRows, selectedCoverageLocation]);
+
+  useEffect(() => {
+    if (!selectedLocationRow) return;
+    setNewLocationRow((current) => {
+      if (current.location === selectedLocationRow.location && current.officeLocation === selectedLocationRow.location) {
+        return current;
+      }
+      return applyOfficeLocationSelection(current, selectedLocationRow.location, locationRows);
+    });
+    if (selectedCoverageLocation !== selectedLocationRow.location) {
+      setSelectedCoverageLocation(selectedLocationRow.location);
+    }
+  }, [locationRows, selectedCoverageLocation, selectedLocationRow]);
+
   const selectedLocationCoverage = useMemo(
     () => coverageRows.filter((row) => row.location === selectedCoverageLocation),
     [coverageRows, selectedCoverageLocation],
   );
+
+  const minimumReadableZoom = selectedCoverageLocation === "Memphis" ? 6 : 7;
 
   useEffect(() => {
     if (activeTab !== "coverage") return;
@@ -352,15 +795,23 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       const maps = (window as Window & { google?: any }).google?.maps;
       if (!maps) return;
 
+      const MapConstructor = maps.Map;
+      const mapTypeId = maps.MapTypeId?.ROADMAP ?? "roadmap";
+
+      if (typeof MapConstructor !== "function") {
+        if (!cancelled) setCoverageMapError("Google Maps did not expose a Map constructor.");
+        return;
+      }
+
       // Always re-create the map if the container div has changed (tab remount)
       if (
         !coverageMapRef.current ||
         coverageMapRef.current.getDiv() !== coverageMapContainerRef.current
       ) {
-        coverageMapRef.current = new maps.Map(coverageMapContainerRef.current, {
+        coverageMapRef.current = new MapConstructor(coverageMapContainerRef.current, {
           center: { lat: 37.0902, lng: -95.7129 },
           zoom: 4,
-          mapTypeId: maps.MapTypeId.ROADMAP,
+          mapTypeId,
           disableDefaultUI: false,
           zoomControl: true,
           mapTypeControl: true,
@@ -368,15 +819,17 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
         });
       }
 
-      setCoverageMapReady(true);
-      setCoverageMapError(null);
+      if (!cancelled) {
+        setCoverageMapReady(true);
+        setCoverageMapError(null);
+      }
     };
 
     const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps="location-coverage"]');
     if ((window as Window & { google?: any }).google?.maps) {
       initializeMap();
     } else if (existingScript) {
-      existingScript.addEventListener("load", initializeMap, { once: true });
+      (window as Window & { initCoverageMap?: () => void }).initCoverageMap = initializeMap;
       existingScript.addEventListener(
         "error",
         () => {
@@ -385,12 +838,12 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
         { once: true },
       );
     } else {
+      (window as Window & { initCoverageMap?: () => void }).initCoverageMap = initializeMap;
       const script = document.createElement("script");
       script.dataset.googleMaps = "location-coverage";
       script.async = true;
       script.defer = true;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-      script.onload = initializeMap;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&loading=async&v=weekly&callback=initCoverageMap`;
       script.onerror = () => {
         if (!cancelled) setCoverageMapError("Google Maps failed to load.");
       };
@@ -402,6 +855,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       // Reset so map re-attaches correctly on next tab visit
       coverageMapRef.current = null;
       setCoverageMapReady(false);
+      delete (window as Window & { initCoverageMap?: () => void }).initCoverageMap;
     };
   }, [activeTab]);
 
@@ -492,48 +946,79 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       "#3f8f7a",
     ];
 
-    Promise.all(
-      uniqueZipCodes.map(async (zipCode) => {
+    setCoverageMapLoading(true);
+    setCoverageMapError(null);
+
+    mapData.setStyle((feature: any) => {
+      const zip = String(feature.getProperty("ZCTA5") ?? "");
+      const index = uniqueZipCodes.indexOf(zip);
+      const fillColor = fillPalette[(index >= 0 ? index : 0) % fillPalette.length];
+      return {
+        fillColor,
+        fillOpacity: 0.35,
+        strokeColor: "#0f172a",
+        strokeOpacity: 0.6,
+        strokeWeight: 1,
+      };
+    });
+
+    if (!uniqueZipCodes.length) {
+      setCoverageMapLoading(false);
+      coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
+      coverageMapRef.current.setZoom(4);
+      setCoverageMapError("No geocodable zip codes found for this location.");
+      return () => {
+        cancelled = true;
+        coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
+        coverageOverlayRefs.current = [];
+        mapData.forEach((feature: any) => mapData.remove(feature));
+      };
+    }
+
+    let pendingZipCount = uniqueZipCodes.length;
+    let hasAnyValidPoints = false;
+
+    uniqueZipCodes.forEach((zipCode, index) => {
+      void (async () => {
         const [point, geojson] = await Promise.all([fetchZipPoint(zipCode), fetchZipGeoJson(zipCode)]);
-        return { zipCode, point, geojson };
-      }),
-    ).then((results) => {
         if (cancelled || !coverageMapRef.current) return;
 
-        const validPoints = results
-          .map((result) => result.point)
-          .filter((point): point is MapZipGeometry => Boolean(point));
-
-        mapData.setStyle((feature: any) => {
-          const zip = String(feature.getProperty("ZCTA5") ?? "");
-          const index = uniqueZipCodes.indexOf(zip);
-          const fillColor = fillPalette[(index >= 0 ? index : 0) % fillPalette.length];
-          return {
-            fillColor,
-            fillOpacity: 0.35,
-            strokeColor: "#0f172a",
-            strokeOpacity: 0.6,
-            strokeWeight: 1,
-          };
-        });
-
-        validPoints.forEach((point) => {
+        if (point) {
+          hasAnyValidPoints = true;
           bounds.extend(point.center);
-        });
-
-        results.forEach((result) => {
-          if (!result.geojson) return;
-          mapData.addGeoJson(result.geojson);
-        });
-
-        if (!bounds.isEmpty()) {
-          coverageMapRef.current.fitBounds(bounds, { padding: 40 });
-        } else {
-          coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
-          coverageMapRef.current.setZoom(4);
-          setCoverageMapError("No geocodable zip codes found for this location.");
         }
-      });
+
+        if (geojson) {
+          mapData.addGeoJson(geojson);
+        }
+
+        pendingZipCount -= 1;
+
+        // On first resolved point, immediately zoom to the area so the map isn't blank
+        if (index === 0 && point) {
+          coverageMapRef.current.setCenter(point.center);
+          coverageMapRef.current.setZoom(Math.max(minimumReadableZoom, 8));
+        }
+
+        if (pendingZipCount === 0) {
+          setCoverageMapLoading(false);
+          if (hasAnyValidPoints && !bounds.isEmpty()) {
+            coverageMapRef.current.fitBounds(bounds, { padding: 40 });
+            maps.event.addListenerOnce(coverageMapRef.current, "idle", () => {
+              if (!coverageMapRef.current) return;
+              const currentZoom = coverageMapRef.current.getZoom?.();
+              if (typeof currentZoom === "number" && currentZoom < minimumReadableZoom) {
+                coverageMapRef.current.setZoom(minimumReadableZoom);
+              }
+            });
+          } else {
+            coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
+            coverageMapRef.current.setZoom(4);
+            setCoverageMapError("No geocodable zip codes found for this location.");
+          }
+        }
+      })();
+    });
 
     return () => {
       cancelled = true;
@@ -541,13 +1026,50 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       coverageOverlayRefs.current = [];
       mapData.forEach((feature: any) => mapData.remove(feature));
     };
-  }, [activeTab, coverageMapReady, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef]);
+  }, [activeTab, coverageMapReady, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation]);
 
   const addLocationRow = () => {
     if (!newLocationRow.location.trim()) return;
-    const nextRow = { ...newLocationRow, id: nextLocationId };
-    setLocationRows((current) => [nextRow, ...current]);
+    const nextRow = {
+      ...newLocationRow,
+      id: editingLocationId ?? nextLocationId,
+      officeLocation: newLocationRow.officeLocation || newLocationRow.location,
+      availableDays: newLocationRow.availableDays ?? [],
+      availableTimeSlot: newLocationRow.availableTimeSlot ?? "ANY",
+      coveredTechnicians: newLocationRow.coveredTechnicians ?? [],
+    };
+
+    setLocationRows((current) => {
+      if (editingLocationId) {
+        return current.map((row) => (row.id === editingLocationId ? nextRow : row));
+      }
+      return [nextRow, ...current];
+    });
     setNewLocationRow(buildEmptyLocationRow());
+    setEditingLocationId(null);
+  };
+
+  const editLocationRow = (row: LocationRow) => {
+    setEditingLocationId(row.id);
+    setNewLocationRow({
+      ...buildEmptyLocationRow(),
+      ...row,
+      officeLocation: row.officeLocation || row.office || row.location,
+      availableDays: row.availableDays ?? [],
+      availableTimeSlot: row.availableTimeSlot ?? "ANY",
+      coveredTechnicians: row.coveredTechnicians ?? [],
+      checkProcessing: row.checkProcessing ?? "N",
+      creditCardProcessing: row.creditCardProcessing ?? "N",
+      permission: row.permission ?? "N",
+      encompassPickupWH: row.encompassPickupWH ?? "N",
+    });
+    setSelectedCoverageLocation(row.location);
+    setActiveTab("locations");
+  };
+
+  const resetLocationForm = () => {
+    setNewLocationRow(buildEmptyLocationRow());
+    setEditingLocationId(null);
   };
 
   const addPartRow = () => {
@@ -620,6 +1142,161 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
         {activeTab === "locations" && (
         <section className="mt-5 rounded-xl border border-white/15 bg-white/8 p-4 backdrop-blur-md">
+          <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">Location Details</h2>
+                <p className="mt-1 text-sm text-slate-300">Location ID {visibleLocationId}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {editingLocationId ? (
+                  <button type="button" onClick={resetLocationForm} className="btn">Cancel</button>
+                ) : null}
+                <button type="button" onClick={addLocationRow} className="btn btn-primary">
+                  {editingLocationId ? "Update" : "Add"}
+                </button>
+                <button type="button" onClick={saveLocationRows} className="btn">Save</button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Location Name</span>
+                  <input value={newLocationRow.location} onChange={(event) => setNewLocationRow((current) => ({ ...current, location: event.target.value }))} placeholder="Location Name" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Office Location</span>
+                  <select
+                    value={newLocationRow.officeLocation || newLocationRow.location || ""}
+                    onChange={(event) => setNewLocationRow((current) => applyOfficeLocationSelection(current, event.target.value, locationRows))}
+                    className="glass-input w-full text-[11px] px-2 py-1"
+                  >
+                    <option value="">Select office location</option>
+                    {OFFICE_LOCATION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address 1</span>
+                  <input value={newLocationRow.address1} onChange={(event) => setNewLocationRow((current) => ({ ...current, address1: event.target.value }))} placeholder="Address 1" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address 2</span>
+                  <input value={newLocationRow.address2} onChange={(event) => setNewLocationRow((current) => ({ ...current, address2: event.target.value }))} placeholder="Address 2" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">City</span>
+                  <input value={newLocationRow.city} onChange={(event) => setNewLocationRow((current) => ({ ...current, city: event.target.value }))} placeholder="City" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">State</span>
+                  <select value={newLocationRow.state} onChange={(event) => setNewLocationRow((current) => ({ ...current, state: event.target.value }))} className="glass-input w-full text-[11px] px-2 py-1">
+                    <option value="">Select state</option>
+                    {STATE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Zip Code</span>
+                  <input value={newLocationRow.zipCode} onChange={(event) => setNewLocationRow((current) => ({ ...current, zipCode: event.target.value }))} placeholder="Zip Code" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Coordinates</span>
+                  <input value={newLocationRow.coordinates || ""} onChange={(event) => setNewLocationRow((current) => ({ ...current, coordinates: event.target.value }))} placeholder="35.4680177, -82.5156063" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Phone #</span>
+                  <input value={newLocationRow.phoneNo} onChange={(event) => setNewLocationRow((current) => ({ ...current, phoneNo: event.target.value }))} placeholder="Phone #" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
+                  <input value={newLocationRow.email} onChange={(event) => setNewLocationRow((current) => ({ ...current, email: event.target.value }))} placeholder="Email" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Default Part Dist.</span>
+                  <select value={newLocationRow.defaultPartDist} onChange={(event) => setNewLocationRow((current) => ({ ...current, defaultPartDist: event.target.value }))} className="glass-input w-full text-[11px] px-2 py-1">
+                    <option value="">Select default part dist.</option>
+                    {DEFAULT_PART_DIST_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Representative Technician</span>
+                  <input value={newLocationRow.repTech} onChange={(event) => setNewLocationRow((current) => ({ ...current, repTech: event.target.value }))} placeholder="Representative Technician" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Available Time Slot</span>
+                  <select value={newLocationRow.availableTimeSlot || "ANY"} onChange={(event) => setNewLocationRow((current) => ({ ...current, availableTimeSlot: event.target.value }))} className="glass-input w-full text-[11px] px-2 py-1">
+                    {AVAILABLE_TIME_SLOT_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Availability</div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {AVAILABLE_DAY_OPTIONS.map((day) => {
+                      const checked = (newLocationRow.availableDays ?? []).includes(day);
+                      return (
+                        <label key={day} className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-sm text-slate-200">
+                          <input type="checkbox" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, availableDays: toggleListValue(current.availableDays, day) }))} />
+                          <span>{day}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Flags</div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-200 sm:grid-cols-3">
+                    {[
+                      ["Check Processing", "checkProcessing"],
+                      ["Credit Card Processing", "creditCardProcessing"],
+                      ["Permission", "permission"],
+                      ["SMS", "sms"],
+                      ["Auto Triage", "autoTriage"],
+                      ["Encompass Pickup W/H", "encompassPickupWH"],
+                    ].map(([label, key]) => (
+                      <label key={key} className="flex items-center gap-2 rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={ynToCheckbox((newLocationRow as LocationRow & Record<string, unknown>)[key as keyof LocationRow] as "Y" | "N" | undefined)}
+                          onChange={(event) => setNewLocationRow((current) => ({ ...current, [key]: checkboxToYN(event.target.checked) }))}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Covered Technicians</div>
+                  <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-3">
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {COVERED_TECHNICIAN_OPTIONS.map((technician) => {
+                        const checked = (newLocationRow.coveredTechnicians ?? []).includes(technician);
+                        return (
+                          <label key={technician} className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.02] px-2 py-1 text-xs text-slate-200">
+                            <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, coveredTechnicians: toggleStringValue(current.coveredTechnicians, technician) }))} />
+                            <span>{technician}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="mt-5 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
             <table className="min-w-[1600px] w-full text-[11px] leading-tight">
               <thead>
@@ -643,62 +1320,6 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-slate-200">
-                <tr className="bg-blue-500/10">
-                  <td className="px-4 py-3 align-middle">
-                    <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-200">{nextLocationId}</div>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.location} onChange={(event) => setNewLocationRow((current) => ({ ...current, location: event.target.value }))} title="Location" placeholder="Location" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.address1} onChange={(event) => setNewLocationRow((current) => ({ ...current, address1: event.target.value }))} title="Address1" placeholder="Address1" className="glass-input w-full min-w-[180px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.address2} onChange={(event) => setNewLocationRow((current) => ({ ...current, address2: event.target.value }))} title="Address2" placeholder="Address2" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.city} onChange={(event) => setNewLocationRow((current) => ({ ...current, city: event.target.value }))} title="City" placeholder="City" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.state} onChange={(event) => setNewLocationRow((current) => ({ ...current, state: event.target.value }))} title="State" placeholder="State" className="glass-input w-full min-w-[80px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.zipCode} onChange={(event) => setNewLocationRow((current) => ({ ...current, zipCode: event.target.value }))} title="Zip Code" placeholder="Zip Code" className="glass-input w-full min-w-[95px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.office} onChange={(event) => setNewLocationRow((current) => ({ ...current, office: event.target.value }))} title="Office" placeholder="Office" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.phoneNo} onChange={(event) => setNewLocationRow((current) => ({ ...current, phoneNo: event.target.value }))} title="Phone No" placeholder="Phone No" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.email} onChange={(event) => setNewLocationRow((current) => ({ ...current, email: event.target.value }))} title="Email" placeholder="Email" className="glass-input w-full min-w-[220px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.defaultPartDist} onChange={(event) => setNewLocationRow((current) => ({ ...current, defaultPartDist: event.target.value }))} title="Default Part Dist." placeholder="Default Part Dist." className="glass-input w-full min-w-[180px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newLocationRow.repTech} onChange={(event) => setNewLocationRow((current) => ({ ...current, repTech: event.target.value }))} title="Rep. Tech." placeholder="Rep. Tech." className="glass-input w-full min-w-[150px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <select value={newLocationRow.sms} onChange={(event) => setNewLocationRow((current) => ({ ...current, sms: event.target.value as LocationRow["sms"] }))} title="SMS" aria-label="SMS" className="glass-input w-full min-w-[70px] text-[11px] px-2 py-1">
-                      {YES_NO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <select value={newLocationRow.emailFlag} onChange={(event) => setNewLocationRow((current) => ({ ...current, emailFlag: event.target.value as LocationRow["emailFlag"] }))} title="Email" aria-label="Email flag" className="glass-input w-full min-w-[70px] text-[11px] px-2 py-1">
-                      {YES_NO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <select value={newLocationRow.autoTriage} onChange={(event) => setNewLocationRow((current) => ({ ...current, autoTriage: event.target.value as LocationRow["autoTriage"] }))} title="Auto Triage" aria-label="Auto Triage" className="glass-input w-full min-w-[80px] text-[11px] px-2 py-1">
-                      {YES_NO_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <button type="button" onClick={addLocationRow} className="btn btn-primary">Add</button>
-                  </td>
-                </tr>
                 {filteredLocations.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
                     <td className="px-4 py-3 align-middle">
@@ -747,6 +1368,13 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                       <span className="block px-2 py-1">{row.autoTriage}</span>
                     </td>
                     <td className="px-4 py-3 align-middle">
+                      <button
+                        type="button"
+                        onClick={() => editLocationRow(row)}
+                        className="btn mr-2"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -893,12 +1521,27 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+          <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.2fr]">
             <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
               <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 <label className="space-y-2 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Location</span>
-                  <input value={newCoverageRow.location || selectedCoverageLocation} onChange={(event) => setNewCoverageRow((current) => ({ ...current, location: event.target.value }))} className="glass-input w-full text-[11px] px-2 py-1" />
+                  <select
+                    value={selectedCoverageLocation}
+                    onChange={(event) => {
+                      const location = event.target.value;
+                      setSelectedCoverageLocation(location);
+                      setNewCoverageRow((current) => ({ ...current, location }));
+                      setNewLocationRow((current) => applyOfficeLocationSelection(current, location, locationRows));
+                    }}
+                    className="glass-input w-full text-[11px] px-2 py-1"
+                  >
+                    {coverageLocationOptions.map((location) => (
+                      <option key={location} value={location}>
+                        {location}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="space-y-2 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Zip Code</span>
@@ -963,11 +1606,17 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Coverage Map</div>
               <h3 className="mt-2 text-xl font-semibold text-white">{selectedCoverageLocation || "No location selected"}</h3>
-              <div className="relative mt-3 min-h-[520px] overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/10 via-slate-900 to-cyan-500/10">
+              <div className="relative mt-3 min-h-[580px] overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/10 via-slate-900 to-cyan-500/10">
                 <div ref={coverageMapContainerRef} className="google-map-canvas" aria-label="Google coverage map" />
-                {!coverageMapReady && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/70 text-center">
-                    <div className="text-sm text-slate-300">Loading Google coverage map...</div>
+                {(!coverageMapReady || coverageMapLoading) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/75 text-center backdrop-blur-sm">
+                    <div className="relative flex h-14 w-14 items-center justify-center">
+                      <span className="absolute inline-block h-14 w-14 animate-spin rounded-full border-4 border-white/10 border-t-blue-400" />
+                      <span className="absolute inline-block h-8 w-8 animate-spin-fast animate-spin-reverse rounded-full border-4 border-white/10 border-t-cyan-400" />
+                    </div>
+                    <div className="text-sm font-medium text-slate-200">
+                      {coverageMapReady ? `Loading ${selectedCoverageLocation} coverage…` : "Loading Google coverage map…"}
+                    </div>
                     {coverageMapError ? <div className="max-w-sm text-xs text-rose-300">{coverageMapError}</div> : null}
                   </div>
                 )}
