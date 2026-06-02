@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import logo from "@/assets/logo.png";
+import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { ChevronDown, Clock, LogOut, MessageCircle, Settings as SettingsIcon, Shield, User } from "lucide-react";
 import {
   DropdownMenu,
