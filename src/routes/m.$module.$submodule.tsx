@@ -61,6 +61,25 @@ import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
+import { ReportHRDaily } from "@/components/ReportHRDaily";
+import { ReportCSRDaily } from "@/components/ReportCSRDaily";
+import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
+import { ReportTriageDaily } from "@/components/ReportTriageDaily";
+import { ReportPartsDaily } from "@/components/ReportPartsDaily";
+import { ReportOperationsDaily } from "@/components/ReportOperationsDaily";
+import { ReportEastTX } from "@/components/ReportEastTX";
+import { ReportWestTX } from "@/components/ReportWestTX";
+import { ReportCentralTX } from "@/components/ReportCentralTX";
+import { EncompassClaimAuditReport } from "@/components/EncompassClaimAuditReport";
+import { MonthlyPartReport } from "@/components/MonthlyPartReport";
+import { PayrollReport } from "@/components/PayrollReport";
+import { UnclaimedPartsReport } from "@/components/UnclaimedPartsReport";
+import { RepairCodeRestriction } from "@/components/RepairCodeRestriction";
+import { SalesSummaryReport } from "@/components/SalesSummaryReport";
+import { TechPayrollSetup } from "@/components/TechPayrollSetup";
+import { PaymentReport } from "@/components/PaymentReport";
+import { ClosingReport } from "@/components/ClosingReport";
+import { RepairStatusReport } from "@/components/RepairStatusReport";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -230,6 +249,44 @@ function SubModule() {
         ? <TimecardReport mod={mod} sub={sub} />
         : (sub as any).custom === "triage-performance-report"
         ? <TriagePerformanceReport mod={mod} sub={sub} />
+        : (sub as any).custom === "report-hr-daily"
+        ? <ReportHRDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-csr-daily"
+        ? <ReportCSRDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-claims-daily"
+        ? <ReportClaimsDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-triage-daily"
+        ? <ReportTriageDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-parts-daily"
+        ? <ReportPartsDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-operations-daily"
+        ? <ReportOperationsDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-east-tx"
+        ? <ReportEastTX mod={mod} sub={sub} />
+        : (sub as any).custom === "report-west-tx"
+        ? <ReportWestTX mod={mod} sub={sub} />
+        : (sub as any).custom === "report-central-tx"
+        ? <ReportCentralTX mod={mod} sub={sub} />
+        : (sub as any).custom === "encompass-claim-audit-report"
+        ? <EncompassClaimAuditReport mod={mod} sub={sub} />
+        : (sub as any).custom === "monthly-part-report"
+        ? <MonthlyPartReport mod={mod} sub={sub} />
+        : (sub as any).custom === "payroll-report"
+        ? <PayrollReport mod={mod} sub={sub} />
+        : (sub as any).custom === "unclaimed-parts-report"
+        ? <UnclaimedPartsReport mod={mod} sub={sub} />
+        : (sub as any).custom === "repair-code-restriction"
+        ? <RepairCodeRestriction mod={mod} sub={sub} />
+        : (sub as any).custom === "sales-summary-report"
+        ? <SalesSummaryReport mod={mod} sub={sub} />
+        : (sub as any).custom === "tech-payroll-setup"
+        ? <TechPayrollSetup mod={mod} sub={sub} />
+        : (sub as any).custom === "payment-report"
+        ? <PaymentReport mod={mod} sub={sub} />
+        : (sub as any).custom === "closing-report"
+        ? <ClosingReport mod={mod} sub={sub} />
+        : (sub as any).custom === "repair-status-report"
+        ? <RepairStatusReport mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"

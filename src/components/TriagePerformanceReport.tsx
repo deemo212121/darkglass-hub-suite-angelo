@@ -38,7 +38,7 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           {LOCATIONS.map((l,i)=>(
             <button key={i} onClick={()=>{onChange(l);setOpen(false);}}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${value===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
@@ -55,15 +55,14 @@ export function TriagePerformanceReport({ mod, sub }: Props) {
   const [location, setLocation] = useState("");
   const [startDate, setStartDate] = useState(offsetStr(-30));
   const [endDate, setEndDate] = useState(offsetStr(-1));
-  const [applied, setApplied] = useState({ location:"", startDate:offsetStr(-30), endDate:offsetStr(-1) });
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    if (applied.location) r = r.filter(x=>x.location===applied.location);
-    if (applied.startDate) r = r.filter(x=>x.completeDate>=applied.startDate);
-    if (applied.endDate) r = r.filter(x=>x.completeDate<=applied.endDate);
+    if (location) r = r.filter(x=>x.location===location);
+    if (startDate) r = r.filter(x=>x.completeDate>=startDate);
+    if (endDate) r = r.filter(x=>x.completeDate<=endDate);
     return r;
-  }, [applied]);
+  }, [endDate, location, startDate]);
 
   const avgRes = rows.length ? Math.round(rows.reduce((s,r)=>s+r.resolutionRate,0)/rows.length) : 0;
 
@@ -78,7 +77,7 @@ export function TriagePerformanceReport({ mod, sub }: Props) {
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Triage Performance Report</h1>
       </div>
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-48">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
@@ -91,9 +90,7 @@ export function TriagePerformanceReport({ mod, sub }: Props) {
             <label htmlFor="trig-end" className="sr-only">End date</label>
             <input id="trig-end" type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} title="End date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-32.5"/>
           </div>
-          <button onClick={()=>setApplied({location,startDate,endDate})} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5"/>Refresh
-          </button>
+          
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
@@ -120,7 +117,7 @@ export function TriagePerformanceReport({ mod, sub }: Props) {
           </thead>
           <tbody>
             {rows.length===0
-              ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground">No records. Adjust filters and click Refresh.</td></tr>
+              ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground">No records found matching the selected filters.</td></tr>
               : rows.map((r,idx)=>(
                 <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/2":""}`}>
                   <td className="px-3 py-2.5 text-muted-foreground">{idx+1}</td>

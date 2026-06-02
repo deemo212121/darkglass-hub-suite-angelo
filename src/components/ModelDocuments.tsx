@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, RefreshCw, Save, FileText, ExternalLink } from "lucide-react";
+import { ChevronLeft, Save, FileText, ExternalLink } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -38,7 +38,7 @@ export function ModelDocuments({ mod, sub }: Props) {
         <h1 className="text-xl font-bold">Model Documents</h1>
       </div>
 
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Model Code</span>
           <label htmlFor="model-code" className="sr-only">Model Code</label>
@@ -52,9 +52,7 @@ export function ModelDocuments({ mod, sub }: Props) {
             title="Model code to search"
             className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"
           />
-          <button onClick={handleRefresh} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5" />Refresh
-          </button>
+          
           <button className="btn btn-primary flex items-center gap-2 px-4">
             <Save className="h-3.5 w-3.5" />Save
           </button>

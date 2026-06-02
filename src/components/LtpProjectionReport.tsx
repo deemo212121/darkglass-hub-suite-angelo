@@ -64,7 +64,7 @@ function MultiSelect({ label, options, selected, onChange }: { label: string; op
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           <label className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer border-b border-white/10 text-sm font-medium">
             <input type="checkbox" checked={all} onChange={() => onChange(all ? [] : [...options])} className="accent-blue-500" title="Select all" />
             [ Select All ]
@@ -89,13 +89,12 @@ export function LtpProjectionReport({ mod, sub }: Props) {
   const [activeTab, setActiveTab] = useState<"imported"|"scheduled">("imported");
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
-  const [applied, setApplied] = useState({ accounts:[...ACCOUNTS], serviceTypes:[...SERVICE_TYPES], warrantyTypes:[...WARRANTY_TYPES], location:"" });
 
   const rows = useMemo(() => ALL_ROWS.filter(r =>
-    applied.accounts.includes(r.account) &&
-    applied.serviceTypes.includes(r.serviceType) &&
-    applied.warrantyTypes.includes(r.warrantyType) &&
-    (applied.location ? r.location === applied.location : true) &&
+    accounts.includes(r.account) &&
+    serviceTypes.includes(r.serviceType) &&
+    warrantyTypes.includes(r.warrantyType) &&
+    (location ? r.location === location : true) &&
     (activeTab === "imported" ? !r.isLateScheduled : r.isLateScheduled)
   ), [applied, activeTab]);
 
@@ -114,7 +113,7 @@ export function LtpProjectionReport({ mod, sub }: Props) {
         <h1 className="text-xl font-bold">LTP Projection Report</h1>
       </div>
 
-      <div className="panel mb-4">
+      <div className="panel panel-filter mb-4">
         <div className="grid gap-3">
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex items-center gap-2 flex-1">
@@ -127,9 +126,7 @@ export function LtpProjectionReport({ mod, sub }: Props) {
               </label>
               <MultiSelect label="Service Type (SS)" options={SERVICE_TYPES} selected={serviceTypes} onChange={setServiceTypes} />
             </div>
-            <button onClick={() => setApplied({accounts,serviceTypes,warrantyTypes,location})} className="btn btn-primary flex items-center gap-2 px-5">
-              <RefreshCw className="h-3.5 w-3.5" />Refresh
-            </button>
+            
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 flex-1">

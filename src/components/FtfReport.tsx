@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -96,44 +96,35 @@ export function FtfReport({ mod, sub }: Props) {
   const [dayEnd, setDayEnd] = useState(todayStr());
 
   // Applied (on Refresh)
-  const [applied, setApplied] = useState({
-    byLocation: false, byTechnician: false, byBranch: false,
-    inWarranty: true, outOfWarranty: false,
-    dateMode: "daily" as DateMode,
-    dayStart: offsetStr(-12), dayEnd: todayStr(),
-    monthStart: offsetMonth(-12), monthEnd: currentMonth(),
-    weekStart: isoWeek(new Date(Date.now() - 60 * 86400000)), weekEnd: isoWeek(new Date()),
-  });
 
   const handleRefresh = () => {
-    setApplied({ byLocation, byTechnician, byBranch, inWarranty, outOfWarranty, dateMode, dayStart, dayEnd, monthStart, monthEnd, weekStart, weekEnd });
   };
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
     // Warranty filter
-    const wf = [applied.inWarranty && "In-warranty", applied.outOfWarranty && "Out-of-warranty"].filter(Boolean) as string[];
+    const wf = [inWarranty && "In-warranty", outOfWarranty && "Out-of-warranty"].filter(Boolean) as string[];
     if (wf.length) r = r.filter(x => wf.includes(x.warrantyType));
     // Date filter
-    if (applied.dateMode === "daily") {
-      if (applied.dayStart) r = r.filter(x => x.date >= applied.dayStart);
-      if (applied.dayEnd) r = r.filter(x => x.date <= applied.dayEnd);
-    } else if (applied.dateMode === "monthly") {
+    if (dateMode === "daily") {
+      if (dayStart) r = r.filter(x => x.date >= dayStart);
+      if (dayEnd) r = r.filter(x => x.date <= dayEnd);
+    } else if (dateMode === "monthly") {
       r = r.filter(x => {
         const m = x.date.slice(0, 7);
-        return m >= applied.monthStart && m <= applied.monthEnd;
+        return m >= monthStart && m <= monthEnd;
       });
     } else {
-      r = r.filter(x => x.week >= applied.weekStart && x.week <= applied.weekEnd);
+      r = r.filter(x => x.week >= weekStart && x.week <= weekEnd);
     }
     return r;
-  }, [applied]);
+  }, [dateMode, dayEnd, dayStart, inWarranty, monthEnd, monthStart, outOfWarranty, weekEnd, weekStart]);
 
   // Grouping columns based on data level
   const groupCols: string[] = [];
-  if (applied.byLocation) groupCols.push("Branch");
-  if (applied.byTechnician) groupCols.push("Technician");
-  if (applied.byBranch) groupCols.push("Branch");
+  if (byLocation) groupCols.push("Branch");
+  if (byTechnician) groupCols.push("Technician");
+  if (byBranch) groupCols.push("Branch");
 
   const avgFtf = rows.length ? Math.round(rows.reduce((s, r) => s + r.ftfRate, 0) / rows.length) : 0;
 
@@ -157,7 +148,7 @@ export function FtfReport({ mod, sub }: Props) {
       </div>
 
       {/* Filter Panel */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="grid gap-3">
           {/* Row 1: Data Level + Warranty Type + Refresh */}
           <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
@@ -193,10 +184,7 @@ export function FtfReport({ mod, sub }: Props) {
               </label>
             </div>
 
-            <button onClick={handleRefresh} className="btn btn-primary flex items-center gap-2 px-5">
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
+            
           </div>
 
           {/* Row 2: Date Mode */}
@@ -257,8 +245,8 @@ export function FtfReport({ mod, sub }: Props) {
       {/* Results label */}
       <div className="mb-2 text-sm text-muted-foreground">
         Showing <span className="text-foreground font-medium">{rows.length}</span> record{rows.length !== 1 ? "s" : ""}
-        {applied.dateMode === "daily" && applied.dayStart && applied.dayEnd && (
-          <span> &middot; {applied.dayStart} → {applied.dayEnd}</span>
+        {dateMode === "daily" && dayStart && dayEnd && (
+          <span> &middot; {dayStart} → {dayEnd}</span>
         )}
       </div>
 
@@ -269,7 +257,7 @@ export function FtfReport({ mod, sub }: Props) {
             <tr className="border-b border-white/10 bg-white/5">
               {[
                 "#", "Ticket No", "Date",
-                ...(applied.dateMode === "weekly" ? ["Week"] : applied.dateMode === "monthly" ? ["Month"] : []),
+                ...(dateMode === "weekly" ? ["Week"] : dateMode === "monthly" ? ["Month"] : []),
                 "Technician", "Branch", "Warranty", "Appliance", "Jobs", "FTF Count", "FTF %", "Callbacks"
               ].map(h => (
                 <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
@@ -290,8 +278,8 @@ export function FtfReport({ mod, sub }: Props) {
                 <td className="px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
                 <td className="px-3 py-2.5 font-mono text-blue-400">{row.ticketNo}</td>
                 <td className="px-3 py-2.5 text-muted-foreground">{row.date}</td>
-                {applied.dateMode === "weekly" && <td className="px-3 py-2.5 text-muted-foreground">{row.week}</td>}
-                {applied.dateMode === "monthly" && <td className="px-3 py-2.5 text-muted-foreground">{row.month}</td>}
+                {dateMode === "weekly" && <td className="px-3 py-2.5 text-muted-foreground">{row.week}</td>}
+                {dateMode === "monthly" && <td className="px-3 py-2.5 text-muted-foreground">{row.month}</td>}
                 <td className="px-3 py-2.5">{row.tech}</td>
                 <td className="px-3 py-2.5">{row.branch}</td>
                 <td className="px-3 py-2.5">
@@ -318,7 +306,7 @@ export function FtfReport({ mod, sub }: Props) {
           {rows.length > 0 && (
             <tfoot>
               <tr className="border-t border-white/10 bg-white/5 font-semibold">
-                <td colSpan={applied.dateMode === "daily" ? 8 : 9} className="px-3 py-2.5 text-muted-foreground text-xs uppercase tracking-wide">Totals</td>
+                <td colSpan={dateMode === "daily" ? 8 : 9} className="px-3 py-2.5 text-muted-foreground text-xs uppercase tracking-wide">Totals</td>
                 <td className="px-3 py-2.5 text-right">{rows.reduce((s, r) => s + r.jobs, 0)}</td>
                 <td className="px-3 py-2.5 text-right">{rows.reduce((s, r) => s + r.ftfCount, 0)}</td>
                 <td className={`px-3 py-2.5 text-right font-bold ${avgFtf >= 80 ? "text-green-400" : avgFtf >= 65 ? "text-yellow-400" : "text-red-400"}`}>

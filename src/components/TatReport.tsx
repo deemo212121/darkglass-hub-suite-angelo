@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -257,37 +257,27 @@ export function TatReport({ mod, sub }: Props) {
   const [dayEnd, setDayEnd] = useState(todayStr());
   const [showDetail, setShowDetail] = useState(false);
 
-  const [applied, setApplied] = useState({
-    byLocation: false, byTechnician: false, byBranch: false,
-    inWarranty: true, outOfWarranty: false,
-    dateMode: "daily" as DateMode,
-    dayStart: offsetStr(-7), dayEnd: todayStr(),
-    monthStart: offsetStr(-210), monthEnd: todayStr(),
-    weekStart: offsetStr(-60), weekEnd: todayStr(),
-  });
-
   const handleRefresh = () => {
-    setApplied({ byLocation, byTechnician, byBranch, inWarranty, outOfWarranty, dateMode, dayStart, dayEnd, monthStart, monthEnd, weekStart, weekEnd });
     setShowDetail(false);
   };
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    const wf = [applied.inWarranty && "In-warranty", applied.outOfWarranty && "Out-of-warranty"].filter(Boolean) as string[];
+    const wf = [inWarranty && "In-warranty", outOfWarranty && "Out-of-warranty"].filter(Boolean) as string[];
     if (wf.length) r = r.filter(x => wf.includes(x.warrantyType));
-    if (applied.dateMode === "monthly") {
-      r = r.filter(x => x.closeDate >= applied.monthStart && x.closeDate <= applied.monthEnd);
-    } else if (applied.dateMode === "weekly") {
-      r = r.filter(x => x.closeDate >= applied.weekStart && x.closeDate <= applied.weekEnd);
+    if (dateMode === "monthly") {
+      r = r.filter(x => x.closeDate >= monthStart && x.closeDate <= monthEnd);
+    } else if (dateMode === "weekly") {
+      r = r.filter(x => x.closeDate >= weekStart && x.closeDate <= weekEnd);
     } else {
-      if (applied.dayStart) r = r.filter(x => x.closeDate >= applied.dayStart);
-      if (applied.dayEnd) r = r.filter(x => x.closeDate <= applied.dayEnd);
+      if (dayStart) r = r.filter(x => x.closeDate >= dayStart);
+      if (dayEnd) r = r.filter(x => x.closeDate <= dayEnd);
     }
     return r;
-  }, [applied]);
+  }, [dateMode, dayEnd, dayStart, inWarranty, monthEnd, monthStart, outOfWarranty, weekEnd, weekStart]);
 
   const avgTat = rows.length ? Math.round(rows.reduce((s,r)=>s+r.tat,0)/rows.length) : 0;
-  const groupBy: "month"|"tech"|"branch" = applied.byTechnician ? "tech" : applied.byBranch ? "branch" : "month";
+  const groupBy: "month"|"tech"|"branch" = byTechnician ? "tech" : byBranch ? "branch" : "month";
 
   return (
     <main className="max-w-350 mx-auto px-4 py-6">
@@ -309,7 +299,7 @@ export function TatReport({ mod, sub }: Props) {
       </div>
 
       {/* Filter Panel */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="grid gap-3">
           {/* Row 1: Data Level + Warranty + Refresh */}
           <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
@@ -340,10 +330,7 @@ export function TatReport({ mod, sub }: Props) {
                 Out-of-warranty
               </label>
             </div>
-            <button onClick={handleRefresh} className="btn btn-primary flex items-center gap-2 px-5">
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
+            
           </div>
 
           {/* Row 2: Date mode — all type="date" for cross-browser support */}
@@ -375,10 +362,10 @@ export function TatReport({ mod, sub }: Props) {
       </div>
 
       {/* Summary Table */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">
-            Statistics ({applied.byTechnician ? "by Technician" : applied.byBranch ? "by Branch" : "Monthly"})
+            Statistics ({byTechnician ? "by Technician" : byBranch ? "by Branch" : "Monthly"})
           </h2>
           <button onClick={() => setShowDetail(d => !d)} className="btn text-xs">
             {showDetail ? "Hide Detail" : "Show Detail"}

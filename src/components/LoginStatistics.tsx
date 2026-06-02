@@ -57,14 +57,12 @@ export function LoginStatistics({ mod, sub }: Props) {
         <h1 className="text-xl font-bold">Login Statistics</h1>
       </div>
 
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex items-center gap-4">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Report Date</span>
           <span className="text-sm font-medium">{reportDate}</span>
           <div className="flex-1" />
-          <button className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5" />Refresh
-          </button>
+          
         </div>
       </div>
 
@@ -75,7 +73,7 @@ export function LoginStatistics({ mod, sub }: Props) {
           <input id="ls-search" type="search" placeholder="search in result…" value={search} onChange={e => setSearch(e.target.value)} title="Search results" className="glass-input text-sm py-1.5 px-3 rounded-md w-44" />
           <button onClick={() => setShowColMenu(m => !m)} title="Column visibility" aria-label="Column visibility" className="btn p-1.5">⚙</button>
           {showColMenu && (
-            <div className="absolute z-50 top-full right-0 mt-1 w-52 rounded-md border border-white/15 bg-(--color-surface) shadow-xl p-2">
+            <div className="absolute z-[99999] top-full right-0 mt-1 w-52 rounded-md border border-white/15 bg-(--color-surface) shadow-xl p-2" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
               {COLS.map(c => (
                 <label key={c} className="flex items-center gap-2 px-2 py-1 text-sm hover:bg-white/5 cursor-pointer rounded">
                   <input type="checkbox" checked={visibleCols.includes(c)} onChange={() => toggleCol(c)} className="accent-blue-500" title={c} />

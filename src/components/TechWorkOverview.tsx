@@ -39,7 +39,7 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           {LOCATIONS.map((l,i)=>(
             <button key={i} onClick={()=>{onChange(l);setOpen(false);}}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${value===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
@@ -55,13 +55,12 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
 export function TechWorkOverview({ mod, sub }: Props) {
   const [location, setLocation] = useState("");
   const [date, setDate] = useState(todayStr());
-  const [applied, setApplied] = useState({ location:"", date:todayStr() });
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    if (applied.location) r = r.filter(x=>x.location===applied.location);
+    if (location) r = r.filter(x=>x.location===location);
     return r;
-  }, [applied]);
+  }, [location]);
 
   const byTech: Record<string,typeof ALL_ROWS> = {};
   rows.forEach(r => { if (!byTech[r.tech]) byTech[r.tech]=[]; byTech[r.tech].push(r); });
@@ -77,7 +76,7 @@ export function TechWorkOverview({ mod, sub }: Props) {
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Tech Work Overview</h1>
       </div>
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-48">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
@@ -87,9 +86,7 @@ export function TechWorkOverview({ mod, sub }: Props) {
             <label htmlFor="two-date" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
             <input id="two-date" type="date" value={date} onChange={e=>setDate(e.target.value)} title="Overview date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-40"/>
           </div>
-          <button onClick={()=>setApplied({location,date})} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5"/>Refresh
-          </button>
+          
         </div>
       </div>
       <div className="space-y-4">

@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -99,7 +99,7 @@ function MultiSelect({
           role="listbox"
           aria-label={label}
           aria-multiselectable="true"
-          className="absolute z-50 top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl"
+          className="absolute z-[99999] top-full mt-1 left-0 w-64 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}
         >
           <label className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer border-b border-white/10 text-sm font-medium">
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-blue-500" title="Select all" />
@@ -188,21 +188,15 @@ export function LtpReport({ mod, sub }: Props) {
   const [ltpAging, setLtpAging] = useState(14);
   const [showDetail, setShowDetail] = useState(false);
 
-  const [applied, setApplied] = useState({
-    accounts: [...ACCOUNTS], serviceTypes: [...SERVICE_TYPES],
-    warrantyTypes: [...WARRANTY_TYPES], dataLevel: "Location" as DataLevel, ltpAging: 14,
-  });
-
   const handleRefresh = () => {
-    setApplied({ accounts, serviceTypes, warrantyTypes, dataLevel, ltpAging });
     setShowDetail(false);
   };
 
   const rows = useMemo(() => ALL_ROWS.filter(r =>
-    applied.accounts.includes(r.account) &&
-    applied.serviceTypes.includes(r.serviceType) &&
-    applied.warrantyTypes.includes(r.warrantyType) &&
-    r.aging >= applied.ltpAging
+    accounts.includes(r.account) &&
+    serviceTypes.includes(r.serviceType) &&
+    warrantyTypes.includes(r.warrantyType) &&
+    r.aging >= ltpAging
   ), [applied]);
 
   const avgAging = rows.length ? Math.round(rows.reduce((s,r)=>s+r.aging,0)/rows.length) : 0;
@@ -227,7 +221,7 @@ export function LtpReport({ mod, sub }: Props) {
       </div>
 
       {/* Filter Panel */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="grid gap-3">
           {/* Row 1: Accounts + Service Type + Refresh */}
           <div className="flex flex-wrap items-start gap-3">
@@ -239,10 +233,7 @@ export function LtpReport({ mod, sub }: Props) {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0 whitespace-nowrap">Service Type (SS)</span>
               <MultiSelect label="Service Type (SS)" options={SERVICE_TYPES} selected={serviceTypes} onChange={setServiceTypes} />
             </div>
-            <button onClick={handleRefresh} className="btn btn-primary flex items-center gap-2 px-5 self-center">
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
+            
           </div>
 
           {/* Row 2: Warranty Type + Data Level + LTP Aging */}
@@ -297,7 +288,7 @@ export function LtpReport({ mod, sub }: Props) {
       </div>
 
       {/* Statistics Monthly */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">Statistics (Monthly)</h2>
           <button onClick={() => setShowDetail(d => !d)} className="btn text-xs">
@@ -314,7 +305,7 @@ export function LtpReport({ mod, sub }: Props) {
             <h2 className="text-sm font-semibold">
               Detail Records
               <span className="ml-2 text-xs text-muted-foreground font-normal">
-                ({rows.length} records · aging ≥ {applied.ltpAging} days)
+                ({rows.length} records · aging ≥ {ltpAging} days)
               </span>
             </h2>
           </div>

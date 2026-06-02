@@ -45,7 +45,7 @@ function LocationDropdown({ value, onChange }: { value: string; onChange: (v: st
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-48 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-48 max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           {LOCATIONS.map((l,i) => (
             <button key={i} onClick={() => { onChange(l); setOpen(false); }}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${value===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
@@ -63,15 +63,14 @@ export function PartRevenueReport({ mod, sub }: Props) {
   const [dateType, setDateType] = useState<DateType>("daily");
   const [startDate, setStartDate] = useState(offsetStr(-7));
   const [endDate, setEndDate] = useState(todayStr());
-  const [applied, setApplied] = useState({ location:"",dateType:"daily" as DateType,startDate:offsetStr(-7),endDate:todayStr() });
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    if (applied.location) r = r.filter(x=>x.location===applied.location);
-    if (applied.startDate) r = r.filter(x=>x.poDate>=applied.startDate);
-    if (applied.endDate) r = r.filter(x=>x.poDate<=applied.endDate);
+    if (location) r = r.filter(x=>x.location===location);
+    if (startDate) r = r.filter(x=>x.poDate>=startDate);
+    if (endDate) r = r.filter(x=>x.poDate<=endDate);
     return r;
-  }, [applied]);
+  }, [endDate, location, startDate]);
 
   const totalRevenue = rows.reduce((s,r)=>s+r.revenue,0);
   const totalCost = rows.reduce((s,r)=>s+r.cost,0);
@@ -95,7 +94,7 @@ export function PartRevenueReport({ mod, sub }: Props) {
         <span>* Balance Amount: Used Amount</span>
       </div>
 
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <label htmlFor="prr-location" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Location</label>
@@ -117,9 +116,7 @@ export function PartRevenueReport({ mod, sub }: Props) {
             <label htmlFor="prr-end" className="sr-only">PO end date</label>
             <input id="prr-end" type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} title="PO end date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-32.5" />
           </div>
-          <button onClick={() => setApplied({location,dateType,startDate,endDate})} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5" />Refresh
-          </button>
+          
         </div>
       </div>
 
@@ -148,7 +145,7 @@ export function PartRevenueReport({ mod, sub }: Props) {
           </thead>
           <tbody>
             {rows.length===0
-              ? <tr><td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">No records. Adjust filters and click Refresh.</td></tr>
+              ? <tr><td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">No records found matching the selected filters.</td></tr>
               : rows.map((r,idx) => (
                 <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/2":""}`}>
                   <td className="px-3 py-2.5 text-muted-foreground">{idx+1}</td>

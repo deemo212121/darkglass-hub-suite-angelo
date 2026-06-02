@@ -32,7 +32,6 @@ export function ClaimCalendarMonthly({ mod, sub }: Props) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [location, setLocation] = useState("");
-  const [applied, setApplied] = useState({ location: "", year: now.getFullYear(), month: now.getMonth() });
   const [locOpen, setLocOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -65,7 +64,7 @@ export function ClaimCalendarMonthly({ mod, sub }: Props) {
       weekNo: wn,
       days: week.map(d => ({
         date: d,
-        count: d ? seedCount(year, month, d, applied.location || "all") : 0,
+        count: d ? seedCount(year, month, d, location || "all") : 0,
       })),
     });
     weekIdx++;
@@ -87,7 +86,7 @@ export function ClaimCalendarMonthly({ mod, sub }: Props) {
       </div>
 
       {/* Filter bar */}
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
           <div ref={ref} className="relative flex-1">
@@ -97,7 +96,7 @@ export function ClaimCalendarMonthly({ mod, sub }: Props) {
               <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${locOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             {locOpen && (
-              <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+              <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
                 {LOCATIONS.map((l,i)=>(
                   <button key={i} onClick={()=>{setLocation(l);setLocOpen(false);}}
                     className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
@@ -107,7 +106,7 @@ export function ClaimCalendarMonthly({ mod, sub }: Props) {
               </div>
             )}
           </div>
-          <button onClick={()=>setApplied({location,year,month})} className="btn btn-primary px-5 text-sm">Show</button>
+          
         </div>
       </div>
 

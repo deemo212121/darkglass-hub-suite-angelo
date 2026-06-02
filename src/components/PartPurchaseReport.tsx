@@ -39,7 +39,7 @@ function DistributorDropdown({ value, onChange }: { value: string; onChange: (v:
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-full rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-full rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           <button onClick={() => { onChange(""); setOpen(false); }}
             className={`w-full text-left px-3 py-3 text-sm hover:bg-white/5 ${value===""?"bg-blue-600 text-white":""}`}>&nbsp;</button>
           {PART_DISTRIBUTORS.slice(1).map(d => (
@@ -56,15 +56,14 @@ export function PartPurchaseReport({ mod, sub }: Props) {
   const [distributor, setDistributor] = useState("");
   const [startMonth, setStartMonth] = useState(offsetStr(-365));
   const [endMonth, setEndMonth] = useState(offsetStr(0));
-  const [applied, setApplied] = useState({ distributor:"", startMonth:offsetStr(-365), endMonth:offsetStr(0) });
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    if (applied.distributor) r = r.filter(x=>x.distributor===applied.distributor);
-    if (applied.startMonth) r = r.filter(x=>x.invoiceDate>=applied.startMonth);
-    if (applied.endMonth) r = r.filter(x=>x.invoiceDate<=applied.endMonth);
+    if (distributor) r = r.filter(x=>x.distributor===distributor);
+    if (startMonth) r = r.filter(x=>x.invoiceDate>=startMonth);
+    if (endMonth) r = r.filter(x=>x.invoiceDate<=endMonth);
     return r;
-  }, [applied]);
+  }, [distributor, endMonth, startMonth]);
 
   const totalCost = rows.reduce((s,r)=>s+r.totalCost,0);
 
@@ -80,7 +79,7 @@ export function PartPurchaseReport({ mod, sub }: Props) {
         <h1 className="text-xl font-bold">Part Purchase Report</h1>
       </div>
 
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-48">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0 whitespace-nowrap">Part Distributor</span>
@@ -93,9 +92,7 @@ export function PartPurchaseReport({ mod, sub }: Props) {
             <label htmlFor="ppr-end" className="sr-only">Invoice end date</label>
             <input id="ppr-end" type="date" value={endMonth} onChange={e=>setEndMonth(e.target.value)} title="Invoice end date" placeholder="YYYY-MM-DD" className="glass-input text-sm py-1.5 px-2 rounded-md w-32.5" />
           </div>
-          <button onClick={() => setApplied({distributor,startMonth,endMonth})} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5" />Refresh
-          </button>
+          
         </div>
       </div>
 
@@ -123,7 +120,7 @@ export function PartPurchaseReport({ mod, sub }: Props) {
           </thead>
           <tbody>
             {rows.length===0
-              ? <tr><td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">No records. Adjust filters and click Refresh.</td></tr>
+              ? <tr><td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">No records found matching the selected filters.</td></tr>
               : rows.map((r,idx) => (
                 <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/2":""}`}>
                   <td className="px-3 py-2.5 text-muted-foreground">{idx+1}</td>
