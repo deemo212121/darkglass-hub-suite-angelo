@@ -22,6 +22,7 @@ function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug:
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -47,22 +48,31 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
-          <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
               <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
             </div>
-            <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/80 p-1">
-              {(["list", "hierarchy"] as ViewMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setViewMode(mode)}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${viewMode === mode ? "bg-blue-500/30 text-white" : "text-slate-300 hover:text-white"}`}
-                >
-                  {mode === "list" ? "List" : "Hierarchy"}
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/80 p-1">
+                {(["list", "hierarchy"] as ViewMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setViewMode(mode)}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold transition ${viewMode === mode ? "bg-blue-500/30 text-white" : "text-slate-300 hover:text-white"}`}
+                  >
+                    {mode === "list" ? "List" : "Hierarchy"}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddUserModal(true)}
+                className="btn btn-primary whitespace-nowrap"
+              >
+                + Add User
+              </button>
             </div>
           </div>
 
@@ -146,6 +156,69 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           </div>
         )}
       </div>
+
+      {showAddUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/95 px-5 py-4 backdrop-blur-md">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">Add New User</h2>
+                <p className="mt-1 text-sm text-slate-300">Create a new user account (ID will be auto-generated)</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button type="button" onClick={() => setShowAddUserModal(false)} className="btn hover:bg-slate-800">Cancel</button>
+                <button type="button" onClick={() => setShowAddUserModal(false)} className="btn btn-primary">Create User</button>
+              </div>
+            </div>
+            <div className="p-5">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Login Name *</span>
+                  <input placeholder="Enter login name" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Name *</span>
+                  <input placeholder="Enter user name" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email *</span>
+                  <input type="email" placeholder="Enter email address" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Type *</span>
+                  <select className="glass-input w-full text-[11px] px-2 py-1">
+                    <option value="">Select user type</option>
+                    <option value="admin">Admin</option>
+                    <option value="hr">HR</option>
+                    <option value="manager">Manager</option>
+                    <option value="technician">Technician</option>
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Manager *</span>
+                  <input placeholder="Assign manager" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician ID</span>
+                  <input placeholder="Enter technician ID (optional)" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Assigned Branch *</span>
+                  <input placeholder="Select branch office" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch Access *</span>
+                  <input placeholder="Enter branch access (comma separated)" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+              </div>
+              <div className="mt-4 text-xs text-slate-400">
+                <span className="font-semibold">Note:</span> Fields marked with * are required. ID will be automatically generated upon creation.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
+

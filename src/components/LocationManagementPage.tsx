@@ -665,6 +665,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const [coverageSearch, setCoverageSearch] = useState("");
   const [newLocationRow, setNewLocationRow] = useState<LocationRow>(() => buildEmptyLocationRow());
   const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [newPartRow, setNewPartRow] = useState<PartAddressRow>({ id: "", name: "", address1: "", address2: "", city: "", state: "", zipCode: "", location: "" });
   const [newCoverageRow, setNewCoverageRow] = useState<CoverageRow>(() => buildEmptyCoverageRow());
   const [selectedCoverageLocation, setSelectedCoverageLocation] = useState(() => DEFAULT_COVERAGE_ROWS[0]?.location ?? locationRows[0]?.location ?? "Birmingham");
@@ -1047,6 +1048,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     });
     setNewLocationRow(buildEmptyLocationRow());
     setEditingLocationId(null);
+    setLocationModalOpen(false);
   };
 
   const editLocationRow = (row: LocationRow) => {
@@ -1065,11 +1067,30 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     });
     setSelectedCoverageLocation(row.location);
     setActiveTab("locations");
+    setLocationModalOpen(true);
   };
 
   const resetLocationForm = () => {
     setNewLocationRow(buildEmptyLocationRow());
     setEditingLocationId(null);
+  };
+
+  const openNewLocationModal = () => {
+    resetLocationForm();
+    setLocationModalOpen(true);
+  };
+
+  const closeLocationModal = () => {
+    setLocationModalOpen(false);
+    resetLocationForm();
+  };
+
+  const deleteLocationRow = () => {
+    if (!editingLocationId) return;
+    if (confirm("Are you sure you want to delete this location?")) {
+      removeLocationRow(editingLocationId);
+      closeLocationModal();
+    }
   };
 
   const addPartRow = () => {
@@ -1117,47 +1138,52 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 className="glass-input mt-2 w-full"
               />
             </div>
-            <div className="ml-auto flex flex-wrap gap-2">
-              <button type="button" onClick={saveLocationRows} className="btn btn-primary">Save</button>
-            </div>
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap gap-2.5">
-          {[
-            { key: "locations", label: "Locations" },
-            { key: "parts", label: "Part Addresses" },
-            { key: "coverage", label: "Covered Zip Codes" },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key as typeof activeTab)}
-              className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${activeTab === tab.key ? "border-blue-400/60 bg-blue-500/25 text-white" : "border-white/20 bg-slate-900/90 text-slate-300 hover:border-slate-200/30 hover:text-white"}`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2.5">
+            {[
+              { key: "locations", label: "Locations" },
+              { key: "parts", label: "Part Addresses" },
+              { key: "coverage", label: "Covered Zip Codes" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key as typeof activeTab)}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${activeTab === tab.key ? "border-blue-400/60 bg-blue-500/25 text-white" : "border-white/20 bg-slate-900/90 text-slate-300 hover:border-slate-200/30 hover:text-white"}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={openNewLocationModal}
+            className="btn btn-primary whitespace-nowrap"
+          >
+            Add New Location
+          </button>
         </div>
 
-        {activeTab === "locations" && (
-        <section className="mt-5 rounded-xl border border-white/15 bg-white/8 p-4 backdrop-blur-md">
-          <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight">Location Details</h2>
-                <p className="mt-1 text-sm text-slate-300">Location ID {visibleLocationId}</p>
+        {locationModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+            <div className="relative max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60">
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/95 px-5 py-4 backdrop-blur-md">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight">{editingLocationId ? "Edit Location" : "Add New Location"}</h2>
+                  <p className="mt-1 text-sm text-slate-300">Location ID {visibleLocationId}</p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <button type="button" onClick={closeLocationModal} className="btn hover:bg-slate-800">Cancel</button>
+                  <button type="button" onClick={() => { addLocationRow(); }} className="btn btn-primary">{editingLocationId ? "Update" : "Add Location"}</button>
+                  {editingLocationId && (
+                    <button type="button" onClick={deleteLocationRow} className="btn bg-red-600 hover:bg-red-700 border-red-500/50 text-white">Delete</button>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {editingLocationId ? (
-                  <button type="button" onClick={resetLocationForm} className="btn">Cancel</button>
-                ) : null}
-                <button type="button" onClick={addLocationRow} className="btn btn-primary">
-                  {editingLocationId ? "Update" : "Add"}
-                </button>
-                <button type="button" onClick={saveLocationRows} className="btn">Save</button>
-              </div>
-            </div>
+              <div className="p-5">
 
             <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
@@ -1295,9 +1321,14 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 </div>
               </div>
             </div>
+              </div>
+            </div>
           </div>
+        )}
 
-          <div className="mt-5 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
+        {activeTab === "locations" && (
+        <section className="mt-5 rounded-xl border border-white/15 bg-white/8 p-4 backdrop-blur-md">
+          <div className="overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
             <table className="min-w-[1600px] w-full text-[11px] leading-tight">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
