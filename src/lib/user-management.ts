@@ -120,3 +120,17 @@ export function canAccessUserManagement(emailOrUserId: string | null | undefined
   const record = getUserManagementRecord(normalized);
   return !!record && USER_MANAGEMENT_ADMIN_TYPES.has(record.type.toLowerCase());
 }
+
+const ADMIN_ONLY_TYPES = new Set(["admin", "super admin", "superadmin"]);
+const ADMIN_SYSTEM_ACCESS_EMAILS = new Set([
+  "admin@ahsolutions.com",
+  "superadmin@ahsolutions.com",
+]);
+
+export function canAccessAdminModule(emailOrUserId: string | null | undefined) {
+  const normalized = String(emailOrUserId || "").trim().toLowerCase();
+  if (ADMIN_SYSTEM_ACCESS_EMAILS.has(normalized)) return true;
+
+  const record = getUserManagementRecord(normalized);
+  return !!record && ADMIN_ONLY_TYPES.has(record.type.toLowerCase());
+}

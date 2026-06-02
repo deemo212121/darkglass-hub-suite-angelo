@@ -60,7 +60,7 @@ import { TodoListPage } from "@/components/TodoListPage";
 import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
-import { canAccessUserManagement, getUserManagementRecord } from "@/lib/user-management";
+import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -100,6 +100,30 @@ function SubModule() {
   const location = useLocation();
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" />;
+  
+  if (mod.slug === "admin" && !canAccessAdminModule(email)) {
+    const currentUser = getUserManagementRecord(email);
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                The admin module is only available to Admin users.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {currentUser?.userName ?? email}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+  
   if (sub.custom === "user-management" && !canAccessUserManagement(email)) {
     const currentUser = getUserManagementRecord(email);
     return (
