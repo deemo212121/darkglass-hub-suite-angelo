@@ -125,6 +125,143 @@ const dashboardMod: ModuleDef = {
         topPart: pick(PARTS, i),
       }),
     },
+    {
+      slug: "accounting-dashboard",
+      title: "Accounting Dashboard",
+      description: "Attendance monitoring, payroll calculation, and employee time tracking.",
+      custom: "accounting-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "attendance-monitoring",
+      title: "Attendance Monitoring Dashboard",
+      description: "Track daily attendance, late arrivals, and absences.",
+      fields: [
+        { key: "employeeName", label: "Employee", filterable: true },
+        { key: "date", label: "Date", type: "date", filterable: true },
+        { key: "status", label: "Status", type: "select", options: ["Present", "Late", "Absent", "Half-Day"], filterable: true },
+        { key: "checkIn", label: "Check In", type: "text" },
+        { key: "checkOut", label: "Check Out", type: "text" },
+        { key: "hoursWorked", label: "Hours Worked", type: "number" },
+      ],
+      count: 40,
+      seed: (i) => {
+        const statuses = ["Present", "Late", "Absent", "Half-Day"];
+        return {
+          employeeName: pick(TECHS, i),
+          date: dateStr(-(i % 15)),
+          status: pick(statuses, i),
+          checkIn: (7 + (i % 2)).toString().padStart(2, "0") + ":00",
+          checkOut: (17 + (i % 2)).toString().padStart(2, "0") + ":00",
+          hoursWorked: 8 + (i % 2),
+        };
+      },
+    },
+    {
+      slug: "payroll-calculation",
+      title: "Payroll Calculation Dashboard",
+      description: "Calculate and manage employee payroll with deductions.",
+      fields: [
+        { key: "employeeName", label: "Employee", filterable: true },
+        { key: "period", label: "Period", filterable: true },
+        { key: "regularHours", label: "Regular Hours", type: "number" },
+        { key: "overtimeHours", label: "Overtime Hours", type: "number" },
+        { key: "ptoHours", label: "PTO Hours", type: "number" },
+        { key: "grossPay", label: "Gross Pay", type: "number" },
+        { key: "deductions", label: "Deductions", type: "number" },
+        { key: "netPay", label: "Net Pay", type: "number" },
+      ],
+      count: 30,
+      seed: (i) => {
+        const regularHours = 160 + (i % 20);
+        const overtimeHours = i % 5;
+        const grossPay = regularHours * 20 + overtimeHours * 30;
+        const deductions = Math.round(grossPay * 0.2);
+        return {
+          employeeName: pick(TECHS, i),
+          period: `Jun ${(i % 2) ? "1-15" : "16-30"}, 2026`,
+          regularHours,
+          overtimeHours,
+          ptoHours: i % 3,
+          grossPay,
+          deductions,
+          netPay: grossPay - deductions,
+        };
+      },
+    },
+    {
+      slug: "employee-self-service",
+      title: "Employee Self-Service Portal",
+      description: "Allow employees to view timecards and request time off.",
+      fields: [
+        { key: "employeeName", label: "Employee", filterable: true },
+        { key: "availableBalance", label: "Available PTO Balance", type: "number" },
+        { key: "usedBalance", label: "Used PTO", type: "number" },
+        { key: "pendingRequests", label: "Pending Requests", type: "number" },
+      ],
+      count: 20,
+      seed: (i) => ({
+        employeeName: pick(TECHS, i),
+        availableBalance: 15 - (i % 5),
+        usedBalance: i % 10,
+        pendingRequests: i % 3,
+      }),
+    },
+    {
+      slug: "pto-leave-management",
+      title: "PTO & Leave Management Dashboard",
+      description: "Manage vacation, sick leave, and time-off requests.",
+      fields: [
+        { key: "employeeName", label: "Employee", filterable: true },
+        { key: "leaveType", label: "Leave Type", type: "select", options: ["Vacation", "Sick Leave", "Personal", "Unpaid"], filterable: true },
+        { key: "startDate", label: "Start Date", type: "date" },
+        { key: "endDate", label: "End Date", type: "date" },
+        { key: "daysRequested", label: "Days", type: "number" },
+        { key: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Denied"], filterable: true },
+      ],
+      count: 35,
+      seed: (i) => {
+        const leaveTypes = ["Vacation", "Sick Leave", "Personal", "Unpaid"];
+        const statuses = ["Pending", "Approved", "Denied"];
+        const daysRequested = (i % 7) + 1;
+        return {
+          employeeName: pick(TECHS, i),
+          leaveType: pick(leaveTypes, i),
+          startDate: dateStr(i % 30),
+          endDate: dateStr((i % 30) + daysRequested),
+          daysRequested,
+          status: pick(statuses, i),
+        };
+      },
+    },
+    {
+      slug: "expense-tracking",
+      title: "Tracking Expenses Dashboard",
+      description: "Track and manage employee expenses and reimbursements.",
+      fields: [
+        { key: "employeeName", label: "Employee", filterable: true },
+        { key: "category", label: "Category", type: "select", options: ["Travel", "Supplies", "Meals", "Other"], filterable: true },
+        { key: "date", label: "Date", type: "date" },
+        { key: "amount", label: "Amount", type: "number" },
+        { key: "description", label: "Description", filterable: true },
+        { key: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Reimbursed"], filterable: true },
+      ],
+      count: 40,
+      seed: (i) => {
+        const categories = ["Travel", "Supplies", "Meals", "Other"];
+        const statuses = ["Pending", "Approved", "Reimbursed"];
+        return {
+          employeeName: pick(TECHS, i),
+          category: pick(categories, i),
+          date: dateStr(-(i % 20)),
+          amount: 25 + (i * 13) % 250,
+          description: `Expense for ${pick(categories, i)}`,
+          status: pick(statuses, i),
+        };
+      },
+    },
   ],
 };
 
@@ -1257,6 +1394,7 @@ const adminMod: ModuleDef = {
     },
   ],
 };
+
 
 export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, adminMod];
 
