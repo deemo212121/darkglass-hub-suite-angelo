@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Users, CheckCircle, XCircle, Clock, Calendar, AlertCircle, TrendingUp, DollarSign, ExternalLink } from "lucide-react";
+import { ChevronLeft, Users, CheckCircle, XCircle, Clock, Calendar, AlertCircle, TrendingUp, DollarSign, ExternalLink, Search, X } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -73,6 +73,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [timeCards, setTimeCards] = useState<TimeCardEntry[]>([]);
   const [payrollData, setPayrollData] = useState<PayrollData | null>(null);
   const [monthlyStats, setMonthlyStats] = useState<EmployeeMonthlyStats[]>([]);
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Generate mock data
   useEffect(() => {
@@ -293,8 +294,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
             {/* Employee Attendance Table */}
             <div className="panel p-0 overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm">
-                Employee Attendance Details
+              <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center justify-between">
+                <span>Employee Attendance Details</span>
+                <div className="relative w-64">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search employee..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="glass-input rounded pl-9 pr-9 py-2 bg-white/10 border border-white/20 text-sm w-full"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
               <table className="w-full text-sm">
                 <thead>
@@ -307,7 +326,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </tr>
                 </thead>
                 <tbody>
-                  {employees.map((emp, i) => (
+                  {employees
+                    .filter((emp) => emp.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map((emp, i) => (
                     <tr key={emp.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
                       <td className="px-4 py-3">
                         <button

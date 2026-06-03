@@ -683,6 +683,18 @@
     accent-color: #3b82f6;
   }
 
+  /* Date input calendar icon styling - white icon */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: brightness(0) invert(1);
+    cursor: pointer;
+  }
+
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    color-scheme: dark;
+  }
+
   .ticket-form-actions {
     display: flex;
     gap: 1rem;
