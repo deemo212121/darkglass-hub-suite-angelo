@@ -118,38 +118,21 @@ function ModuleIndex() {
           </div>
         </div>
         {m.slug === "dashboard" ? (
-          <div className="grid gap-5 lg:grid-cols-3">
-            {submodules.map((s: SubModuleDef, index) => {
-              const Icon = dashboardIcons[s.slug] ?? ArrowRight;
-              const cardStyle = dashboardCardStyles[s.slug] ?? dashboardCardStyles["repair-forecast"];
-              const iconStyle = dashboardCardIconStyles[s.slug] ?? dashboardCardIconStyles["repair-forecast"];
-              const metaStyle = dashboardCardMetaStyles[s.slug] ?? dashboardCardMetaStyles["repair-forecast"];
-              return (
-                <Link
-                  key={s.slug}
-                  to="/m/$module/$submodule"
-                  params={{ module: m.slug, submodule: s.slug }}
-                  className={`group rounded-[18px] p-6 transition-all duration-200 ${cardStyle}`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${iconStyle}`}>
-                      <Icon className="h-6 w-6" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-3">
-                        <h3 className={`text-sm font-semibold uppercase tracking-[0.18em] ${s.slug === "overall-status" ? "text-slate-900" : "text-white/95"}`}>
-                          {s.title}
-                        </h3>
-                        <ArrowRight className={`ml-auto h-4 w-4 shrink-0 opacity-60 transition-transform group-hover:translate-x-1 ${s.slug === "overall-status" ? "text-slate-700" : "text-white"}`} />
-                      </div>
-                      <p className={`mt-3 text-sm leading-6 ${s.slug === "overall-status" ? "text-slate-600" : "text-white/75"}`}>
-                        {s.description}
-                      </p>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {submodules.map((s: SubModuleDef) => (
+              <Link
+                key={s.slug}
+                to="/m/$module/$submodule"
+                params={{ module: m.slug, submodule: s.slug }}
+                className="module-card group"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="font-semibold">{s.title}</h3>
+                  <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
+                </div>
+                <p className="text-sm text-muted-foreground">{s.description}</p>
+              </Link>
+            ))}
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

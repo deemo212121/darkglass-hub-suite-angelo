@@ -63,6 +63,8 @@ interface DailyTimecard {
   dayOfWeek: string;
   timeIn?: string;
   timeOut?: string;
+  mealInTime?: string;
+  mealOutTime?: string;
   lunchBreakStart?: string;
   lunchBreakEnd?: string;
   hoursWorked: number;
@@ -90,6 +92,9 @@ const EMPLOYEES_DATA: Record<string, EmployeeDetail> = {
     checkOutTime: "17:30",
     hoursWorked: 9.5,
     overtimeHours: 0,
+    location: "Atlanta",
+    department: "Operations",
+    manager: "Sarah Manager",
     monthlyStats: {
       employeeId: "1",
       employeeName: "John Doe",
@@ -106,16 +111,16 @@ const EMPLOYEES_DATA: Record<string, EmployeeDetail> = {
     performance: "Good",
     hourlyRate: 20,
     dailyTimecards: [
-      { id: "1", date: "2026-06-01", dayOfWeek: "Monday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "2", date: "2026-06-02", dayOfWeek: "Tuesday", timeIn: "08:15", timeOut: "17:30", hoursWorked: 9.25, status: "present" },
-      { id: "3", date: "2026-06-03", dayOfWeek: "Wednesday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "4", date: "2026-06-04", dayOfWeek: "Thursday", timeIn: "07:30", timeOut: "17:00", hoursWorked: 9.5, status: "present" },
-      { id: "5", date: "2026-06-05", dayOfWeek: "Friday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "6", date: "2026-06-08", dayOfWeek: "Monday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "7", date: "2026-06-09", dayOfWeek: "Tuesday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "8", date: "2026-06-10", dayOfWeek: "Wednesday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
-      { id: "9", date: "2026-06-11", dayOfWeek: "Thursday", timeIn: "08:00", timeOut: "18:00", hoursWorked: 10, status: "present" },
-      { id: "10", date: "2026-06-12", dayOfWeek: "Friday", timeIn: "08:00", timeOut: "17:00", hoursWorked: 9, status: "present" },
+      { id: "1", date: "2026-06-01", dayOfWeek: "Monday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "2", date: "2026-06-02", dayOfWeek: "Tuesday", timeIn: "08:15", timeOut: "17:30", mealInTime: "12:00", mealOutTime: "12:45", hoursWorked: 8.75, status: "present" },
+      { id: "3", date: "2026-06-03", dayOfWeek: "Wednesday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "4", date: "2026-06-04", dayOfWeek: "Thursday", timeIn: "07:30", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 9, status: "present" },
+      { id: "5", date: "2026-06-05", dayOfWeek: "Friday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "6", date: "2026-06-08", dayOfWeek: "Monday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "7", date: "2026-06-09", dayOfWeek: "Tuesday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "8", date: "2026-06-10", dayOfWeek: "Wednesday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
+      { id: "9", date: "2026-06-11", dayOfWeek: "Thursday", timeIn: "08:00", timeOut: "18:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 9.5, status: "present" },
+      { id: "10", date: "2026-06-12", dayOfWeek: "Friday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
     ],
   },
   "2": {
@@ -836,10 +841,14 @@ function EmployeeDetailsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Location</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Department</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Manager</th>
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Date</th>
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Day</th>
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Time In</th>
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Time Out</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Check In</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Meal In</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Meal Out</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Check Out</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Hours</th>
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Status</th>
                   </tr>
@@ -851,9 +860,13 @@ function EmployeeDetailsPage() {
                       onClick={() => openTimecardModal(idx)}
                       className="border-b border-white/5 hover:bg-white/10 cursor-pointer transition"
                     >
+                      <td className="px-4 py-3 text-sm text-slate-300">{employee.location || "—"}</td>
+                      <td className="px-4 py-3 text-sm text-slate-300">{employee.department || "—"}</td>
+                      <td className="px-4 py-3 text-sm text-slate-300">{employee.manager || "—"}</td>
                       <td className="px-4 py-3 text-sm">{timecard.date}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{timecard.dayOfWeek}</td>
                       <td className="px-4 py-3 text-sm">{timecard.timeIn || "—"}</td>
+                      <td className="px-4 py-3 text-sm">{timecard.mealInTime || "—"}</td>
+                      <td className="px-4 py-3 text-sm">{timecard.mealOutTime || "—"}</td>
                       <td className="px-4 py-3 text-sm">{timecard.timeOut || "—"}</td>
                       <td className="px-4 py-3 text-center text-sm font-semibold text-blue-300">
                         {timecard.hoursWorked.toFixed(2)}
