@@ -11,8 +11,29 @@ interface EmployeeStatus {
   status: "present" | "absent" | "late";
   checkInTime?: string;
   checkOutTime?: string;
+  mealInTime?: string;
+  mealOutTime?: string;
   hoursWorked?: number;
   overtimeHours?: number;
+  location?: string;
+  department?: string;
+  manager?: string;
+}
+
+interface AttendanceAlert {
+  type: "overtime" | "undertime" | "no_meal_break" | "no_lunch_break";
+  message: string;
+  severity: "warning" | "critical";
+}
+
+interface AttendanceNote {
+  id: string;
+  date: string;
+  content: string;
+  createdBy: string;
+  notifyIndividual: boolean;
+  notifyTeamLead: boolean;
+  timestamp: string;
 }
 
 interface EmployeeMonthlyStats {

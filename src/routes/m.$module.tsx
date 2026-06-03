@@ -48,29 +48,7 @@ function ModuleIndex() {
   }
   
   // Render the module index (navigation cards)
-  const dashboardIcons: Record<string, typeof BarChart3> = {
-    "overall-status": BarChart3,
-    "repair-forecast": ChartColumnIncreasing,
-    "daily-activity": ClipboardList,
-  };
 
-  const dashboardCardStyles: Record<string, string> = {
-    "overall-status": "bg-white text-slate-900 border border-slate-200 shadow-[0_14px_34px_rgba(15,23,42,0.14)] hover:-translate-y-1 hover:border-blue-500/40 hover:shadow-[0_18px_42px_rgba(37,99,235,0.18)]",
-    "repair-forecast": "bg-[rgba(255,255,255,0.08)] text-white border border-[rgba(255,255,255,0.15)] backdrop-blur-md hover:-translate-y-1 hover:bg-[rgba(255,255,255,0.12)] hover:border-[rgba(91,126,255,0.5)]",
-    "daily-activity": "bg-[rgba(255,255,255,0.08)] text-white border border-[rgba(255,255,255,0.15)] backdrop-blur-md hover:-translate-y-1 hover:bg-[rgba(255,255,255,0.12)] hover:border-[rgba(91,126,255,0.5)]",
-  };
-
-  const dashboardCardIconStyles: Record<string, string> = {
-    "overall-status": "bg-blue-50 text-blue-700 border border-blue-100 shadow-none",
-    "repair-forecast": "bg-white/10 text-white border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.18)]",
-    "daily-activity": "bg-white/10 text-white border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.18)]",
-  };
-
-  const dashboardCardMetaStyles: Record<string, string> = {
-    "overall-status": "text-slate-500",
-    "repair-forecast": "text-white/45",
-    "daily-activity": "text-white/45",
-  };
 
   const partsLandingOrder = [
     "part-collection",
@@ -166,9 +144,6 @@ function ModuleIndex() {
                       </div>
                       <p className={`mt-3 text-sm leading-6 ${s.slug === "overall-status" ? "text-slate-600" : "text-white/75"}`}>
                         {s.description}
-                      </p>
-                      <p className={`mt-5 text-[0.72rem] font-medium uppercase tracking-[0.18em] ${metaStyle}`}>
-                        Open submenu {index + 1}
                       </p>
                     </div>
                   </div>

@@ -135,6 +135,15 @@ const dashboardMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "attendance-details",
+      title: "Attendance Details",
+      description: "Comprehensive daily attendance tracking with alerts and notes.",
+      custom: "attendance-details" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
