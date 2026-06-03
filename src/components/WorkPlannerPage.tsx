@@ -6,7 +6,7 @@ import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocatio
 import { getSubModule } from "@/lib/modules";
 import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
 
-const GOOGLE_MAPS_API_KEY = "AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc";
+const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc";
 
 type TicketRecord = Record<string, any> & {
   ticketNo: string;
