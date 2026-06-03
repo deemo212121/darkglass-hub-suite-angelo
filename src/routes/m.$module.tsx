@@ -3,7 +3,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
-import { ArrowRight, BarChart3, ChevronLeft, ClipboardList, ChartColumnIncreasing } from "lucide-react";
+import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
   head: ({ params }) => ({

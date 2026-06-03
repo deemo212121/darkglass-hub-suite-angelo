@@ -189,6 +189,10 @@ export function AttendanceDetailsPage() {
     return attendanceData.filter((row) => row.department === selectedDepartment);
   }, [attendanceData, selectedDepartment]);
 
+  const handleEmployeeClick = (employeeId: string) => {
+    window.open(`/employee/${employeeId}`, "_blank");
+  };
+
   const handleAddNote = (rowIndex: number) => {
     const actualIndex = attendanceData.indexOf(filteredData[rowIndex]);
     setSelectedRow(actualIndex);
@@ -259,7 +263,7 @@ export function AttendanceDetailsPage() {
         <div className="max-w-[1600px] mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate({ to: "/m/dashboard/accounting-dashboard" })}
+              onClick={() => window.location.href = "/m/dashboard"}
               className="hover:bg-white/15 p-2 rounded-md transition"
             >
               <ChevronLeft className="h-5 w-5" />
@@ -316,7 +320,15 @@ export function AttendanceDetailsPage() {
                   const hours = calculateHours(row.checkIn, row.checkOut, row.mealIn, row.mealOut);
                   return (
                     <tr key={idx} className="border-b border-white/5 hover:bg-white/10 transition">
-                      <td className="px-4 py-3 text-sm font-medium">{row.employeeName}</td>
+                      <td className="px-4 py-3 text-sm font-medium">
+                        <button
+                          onClick={() => handleEmployeeClick(row.employeeId)}
+                          className="text-blue-400 hover:text-blue-300 cursor-pointer font-medium flex items-center gap-1"
+                        >
+                          {row.employeeName}
+                          <span className="text-xs">↗</span>
+                        </button>
+                      </td>
                       <td className="px-4 py-3 text-sm text-slate-300">{row.location}</td>
                       <td className="px-4 py-3 text-sm text-slate-300">{row.department}</td>
                       <td className="px-4 py-3 text-sm text-slate-300">{row.manager}</td>
