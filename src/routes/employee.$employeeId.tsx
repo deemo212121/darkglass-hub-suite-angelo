@@ -55,6 +55,7 @@ interface EmployeeDetail extends EmployeeStatus {
   performance: "Excellent" | "Good" | "Average" | "Needs Improvement";
   hourlyRate: number;
   dailyTimecards: DailyTimecard[];
+  notes?: string;
 }
 
 interface DailyTimecard {
@@ -110,6 +111,7 @@ const EMPLOYEES_DATA: Record<string, EmployeeDetail> = {
     totalHolidayPay: 160,
     performance: "Good",
     hourlyRate: 20,
+    notes: "FIRST PAY",
     dailyTimecards: [
       { id: "1", date: "2026-06-01", dayOfWeek: "Monday", timeIn: "08:00", timeOut: "17:00", mealInTime: "12:00", mealOutTime: "12:30", hoursWorked: 8.5, status: "present" },
       { id: "2", date: "2026-06-02", dayOfWeek: "Tuesday", timeIn: "08:15", timeOut: "17:30", mealInTime: "12:00", mealOutTime: "12:45", hoursWorked: 8.75, status: "present" },
@@ -521,18 +523,30 @@ function EmployeeDetailsPage() {
     setSelectedTimecardIndex(null);
   };
 
-  const handleGeneratePayslip = () => {
-    // Generate a simple payslip document
-    const payslipContent = generatePayslipHTML({
-      ...employee!,
-      totalHoursMonth: editedHours,
-      totalOvertimeMonth: editedOvertime,
-      totalPTOHours: editedPTO,
-      totalAbsences: editedAbsences,
-      totalHolidayPay: editedHolidayPay,
+  const handleGeneratePayslip = async () => {
+    // Generate a simple payslip document with logo
+    // Convert logo to data URL
+    const response = await fetch(logoImage);
+    const blob = await response.blob();
+    const logoDataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
     });
-    const blob = new Blob([payslipContent], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
+
+    const payslipContent = generatePayslipHTML(
+      {
+        ...employee!,
+        totalHoursMonth: editedHours,
+        totalOvertimeMonth: editedOvertime,
+        totalPTOHours: editedPTO,
+        totalAbsences: editedAbsences,
+        totalHolidayPay: editedHolidayPay,
+      },
+      logoDataUrl
+    );
+    const payslipBlob = new Blob([payslipContent], { type: "text/html" });
+    const url = URL.createObjectURL(payslipBlob);
     
     // Open in new window for printing
     const printWindow = window.open(url, "_blank");
@@ -1074,7 +1088,10 @@ function EmployeeDetailsPage() {
   );
 }
 
-function generatePayslipHTML(employee: EmployeeDetail): string {
+// Import logo
+import logoImage from "@/assets/logo.png";
+
+function generatePayslipHTML(employee: EmployeeDetail, logoDataUrl: string): string {
   const currentDate = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -1110,50 +1127,88 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: white;
-      padding: 20px;
+      padding: 10px;
     }
     .container {
       max-width: 900px;
       margin: 0 auto;
       background: white;
       border: 1px solid #e5e7eb;
-      padding: 40px;
+      padding: 20px;
     }
     .header {
-      text-align: center;
-      margin-bottom: 30px;
+      display: flex;
+      flex-direction: row;
+      gap: 15px;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      padding: 15px;
       border-bottom: 2px solid #1e40af;
-      padding-bottom: 20px;
+      background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+      border-radius: 8px;
+      position: relative;
+    }
+    .logo {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    .header-content {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      margin-left: 10px;
     }
     .header h1 {
-      color: #1e40af;
+      color: white;
       font-size: 28px;
-      margin-bottom: 5px;
+      margin-bottom: 0;
+      letter-spacing: 1px;
     }
     .header p {
-      color: #6b7280;
+      color: #e0e7ff;
       font-size: 14px;
+      display: none;
     }
     .payslip-info {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 30px;
-      margin-bottom: 30px;
+      gap: 15px;
+      margin-bottom: 15px;
     }
     .info-section {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 4px;
     }
     .info-section label {
-      font-size: 12px;
+      font-size: 11px;
       color: #6b7280;
       text-transform: uppercase;
       font-weight: 600;
     }
     .info-section span {
-      font-size: 14px;
+      font-size: 13px;
       color: #1f2937;
+      font-weight: 500;
+    }
+    .employee-highlight {
+      background: #eff6ff;
+      border-left: 4px solid #1e40af;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .employee-highlight .info-section label {
+      color: #1e40af;
+      font-weight: 700;
+    }
+    .employee-highlight .info-section span {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e40af;
     }
     .table {
       width: 100%;
@@ -1163,40 +1218,56 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
     .table th {
       background: #f3f4f6;
       color: #1f2937;
-      padding: 12px;
+      padding: 8px;
       text-align: left;
       font-weight: 600;
-      font-size: 13px;
+      font-size: 12px;
       border: 1px solid #e5e7eb;
     }
     .table td {
-      padding: 12px;
+      padding: 8px;
       border: 1px solid #e5e7eb;
-      font-size: 13px;
+      font-size: 12px;
       color: #374151;
     }
     .table tr:nth-child(even) {
       background: #fafafa;
     }
     .summary-section {
-      margin-top: 30px;
+      margin-top: 15px;
       border-top: 2px solid #e5e7eb;
-      padding-top: 20px;
+      padding-top: 10px;
     }
     .summary-row {
       display: grid;
       grid-template-columns: 2fr 1fr;
-      gap: 20px;
+      gap: 10px;
       align-items: center;
-      padding: 10px 0;
+      padding: 6px 0;
       border-bottom: 1px solid #e5e7eb;
     }
-    .summary-row.total {
-      border-bottom: 2px solid #1e40af;
-      padding: 15px 0;
+    .summary-row.gross {
+      background: #f0f9ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      padding: 10px;
+      margin: 8px 0;
       font-weight: 600;
-      font-size: 16px;
+      font-size: 14px;
       color: #1e40af;
+    }
+    .summary-row.total {
+      background: #1e40af;
+      color: white;
+      border-radius: 4px;
+      padding: 12px;
+      margin: 8px 0;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .summary-row.total .amount {
+      text-align: right;
+      font-size: 18px;
     }
     .amount {
       text-align: right;
@@ -1204,11 +1275,11 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
     }
     .footer {
       text-align: center;
-      margin-top: 40px;
-      padding-top: 20px;
+      margin-top: 10px;
+      padding-top: 10px;
       border-top: 1px solid #e5e7eb;
       color: #6b7280;
-      font-size: 12px;
+      font-size: 11px;
     }
     @media print {
       body {
@@ -1219,25 +1290,64 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
         border: none;
         padding: 20px;
       }
+      .header {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%) !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .header h1, .header p {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      table {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      th, td {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .summary-row.gross {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .summary-row.total {
+        background: #1e40af !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .footer {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
     }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>PAYSLIP</h1>
-      <p>Admin Hub Solutions</p>
+      <img src="${logoDataUrl}" alt="Admin Hub Solutions Logo" class="logo" />
+      <div class="header-content">
+        <h1>PAYSLIP</h1>
+      </div>
     </div>
 
     <div class="payslip-info">
-      <div>
+      <div class="employee-highlight">
         <div class="info-section">
-          <label>Employee Name</label>
+          <label>👤 Employee Name</label>
           <span>${employee.name}</span>
         </div>
         <div class="info-section" style="margin-top: 15px;">
-          <label>Employee ID</label>
-          <span>${employee.id}</span>
+          <label>Department</label>
+          <span>${employee.department || "—"}</span>
         </div>
       </div>
       <div>
@@ -1252,6 +1362,47 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
       </div>
     </div>
 
+    <!-- Timecard Detail Table -->
+    <div style="margin-top: 15px; margin-bottom: 15px;">
+      <h3 style="font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 8px; border-bottom: 2px solid #1e40af; padding-bottom: 5px;">Daily Timecard Details</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Check In</th>
+            <th>Meal Start</th>
+            <th>Meal End</th>
+            <th>Check Out</th>
+            <th>Working Hours</th>
+            <th>Rate</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${employee.dailyTimecards.map(tc => {
+            const checkInTime = tc.timeIn || "—";
+            const checkOutTime = tc.timeOut || "—";
+            const mealStart = tc.mealInTime || "—";
+            const mealEnd = tc.mealOutTime || "—";
+            const hours = tc.hoursWorked.toFixed(2);
+            const amount = (tc.hoursWorked * hourlyRate).toFixed(2);
+            return `
+          <tr>
+            <td>${tc.date}</td>
+            <td>${checkInTime}</td>
+            <td>${mealStart}</td>
+            <td>${mealEnd}</td>
+            <td>${checkOutTime}</td>
+            <td>${hours}</td>
+            <td>$${hourlyRate}</td>
+            <td class="amount">$${amount}</td>
+          </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
     <div class="summary-section">
       <table class="table">
         <thead>
@@ -1262,44 +1413,60 @@ function generatePayslipHTML(employee: EmployeeDetail): string {
         </thead>
         <tbody>
           <tr>
-            <td>Regular Hours (${employee.totalHoursMonth} hrs @ $${hourlyRate}/hr)</td>
+            <td>Regular Hours</td>
             <td class="amount">$${regularPay.toFixed(2)}</td>
           </tr>
+          ${employee.totalOvertimeMonth > 0 ? `
           <tr>
-            <td>Overtime Hours (${employee.totalOvertimeMonth} hrs @ $${overtimeRate}/hr)</td>
+            <td>Overtime Hours</td>
             <td class="amount">$${overtimePay.toFixed(2)}</td>
           </tr>
+          ` : ''}
+          ${employee.totalPTOHours > 0 ? `
           <tr>
-            <td>PTO Hours (${employee.totalPTOHours} hrs @ $${ptoRate}/hr)</td>
+            <td>PTO Hours</td>
             <td class="amount">$${ptoPay.toFixed(2)}</td>
           </tr>
+          ` : ''}
+          ${employee.totalAbsences > 0 ? `
+          <tr>
+            <td>Absences (${employee.totalAbsences} days)</td>
+            <td class="amount">-$${absenceCost.toFixed(2)}</td>
+          </tr>
+          ` : ''}
+          ${employee.totalHolidayPay > 0 ? `
           <tr>
             <td>Holiday Pay</td>
             <td class="amount">$${holidayPay.toFixed(2)}</td>
           </tr>
-          <tr>
-            <td>Absences (${employee.totalAbsences} hrs @ $${hourlyRate}/hr)</td>
-            <td class="amount">-$${absenceCost.toFixed(2)}</td>
-          </tr>
-          <tr style="background: #f0f9ff;">
-            <td><strong>Gross Pay</strong></td>
-            <td class="amount"><strong>$${grossPay.toFixed(2)}</strong></td>
-          </tr>
+          ` : ''}
+        </tbody>
+      </table>
+      
+      <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>💰 Gross Pay</div>
+        <div class="amount">$${grossPay.toFixed(2)}</div>
+      </div>
+
+      <table class="table" style="margin-top: 15px;">
+        <tbody>
           <tr>
             <td>Deductions (20%)</td>
             <td class="amount">-$${deductions.toFixed(2)}</td>
           </tr>
-          <tr class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
-            <div>Net Pay</div>
-            <div class="amount">$${netPay.toFixed(2)}</div>
-          </tr>
         </tbody>
       </table>
+
+      <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>💵 NET PAY</div>
+        <div class="amount">$${netPay.toFixed(2)}</div>
+      </div>
     </div>
 
     <div class="footer">
-      <p>This is an electronically generated payslip. No signature is required.</p>
-      <p style="margin-top: 10px;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
+      ${employee.notes ? `<div style="text-align: left; margin-bottom: 20px; padding: 12px; background: #f3f4f6; border-left: 4px solid #1e40af; border-radius: 4px;"><p style="margin: 0; font-size: 12px;"><strong style="color: #1e40af;">Notes:</strong> <span style="color: #374151;">${employee.notes}</span></p></div>` : ''}
+      <p style="margin: 0; margin-bottom: 10px;">This is an electronically generated payslip. No signature is required.</p>
+      <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
     </div>
   </div>
 </body>

@@ -1,108 +1,522 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { AccountPageShell } from "@/components/AccountPageShell";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { AppHeader } from "@/components/Header";
+import { Footer } from "@/components/Footer";
+
+interface TimeEntry {
+  checkIn: string;
+  checkOut: string;
+  mealStart: string;
+  mealEnd: string;
+  notes: string;
+}
+
+interface Entries {
+  [key: string]: TimeEntry;
+}
 
 export const Route = createFileRoute("/timecard")({
-  head: () => ({ meta: [{ title: "My Timecard — Admin Hub Solutions" }] }),
   component: TimecardPage,
 });
 
-type Entry = { id: string; date: string; in: string; out: string; notes: string };
-const KEY = "ahs:timecard";
-
 function TimecardPage() {
-  const today = new Date();
-  const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-  const [month, setMonth] = useState(monthKey);
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
+  const [entries, setEntries] = useState<Entries>({});
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const STORAGE_KEY = "tc_entries";
 
   useEffect(() => {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      try {
-        setEntries(JSON.parse(raw));
-        return;
-      } catch {}
-    }
-    const seed: Entry[] = Array.from({ length: 5 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return {
-        id: `seed-${i}`,
-        date: d.toISOString().slice(0, 10),
-        in: "08:00",
-        out: i % 4 === 0 ? "18:30" : "17:00",
-        notes: i % 3 === 0 ? "On-call coverage" : "",
-      };
-    });
-    setEntries(seed);
+    loadEntries();
   }, []);
 
-  const persist = (next: Entry[]) => {
-    setEntries(next);
-    localStorage.setItem(KEY, JSON.stringify(next));
+  const loadEntries = () => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) setEntries(JSON.parse(stored));
+    } catch (e) {
+      setEntries({});
+    }
   };
 
-  const addRow = () => persist([{ id: `t-${Date.now()}`, date: today.toISOString().slice(0, 10), in: "08:00", out: "17:00", notes: "" }, ...entries]);
-  const update = (id: string, key: keyof Entry, value: string) => persist(entries.map((entry) => (entry.id === id ? { ...entry, [key]: value } : entry)));
-  const remove = (id: string) => persist(entries.filter((entry) => entry.id !== id));
+  const saveEntries = (newEntries: Entries) => {
+    setEntries(newEntries);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newEntries));
+  };
 
-  const filtered = useMemo(() => entries.filter((entry) => entry.date.startsWith(month)), [entries, month]);
+  const changeMonth = (dir: number) => {
+    let newMonth = currentMonth + dir;
+    let newYear = currentYear;
+    if (newMonth > 11) {
+      newMonth = 0;
+      newYear++;
+    }
+    if (newMonth < 0) {
+      newMonth = 11;
+      newYear--;
+    }
+    setCurrentMonth(newMonth);
+    setCurrentYear(newYear);
+  };
+
+  const goToToday = () => {
+    const now = new Date();
+    setCurrentYear(now.getFullYear());
+    setCurrentMonth(now.getMonth());
+  };
+
+  const toKey = (date: Date): string => {
+    return (
+      date.getFullYear() +
+      "-" +
+      String(date.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(date.getDate()).padStart(2, "0")
+    );
+  };
+
+  const getNowTime = (): string => {
+    const now = new Date();
+    return (
+      String(now.getHours()).padStart(2, "0") +
+      ":" +
+      String(now.getMinutes()).padStart(2, "0")
+    );
+  };
+
+  const timeDiff = (t1: string, t2: string): number => {
+    if (!t1 || !t2) return 0;
+    const [h1, m1] = t1.split(":").map(Number);
+    const [h2, m2] = t2.split(":").map(Number);
+    return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+  };
+
+  const calcHours = (entry: TimeEntry): number => {
+    if (!entry || !entry.checkIn || !entry.checkOut) return 0;
+    let hrs = timeDiff(entry.checkIn, entry.checkOut);
+    if (entry.mealStart && entry.mealEnd) {
+      hrs -= timeDiff(entry.mealStart, entry.mealEnd);
+    }
+    return Math.max(0, hrs);
+  };
+
+  const getWeekNumber = (date: Date): number => {
+    const d = new Date(
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+    );
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  };
+
+  const fmtDate = (date: Date): string => {
+    const months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    return months[date.getMonth()] + " " + date.getDate();
+  };
+
+  const openEntryModal = (dateKey: string) => {
+    setEditingDate(dateKey);
+    const entry = entries[dateKey] || {
+      checkIn: "",
+      checkOut: "",
+      mealStart: "",
+      mealEnd: "",
+      notes: "",
+    };
+    setModalEntry(entry);
+    setModalOpen(true);
+  };
+
+  const closeEntryModal = () => {
+    setModalOpen(false);
+    setEditingDate(null);
+    setModalEntry(null);
+  };
+
+  const saveEntry = () => {
+    if (!editingDate || !modalEntry) return;
+    // Auto-save when time is logged
+    const newEntries = { ...entries, [editingDate]: modalEntry };
+    saveEntries(newEntries);
+  };
+
+  const handleTimeToggle = () => {
+    if (!modalEntry) return;
+    if (!modalEntry.checkIn) {
+      setModalEntry({ ...modalEntry, checkIn: getNowTime() });
+    } else if (!modalEntry.checkOut) {
+      setModalEntry({ ...modalEntry, checkOut: getNowTime() });
+    }
+  };
+
+  const handleMealToggle = () => {
+    if (!modalEntry) return;
+    if (!modalEntry.checkIn) {
+      alert("Please log time in first.");
+      return;
+    }
+
+    // Check if duty hours is 6 or more
+    const dutyHours = calcHours(modalEntry);
+    if (dutyHours < 6) {
+      alert(`Meal break only available after 6 hours of work. Current: ${dutyHours.toFixed(1)} hours`);
+      return;
+    }
+
+    if (!modalEntry.mealStart) {
+      setModalEntry({ ...modalEntry, mealStart: getNowTime() });
+    } else if (!modalEntry.mealEnd) {
+      setModalEntry({ ...modalEntry, mealEnd: getNowTime() });
+    }
+  };
+
+  const deleteEntry = () => {
+    if (!editingDate || !entries[editingDate]) return;
+    if (!confirm("Delete time entry for this day?")) return;
+    const newEntries = { ...entries };
+    delete newEntries[editingDate];
+    saveEntries(newEntries);
+    closeEntryModal();
+  };
+
+  const monthNames = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  const firstDay = new Date(currentYear, currentMonth, 1);
+  const lastDay = new Date(currentYear, currentMonth + 1, 0);
+  const today = new Date();
+
+  // Build calendar
+  let cursor = new Date(firstDay);
+  cursor.setDate(cursor.getDate() - cursor.getDay());
+
+  const calendarDays: (Date | null)[] = [];
+  const end = new Date(lastDay);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+
+  while (cursor <= end) {
+    calendarDays.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Summary
+  let totalDays = 0,
+    totalHrs = 0,
+    totalMeal = 0;
+  const prefix = currentYear + "-" + String(currentMonth + 1).padStart(2, "0");
+
+  for (const [key, entry] of Object.entries(entries)) {
+    if (!key.startsWith(prefix)) continue;
+    const hrs = calcHours(entry);
+    if (hrs > 0 || entry.checkIn) {
+      totalDays++;
+      totalHrs += hrs;
+      if (entry.mealStart && entry.mealEnd) {
+        totalMeal += timeDiff(entry.mealStart, entry.mealEnd);
+      }
+    }
+  }
 
   return (
-    <AccountPageShell title="My Timecard" description="Review and edit your time in/out records.">
-      <section className="panel mb-4">
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-muted-foreground">Month</span>
-            <input className="glass-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          </label>
-          <div className="ml-auto flex items-center gap-3">
-            <button className="btn" onClick={addRow}><Plus className="h-4 w-4" />Add row</button>
-            <button className="btn btn-primary" onClick={() => persist(entries)}><Save className="h-4 w-4" />Save</button>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
-            <div className="text-xs text-muted-foreground">Entries this month</div>
-            <div className="text-2xl font-semibold">{filtered.length}</div>
-          </div>
-          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
-            <div className="text-xs text-muted-foreground">Latest date</div>
-            <div className="text-2xl font-semibold">{filtered[0]?.date ?? "-"}</div>
-          </div>
-          <div className="rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] p-3">
-            <div className="text-xs text-muted-foreground">Status</div>
-            <div className="text-2xl font-semibold">{filtered.length ? "Active" : "No entries"}</div>
-          </div>
-        </div>
-      </section>
+    <div className="min-h-screen flex flex-col bg-slate-950">
+      <AppHeader />
 
-      <section className="panel overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
-            <tr>
-              <th className="py-3 pr-3">Date</th>
-              <th className="py-3 pr-3">In</th>
-              <th className="py-3 pr-3">Out</th>
-              <th className="py-3 pr-3">Notes</th>
-              <th className="py-3 pr-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((entry) => (
-              <tr key={entry.id} className="border-t border-[var(--color-panel-border)]">
-                <td className="py-3 pr-3"><input className="glass-input min-w-36" type="date" value={entry.date} onChange={(e) => update(entry.id, "date", e.target.value)} /></td>
-                <td className="py-3 pr-3"><input className="glass-input min-w-28" type="time" value={entry.in} onChange={(e) => update(entry.id, "in", e.target.value)} /></td>
-                <td className="py-3 pr-3"><input className="glass-input min-w-28" type="time" value={entry.out} onChange={(e) => update(entry.id, "out", e.target.value)} /></td>
-                <td className="py-3 pr-3"><input className="glass-input min-w-64" value={entry.notes} onChange={(e) => update(entry.id, "notes", e.target.value)} /></td>
-                <td className="py-3 pr-3 text-right"><button className="btn" onClick={() => remove(entry.id)}><Trash2 className="h-4 w-4" />Remove</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-    </AccountPageShell>
+      <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-8">
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate({ to: "/" })}
+              className="btn p-2 hover:bg-white/10 rounded-md transition"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-3xl font-bold text-white">My Timecard</h1>
+          </div>
+
+          {/* Nav + Summary Panel */}
+          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => changeMonth(-1)}
+                  className="p-2 hover:bg-white/10 rounded-md transition"
+                  title="Previous month"
+                >
+                  <ChevronLeft className="h-5 w-5 text-slate-300" />
+                </button>
+                <h2 className="text-2xl font-bold text-white min-w-48 text-center">
+                  {monthNames[currentMonth]} {currentYear}
+                </h2>
+                <button
+                  onClick={() => changeMonth(1)}
+                  className="p-2 hover:bg-white/10 rounded-md transition"
+                  title="Next month"
+                >
+                  <ChevronRight className="h-5 w-5 text-slate-300" />
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-white/5 rounded-lg p-4 border border-white/5">
+                <p className="text-xs text-slate-400 font-semibold mb-2">Days Worked</p>
+                <p className="text-2xl font-bold text-blue-300">{totalDays}</p>
+              </div>
+              <div className="bg-white/5 rounded-lg p-4 border border-white/5">
+                <p className="text-xs text-slate-400 font-semibold mb-2">Total Hours</p>
+                <p className="text-2xl font-bold text-green-300">
+                  {totalHrs.toFixed(1)}h
+                </p>
+              </div>
+              <div className="bg-white/5 rounded-lg p-4 border border-white/5">
+                <p className="text-xs text-slate-400 font-semibold mb-2">Meal Break</p>
+                <p className="text-2xl font-bold text-orange-300">
+                  {totalMeal.toFixed(1)}h
+                </p>
+              </div>
+              <div className="bg-white/5 rounded-lg p-4 border border-white/5">
+                <p className="text-xs text-slate-400 font-semibold mb-2">Net Hours</p>
+                <p className="text-2xl font-bold text-purple-300">
+                  {totalHrs.toFixed(1)}h
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Calendar */}
+          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+            <table className="w-full border-collapse table-fixed">
+              <thead>
+                <tr className="h-10">
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Sun</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Mon</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Tue</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Wed</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Thu</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Fri</th>
+                  <th className="text-xs font-semibold text-slate-400 p-2 text-center">Sat</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: Math.ceil(calendarDays.length / 7) }).map((_, weekIdx) => {
+                  const weekDays = calendarDays.slice(weekIdx * 7, (weekIdx + 1) * 7);
+                  return (
+                    <tr key={weekIdx} className="h-20">
+                      {weekDays.map((day, dayIdx) => {
+                        if (!day) {
+                          return <td key={dayIdx} className="p-2 border border-white/5" />;
+                        }
+
+                        const dateKey = toKey(day);
+                        const entry = entries[dateKey];
+                        const isToday = day.toDateString() === today.toDateString();
+                        const isOtherMonth = day.getMonth() !== currentMonth;
+                        const hrs = entry ? calcHours(entry) : 0;
+
+                        return (
+                          <td
+                            key={dateKey}
+                            onClick={() => openEntryModal(dateKey)}
+                            className={`p-2 border text-sm cursor-pointer transition overflow-hidden ${
+                              isOtherMonth
+                                ? "opacity-20 border-white/5"
+                                : isToday
+                                  ? "border-blue-500 bg-blue-500/5"
+                                  : entry
+                                    ? "border-green-500/30 bg-green-500/5"
+                                    : "border-white/10 hover:bg-white/5"
+                            }`}
+                          >
+                            <div className="font-semibold text-white text-xs mb-0.5">{day.getDate()}</div>
+                            {entry && !isOtherMonth && (
+                              <div className="text-xs space-y-0.5">
+                                {entry.checkIn && (
+                                  <div className="bg-green-500/40 text-green-100 px-1 py-0.5 rounded text-xs line-clamp-1">
+                                    ✓ {entry.checkIn}
+                                  </div>
+                                )}
+                                {entry.mealStart && entry.mealEnd && (
+                                  <div className="bg-orange-500/40 text-orange-100 px-1 py-0.5 rounded text-xs line-clamp-1">
+                                    🍽 {entry.mealStart}-{entry.mealEnd}
+                                  </div>
+                                )}
+                                {entry.checkOut && (
+                                  <div className="bg-red-500/40 text-red-100 px-1 py-0.5 rounded text-xs line-clamp-1">
+                                    ✕ {entry.checkOut}
+                                  </div>
+                                )}
+                                {hrs > 0 && (
+                                  <div className="bg-blue-500/40 text-blue-100 px-1 py-0.5 rounded text-xs font-semibold line-clamp-1">
+                                    {hrs.toFixed(1)}h
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Modal */}
+          {modalOpen && editingDate && modalEntry && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+              <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-md shadow-2xl">
+                {/* Header */}
+                <div className="flex items-center justify-between p-6 border-b border-white/10">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Log Time Entry</h3>
+                    <p className="text-xs text-slate-400 mt-1">{editingDate}</p>
+                  </div>
+                  <button
+                    onClick={closeEntryModal}
+                    className="text-slate-400 hover:text-white transition p-1"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div className="p-6 space-y-4">
+                  {/* Time Section */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      Work Time
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Check In</p>
+                        <p className="text-lg font-semibold text-green-300">{modalEntry.checkIn || "—"}</p>
+                      </div>
+                      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Check Out</p>
+                        <p className="text-lg font-semibold text-red-300">{modalEntry.checkOut || "—"}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Meal Section */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
+                      Meal Break
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Start</p>
+                        <p className="text-lg font-semibold text-orange-300">{modalEntry.mealStart || "—"}</p>
+                      </div>
+                      <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">End</p>
+                        <p className="text-lg font-semibold text-orange-300">{modalEntry.mealEnd || "—"}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-4">
+                    <button
+                      onClick={() => {
+                        if (!modalEntry.checkIn) {
+                          handleTimeToggle();
+                        } else if (!modalEntry.checkOut) {
+                          handleTimeToggle();
+                        }
+                      }}
+                      className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
+                      disabled={!!modalEntry.checkOut}
+                    >
+                      {!modalEntry.checkIn
+                        ? "🕐 Time In"
+                        : !modalEntry.checkOut
+                          ? "🛑 Time Out"
+                          : "✓ Done"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!modalEntry.mealStart) {
+                          handleMealToggle();
+                        } else if (!modalEntry.mealEnd) {
+                          handleMealToggle();
+                        }
+                      }}
+                      className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
+                      disabled={!!modalEntry.mealEnd}
+                    >
+                      {!modalEntry.mealStart
+                        ? "🍽 Meal In"
+                        : !modalEntry.mealEnd
+                          ? "✓ Meal Out"
+                          : "Done"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex gap-2 p-6 border-t border-white/10">
+                  <button
+                    onClick={closeEntryModal}
+                    className="flex-1 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-lg font-semibold transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      saveEntry();
+                      closeEntryModal();
+                    }}
+                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <Footer />
+    </div>
   );
 }
