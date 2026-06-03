@@ -8,7 +8,7 @@ const coverageCsvModules = import.meta.glob("../../grid_coverage/*.csv", {
   query: "?raw",
 }) as Record<string, string>;
 
-const GOOGLE_MAPS_API_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "AIzaSyBnTWvcdQZsXsohbrHLBiA3zsMGhVZYPbc";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 type LocationRow = {
   id: string;
