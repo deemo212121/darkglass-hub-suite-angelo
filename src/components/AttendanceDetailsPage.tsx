@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, Filter, Bell, MessageSquare, AlertTriangle, Clock } from "lucide-react";
+import { ChevronLeft, Filter, Bell, MessageSquare, AlertTriangle, Clock, Search, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 interface DailyAttendance {
@@ -174,6 +174,7 @@ const LOCATIONS = ["Atlanta", "Dallas", "Houston", "Phoenix", "Chicago", "Austin
 export function AttendanceDetailsPage() {
   const navigate = useNavigate();
   const [selectedDepartment, setSelectedDepartment] = useState<string>("All");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [attendanceData, setAttendanceData] = useState<DailyAttendance[]>(ATTENDANCE_DATA);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [notesModalOpen, setNotesModalOpen] = useState(false);
@@ -181,13 +182,24 @@ export function AttendanceDetailsPage() {
   const [notifyIndividual, setNotifyIndividual] = useState(true);
   const [notifyTeamLead, setNotifyTeamLead] = useState(true);
 
-  // Filter data by department
+  // Filter data by department and search query
   const filteredData = useMemo(() => {
-    if (selectedDepartment === "All") {
-      return attendanceData;
+    let filtered = attendanceData;
+    
+    // Filter by department
+    if (selectedDepartment !== "All") {
+      filtered = filtered.filter((row) => row.department === selectedDepartment);
     }
-    return attendanceData.filter((row) => row.department === selectedDepartment);
-  }, [attendanceData, selectedDepartment]);
+    
+    // Filter by search query (employee name)
+    if (searchQuery.trim()) {
+      filtered = filtered.filter((row) =>
+        row.employeeName.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  }, [attendanceData, selectedDepartment, searchQuery]);
 
   const handleEmployeeClick = (employeeId: string) => {
     window.open(`/employee/${employeeId}`, "_blank");
@@ -289,6 +301,26 @@ export function AttendanceDetailsPage() {
                 </option>
               ))}
             </select>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search employee..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="glass-input rounded pl-9 pr-9 py-2 bg-white/10 border border-white/20 text-sm w-48"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
