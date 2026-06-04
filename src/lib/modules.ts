@@ -147,6 +147,7 @@ const dashboardMod: ModuleDef = {
       slug: "payroll-calculation",
       title: "Payroll Calculation Dashboard",
       description: "Calculate and manage employee payroll with deductions.",
+      custom: "payroll-calculation" as any,
       fields: [
         { key: "employeeName", label: "Employee", filterable: true },
         { key: "period", label: "Period", filterable: true },
@@ -179,6 +180,7 @@ const dashboardMod: ModuleDef = {
       slug: "employee-self-service",
       title: "Employee Self-Service Portal",
       description: "Allow employees to view timecards and request time off.",
+      custom: "employee-self-service" as any,
       fields: [
         { key: "employeeName", label: "Employee", filterable: true },
         { key: "availableBalance", label: "Available PTO Balance", type: "number" },

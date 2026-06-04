@@ -82,6 +82,8 @@ import { ClosingReport } from "@/components/ClosingReport";
 import { RepairStatusReport } from "@/components/RepairStatusReport";
 import { AccountingDashboard } from "@/components/AccountingDashboard";
 import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
+import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
+import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -293,6 +295,10 @@ function SubModule() {
         ? <AccountingDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "attendance-monitoring"
         ? <AttendanceMonitoringPage mod={mod} sub={sub} />
+        : (sub as any).custom === "payroll-calculation"
+        ? <PayrollCalculationPage mod={mod} sub={sub} />
+        : (sub as any).custom === "employee-self-service"
+        ? <EmployeeSelfServicePage mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"
