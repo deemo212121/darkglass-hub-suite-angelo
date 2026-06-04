@@ -1,5 +1,5 @@
-import { ChevronLeft, DollarSign, Calendar, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText } from "lucide-react";
-import { useState, useMemo } from "react";
+import { ChevronLeft, DollarSign, Calendar, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
 
@@ -36,6 +36,26 @@ interface Request {
   details: string;
 }
 
+interface EmployeePayslipData {
+  id: string;
+  name: string;
+  department: string;
+  dailyTimecards: Array<{
+    date: string;
+    timeIn: string;
+    timeOut: string;
+    mealInTime: string;
+    mealOutTime: string;
+    hoursWorked: number;
+  }>;
+  totalHoursMonth: number;
+  totalOvertimeMonth: number;
+  totalPTOHours: number;
+  totalAbsences: number;
+  totalHolidayPay: number;
+  notes?: string;
+}
+
 // Mock Data
 const CURRENT_PAYROLL: PayrollRecord = {
   id: "current",
@@ -53,6 +73,25 @@ const PAYROLL_HISTORY: PayrollRecord[] = [
   { id: "2", period: "May 16-31, 2026", date: "2026-06-01", grossPay: 3100, netPay: 2480, deductions: 380, overtime: 120, status: "available" },
   { id: "3", period: "May 1-15, 2026", date: "2026-05-16", grossPay: 3200, netPay: 2560, deductions: 400, overtime: 140, status: "available" },
 ];
+
+const EMPLOYEE_PAYSLIP_DATA: EmployeePayslipData = {
+  id: "current-employee",
+  name: "John Doe",
+  department: "Operations",
+  dailyTimecards: [
+    { date: "2026-06-01", timeIn: "8:00 AM", timeOut: "5:00 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 8 },
+    { date: "2026-06-02", timeIn: "8:10 AM", timeOut: "5:05 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 8.92 },
+    { date: "2026-06-03", timeIn: "7:55 AM", timeOut: "5:15 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9.33 },
+    { date: "2026-06-04", timeIn: "8:00 AM", timeOut: "5:00 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9 },
+    { date: "2026-06-05", timeIn: "8:05 AM", timeOut: "5:10 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9.08 },
+  ],
+  totalHoursMonth: 160,
+  totalOvertimeMonth: 8,
+  totalPTOHours: 0,
+  totalAbsences: 0,
+  totalHolidayPay: 0,
+  notes: "June payroll processed successfully. All timecards verified.",
+};
 
 const ATTENDANCE_DAILY: AttendanceRecord[] = [
   { date: "2026-06-04", clockIn: "8:00 AM", clockOut: "5:00 PM", hoursWorked: 9, status: "completed" },
@@ -91,9 +130,360 @@ const ALL_REQUESTS: Request[] = [
   { id: "4", type: "Payroll Inquiry", status: "closed", submittedDate: "2026-05-20", details: "Question about overtime calculation for May 1-15 period" },
 ];
 
+function generatePayslipHTML(employee: EmployeePayslipData): string {
+  const currentDate = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  // Calculate payroll values
+  const hourlyRate = 20;
+  const overtimeRate = 30;
+  const ptoRate = 20;
+  const regularPay = employee.totalHoursMonth * hourlyRate;
+  const overtimePay = employee.totalOvertimeMonth * overtimeRate;
+  const ptoPay = employee.totalPTOHours * ptoRate;
+  const holidayPay = employee.totalHolidayPay;
+  const grossPay = regularPay + overtimePay + ptoPay + holidayPay;
+  const absenceCost = employee.totalAbsences * 20;
+  const deductions = grossPay * 0.2;
+  const netPay = grossPay - deductions;
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payslip - ${employee.name}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: white;
+      padding: 10px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border: 1px solid #e5e7eb;
+      padding: 20px;
+    }
+    .header {
+      display: flex;
+      flex-direction: row;
+      gap: 15px;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      padding: 15px;
+      border-bottom: 2px solid #1e40af;
+      background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+      border-radius: 8px;
+      position: relative;
+    }
+    .header h1 {
+      color: white;
+      font-size: 28px;
+      margin-bottom: 0;
+      letter-spacing: 1px;
+    }
+    .payslip-info {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .info-section {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .info-section label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .info-section span {
+      font-size: 13px;
+      color: #1f2937;
+      font-weight: 500;
+    }
+    .employee-highlight {
+      background: #eff6ff;
+      border-left: 4px solid #1e40af;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .employee-highlight .info-section label {
+      color: #1e40af;
+      font-weight: 700;
+    }
+    .employee-highlight .info-section span {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e40af;
+    }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    .table th {
+      background: #f3f4f6;
+      color: #1f2937;
+      padding: 8px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 12px;
+      border: 1px solid #e5e7eb;
+    }
+    .table td {
+      padding: 8px;
+      border: 1px solid #e5e7eb;
+      font-size: 12px;
+      color: #374151;
+    }
+    .table tr:nth-child(even) {
+      background: #fafafa;
+    }
+    .summary-section {
+      margin-top: 15px;
+      border-top: 2px solid #e5e7eb;
+      padding-top: 10px;
+    }
+    .summary-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .summary-row.gross {
+      background: #f0f9ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      padding: 10px;
+      margin: 8px 0;
+      font-weight: 600;
+      font-size: 14px;
+      color: #1e40af;
+    }
+    .summary-row.total {
+      background: #1e40af;
+      color: white;
+      border-radius: 4px;
+      padding: 12px;
+      margin: 8px 0;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .summary-row.total .amount {
+      text-align: right;
+      font-size: 18px;
+    }
+    .amount {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #e5e7eb;
+      color: #6b7280;
+      font-size: 11px;
+    }
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+      .container {
+        border: none;
+        padding: 20px;
+      }
+      .header {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%) !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      table {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .summary-row.gross {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      .summary-row.total {
+        background: #1e40af !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div style="text-align: center; width: 100%;">
+        <h1>PAYSLIP</h1>
+      </div>
+    </div>
+
+    <div class="payslip-info">
+      <div class="employee-highlight">
+        <div class="info-section">
+          <label>Employee Name</label>
+          <span>${employee.name}</span>
+        </div>
+        <div class="info-section" style="margin-top: 15px;">
+          <label>Department</label>
+          <span>${employee.department || "—"}</span>
+        </div>
+      </div>
+      <div>
+        <div class="info-section">
+          <label>Payslip Date</label>
+          <span>${currentDate}</span>
+        </div>
+        <div class="info-section" style="margin-top: 15px;">
+          <label>Period</label>
+          <span>June 1-30, 2026</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 15px; margin-bottom: 15px;">
+      <h3 style="font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 8px; border-bottom: 2px solid #1e40af; padding-bottom: 5px;">Daily Timecard Details</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Check In</th>
+            <th>Meal Start</th>
+            <th>Meal End</th>
+            <th>Check Out</th>
+            <th>Working Hours</th>
+            <th>Rate</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${employee.dailyTimecards.map(tc => {
+            const checkInTime = tc.timeIn || "—";
+            const checkOutTime = tc.timeOut || "—";
+            const mealStart = tc.mealInTime || "—";
+            const mealEnd = tc.mealOutTime || "—";
+            const hours = tc.hoursWorked.toFixed(2);
+            const amount = (tc.hoursWorked * hourlyRate).toFixed(2);
+            return `
+          <tr>
+            <td>${tc.date}</td>
+            <td>${checkInTime}</td>
+            <td>${mealStart}</td>
+            <td>${mealEnd}</td>
+            <td>${checkOutTime}</td>
+            <td>${hours}</td>
+            <td>$${hourlyRate}</td>
+            <td class="amount">$${amount}</td>
+          </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="summary-section">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th style="text-align: right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Regular Hours</td>
+            <td class="amount">$${regularPay.toFixed(2)}</td>
+          </tr>
+          ${employee.totalOvertimeMonth > 0 ? `
+          <tr>
+            <td>Overtime Hours</td>
+            <td class="amount">$${overtimePay.toFixed(2)}</td>
+          </tr>
+          ` : ''}
+          ${employee.totalPTOHours > 0 ? `
+          <tr>
+            <td>PTO Hours</td>
+            <td class="amount">$${ptoPay.toFixed(2)}</td>
+          </tr>
+          ` : ''}
+          ${employee.totalAbsences > 0 ? `
+          <tr>
+            <td>Absences (${employee.totalAbsences} days)</td>
+            <td class="amount">-$${absenceCost.toFixed(2)}</td>
+          </tr>
+          ` : ''}
+          ${employee.totalHolidayPay > 0 ? `
+          <tr>
+            <td>Holiday Pay</td>
+            <td class="amount">$${holidayPay.toFixed(2)}</td>
+          </tr>
+          ` : ''}
+        </tbody>
+      </table>
+      
+      <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>Gross Pay</div>
+        <div class="amount">$${grossPay.toFixed(2)}</div>
+      </div>
+
+      <table class="table" style="margin-top: 15px;">
+        <tbody>
+          <tr>
+            <td>Deductions (20%)</td>
+            <td class="amount">-$${deductions.toFixed(2)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>NET PAY</div>
+        <div class="amount">$${netPay.toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      ${employee.notes ? `<div style="text-align: left; margin-bottom: 20px; padding: 12px; background: #f3f4f6; border-left: 4px solid #1e40af; border-radius: 4px;"><p style="margin: 0; font-size: 12px;"><strong style="color: #1e40af;">Notes:</strong> <span style="color: #374151;">${employee.notes}</span></p></div>` : ''}
+      <p style="margin: 0; margin-bottom: 10px;">This is an electronically generated payslip. No signature is required.</p>
+      <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
   const [activeTab, setActiveTab] = useState<"dashboard" | "payroll" | "attendance" | "pto" | "requests">("dashboard");
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
+  const [payslipModalOpen, setPayslipModalOpen] = useState(false);
+  const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<"pto" | "dispute" | "correction" | "inquiry">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
@@ -139,6 +529,26 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+  };
+
+  const handleViewPayslip = (payrollId: string) => {
+    setSelectedPayslipId(payrollId);
+    setPayslipModalOpen(true);
+  };
+
+  const handleDownloadPayslip = () => {
+    if (!iframeRef.current) return;
+    const payslipHtml = iframeRef.current.contentWindow?.document.documentElement.innerHTML;
+    if (!payslipHtml) return;
+
+    const element = document.createElement("a");
+    const file = new Blob([payslipHtml], { type: "text/html" });
+    element.href = URL.createObjectURL(file);
+    element.download = `Payslip-${EMPLOYEE_PAYSLIP_DATA.name}-${Date.now()}.html`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+    URL.revokeObjectURL(element.href);
   };
 
   return (
@@ -255,80 +665,37 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {/* Payroll Tab */}
         {activeTab === "payroll" && (
           <div className="space-y-6">
-            {/* Current Payroll */}
+            {/* Current Payroll with Payslip View */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Current Payroll</h3>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Period</p>
-                  <p className="text-lg font-semibold text-white">{CURRENT_PAYROLL.period}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Issue Date</p>
-                  <p className="text-lg font-semibold text-white">{CURRENT_PAYROLL.date}</p>
-                </div>
+              <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-400" />
+                Current Payroll (Jun 1-15, 2026)
+              </h3>
+              <div className="grid gap-4 md:grid-cols-4 mb-4">
                 <div>
                   <p className="text-xs text-slate-400 mb-1">Gross Pay</p>
                   <p className="text-lg font-semibold text-blue-300">${CURRENT_PAYROLL.grossPay}</p>
                 </div>
                 <div>
+                  <p className="text-xs text-slate-400 mb-1">Deductions</p>
+                  <p className="text-lg font-semibold text-red-300">-${CURRENT_PAYROLL.deductions}</p>
+                </div>
+                <div>
                   <p className="text-xs text-slate-400 mb-1">Net Pay</p>
                   <p className="text-lg font-semibold text-green-300">${CURRENT_PAYROLL.netPay}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">Overtime</p>
+                  <p className="text-lg font-semibold text-amber-300">${CURRENT_PAYROLL.overtime}</p>
+                </div>
               </div>
               <button
-                onClick={() => handleDownload("payslip")}
-                className="mt-4 w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
+                onClick={() => handleViewPayslip("current")}
+                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
               >
-                <Download className="h-3 w-3" />
-                Download Payslip (PDF)
+                <FileText className="h-3 w-3" />
+                View Payslip
               </button>
-            </div>
-
-            {/* Payroll Breakdown */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Payroll Breakdown</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-300">Regular Hours: 160 × $20/hr</span>
-                  <span className="text-white font-semibold">$3,200</span>
-                </div>
-                <div className="flex justify-between text-sm border-t border-white/10 pt-3">
-                  <span className="text-slate-300">Deductions</span>
-                  <span className="text-red-300 font-semibold">-${CURRENT_PAYROLL.deductions}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-300">Taxes (12%)</span>
-                  <span className="text-red-300">-$240</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-300">Benefits</span>
-                  <span className="text-red-300">-$160</span>
-                </div>
-                <div className="flex justify-between text-sm border-t border-white/10 pt-3 font-bold">
-                  <span className="text-white">Net Pay</span>
-                  <span className="text-green-300">${CURRENT_PAYROLL.netPay}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Overtime Details */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Overtime Details</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Overtime Hours</span>
-                  <span className="text-white font-semibold">8 hours</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Rate</span>
-                  <span className="text-white font-semibold">$30/hr (1.5x)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Overtime Pay</span>
-                  <span className="text-amber-300 font-semibold">${CURRENT_PAYROLL.overtime}</span>
-                </div>
-              </div>
             </div>
 
             {/* Previous Payroll History */}
@@ -342,9 +709,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <p className="text-sm font-semibold text-white">{payroll.period}</p>
                         <p className="text-xs text-slate-400">{payroll.date}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-green-300">${payroll.netPay}</p>
-                        <p className="text-xs text-slate-400">Net Pay</p>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-green-300">${payroll.netPay}</p>
+                          <p className="text-xs text-slate-400">Net Pay</p>
+                        </div>
+                        <button
+                          onClick={() => handleViewPayslip(payroll.id)}
+                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
+                        >
+                          View
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -737,6 +1112,64 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition"
               >
                 Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payslip Modal */}
+      {payslipModalOpen && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-lg w-[95vw] h-[95vh] max-w-7xl overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
+              <h2 className="text-2xl font-bold text-white">
+                {selectedPayslipId === "current" ? "Current Payslip" : "Payslip"}
+              </h2>
+              <button
+                onClick={() => setPayslipModalOpen(false)}
+                className="p-1 hover:bg-white/10 rounded transition"
+              >
+                <X className="h-5 w-5 text-slate-300" />
+              </button>
+            </div>
+
+            {/* Payslip Content */}
+            <div className="flex-1 overflow-y-auto bg-white">
+              <iframe
+                ref={iframeRef}
+                srcDoc={generatePayslipHTML(EMPLOYEE_PAYSLIP_DATA)}
+                className="w-full h-full border-none"
+                title="Payslip"
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-white/10 px-8 py-6 flex gap-4">
+              <button
+                onClick={() => setPayslipModalOpen(false)}
+                className="flex-1 px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-semibold transition"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleDownloadPayslip}
+                className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </button>
+              <button
+                onClick={() => {
+                  if (iframeRef.current?.contentWindow) {
+                    iframeRef.current.contentWindow.print();
+                  }
+                }}
+                className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <FileText className="h-4 w-4" />
+                Print
               </button>
             </div>
           </div>
