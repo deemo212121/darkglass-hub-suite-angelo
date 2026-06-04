@@ -34,7 +34,7 @@ export const Route = createFileRoute("/m/$module")({
 });
 
 function ModuleIndex() {
-  const { ready, email } = useAuth();
+  const { ready, email, role } = useAuth();
   const { module: m } = Route.useLoaderData();
 
   if (!ready) return null;
@@ -46,8 +46,6 @@ function ModuleIndex() {
     // Render the child route (submodule detail page)
     return <Outlet />;
   }
-  
-  // Render the module index (navigation cards)
 
 
   const partsLandingOrder = [

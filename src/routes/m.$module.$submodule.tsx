@@ -81,7 +81,7 @@ import { PaymentReport } from "@/components/PaymentReport";
 import { ClosingReport } from "@/components/ClosingReport";
 import { RepairStatusReport } from "@/components/RepairStatusReport";
 import { AccountingDashboard } from "@/components/AccountingDashboard";
-import { AttendanceDetailsPage } from "@/components/AttendanceDetailsPage";
+import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -291,8 +291,8 @@ function SubModule() {
         ? <RepairStatusReport mod={mod} sub={sub} />
         : (sub as any).custom === "accounting-dashboard"
         ? <AccountingDashboard mod={mod} sub={sub} />
-        : (sub as any).custom === "attendance-details"
-        ? <AttendanceDetailsPage />
+        : (sub as any).custom === "attendance-monitoring"
+        ? <AttendanceMonitoringPage mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"

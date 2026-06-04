@@ -135,38 +135,13 @@ const dashboardMod: ModuleDef = {
       seed: () => ({}),
     },
     {
-      slug: "attendance-details",
-      title: "Attendance Details",
-      description: "Comprehensive daily attendance tracking with alerts and notes.",
-      custom: "attendance-details" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
-      fields: [
-        { key: "employeeName", label: "Employee", filterable: true },
-        { key: "date", label: "Date", type: "date", filterable: true },
-        { key: "status", label: "Status", type: "select", options: ["Present", "Late", "Absent", "Half-Day"], filterable: true },
-        { key: "checkIn", label: "Check In", type: "text" },
-        { key: "checkOut", label: "Check Out", type: "text" },
-        { key: "hoursWorked", label: "Hours Worked", type: "number" },
-      ],
-      count: 40,
-      seed: (i) => {
-        const statuses = ["Present", "Late", "Absent", "Half-Day"];
-        return {
-          employeeName: pick(TECHS, i),
-          date: dateStr(-(i % 15)),
-          status: pick(statuses, i),
-          checkIn: (7 + (i % 2)).toString().padStart(2, "0") + ":00",
-          checkOut: (17 + (i % 2)).toString().padStart(2, "0") + ":00",
-          hoursWorked: 8 + (i % 2),
-        };
-      },
+      custom: "attendance-monitoring" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
     },
     {
       slug: "payroll-calculation",
@@ -1412,6 +1387,28 @@ export function getModule(slug: string) {
 }
 export function getSubModule(modSlug: string, subSlug: string) {
   return getModule(modSlug)?.submodules.find((s) => s.slug === subSlug);
+}
+
+// Role-based dashboard submodule access
+const ROLE_DASHBOARD_ACCESS: Record<string, string[]> = {
+  "superadmin": ["daily-activity", "overall-status", "tech-ranking", "location-ranking", "ticket-stats", "login-stats", "accounting-dashboard"],
+  "admin": ["daily-activity", "overall-status", "tech-ranking", "location-ranking", "ticket-stats", "login-stats", "accounting-dashboard"],
+  "manager": ["daily-activity", "overall-status", "tech-ranking"],
+  "finance": ["ticket-stats", "overall-status", "accounting-dashboard"],
+  "hr": ["overall-status", "login-stats"],
+  "csr": ["daily-activity", "overall-status"],
+  "parts": ["daily-activity", "overall-status"],
+  "technician": ["daily-activity"],
+  "viewer": ["overall-status", "ticket-stats"],
+};
+
+export function getFilteredDashboardSubmodules(role: string | null | undefined): SubModuleDef[] {
+  if (!role) return [];
+  const dashboardMod = getModule("dashboard");
+  if (!dashboardMod) return [];
+  
+  const allowedSlugs = ROLE_DASHBOARD_ACCESS[role.toLowerCase()] || [];
+  return dashboardMod.submodules.filter((s) => allowedSlugs.includes(s.slug));
 }
 
 export const PART_RETURN_ACCOUNTS = ACCOUNTS;

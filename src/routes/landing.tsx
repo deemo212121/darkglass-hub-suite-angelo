@@ -14,6 +14,11 @@ const DEFAULT_LOGIN_EMAILS = [
   "manager@ahsolutions.com",
   "tech@ahsolutions.com",
   "viewer@ahsolutions.com",
+  "superadmin@ahsolutions.com",
+  "finance@ahsolutions.com",
+  "csr@ahsolutions.com",
+  "hr@ahsolutions.com",
+  "parts@ahsolutions.com",
 ];
 
 export const Route = createFileRoute("/landing")({

@@ -52,7 +52,7 @@ export interface User {
   id?: number;
   email: string;
   name: string;
-  role: "admin" | "manager" | "technician" | "viewer";
+  role: "admin" | "manager" | "technician" | "viewer" | "superadmin" | "finance" | "csr" | "hr" | "parts";
   department: string;
   status: "active" | "inactive";
   createdAt?: Date;
@@ -174,6 +174,11 @@ export async function initializeDummyData() {
     { email: "manager@ahsolutions.com", name: "John Manager", role: "manager", department: "Operations", status: "active", createdAt: new Date() },
     { email: "tech@ahsolutions.com", name: "Tech Support", role: "technician", department: "Support", status: "active", createdAt: new Date() },
     { email: "viewer@ahsolutions.com", name: "Report Viewer", role: "viewer", department: "Finance", status: "active", createdAt: new Date() },
+    { email: "superadmin@ahsolutions.com", name: "Super Admin", role: "superadmin", department: "Management", status: "active", createdAt: new Date() },
+    { email: "finance@ahsolutions.com", name: "Finance Manager", role: "finance", department: "Finance", status: "active", createdAt: new Date() },
+    { email: "csr@ahsolutions.com", name: "Customer Service Rep", role: "csr", department: "Customer Service", status: "active", createdAt: new Date() },
+    { email: "hr@ahsolutions.com", name: "HR Manager", role: "hr", department: "Human Resources", status: "active", createdAt: new Date() },
+    { email: "parts@ahsolutions.com", name: "Parts Manager", role: "parts", department: "Parts", status: "active", createdAt: new Date() },
   ];
 
   // Dashboard: Tech Ranking Data (Sample from provided data)

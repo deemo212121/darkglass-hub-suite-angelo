@@ -353,6 +353,13 @@ function EmployeeDetailsPage() {
   const [editedHolidayPay, setEditedHolidayPay] = useState(employee?.totalHolidayPay || 0);
   const [editedHourlyRate, setEditedHourlyRate] = useState(employee?.hourlyRate || 20);
   const [editedTimecards, setEditedTimecards] = useState(employee?.dailyTimecards || []);
+  
+  // Work hours setting
+  const [workDays, setWorkDays] = useState<string[]>(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]);
+  const [workTimeIn, setWorkTimeIn] = useState("08:00");
+  const [workTimeOut, setWorkTimeOut] = useState("17:00");
+  const [mealInTime, setMealInTime] = useState("12:00");
+  const [mealOutTime, setMealOutTime] = useState("12:30");
 
   const handleSaveChanges = () => {
     const currentUser = currentUserEmail || "Current User";
@@ -446,6 +453,29 @@ function EmployeeDetailsPage() {
     setEditedHourlyRate(employee?.hourlyRate || 20);
     setEditedTimecards(employee?.dailyTimecards || []);
     setIsEditing(false);
+  };
+
+  const handleSaveWorkSchedule = () => {
+    const currentUser = currentUserEmail || "Current User";
+    const changes: AuditLogEntry[] = [];
+
+    // Log the work schedule change
+    changes.push({
+      id: crypto.randomUUID?.() || Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      editedBy: currentUser,
+      field: "Work Schedule",
+      oldValue: `Days: Mon-Fri, In: 08:00, Out: 17:00`,
+      newValue: `Days: ${workDays.join(", ")}, In: ${workTimeIn}, Out: ${workTimeOut}`,
+      action: "edited",
+    });
+
+    if (changes.length > 0) {
+      setAuditLog((prev) => [...changes, ...prev]);
+    }
+
+    // Show success feedback
+    alert(`Work schedule saved successfully!\nWorking Days: ${workDays.join(", ")}\nDuty Time: ${workTimeIn} - ${workTimeOut}`);
   };
 
   const handleTimecardChange = (index: number, field: string, value: any) => {
@@ -843,6 +873,65 @@ function EmployeeDetailsPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Work Hours Setting */}
+          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+            <h2 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <Clock className="h-5 w-5 text-blue-400" />
+              Set Work Hours
+            </h2>
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-slate-300 mb-3">Working Days</label>
+              <div className="flex flex-wrap gap-2">
+                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
+                  <button
+                    key={day}
+                    onClick={() => {
+                      if (workDays.includes(day)) {
+                        setWorkDays(workDays.filter((d) => d !== day));
+                      } else {
+                        setWorkDays([...workDays, day]);
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-lg font-semibold text-sm transition ${
+                      workDays.includes(day)
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                    }`}
+                  >
+                    {day.slice(0, 3)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-semibold text-slate-300">Duty Time In</label>
+                <input
+                  type="time"
+                  value={workTimeIn}
+                  onChange={(e) => setWorkTimeIn(e.target.value)}
+                  className="glass-input rounded px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-500">Employee work starts at this time</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-semibold text-slate-300">Duty Time Out</label>
+                <input
+                  type="time"
+                  value={workTimeOut}
+                  onChange={(e) => setWorkTimeOut(e.target.value)}
+                  className="glass-input rounded px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-500">Employee work ends at this time</p>
+              </div>
+            </div>
+
+            <button onClick={handleSaveWorkSchedule} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-md transition">
+              Save Work Schedule
+            </button>
           </div>
 
           {/* Daily Timecards */}

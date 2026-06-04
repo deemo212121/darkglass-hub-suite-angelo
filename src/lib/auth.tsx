@@ -2,9 +2,28 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 
+// Map email to role
+const EMAIL_TO_ROLE: Record<string, string> = {
+  "admin@ahsolutions.com": "admin",
+  "manager@ahsolutions.com": "manager",
+  "tech@ahsolutions.com": "technician",
+  "viewer@ahsolutions.com": "viewer",
+  "superadmin@ahsolutions.com": "superadmin",
+  "finance@ahsolutions.com": "finance",
+  "csr@ahsolutions.com": "csr",
+  "hr@ahsolutions.com": "hr",
+  "parts@ahsolutions.com": "parts",
+};
+
+function getRoleFromEmail(email: string | null): string | null {
+  if (!email) return null;
+  return EMAIL_TO_ROLE[email.toLowerCase()] || null;
+}
+
 type AuthState = {
   email: string | null;
   companyId: string | null;
+  role: string | null;
   login: (email: string, companyId: string) => void;
   logout: () => void;
   ready: boolean;
@@ -15,6 +34,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -22,8 +42,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       initDatabase().then(() => {
         void getFirebaseAnalytics();
-        setEmail(localStorage.getItem("userEmail"));
-        setCompanyId(localStorage.getItem("userCompanyId"));
+        const savedEmail = localStorage.getItem("userEmail");
+        const savedCompanyId = localStorage.getItem("userCompanyId");
+        setEmail(savedEmail);
+        setCompanyId(savedCompanyId);
+        
+        // Get user role from email mapping
+        if (savedEmail) {
+          const userRole = getRoleFromEmail(savedEmail);
+          setRole(userRole);
+        }
+        
         setReady(true);
       });
     } else {
@@ -31,7 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     
     const handler = (e: StorageEvent) => {
-      if (e.key === "userEmail") setEmail(e.newValue);
+      if (e.key === "userEmail") {
+        setEmail(e.newValue);
+        setRole(getRoleFromEmail(e.newValue));
+      }
       if (e.key === "userCompanyId") setCompanyId(e.newValue);
     };
     window.addEventListener("storage", handler);
@@ -43,16 +75,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("userCompanyId", c);
     setEmail(e);
     setCompanyId(c);
+    
+    // Get user role from email mapping
+    const userRole = getRoleFromEmail(e);
+    setRole(userRole);
   };
+  
   const logout = () => {
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userCompanyId");
     setEmail(null);
     setCompanyId(null);
+    setRole(null);
   };
 
   return (
-    <AuthContext.Provider value={{ email, companyId, login, logout, ready }}>
+    <AuthContext.Provider value={{ email, companyId, role, login, logout, ready }}>
       {children}
     </AuthContext.Provider>
   );
