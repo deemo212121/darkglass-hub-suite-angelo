@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useMemo, useState, useEffect } from "react";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
+
+const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 
 const SOURCES = [
   "Call in",
@@ -42,6 +44,8 @@ const WARRANTY_TYPES = [
 
 const DEFAULT_FORM = {
   ticketNo: "",
+  originalTicketNo: "",
+  isRedo: false,
   fakeTicket: false,
   source: "",
   customerName: "",
@@ -69,6 +73,65 @@ export function NewTicketPage({ mod, sub }: Props) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState("");
   const createdTicketStatus = "Acknowledged";
+  
+  // Get query parameters using router's useSearch
+  let copyToken: string | null = null;
+  try {
+    const searchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+    copyToken = searchParams.get("copyToken");
+  } catch (e) {
+    console.error("Error reading query params:", e);
+  }
+
+  useEffect(() => {
+    if (!copyToken) return;
+    
+    try {
+      const storageKey = `${TICKET_COPY_KEY_PREFIX}${copyToken}`;
+      const copiedData = localStorage.getItem(storageKey);
+      console.log(`Looking for storage key: ${storageKey}`);
+      console.log(`Found data:`, copiedData ? "yes" : "no");
+      
+      if (copiedData) {
+        const payload = JSON.parse(copiedData);
+        console.log(`Parsed payload:`, payload);
+        
+        // Map payload to form structure with RE- prefix
+        const newForm = {
+          ticketNo: `RE-${payload.ticketNo}`,
+          originalTicketNo: payload.ticketNo,
+          isRedo: true,
+          fakeTicket: false,
+          source: payload.source || "",
+          customerName: payload.customerName || "",
+          primaryPhone: payload.primaryPhone || "",
+          secondaryPhone: payload.secondaryPhone || "",
+          email1: payload.email || "",
+          address: payload.address || "",
+          city: payload.city || "",
+          zipCode: payload.zip || "",
+          state: payload.state || "",
+          addressNote: payload.addressNote || "",
+          model: payload.model || "",
+          serialNo: payload.serialNo || "",
+          modelVersion: payload.modelVersion || "",
+          brand: payload.brand || "",
+          productCategory: payload.productCategory || "",
+          purchaseDate: payload.purchaseDate || "",
+          warrantyType: payload.warrantyType || "",
+          cxPreferredDate: payload.cxPreferredDate || "",
+          callTakenDate: new Date().toISOString().slice(0, 10),
+          problemDescription: payload.problemDescription || "",
+        };
+        setForm(newForm);
+        localStorage.removeItem(storageKey);
+      } else {
+        console.log("No copied data found in localStorage");
+      }
+    } catch (error) {
+      console.error("Failed to load copied ticket data:", error);
+    }
+  }, [copyToken]);
 
   const ticketNoPreview = useMemo(() => form.ticketNo.trim().toUpperCase() || "NEW-TICKET", [form.ticketNo]);
 
@@ -129,8 +192,8 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
-                <label className="form-label" htmlFor="primaryPhone">Primary Phone</label>
-                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} />
+                <label className="form-label required" htmlFor="primaryPhone">Primary Phone</label>
+                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="secondaryPhone">Secondary Phone</label>

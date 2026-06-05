@@ -108,24 +108,6 @@ const dashboardMod: ModuleDef = {
       }),
     },
     {
-      slug: "repair-forecast",
-      title: "Repair Forecast",
-      description: "Expected volume & parts needs.",
-      fields: [
-        { key: "week", label: "Week", filterable: true },
-        { key: "forecast", label: "Forecast Jobs", type: "number" },
-        { key: "capacity", label: "Capacity", type: "number" },
-        { key: "topPart", label: "Top Part", type: "select", options: PARTS, filterable: true },
-      ],
-      count: 12,
-      seed: (i) => ({
-        week: `W${i + 1}`,
-        forecast: 80 + (i * 13) % 90,
-        capacity: 100 + (i % 5) * 10,
-        topPart: pick(PARTS, i),
-      }),
-    },
-    {
       slug: "accounting-dashboard",
       title: "Accounting Dashboard",
       description: "Attendance monitoring, payroll calculation, and employee time tracking.",

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { lookupZip } from "@/lib/zipCoverage";
+import { useAuth } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Clock, History, X, User } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -50,6 +51,7 @@ const REPAIR_STATUS_OPTIONS = [
 ] as const;
 const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
 const STATUS_LOG_KEY = "ahs:ticket:status-log";
+const TICKET_VISITS_KEY = "ahs:ticket:visits"; // Track who visited which tickets
 
 interface StatusLogEntry {
   ticketNo: string;
@@ -60,6 +62,12 @@ interface StatusLogEntry {
   note?: string;
 }
 
+interface TicketVisit {
+  ticketNo: string;
+  visitedBy: string;
+  visitedAt: string; // ISO string
+}
+
 function loadStatusLog(): StatusLogEntry[] {
   try { return JSON.parse(localStorage.getItem(STATUS_LOG_KEY) || "[]"); }
   catch { return []; }
@@ -67,6 +75,30 @@ function loadStatusLog(): StatusLogEntry[] {
 
 function saveStatusLog(log: StatusLogEntry[]) {
   try { localStorage.setItem(STATUS_LOG_KEY, JSON.stringify(log)); } catch {}
+}
+
+function loadTicketVisits(): TicketVisit[] {
+  try { return JSON.parse(localStorage.getItem(TICKET_VISITS_KEY) || "[]"); }
+  catch { return []; }
+}
+
+function saveTicketVisits(visits: TicketVisit[]) {
+  try { localStorage.setItem(TICKET_VISITS_KEY, JSON.stringify(visits)); } catch {}
+}
+
+function markTicketAsVisited(ticketNo: string, userName: string): void {
+  const visits = loadTicketVisits();
+  // Check if this user already visited this ticket
+  const existingVisit = visits.find(v => v.ticketNo === ticketNo && v.visitedBy === userName);
+  if (!existingVisit) {
+    visits.push({ ticketNo, visitedBy: userName, visitedAt: new Date().toISOString() });
+    saveTicketVisits(visits);
+  }
+}
+
+function getTicketVisitors(ticketNo: string): string[] {
+  const visits = loadTicketVisits();
+  return [...new Set(visits.filter(v => v.ticketNo === ticketNo).map(v => v.visitedBy))];
 }
 
 function daysAgo(isoString: string): number {
@@ -328,6 +360,7 @@ const SAMPLE_TICKETS: TicketItem[] = RAW_SAMPLE_TICKETS.map((ticket, index) => (
 }));
 
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { email } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
@@ -339,8 +372,25 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [agingModal, setAgingModal] = useState<{ ticketNo: string; status: string } | null>(null);
   const [changeNoteInput, setChangeNoteInput] = useState("");
   const [changeByInput, setChangeByInput] = useState("");
+  const [visitedTickets, setVisitedTickets] = useState<Set<string>>(new Set());
 
   useEffect(() => { setStatusLog(loadStatusLog()); }, []);
+  useEffect(() => { 
+    // Load visited tickets from localStorage whenever component mounts
+    const visits = loadTicketVisits();
+    const visited = new Set(visits.map(v => v.ticketNo));
+    setVisitedTickets(visited);
+    
+    // Also listen for storage changes from other tabs/windows
+    const handleStorageChange = () => {
+      const updatedVisits = loadTicketVisits();
+      const updatedVisited = new Set(updatedVisits.map(v => v.ticketNo));
+      setVisitedTickets(updatedVisited);
+    };
+    
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
   const logStatusChange = useCallback((ticketNo: string, fromStatus: string, toStatus: string) => {
     const entry: StatusLogEntry = {
@@ -457,15 +507,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300 sticky left-0 bg-blue-900/50">
-                    <input
-                      type="checkbox"
-                      checked={selectedItems.size === filteredItems.length && filteredItems.length > 0}
-                      onChange={toggleAllItems}
-                      aria-label="Select all tickets"
-                      className="cursor-pointer"
-                    />
-                  </th>
+                  <th className="px-4 py-3 text-center font-semibold text-blue-300 w-12">✓</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket No</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Wty</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket Source</th>
@@ -490,20 +532,28 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               <tbody>
                 {filteredItems.map((ticket) => (
                   <tr key={ticket.ticketNo} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3 text-center sticky left-0 bg-slate-900/30">
-                      <input
-                        type="checkbox"
-                        checked={selectedItems.has(ticket.ticketNo)}
-                        onChange={() => toggleItemSelection(ticket.ticketNo)}
-                        aria-label={`Select ticket ${ticket.ticketNo}`}
-                        className="cursor-pointer"
-                      />
+                    <td className="px-4 py-3 text-center font-bold text-green-400 w-12" title={visitedTickets.has(ticket.ticketNo) ? `Visited by: ${getTicketVisitors(ticket.ticketNo).join(", ")}` : "Not visited"}>
+                      {visitedTickets.has(ticket.ticketNo) ? "✓" : ""}
                     </td>
                     <td className="px-4 py-3 font-mono text-blue-400 font-semibold">
                       <a
                         href={`/ticket/${ticket.ticketNo}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => {
+                          console.log("Ticket clicked, email:", email);
+                          if (email) {
+                            console.log("Marking ticket as visited:", ticket.ticketNo, email);
+                            markTicketAsVisited(ticket.ticketNo, email);
+                            setVisitedTickets(prev => {
+                              const newSet = new Set([...prev, ticket.ticketNo]);
+                              console.log("Updated visitedTickets:", newSet);
+                              return newSet;
+                            });
+                          } else {
+                            console.warn("No email available");
+                          }
+                        }}
                         className="hover:text-blue-300 hover:underline transition cursor-pointer"
                       >
                         {ticket.ticketNo}

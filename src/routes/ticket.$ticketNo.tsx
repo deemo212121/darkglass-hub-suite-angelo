@@ -670,7 +670,7 @@ const TICKET_DATA: Record<string, TicketData> = {
 function buildTicketCopyPayload(ticket: TicketData): TicketCopyPayload {
   const customerName = `${ticket.firstName} ${ticket.lastName}`.trim();
   return {
-    ticketNo: `a-${ticket.ticketNo}`,
+    ticketNo: ticket.ticketNo,
     source: "Redo",
     customerName,
     primaryPhone: ticket.homePhone || ticket.cellPhone,
@@ -755,6 +755,10 @@ function TicketDetailsPage() {
     },
   ]);
 
+  // Edit mode state for customer information
+  const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
+  const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
+
   useEffect(() => {
     setAuditEntries(loadAuditEntries(ticketNo));
     setVisitLogEntries(loadVisitLogEntries(ticketNo));
@@ -762,6 +766,8 @@ function TicketDetailsPage() {
     setPartRows(loadPartRows(ticketNo));
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
+    setIsEditingCustomerInfo(false);
+    setEditedCustomerInfo({});
   }, [ticketNo]);
 
   useEffect(() => {
@@ -834,6 +840,54 @@ function TicketDetailsPage() {
       });
       setNewServicerNote("");
     }
+  };
+
+  const startEditingCustomerInfo = () => {
+    if (ticket) {
+      setEditedCustomerInfo({
+        firstName: ticket.firstName,
+        lastName: ticket.lastName,
+        address: ticket.address,
+        city: ticket.city,
+        state: ticket.state,
+        zip: ticket.zip,
+        homePhone: ticket.homePhone,
+        cellPhone: ticket.cellPhone,
+        email: ticket.email,
+      });
+      setIsEditingCustomerInfo(true);
+    }
+  };
+
+  const saveCustomerInfo = () => {
+    if (!ticket) return;
+
+    const fieldsToCheck: (keyof TicketData)[] = ["firstName", "lastName", "address", "city", "state", "zip", "homePhone", "cellPhone", "email"];
+
+    fieldsToCheck.forEach((field) => {
+      const oldValue = formatAuditValue(ticket[field]);
+      const newValue = formatAuditValue(editedCustomerInfo[field]);
+
+      if (oldValue !== newValue) {
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Updated customer information",
+          field: field.charAt(0).toUpperCase() + field.slice(1).replace(/([A-Z])/g, " $1"),
+          before: oldValue,
+          after: newValue,
+        });
+
+        (ticket[field] as any) = editedCustomerInfo[field];
+      }
+    });
+
+    setIsEditingCustomerInfo(false);
+    setEditedCustomerInfo({});
+  };
+
+  const cancelEditingCustomerInfo = () => {
+    setIsEditingCustomerInfo(false);
+    setEditedCustomerInfo({});
   };
 
   const addVisitLogEntry = () => {
@@ -1214,27 +1268,30 @@ function TicketDetailsPage() {
               </button>
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
-              {ticket ? (
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Account</div>
-                    <div className="text-sm font-semibold text-white">{ticket.account}</div>
+              <div className="flex flex-col gap-2">
+                <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
+                {ticket ? (
+                  <div className="text-sm text-slate-300 leading-relaxed">
+                    <span className="text-slate-400">Account</span> <span className="font-semibold text-white">{ticket.account}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">Warranty</span> <span className="font-semibold text-white">{ticket.warranty}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">Status</span> <span className="font-semibold text-blue-300">{ticket.status}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">Product</span> <span className="font-semibold text-white">{ticket.product}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">TAT</span> <span className="font-semibold text-white">{ticket.tat}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">Schedule</span> <span className="font-semibold text-white">{ticket.scheduleDate}</span>
+                    <span className="mx-3 text-slate-600">•</span>
+                    <span className="text-slate-400">Contact</span> <span className="font-semibold text-white">{ticket.contact}</span>
                   </div>
-                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Warranty</div>
-                    <div className="text-sm font-semibold text-white">{ticket.warranty}</div>
+                ) : (
+                  <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                    No ticket data is available for this number yet.
                   </div>
-                  <div className="rounded-lg border border-white/10 bg-slate-900/90 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-[0.04em] text-slate-400">Status</div>
-                    <div className="text-sm font-semibold text-blue-300">{ticket.status}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-                  No ticket data is available for this number yet.
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1269,73 +1326,172 @@ function TicketDetailsPage() {
           </div>
         ) : activeTab === "general" && (
           <div className="space-y-8">
-            {/* Quick Info Grid */}
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
-              <div className="grid grid-cols-4 gap-4 text-sm">
-                <div>
-                  <div className="text-slate-400 font-semibold">Product</div>
-                  <div className="text-white">{ticket.product}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 font-semibold">TAT</div>
-                  <div className="text-white">{ticket.tat}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 font-semibold">Schedule</div>
-                  <div className="text-white">{ticket.schedule}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 font-semibold">Contact</div>
-                  <div className="text-white">{ticket.contact}</div>
-                </div>
-              </div>
-            </div>
-
             {/* General Information */}
             <div>
-              <h3 className="text-lg font-semibold text-blue-400 mb-4">General Information</h3>
-
-              {/* Customer Information */}
-              <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Customer Information</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <label className="text-slate-500 font-semibold">Location</label>
-                    <div className="text-white mt-1">{ticket.location}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Tier Code</label>
-                    <div className="text-white mt-1">N/A</div>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">First/Last Name</label>
-                    <div className="text-white mt-1">{ticket.firstName} {ticket.lastName}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">Address</label>
-                    <div className="text-white mt-1">{ticket.address}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">City</label>
-                    <div className="text-white mt-1">{ticket.city}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">State/Zip</label>
-                    <div className="text-white mt-1">{ticket.state} {ticket.zip}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Home Phone</label>
-                    <div className="text-white mt-1">{ticket.homePhone}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Cell Phone</label>
-                    <div className="text-white mt-1">{ticket.cellPhone}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">Email</label>
-                    <div className="text-white mt-1">{ticket.email}</div>
-                  </div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-blue-400">General Information</h3>
+                <div className="flex gap-2">
+                  {!isEditingCustomerInfo ? (
+                    <button
+                      onClick={startEditingCustomerInfo}
+                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors"
+                    >
+                      Edit Customer Info
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={saveCustomerInfo}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEditingCustomerInfo}
+                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
                 </div>
+              </div>
+
+              {/* Customer Information - Prominent Display */}
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+                <h4 className="font-semibold text-slate-300 text-sm">Customer</h4>
+                {!isEditingCustomerInfo ? (
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Name</div>
+                      <div className="text-white font-semibold mt-1">{ticket.firstName} {ticket.lastName}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Phone</div>
+                      <div className="text-white font-semibold mt-1">{ticket.cellPhone || ticket.homePhone}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Location</div>
+                      <div className="text-white font-semibold mt-1">{ticket.city}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold text-xs block mb-1">First Name</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.firstName || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, firstName: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold text-xs block mb-1">Last Name</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.lastName || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, lastName: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold text-xs block mb-1">City</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.city || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, city: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Remaining Customer Details */}
+              <div className="space-y-4 mb-8">
+                <h4 className="font-semibold text-slate-300">Contact Details</h4>
+                {!isEditingCustomerInfo ? (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold">Address</label>
+                      <div className="text-white mt-1">{ticket.address}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">State/Zip</label>
+                      <div className="text-white mt-1">{ticket.state} {ticket.zip}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Home Phone</label>
+                      <div className="text-white mt-1">{ticket.homePhone}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Cell Phone</label>
+                      <div className="text-white mt-1">{ticket.cellPhone}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-slate-500 font-semibold">Email</label>
+                      <div className="text-white mt-1">{ticket.email}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Address</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.address || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, address: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">State</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.state || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, state: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Zip Code</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.zip || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, zip: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Home Phone</label>
+                      <input
+                        type="tel"
+                        value={editedCustomerInfo.homePhone || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, homePhone: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Cell Phone</label>
+                      <input
+                        type="tel"
+                        value={editedCustomerInfo.cellPhone || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, cellPhone: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-slate-500 font-semibold block mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={editedCustomerInfo.email || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, email: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Product Information */}

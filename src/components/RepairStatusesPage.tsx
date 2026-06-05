@@ -14,10 +14,10 @@ type RepairStatusRow = {
   csr: boolean;
   partMgr: boolean;
   tech: boolean;
-  csrRescheduleStatus: string;
-  partPendingStatus: string;
-  cxRequestsReschedule: string;
-  dispatchCompletedStatus: string;
+  csrRescheduleStatus: boolean;
+  partPendingStatus: boolean;
+  cxRequestsReschedule: boolean;
+  dispatchCompletedStatus: boolean;
   mobileSearch: boolean;
   hideInMobile: boolean;
   updateDispatchersStatus: boolean;
@@ -29,7 +29,26 @@ const STORAGE_KEY = "ahs:repair-statuses:rows";
 const SEARCHABLE_FIELDS: Array<keyof RepairStatusRow> = ["code", "description", "overallStatus", "initialStatus", "status", "color", "followUp", "csrRescheduleStatus", "partPendingStatus", "cxRequestsReschedule", "dispatchCompletedStatus", "earlySmsTriggerFlow"];
 const OVERALL_STATUS_OPTIONS = ["Pending", "Ready to Repair", "Completed", "Cancelled"];
 const SET_STATUS_OPTIONS = ["", "ACCEPTED", "Completed", "Pending", "Show All", "Do not show"];
-const STATUS_OPTIONS = ["", "Red", "Black", "Pink", "Purple", "Magenta", "Teal", "Tomato", "Green", "Grey", "Brown", "Lime", "Violet", "Salmon", "Blue", "Orange"];
+const STATUS_OPTIONS = [
+  "",
+  "Red", "DarkRed", "Crimson",
+  "Black", "DarkGray", "Gray",
+  "Pink", "HotPink", "DeepPink",
+  "Purple", "DarkViolet", "Indigo",
+  "Magenta", "Violet", "Plum",
+  "Teal", "DarkCyan", "Turquoise",
+  "Tomato", "OrangeRed", "Salmon",
+  "Green", "DarkGreen", "ForestGreen",
+  "LimeGreen", "Lime", "SpringGreen",
+  "Blue", "DarkBlue", "RoyalBlue",
+  "Orange", "DarkOrange", "Goldenrod",
+  "Brown", "SaddleBrown", "Sienna",
+  "Aqua", "Cyan", "SkyBlue",
+  "Yellow", "Gold", "Khaki",
+  "Navy", "MidnightBlue", "SlateBlue",
+  "Maroon", "Firebrick", "Coral",
+  "MediumVioletRed", "VioletRed", "LightCoral"
+];
 
 const blankDraft: RepairStatusRow = {
   code: "",
@@ -43,10 +62,10 @@ const blankDraft: RepairStatusRow = {
   csr: false,
   partMgr: false,
   tech: false,
-  csrRescheduleStatus: "",
-  partPendingStatus: "",
-  cxRequestsReschedule: "",
-  dispatchCompletedStatus: "",
+  csrRescheduleStatus: false,
+  partPendingStatus: false,
+  cxRequestsReschedule: false,
+  dispatchCompletedStatus: false,
   mobileSearch: false,
   hideInMobile: false,
   updateDispatchersStatus: false,
@@ -55,27 +74,27 @@ const blankDraft: RepairStatusRow = {
 };
 
 const INITIAL_ROWS: RepairStatusRow[] = [
-  { code: "ARC", description: "Archived", overallStatus: "Cancelled", initialStatus: "Archived", status: "Red", color: "Red", fontBold: false, followUp: "Do not show", csr: false, partMgr: false, tech: false, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "BO", description: "CL-Parts Back Ordered", overallStatus: "Pending", initialStatus: "Parts Back Ordered", status: "Black", color: "Black", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "PARTS ON BACKORDER", cxRequestsReschedule: "ST030-Parts Back Ordered / Not Available", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "CFU", description: "CL-Data-Closed", overallStatus: "Claimed", initialStatus: "Claimed", status: "Pink", color: "Pink", fontBold: true, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "CL", description: "CL-Claimed", overallStatus: "Claimed", initialStatus: "Claimed", status: "Purple", color: "Purple", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "ST040-Goods Delivered", mobileSearch: true, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "CN", description: "CL-Cancelled", overallStatus: "Cancelled", initialStatus: "Cancelled", status: "Magenta", color: "Magenta", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "ST052-Cancel by ASC", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "LM", description: "CSR-Left Message for Cx", overallStatus: "Pending", initialStatus: "Accepted", status: "Teal", color: "Teal", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "CUSTOMER CONTACTED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NA", description: "PT-Need PreAuthorization", overallStatus: "Pending", initialStatus: "Accepted", status: "Red", color: "Red", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: false, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "AUTHORIZATION REQ. SUBMIT", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NAC", description: "Needs Auto Claim", overallStatus: "Completed", initialStatus: "Confirmed", status: "Red", color: "Red", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "ST025-Confirmed", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NC", description: "CL-Need Cancel", overallStatus: "Pending", initialStatus: "Need Cancel", status: "Tomato", color: "Tomato", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NP", description: "TR-Need PO", overallStatus: "Pending", initialStatus: "Accepted", status: "Green", color: "Green", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "WAITING ON PARTS", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NS", description: "CSR-Needs Scheduling", overallStatus: "Pending", initialStatus: "Accepted", status: "Teal", color: "Teal", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "ACCEPTED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "NT", description: "TR-Need Triage", overallStatus: "Pending", initialStatus: "Accepted", status: "Grey", color: "Grey", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "TRIAGE", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "RC", description: "CL-Ready to Complete", overallStatus: "Ready to Repair", initialStatus: "Confirmed", status: "Brown", color: "Brown", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "ST025-Confirmed", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "RDCN", description: "Redo Cancelled", overallStatus: "Cancelled", initialStatus: "Cancelled", status: "Lime", color: "Lime", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "ST052-Cancel by ASC", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "RF", description: "OP-Reschedule Follow up", overallStatus: "Pending", initialStatus: "Accepted", status: "Violet", color: "Violet", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "RESCHEDULED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "ST010", description: "CSR-Assigned to ASC", overallStatus: "Pending", initialStatus: "Accepted", status: "Black", color: "Black", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "ACCEPTED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "ST015", description: "CSR-Acknowledged", overallStatus: "Pending", initialStatus: "Accepted", status: "Salmon", color: "Salmon", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "ACCEPTED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "ST025", description: "OP-Ready for Service", overallStatus: "Ready to Repair", initialStatus: "Appointment Confirmed", status: "Blue", color: "Blue", fontBold: true, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "ST025-Confirmed", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "" },
-  { code: "ST035", description: "CL-Completed", overallStatus: "Completed", initialStatus: "Completed", status: "Green", color: "Green", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "", partPendingStatus: "", cxRequestsReschedule: "", dispatchCompletedStatus: "ST035-Completed", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "" },
-  { code: "UH", description: "OP-UPDATE HOLD", overallStatus: "Ready to Repair", initialStatus: "Appointment Confirmed", status: "Lime", color: "Lime", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "APPOINTMENT CONFIRMED", cxRequestsReschedule: "", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: true, updateDispatchersStatus: true, earlySmsTriggerFlow: "", actions: "Delete" },
-  { code: "WP", description: "OP-Waiting for Part", overallStatus: "Pending", initialStatus: "Accepted", status: "Orange", color: "Orange", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: "ACCEPTED", partPendingStatus: "WAITING ON PARTS", cxRequestsReschedule: "ST030-Parts In Transit (Samsung)", dispatchCompletedStatus: "", mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "ARC", description: "Archived", overallStatus: "Cancelled", initialStatus: "Archived", status: "Red", color: "Red", fontBold: false, followUp: "Do not show", csr: false, partMgr: false, tech: false, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "BO", description: "CL-Parts Back Ordered", overallStatus: "Pending", initialStatus: "Parts Back Ordered", status: "Black", color: "Black", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: true, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "CFU", description: "CL-Data-Closed", overallStatus: "Claimed", initialStatus: "Claimed", status: "Pink", color: "Pink", fontBold: true, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "CL", description: "CL-Claimed", overallStatus: "Claimed", initialStatus: "Claimed", status: "Purple", color: "Purple", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: true, mobileSearch: true, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "CN", description: "CL-Cancelled", overallStatus: "Cancelled", initialStatus: "Cancelled", status: "Magenta", color: "Magenta", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: true, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "LM", description: "CSR-Left Message for Cx", overallStatus: "Pending", initialStatus: "Accepted", status: "Teal", color: "Teal", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NA", description: "PT-Need PreAuthorization", overallStatus: "Pending", initialStatus: "Accepted", status: "Red", color: "Red", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: false, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NAC", description: "Needs Auto Claim", overallStatus: "Completed", initialStatus: "Confirmed", status: "Red", color: "Red", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: true, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NC", description: "CL-Need Cancel", overallStatus: "Pending", initialStatus: "Need Cancel", status: "Tomato", color: "Tomato", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NP", description: "TR-Need PO", overallStatus: "Pending", initialStatus: "Accepted", status: "Green", color: "Green", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NS", description: "CSR-Needs Scheduling", overallStatus: "Pending", initialStatus: "Accepted", status: "Teal", color: "Teal", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "NT", description: "TR-Need Triage", overallStatus: "Pending", initialStatus: "Accepted", status: "Grey", color: "Grey", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "RC", description: "CL-Ready to Complete", overallStatus: "Ready to Repair", initialStatus: "Confirmed", status: "Brown", color: "Brown", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: true, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "RDCN", description: "Redo Cancelled", overallStatus: "Cancelled", initialStatus: "Cancelled", status: "Lime", color: "Lime", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: true, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "RF", description: "OP-Reschedule Follow up", overallStatus: "Pending", initialStatus: "Accepted", status: "Violet", color: "Violet", fontBold: false, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "ST010", description: "CSR-Assigned to ASC", overallStatus: "Pending", initialStatus: "Accepted", status: "Black", color: "Black", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "ST015", description: "CSR-Acknowledged", overallStatus: "Pending", initialStatus: "Accepted", status: "Salmon", color: "Salmon", fontBold: false, followUp: "Do not show", csr: true, partMgr: false, tech: false, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "ST025", description: "OP-Ready for Service", overallStatus: "Ready to Repair", initialStatus: "Appointment Confirmed", status: "Blue", color: "Blue", fontBold: true, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: true, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "" },
+  { code: "ST035", description: "CL-Completed", overallStatus: "Completed", initialStatus: "Completed", status: "Green", color: "Green", fontBold: true, followUp: "Show All", csr: true, partMgr: true, tech: true, csrRescheduleStatus: false, partPendingStatus: false, cxRequestsReschedule: false, dispatchCompletedStatus: true, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "" },
+  { code: "UH", description: "OP-UPDATE HOLD", overallStatus: "Ready to Repair", initialStatus: "Appointment Confirmed", status: "Lime", color: "Lime", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: false, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: true, updateDispatchersStatus: true, earlySmsTriggerFlow: "", actions: "Delete" },
+  { code: "WP", description: "OP-Waiting for Part", overallStatus: "Pending", initialStatus: "Accepted", status: "Orange", color: "Orange", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: true, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
 ];
 
 function loadRows() {
@@ -92,6 +111,11 @@ function loadRows() {
 
 function isBlankDraft(row: RepairStatusRow) {
   return JSON.stringify(row) === JSON.stringify(blankDraft);
+}
+
+function getTextColor(bgColor: string): string {
+  const darkColors = ["Black", "DarkRed", "DarkGreen", "DarkBlue", "Navy", "MidnightBlue", "DarkViolet", "DarkGray", "Indigo", "SaddleBrown", "Maroon", "Firebrick"];
+  return darkColors.includes(bgColor) ? "#fff" : "#000";
 }
 
 function ToggleCell({ checked, onToggle, label }: { checked: boolean; onToggle: (value: boolean) => void; label?: string }) {
@@ -334,16 +358,22 @@ export function RepairStatusesPage() {
                   </td>
                   <td><input value={draft.initialStatus} onChange={(event) => updateDraft("initialStatus", event.target.value)} placeholder="Initial status" /></td>
                   <td><input value={draft.status} onChange={(event) => updateDraft("status", event.target.value)} placeholder="Status" /></td>
-                  <td><input value={draft.color} onChange={(event) => updateDraft("color", event.target.value)} placeholder="Color" /></td>
+                  <td><select value={draft.color} onChange={(event) => updateDraft("color", event.target.value)}>
+                      {STATUS_OPTIONS.map((option) => (
+                        <option key={option} value={option} style={option ? { backgroundColor: option, color: getTextColor(option) } : {}}>
+                          {option || "— select —"}
+                        </option>
+                      ))}
+                    </select></td>
                   <td><ToggleCell checked={draft.fontBold} onToggle={(value) => updateDraft("fontBold", value)} /></td>
                   <td><input value={draft.followUp} onChange={(event) => updateDraft("followUp", event.target.value)} placeholder="Follow-up dashboard" /></td>
                   <td><ToggleCell checked={draft.csr} onToggle={(value) => updateDraft("csr", value)} label="CSR" /></td>
                   <td><ToggleCell checked={draft.partMgr} onToggle={(value) => updateDraft("partMgr", value)} /></td>
                   <td><ToggleCell checked={draft.tech} onToggle={(value) => updateDraft("tech", value)} /></td>
-                  <td><input value={draft.csrRescheduleStatus} onChange={(event) => updateDraft("csrRescheduleStatus", event.target.value)} placeholder="CSR reschedule" /></td>
-                  <td><input value={draft.partPendingStatus} onChange={(event) => updateDraft("partPendingStatus", event.target.value)} placeholder="Part pending" /></td>
-                  <td><input value={draft.cxRequestsReschedule} onChange={(event) => updateDraft("cxRequestsReschedule", event.target.value)} placeholder="When Cx requests reschedule" /></td>
-                  <td><input value={draft.dispatchCompletedStatus} onChange={(event) => updateDraft("dispatchCompletedStatus", event.target.value)} placeholder="Dispatch completed" /></td>
+                  <td><ToggleCell checked={draft.csrRescheduleStatus} onToggle={(value) => updateDraft("csrRescheduleStatus", value)} /></td>
+                  <td><ToggleCell checked={draft.partPendingStatus} onToggle={(value) => updateDraft("partPendingStatus", value)} /></td>
+                  <td><ToggleCell checked={draft.cxRequestsReschedule} onToggle={(value) => updateDraft("cxRequestsReschedule", value)} /></td>
+                  <td><ToggleCell checked={draft.dispatchCompletedStatus} onToggle={(value) => updateDraft("dispatchCompletedStatus", value)} /></td>
                   <td><ToggleCell checked={draft.mobileSearch} onToggle={(value) => updateDraft("mobileSearch", value)} /></td>
                   <td><ToggleCell checked={draft.hideInMobile} onToggle={(value) => updateDraft("hideInMobile", value)} /></td>
                   <td><ToggleCell checked={draft.updateDispatchersStatus} onToggle={(value) => updateDraft("updateDispatchersStatus", value)} /></td>
@@ -362,16 +392,22 @@ export function RepairStatusesPage() {
                     </td>
                     <td><input value={row.initialStatus} onChange={(event) => updateRow(index, "initialStatus", event.target.value)} /></td>
                     <td><input value={row.status} onChange={(event) => updateRow(index, "status", event.target.value)} /></td>
-                    <td><input value={row.color} onChange={(event) => updateRow(index, "color", event.target.value)} /></td>
+                    <td><select value={row.color} onChange={(event) => updateRow(index, "color", event.target.value)}>
+                      {STATUS_OPTIONS.map((option) => (
+                        <option key={option} value={option} style={option ? { backgroundColor: option, color: getTextColor(option) } : {}}>
+                          {option || "— select —"}
+                        </option>
+                      ))}
+                    </select></td>
                     <td><ToggleCell checked={row.fontBold} onToggle={(value) => updateRow(index, "fontBold", value)} /></td>
                     <td><input value={row.followUp} onChange={(event) => updateRow(index, "followUp", event.target.value)} /></td>
                     <td><ToggleCell checked={row.csr} onToggle={(value) => updateRow(index, "csr", value)} label="CSR" /></td>
                     <td><ToggleCell checked={row.partMgr} onToggle={(value) => updateRow(index, "partMgr", value)} /></td>
                     <td><ToggleCell checked={row.tech} onToggle={(value) => updateRow(index, "tech", value)} /></td>
-                    <td><input value={row.csrRescheduleStatus} onChange={(event) => updateRow(index, "csrRescheduleStatus", event.target.value)} /></td>
-                    <td><input value={row.partPendingStatus} onChange={(event) => updateRow(index, "partPendingStatus", event.target.value)} /></td>
-                    <td><input value={row.cxRequestsReschedule} onChange={(event) => updateRow(index, "cxRequestsReschedule", event.target.value)} /></td>
-                    <td><input value={row.dispatchCompletedStatus} onChange={(event) => updateRow(index, "dispatchCompletedStatus", event.target.value)} /></td>
+                    <td><ToggleCell checked={row.csrRescheduleStatus} onToggle={(value) => updateRow(index, "csrRescheduleStatus", value)} /></td>
+                    <td><ToggleCell checked={row.partPendingStatus} onToggle={(value) => updateRow(index, "partPendingStatus", value)} /></td>
+                    <td><ToggleCell checked={row.cxRequestsReschedule} onToggle={(value) => updateRow(index, "cxRequestsReschedule", value)} /></td>
+                    <td><ToggleCell checked={row.dispatchCompletedStatus} onToggle={(value) => updateRow(index, "dispatchCompletedStatus", value)} /></td>
                     <td><ToggleCell checked={row.mobileSearch} onToggle={(value) => updateRow(index, "mobileSearch", value)} /></td>
                     <td><ToggleCell checked={row.hideInMobile} onToggle={(value) => updateRow(index, "hideInMobile", value)} /></td>
                     <td><ToggleCell checked={row.updateDispatchersStatus} onToggle={(value) => updateRow(index, "updateDispatchersStatus", value)} /></td>
