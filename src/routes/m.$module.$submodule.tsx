@@ -84,6 +84,9 @@ import { AccountingDashboard } from "@/components/AccountingDashboard";
 import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
 import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
 import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
+import { CSRDashboard } from "@/components/CSRDashboard";
+import { CSRCallTracker } from "@/components/CSRCallTracker";
+import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -299,6 +302,14 @@ function SubModule() {
         ? <PayrollCalculationPage mod={mod} sub={sub} />
         : (sub as any).custom === "employee-self-service"
         ? <EmployeeSelfServicePage mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-dashboard"
+        ? <CSRDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-daily-report"
+        ? <ReportCSRDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "call-tracker"
+        ? <CSRCallTracker mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-status-summary"
+        ? <CSRStatusSummary mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"

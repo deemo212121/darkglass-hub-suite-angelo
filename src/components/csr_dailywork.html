@@ -1,0 +1,616 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>CSR Daily Work - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		/* ── Body Layout ── */
+		body {
+			display: flex;
+			flex-direction: column;
+			min-height: 100vh;
+		}
+
+		.module-page {
+			flex: 1;
+		}
+
+		/* ── CSR Panel ── */
+		.csr-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			overflow: hidden;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			display: flex;
+			flex-direction: column;
+			padding: 0;
+		}
+
+		/* ── Controls Bar ── */
+		.csr-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1.2rem;
+			align-items: flex-end;
+			padding: 1.25rem;
+			background: rgba(17, 24, 39, 0.75);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-label {
+			font-size: 0.72rem;
+			font-weight: 700;
+			color: #94a3b8;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		.control-row {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		.control-row input,
+		.control-row select {
+			padding: 0.5rem 0.7rem;
+			background: rgba(2, 6, 23, 0.8);
+			border: 1px solid rgba(148, 163, 184, 0.35);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+		}
+
+		.control-row input:focus,
+		.control-row select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+		}
+
+		.filter-buttons {
+			display: flex;
+			gap: 0.5rem;
+			flex-wrap: wrap;
+		}
+
+		/* ── Buttons ── */
+		.filter-btn {
+			padding: 0.35rem 0.75rem;
+			background: rgba(30, 41, 59, 0.8);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			color: #e2e8f0;
+			border-radius: 4px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.15s;
+		}
+
+		.filter-btn:hover,
+		.filter-btn.active {
+			background: rgba(96, 165, 250, 0.2);
+			border-color: #60a5fa;
+			color: #e0e7ff;
+		}
+
+		/* ── Data Section ── */
+		.csr-data {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+			padding: 1.25rem;
+			overflow-y: auto;
+		}
+
+		.records-info {
+			color: #94a3b8;
+			font-size: 0.9rem;
+			margin-bottom: 1rem;
+		}
+
+		.records-info strong {
+			color: #dbeafe;
+		}
+
+		.table-wrapper {
+			overflow-x: auto;
+			flex: 1;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			text-align: left;
+			font-size: 0.85rem;
+		}
+
+		thead {
+			background: rgba(17, 24, 39, 0.9);
+			border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+		}
+
+		th {
+			padding: 0.7rem;
+			font-weight: 700;
+			color: #cbd5e1;
+			text-transform: uppercase;
+			font-size: 0.72rem;
+			letter-spacing: 0.04em;
+		}
+
+		td {
+			padding: 0.65rem 0.7rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+			color: #e2e8f0;
+		}
+
+		tbody tr {
+			transition: background 0.2s ease;
+		}
+
+		tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.ticket-link {
+			color: #60a5fa;
+			text-decoration: none;
+			font-weight: 600;
+			cursor: pointer;
+			transition: color 0.2s ease;
+		}
+
+		.ticket-link:hover {
+			color: #93c5fd;
+			text-decoration: underline;
+		}
+
+		.repair-badge {
+			display: inline-block;
+			padding: 0.2rem 0.5rem;
+			background: rgba(34, 197, 94, 0.15);
+			border: 1px solid rgba(74, 222, 128, 0.3);
+			border-radius: 3px;
+			color: #86efac;
+			font-size: 0.75rem;
+			font-weight: 600;
+		}
+
+		.action-badge {
+			display: inline-block;
+			padding: 0.25rem 0.5rem;
+			border-radius: 3px;
+			font-size: 0.72rem;
+			font-weight: 600;
+			text-transform: uppercase;
+			letter-spacing: 0.02em;
+		}
+
+		.action-info {
+			background: rgba(59, 130, 246, 0.15);
+			color: #93c5fd;
+		}
+
+		.action-schedule {
+			background: rgba(34, 197, 94, 0.15);
+			color: #86efac;
+		}
+
+		.action-call {
+			background: rgba(168, 85, 247, 0.15);
+			color: #d8b4fe;
+		}
+
+		.action-update {
+			background: rgba(251, 146, 60, 0.15);
+			color: #fed7aa;
+		}
+
+		.location-badge {
+			display: inline-block;
+			padding: 0.25rem 0.5rem;
+			background: rgba(100, 116, 139, 0.15);
+			border-radius: 3px;
+			font-size: 0.73rem;
+			color: #cbd5e1;
+		}
+
+		@media (max-width: 1024px) {
+			.csr-controls {
+				gap: 0.8rem;
+			}
+
+			th, td {
+				padding: 0.5rem 0.4rem;
+				font-size: 0.75rem;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.control-row {
+				flex-direction: column;
+				align-items: stretch;
+			}
+
+			.table-wrapper {
+				overflow-x: auto;
+			}
+		}
+
+		footer {
+			background: rgba(17, 24, 39, 0.6);
+			border-top: 1px solid rgba(255, 255, 255, 0.1);
+			padding: 1.25rem;
+			text-align: center;
+			color: rgba(255, 255, 255, 0.6);
+			font-size: 0.8rem;
+		}
+
+		footer a {
+			color: rgba(255, 255, 255, 0.85);
+			text-decoration: none;
+			transition: color 0.3s ease;
+		}
+
+		footer a:hover {
+			color: white;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 4px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+		.floating-table-scrollbar.is-visible { display: block; }
+		.floating-table-scrollbar-inner { height: 1px; }
+
+		/* Footer Ticket Lookup - injected by routes.js */
+	</style>
+</head>
+<body>
+	<div id="appContainer"></div>
+
+	<div class="module-page" style="display: flex; flex-direction: column;">
+		<div class="module-header">
+			<button class="back-btn" onclick="goToDashboard()">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">CSR Daily Work</h2>
+		</div>
+
+		<div class="csr-panel">
+			<!-- Controls Section -->
+			<div class="csr-controls">
+				<div class="control-group">
+					<label class="control-label">Date Range</label>
+					<div class="control-row">
+						<input type="date" id="startDate" value="2026-05-19">
+						<input type="date" id="endDate" value="2026-05-19">
+					</div>
+				</div>
+
+				<div class="control-group">
+					<label class="control-label">Filters</label>
+					<div class="control-row">
+						<select id="locationFilter">
+							<option value="">All Locations</option>
+							<option value="Asheville">Asheville</option>
+							<option value="Atlanta">Atlanta</option>
+							<option value="Birmingham">Birmingham</option>
+							<option value="Chattanooga">Chattanooga</option>
+							<option value="Columbus">Columbus</option>
+							<option value="Dallas">Dallas</option>
+							<option value="Jacksonville">Jacksonville</option>
+							<option value="Jackson,MS">Jackson, MS</option>
+							<option value="Jackson,TN">Jackson, TN</option>
+							<option value="Jonesboro">Jonesboro</option>
+							<option value="Knoxville">Knoxville</option>
+							<option value="Lake Charles">Lake Charles</option>
+							<option value="Little Rock">Little Rock</option>
+							<option value="Memphis">Memphis</option>
+							<option value="Nashville">Nashville</option>
+							<option value="New Orleans">New Orleans</option>
+							<option value="Raleigh">Raleigh</option>
+							<option value="Richmond">Richmond</option>
+							<option value="Savannah">Savannah</option>
+							<option value="St. Louis">St. Louis</option>
+							<option value="Wilmington">Wilmington</option>
+							<option value="Huntsville">Huntsville</option>
+						</select>
+						<select id="actionFilter">
+							<option value="">All Actions</option>
+							<option value="INFO. UPDATE">INFO. UPDATE</option>
+							<option value="SCHEDULE">SCHEDULE</option>
+							<option value="CALL ATTEMPT">CALL ATTEMPT</option>
+							<option value="CSR UPDATE">CSR UPDATE</option>
+						</select>
+							<select id="csrFilter">
+								<option value="">All CSRs</option>
+							</select>
+					</div>
+				</div>
+			</div>
+
+			<!-- Data Section -->
+			<div class="csr-data">
+				<div class="records-info">
+					<strong id="recordCount">50</strong> records found
+				</div>
+
+				<div class="table-wrapper" id="csrTableWrap">
+					<table id="csrTable">
+						<thead>
+							<tr>
+								<th>Time</th>
+								<th>Ticket #</th>
+								<th>Repairs</th>
+								<th>Location</th>
+								<th>Action</th>
+								<th>CSR Name</th>
+								<th>Technician</th>
+								<th>Job Type</th>
+								<th>Work Text</th>
+							</tr>
+						</thead>
+						<tbody id="tableBody">
+							<!-- Populated by JavaScript -->
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="floating-table-scrollbar" id="floatingScrollbar">
+		<div class="floating-table-scrollbar-inner" id="floatingScrollbarInner"></div>
+	</div>
+
+	<footer id="contact">
+	<script>
+		/* ── Auth ── */
+		const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+		const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+
+		/* ── Render App Header ── */
+		const appContainer = document.getElementById('appContainer');
+		appContainer.innerHTML = `
+			<div class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+				<div class="dashboard-header">
+					<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+						<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+						<h1 class="dashboard-title">Admin Hub Solutions</h1>
+					</a>
+					<div class="user-info">
+						<div>
+							<p id="userDisplayEmail" style="font-weight: 600; color: white; margin: 0;"></p>
+							<p id="companyDisplayInfo" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+						</div>
+						<button class="logout-btn" onclick="logout()">Logout</button>
+					</div>
+				</div>
+			</div>
+		`;
+
+		/* ── Helper Functions ── */
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail') || 'test@example.com';
+			const userCompanyId = localStorage.getItem('userCompanyId') || 'TEST-001';
+			
+			const userEmailEl = document.getElementById('userDisplayEmail');
+			const companyInfoEl = document.getElementById('companyDisplayInfo');
+			
+			if (userEmailEl) {
+				userEmailEl.textContent = userEmail;
+			}
+			if (companyInfoEl) {
+				companyInfoEl.textContent = `Company: ${userCompanyId}`;
+			}
+		}
+
+		function goToDashboard() {
+			window.location.href = '../../index.html';
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function goToTicketDetails(ticket) {
+			const url = `ticket_details.html?ticket=${encodeURIComponent(ticket)}`;
+			window.open(url, '_blank', 'noopener');
+		}
+
+		// CSR Daily Work Data - with repair count
+		const csrWorkData = [
+			{ time: '05/19/2026 10:42:38', ticket: '4004969701', repairs: 1, location: 'Huntsville', action: 'SCHEDULE', csr: 'Anna Dominique Dimacali', tech: 'Memphis Admin', job: '', work: '' },
+			{ time: '05/19/2026 10:42:36', ticket: 'SA-33058172', repairs: 2, location: 'Jonesboro', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Sean Smith', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:42:35', ticket: 'SA-34195571', repairs: 1, location: 'Nashville', action: 'INFO. UPDATE', csr: 'Alyssa Diones', tech: 'Baolin Henry Zhang', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:42:02', ticket: '1006894613-101', repairs: 3, location: 'Birmingham', action: 'INFO. UPDATE', csr: 'Ian Montesclaros', tech: 'Zonate Grant', job: 'IH', work: '4/30 AM' },
+			{ time: '05/19/2026 10:41:58', ticket: '26000611751DF4', repairs: 2, location: 'Knoxville', action: 'SCHEDULE', csr: 'MaCzarina Lagumen', tech: 'Memphis Admin', job: 'IH', work: 'MN 05/15 sent msg to SBM for ticket review || 12NN-5PM || HAS CATS' },
+			{ time: '05/19/2026 10:41:48', ticket: 'SA-32674371', repairs: 1, location: 'St. Louis', action: 'INFO. UPDATE', csr: 'Kemuel Tamayo', tech: 'Antonio Weathersby', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:41:33', ticket: 'SA-32432212', repairs: 2, location: 'Jonesboro', action: 'INFO. UPDATE', csr: 'Job Christian Alberto', tech: 'Darius Brown', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:40:56', ticket: '26000574020DF3', repairs: 3, location: 'Wilmington', action: 'INFO. UPDATE', csr: 'John Maverick Nieto', tech: 'Justin Alverez', job: 'IH', work: 'AR 5/18 || FOR CLAIMS: This is for dryer and parts info are rectified.' },
+			{ time: '05/19/2026 10:40:51', ticket: 'SA-34412371', repairs: 1, location: 'Raleigh', action: 'INFO. UPDATE', csr: 'Alyssa Diones', tech: 'Marc James', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:40:46', ticket: '1007217738-101', repairs: 2, location: 'Jonesboro', action: 'SCHEDULE', csr: 'John Carl Cabahug', tech: 'Memphis Admin', job: 'IH', work: 'ETA 05/20' },
+			{ time: '05/19/2026 10:40:40', ticket: '26000648480DF2', repairs: 1, location: 'Nashville', action: 'CSR UPDATE', csr: 'Francis John Rebosura', tech: 'Nashville Admin', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:40:40', ticket: '1006677458-102', repairs: 3, location: 'Jacksonville', action: 'INFO. UPDATE', csr: 'Ian Montesclaros', tech: 'Memphis Admin', job: 'IH', work: '4/30 FJ' },
+			{ time: '05/19/2026 10:40:37', ticket: '26000521739DF3', repairs: 2, location: 'Memphis', action: 'SCHEDULE', csr: 'Alona Jane Bautista', tech: 'Memphis Admin', job: 'IH', work: 'MN 05/18 waiting for parts ETA PARTS ETA 05/20' },
+			{ time: '05/19/2026 10:40:26', ticket: '26000648480DF2', repairs: 1, location: 'Nashville', action: 'SCHEDULE', csr: 'Francis John Rebosura', tech: 'Nashville Admin', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:40:24', ticket: '26000585022DF2', repairs: 2, location: 'Wilmington', action: 'INFO. UPDATE', csr: 'John Maverick Nieto', tech: 'Justin Alverez', job: 'IH', work: 'AR 5/18 || FOR CLAIMS: This is for washer and parts info are rectified.' },
+			{ time: '05/19/2026 10:40:14', ticket: 'SA-33171622', repairs: 1, location: 'Atlanta', action: 'CALL ATTEMPT', csr: 'Jo-Ann Lazarte', tech: '', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:39:58', ticket: '26000666962DF1', repairs: 3, location: 'Savannah', action: 'CSR UPDATE', csr: 'Kyle Jomarc Sicat', tech: 'Carlos Ramirez', job: 'IH', work: '5/19 waiting for PA app, left VM / 05/18 KU pa sub' },
+			{ time: '05/19/2026 10:39:46', ticket: 'SA-32807321', repairs: 2, location: 'Jackson,TN', action: 'INFO. UPDATE', csr: 'Job Christian Alberto', tech: 'Gabriel Talley', job: 'IH', work: 'Ticket is showing as completed on SP but as per Travis from GE, we can still proceed with repair - case # 22760480' },
+			{ time: '05/19/2026 10:39:40', ticket: 'SA-32407531', repairs: 1, location: 'Wilmington', action: 'CALL ATTEMPT', csr: 'Shiela Marie Estrellado', tech: 'Josh Malloch', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:39:31', ticket: 'SA-33945881', repairs: 2, location: 'Little Rock', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Jonathan Knox', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:39:14', ticket: 'SA-33464633', repairs: 1, location: 'Jackson,MS', action: 'SCHEDULE', csr: 'Patrick Tendero', tech: 'Memphis Admin', job: 'IH', work: 'Please called this number directly - 662-542-6128' },
+			{ time: '05/19/2026 10:39:11', ticket: 'SA-34122951', repairs: 3, location: 'Jackson,TN', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Gabriel Talley', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:38:53', ticket: '26000638610DF2', repairs: 2, location: 'Chattanooga', action: 'INFO. UPDATE', csr: 'Rocky Deles', tech: 'Seven Grinis', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:38:41', ticket: '26000671636DF1', repairs: 1, location: 'Asheville', action: 'CSR UPDATE', csr: 'Anna Dominique Dimacali', tech: 'Jordan Koetsier', job: 'IH', work: 'CX IS ONLY AVAILABLE AFTER 1:30PM' },
+			{ time: '05/19/2026 10:38:38', ticket: 'SA-34160212', repairs: 2, location: 'Knoxville', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Leo Sun', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:37:28', ticket: '26000663669DF1', repairs: 1, location: 'Atlanta', action: 'CSR UPDATE', csr: 'Kyle Jomarc Sicat', tech: 'Abel Severino', job: 'IH', work: '5/19 waiting for PA app, left VM / 05/18 KU pa sub' },
+			{ time: '05/19/2026 10:37:17', ticket: '727473', repairs: 3, location: 'St. Louis', action: 'INFO. UPDATE', csr: 'Jerich Leonard', tech: '', job: 'IH', work: 'PLEASE CHECK WITH CX IF PARTS ARRIVED BEFORE SCHEDULING' },
+			{ time: '05/19/2026 10:37:08', ticket: 'SA-3419764', repairs: 2, location: 'Jacksonville', action: 'CSR UPDATE', csr: 'Ana Jessa Vito', tech: '', job: 'IH', work: 'Unable to reach' },
+			{ time: '05/19/2026 10:37:03', ticket: '4185043149', repairs: 1, location: 'Birmingham', action: 'INFO. UPDATE', csr: 'Alyssa Diones', tech: '', job: 'IN', work: '' },
+			{ time: '05/19/2026 10:36:54', ticket: '26000638512DF2', repairs: 2, location: 'Knoxville', action: 'INFO. UPDATE', csr: 'Rocky Deles', tech: 'Leo Sun', job: 'IH', work: 'TECH: IF THE NEW ICE MAKER WON"T WORK PLEASE CALL ASSURANT' },
+			{ time: '05/19/2026 10:36:27', ticket: '1007068465-101', repairs: 1, location: 'Birmingham', action: 'CSR UPDATE', csr: 'Shiela Luciano', tech: '', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:36:08', ticket: '1007208923-101', repairs: 3, location: 'Columbus', action: 'CSR UPDATE', csr: 'Jenny Boy Ibale', tech: 'Matt Simmons', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:35:29', ticket: 'SA-33495881', repairs: 2, location: 'Asheville', action: 'CALL ATTEMPT', csr: 'Jerwin Pineda', tech: '', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:35:03', ticket: '0157519741351', repairs: 1, location: 'St. Louis', action: 'CSR UPDATE', csr: 'Renz Marion Casilao', tech: 'Demarkco Cody', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:34:55', ticket: '26000648480DF2', repairs: 2, location: 'Nashville', action: 'CALL ATTEMPT', csr: 'Francis John Rebosura', tech: 'Justin Robertson', job: 'IH', work: 'waiting part ETA' },
+			{ time: '05/19/2026 10:34:53', ticket: '1007077008-101', repairs: 1, location: 'New Orleans', action: 'INFO. UPDATE', csr: 'Alyssa Diones', tech: 'Cooper Shaffett', job: 'IH', work: 'LT5/18 - part available in ENC/Marcone - moved to PO ||AD 05/14 - 140137402065, Encompass: No result, Marcone: Out of stock' },
+			{ time: '05/19/2026 10:34:51', ticket: '26000674038DF2', repairs: 3, location: 'Knoxville', action: 'SCHEDULE', csr: 'MaCzarina Lagumen', tech: 'Memphis Admin', job: 'IH', work: 'NO CATS' },
+			{ time: '05/19/2026 10:34:51', ticket: '26000614705DF1', repairs: 2, location: 'Jackson,MS', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Terry Davis', job: 'IH', work: '05/18 KU pa app / 05/18 KU waiting for update / 05/15 KU pa sub' },
+			{ time: '05/19/2026 10:34:51', ticket: '26000674038DF2', repairs: 1, location: 'Knoxville', action: 'CSR UPDATE', csr: 'MaCzarina Lagumen', tech: 'Memphis Admin', job: 'IH', work: 'NO CATS' },
+			{ time: '05/19/2026 10:34:11', ticket: '26000636912DF2', repairs: 2, location: 'Jackson,TN', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Brandon Phillips', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:34:07', ticket: '1007151906-103', repairs: 1, location: 'St. Louis', action: 'SCHEDULE', csr: 'Mary Rose Labuanan', tech: 'Memphis Admin', job: 'IH', work: '05/19 – Initial appointment was scheduled for 05/19; however, the customer requested to reschedule to 05/21, as this is the only date he is available.' },
+			{ time: '05/19/2026 10:34:03', ticket: 'SA-32130023', repairs: 3, location: 'Atlanta', action: 'CALL ATTEMPT', csr: 'Jo-Ann Lazarte', tech: '', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:33:49', ticket: '26000650607DF1', repairs: 2, location: 'Knoxville', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Alex Myles', job: 'IH', work: '05/18 KU pa app / 05/18 KU waiting for update / 05/15 KU pa sub' },
+			{ time: '05/19/2026 10:33:34', ticket: '26000651015DF1', repairs: 1, location: 'Dallas', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Lashamus Dowell', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:33:30', ticket: '26000652258DF1', repairs: 2, location: 'Lake Charles', action: 'CSR UPDATE', csr: 'Kyle Jomarc Sicat', tech: 'Danny Thornton', job: 'IH', work: '5/19 waiting for PA app, left VM / 05/18 KU waiting for update / 05/15 KU pa sub' },
+			{ time: '05/19/2026 10:33:09', ticket: '26000651119DF1', repairs: 1, location: 'Jackson,TN', action: 'INFO. UPDATE', csr: 'Cheska Timkang', tech: 'Gabriel Talley', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:32:59', ticket: '1007025115-103', repairs: 3, location: 'Wilmington', action: 'CALL ATTEMPT', csr: 'Shiela Marie Estrellado', tech: 'Justin Alverez', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:32:44', ticket: 'SA-32411591', repairs: 2, location: 'St. Louis', action: 'INFO. UPDATE', csr: 'Kemuel Tamayo', tech: 'DeAndre Murray', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:32:35', ticket: '24127631', repairs: 1, location: 'Asheville', action: 'CALL ATTEMPT', csr: 'Jerwin Pineda', tech: '', job: 'IH', work: '' },
+			{ time: '05/19/2026 10:32:31', ticket: '26000678142DF1', repairs: 2, location: 'Columbus', action: 'CSR UPDATE', csr: 'Jenny Boy Ibale', tech: 'Percy Smith', job: 'IH', work: '' }
+		];
+
+		function populateTable(data) {
+			const tableBody = document.getElementById('tableBody');
+			tableBody.innerHTML = '';
+
+			data.forEach(record => {
+				const row = document.createElement('tr');
+				
+				// Determine action badge class
+				let actionClass = 'action-info';
+				if (record.action.includes('SCHEDULE')) actionClass = 'action-schedule';
+				else if (record.action.includes('CALL')) actionClass = 'action-call';
+				else if (record.action.includes('CSR')) actionClass = 'action-update';
+
+				row.innerHTML = `
+					<td>${record.time}</td>
+					<td><a href="../Tickets/ticket_details.html?ticket=${encodeURIComponent(record.ticket)}" target="_blank" class="ticket-link">${record.ticket}</a></td>
+					<td><span class="repair-badge">${record.repairs} repair${record.repairs !== 1 ? 's' : ''}</span></td>
+					<td><span class="location-badge">${record.location}</span></td>
+					<td><span class="action-badge ${actionClass}">${record.action === 'SCHEDULE' ? '◆ ' : ''}${record.action}</span></td>
+					<td>${record.csr}</td>
+					<td>${record.tech || '—'}</td>
+					<td>${record.job || '—'}</td>
+					<td>${record.work || '—'}</td>
+				`;
+				tableBody.appendChild(row);
+			});
+
+			document.getElementById('recordCount').textContent = data.length;
+		}
+
+		function populateCSRDropdown() {
+			const csrSet = new Set(csrWorkData.map(record => record.csr));
+			const csrArray = Array.from(csrSet).sort();
+			const csrFilter = document.getElementById('csrFilter');
+			
+			csrArray.forEach(csr => {
+				const option = document.createElement('option');
+				option.value = csr;
+				option.textContent = csr;
+				csrFilter.appendChild(option);
+			});
+		}
+
+		function applyFilters() {
+			const startDate = document.getElementById('startDate').value;
+			const endDate = document.getElementById('endDate').value;
+			const location = document.getElementById('locationFilter').value;
+			const action = document.getElementById('actionFilter').value;
+			const csr = document.getElementById('csrFilter').value;
+
+			const filtered = csrWorkData.filter(record => {
+				const dateParts = record.time.split(' ')[0].split('/');
+				const recordDate = `${dateParts[2]}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`;
+				
+				const dateMatch = recordDate >= startDate && recordDate <= endDate;
+				const locationMatch = !location || record.location === location;
+				const actionMatch = !action || record.action === action;
+				const csrMatch = !csr || record.csr === csr;
+
+				return dateMatch && locationMatch && actionMatch && csrMatch;
+			});
+
+			populateTable(filtered);
+		}
+
+		function resetFilters() {
+			document.getElementById('startDate').value = '2026-05-19';
+			document.getElementById('endDate').value = '2026-05-19';
+			document.getElementById('locationFilter').value = '';
+			document.getElementById('actionFilter').value = '';
+			document.getElementById('csrFilter').value = '';
+			populateTable(csrWorkData);
+		}
+
+		document.addEventListener('DOMContentLoaded', function() {
+			loadUserInfo();
+			applyPrettyUrl('csrDailyWork');
+			populateCSRDropdown();
+			populateTable(csrWorkData);
+			setupScrollbars();
+			
+			// Add auto-refresh event listeners
+			document.getElementById('startDate').addEventListener('change', applyFilters);
+			document.getElementById('endDate').addEventListener('change', applyFilters);
+			document.getElementById('locationFilter').addEventListener('change', applyFilters);
+			document.getElementById('actionFilter').addEventListener('change', applyFilters);
+			document.getElementById('csrFilter').addEventListener('change', applyFilters);
+		});
+
+		function setupScrollbars() {
+			const tableContainer = document.getElementById('csrTableWrap');
+			const floatingScrollbar = document.getElementById('floatingScrollbar');
+			const floatingScrollbarInner = document.getElementById('floatingScrollbarInner');
+			if (!tableContainer || !floatingScrollbar) return;
+			function update() {
+				const hasOverflow = tableContainer.scrollWidth > tableContainer.clientWidth;
+				if (!hasOverflow) { floatingScrollbar.classList.remove('is-visible'); return; }
+				const rect = tableContainer.getBoundingClientRect();
+				if (rect.bottom > window.innerHeight) {
+					floatingScrollbar.classList.add('is-visible');
+					floatingScrollbarInner.style.width = tableContainer.scrollWidth + 'px';
+					floatingScrollbar.style.width = Math.min(rect.width, window.innerWidth - 28) + 'px';
+					floatingScrollbar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+				} else { floatingScrollbar.classList.remove('is-visible'); }
+			}
+			tableContainer.addEventListener('scroll', () => { floatingScrollbar.scrollLeft = tableContainer.scrollLeft; });
+			floatingScrollbar.addEventListener('scroll', () => { tableContainer.scrollLeft = floatingScrollbar.scrollLeft; });
+			update();
+			window.addEventListener('scroll', update);
+			window.addEventListener('resize', update);
+		}
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

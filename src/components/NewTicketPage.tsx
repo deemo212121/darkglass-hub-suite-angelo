@@ -1,35 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
-
-type TicketCopyPayload = {
-  ticketNo: string;
-  source: string;
-  customerName: string;
-  primaryPhone: string;
-  secondaryPhone: string;
-  email1: string;
-  address: string;
-  city: string;
-  zipCode: string;
-  state: string;
-  addressNote: string;
-  model: string;
-  serialNo: string;
-  modelVersion: string;
-  brand: string;
-  productCategory: string;
-  purchaseDate: string;
-  warrantyType: string;
-  cxPreferredDate: string;
-  callTakenDate: string;
-  problemDescription: string;
-};
-
-const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 
 const SOURCES = [
   "Call in",
@@ -68,6 +42,7 @@ const WARRANTY_TYPES = [
 
 const DEFAULT_FORM = {
   ticketNo: "",
+  fakeTicket: false,
   source: "",
   customerName: "",
   primaryPhone: "",
@@ -101,31 +76,6 @@ export function NewTicketPage({ mod, sub }: Props) {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const searchParams = new URLSearchParams(window.location.search);
-    const copyToken = searchParams.get("copyToken");
-    if (!copyToken) return;
-
-    const storageKey = `${TICKET_COPY_KEY_PREFIX}${copyToken}`;
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return;
-
-    try {
-      const payload = JSON.parse(raw) as TicketCopyPayload;
-      setForm((current) => ({
-        ...current,
-        ...payload,
-      }));
-      setStatus(`Loaded from copied ticket ${payload.ticketNo}.`);
-    } catch {
-      setStatus("Unable to load copied ticket data.");
-    } finally {
-      window.localStorage.removeItem(storageKey);
-    }
-  }, []);
-
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-6">
       <div className="flex items-center gap-3 mb-4">
@@ -150,11 +100,20 @@ export function NewTicketPage({ mod, sub }: Props) {
         <form className="ticket-form">
           <section className="ticket-form-section">
             <h3 className="ticket-form-section-title">Customer Information</h3>
-            <div className="ticket-form-grid ticket-form-grid-3">
+            <div className="ticket-form-grid">
               <div className="form-group">
                 <label className="form-label required" htmlFor="ticketNo">Ticket No</label>
                 <input id="ticketNo" className="form-input" value={form.ticketNo} onChange={(event) => update("ticketNo", event.target.value)} required />
               </div>
+              <div className="form-group form-group-inline">
+                <div className="form-checkbox-group">
+                  <input id="fakeTicket" type="checkbox" className="form-checkbox" checked={form.fakeTicket} onChange={(event) => update("fakeTicket", event.target.checked)} />
+                  <label className="form-label" htmlFor="fakeTicket">Fake Ticket (not included statistically)</label>
+                </div>
+              </div>
+            </div>
+
+            <div className="ticket-form-grid">
               <div className="form-group">
                 <label className="form-label required" htmlFor="source">Source</label>
                 <select id="source" className="form-select" value={form.source} onChange={(event) => update("source", event.target.value)} required>
@@ -170,8 +129,8 @@ export function NewTicketPage({ mod, sub }: Props) {
 
             <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
-                <label className="form-label required" htmlFor="primaryPhone">Primary Number</label>
-                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} required />
+                <label className="form-label" htmlFor="primaryPhone">Primary Phone</label>
+                <input id="primaryPhone" className="form-input" type="tel" value={form.primaryPhone} onChange={(event) => update("primaryPhone", event.target.value)} />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="secondaryPhone">Secondary Phone</label>
@@ -197,7 +156,24 @@ export function NewTicketPage({ mod, sub }: Props) {
               </div>
               <div className="form-group">
                 <label className="form-label required" htmlFor="zipCode">Zip Code</label>
-                <input id="zipCode" className="form-input" value={form.zipCode} onChange={(event) => update("zipCode", event.target.value)} required />
+                <input id="zipCode" className="form-input" value={form.zipCode}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    update("zipCode", val);
+                    if (val.length === 5) {
+                      const found = lookupZip(val);
+                      if (found) {
+                        update("location", found.location);
+                        update("city", found.city || form.city);
+                      }
+                    }
+                  }}
+                  required />
+                {form.zipCode.length === 5 && (() => { const z = lookupZip(form.zipCode); return z ? (
+                  <p className="text-xs text-green-400 mt-1">✓ {z.location} branch — {z.city}{z.tierCode ? ` (${z.tierCode})` : ""}</p>
+                ) : (
+                  <p className="text-xs text-red-400 mt-1">⚠ Zip code not in coverage area</p>
+                ); })()}
               </div>
               <div className="form-group">
                 <label className="form-label required" htmlFor="state">State</label>

@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -247,6 +247,42 @@ const dashboardMod: ModuleDef = {
           status: pick(statuses, i),
         };
       },
+    },
+    {
+      slug: "csr-dashboard",
+      title: "CSR Dashboard",
+      description: "CSR team performance metrics and real-time monitoring.",
+      custom: "csr-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "csr-daily-report",
+      title: "CSR Daily Report",
+      description: "CSR agent performance — tasks, schedule, attempts, mistakes.",
+      custom: "csr-daily-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "call-tracker",
+      title: "Call Tracker",
+      description: "Track and monitor incoming and outgoing calls.",
+      custom: "call-tracker" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "csr-status-summary",
+      title: "Status Summary",
+      description: "View CSR status summary and real-time metrics.",
+      custom: "csr-status-summary" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
     },
   ],
 };

@@ -38,7 +38,7 @@ function PersonDropdown({ label, value, onChange }: { label: string; value: stri
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl">
+        <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md border border-white/15 bg-(--color-surface) shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
           <button onClick={() => { onChange(""); setOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-muted-foreground hover:bg-white/5">— All —</button>
           {CSR_NAMES.map(n => (
             <button key={n} onClick={() => { onChange(n); setOpen(false); }}
@@ -63,16 +63,15 @@ export function InternalMessageReport({ mod, sub }: Props) {
   const [sender, setSender] = useState("");
   const [receiver, setReceiver] = useState("");
   const [search, setSearch] = useState("");
-  const [applied, setApplied] = useState({ startDate: offsetStr(-7), endDate: todayStr(), sender: "", receiver: "" });
 
   const rows = useMemo(() => {
     let r = ALL_ROWS;
-    if (applied.sender) r = r.filter(x => x.sender === applied.sender);
-    if (applied.receiver) r = r.filter(x => x.receiver === applied.receiver);
-    if (applied.startDate) r = r.filter(x => x.sentDate >= applied.startDate);
-    if (applied.endDate) r = r.filter(x => x.sentDate <= applied.endDate);
+    if (sender) r = r.filter(x => x.sender === sender);
+    if (receiver) r = r.filter(x => x.receiver === receiver);
+    if (startDate) r = r.filter(x => x.sentDate >= startDate);
+    if (endDate) r = r.filter(x => x.sentDate <= endDate);
     return r;
-  }, [applied]);
+  }, [endDate, receiver, sender, startDate]);
 
   const filtered = search ? rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(search.toLowerCase()))) : rows;
 
@@ -88,7 +87,7 @@ export function InternalMessageReport({ mod, sub }: Props) {
         <h1 className="text-xl font-bold">Internal Message Report</h1>
       </div>
 
-      <div className="panel mb-5">
+      <div className="panel panel-filter mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <label htmlFor="imr-start" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Sent Date</label>
@@ -105,9 +104,7 @@ export function InternalMessageReport({ mod, sub }: Props) {
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Receiver</span>
             <PersonDropdown label="Receiver" value={receiver} onChange={setReceiver} />
           </div>
-          <button onClick={() => setApplied({ startDate, endDate, sender, receiver })} className="btn btn-primary flex items-center gap-2 px-5">
-            <RefreshCw className="h-3.5 w-3.5" />Refresh
-          </button>
+          
         </div>
       </div>
 
@@ -128,7 +125,7 @@ export function InternalMessageReport({ mod, sub }: Props) {
           </thead>
           <tbody>
             {filtered.length === 0
-              ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No records. Adjust filters and click Refresh.</td></tr>
+              ? <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No records found matching the selected filters.</td></tr>
               : filtered.map((r, idx) => (
                 <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx % 2 !== 0 ? "bg-white/2" : ""}`}>
                   <td className="px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
