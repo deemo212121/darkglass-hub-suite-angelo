@@ -488,6 +488,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [modalType, setModalType] = useState<"pto" | "dispute" | "correction" | "inquiry">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
   const [showLoginLogout, setShowLoginLogout] = useState(false);
+  const [submittedRequests, setSubmittedRequests] = useState<Request[]>(ALL_REQUESTS);
+  const [formData, setFormData] = useState({
+    leaveType: "Vacation",
+    startDate: "",
+    endDate: "",
+    correctionDate: "",
+    details: "",
+  });
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   const tabs = [
     { id: "dashboard", label: "My Dashboard", icon: TrendingUp },
@@ -515,6 +524,66 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       case "closed": return "—";
       default: return "—";
     }
+  };
+
+  const handleSubmitRequest = () => {
+    if (!formData.details.trim()) {
+      alert("Please fill in the details/reason field");
+      return;
+    }
+
+    let typeLabel = "";
+    let details = "";
+
+    switch (modalType) {
+      case "pto":
+        if (!formData.startDate || !formData.endDate) {
+          alert("Please select start and end dates");
+          return;
+        }
+        typeLabel = "PTO Request";
+        details = `${formData.leaveType}: ${formData.startDate} to ${formData.endDate} - ${formData.details}`;
+        break;
+      case "dispute":
+        typeLabel = "Attendance Dispute";
+        details = formData.details;
+        break;
+      case "correction":
+        if (!formData.correctionDate) {
+          alert("Please select a date");
+          return;
+        }
+        typeLabel = "Time Correction";
+        details = `Date: ${formData.correctionDate} - ${formData.details}`;
+        break;
+      case "inquiry":
+        typeLabel = "Payroll Inquiry";
+        details = formData.details;
+        break;
+    }
+
+    const newRequest: Request = {
+      id: String(submittedRequests.length + 1),
+      type: typeLabel,
+      status: "pending",
+      submittedDate: new Date().toISOString().split("T")[0],
+      details: details,
+    };
+
+    setSubmittedRequests([newRequest, ...submittedRequests]);
+    setSubmitSuccess(true);
+    
+    setTimeout(() => {
+      setShowModal(false);
+      setSubmitSuccess(false);
+      setFormData({
+        leaveType: "Vacation",
+        startDate: "",
+        endDate: "",
+        correctionDate: "",
+        details: "",
+      });
+    }, 1500);
   };
 
   const handleDownload = (type: "payslip" | "attendance") => {
@@ -978,19 +1047,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="grid gap-4 md:grid-cols-4">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Pending</p>
-                <p className="text-2xl font-bold text-yellow-300">{ALL_REQUESTS.filter(r => r.status === "pending").length}</p>
+                <p className="text-2xl font-bold text-yellow-300">{submittedRequests.filter(r => r.status === "pending").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Approved</p>
-                <p className="text-2xl font-bold text-green-300">{ALL_REQUESTS.filter(r => r.status === "approved").length}</p>
+                <p className="text-2xl font-bold text-green-300">{submittedRequests.filter(r => r.status === "approved").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Rejected</p>
-                <p className="text-2xl font-bold text-red-300">{ALL_REQUESTS.filter(r => r.status === "rejected").length}</p>
+                <p className="text-2xl font-bold text-red-300">{submittedRequests.filter(r => r.status === "rejected").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Closed</p>
-                <p className="text-2xl font-bold text-slate-300">{ALL_REQUESTS.filter(r => r.status === "closed").length}</p>
+                <p className="text-2xl font-bold text-slate-300">{submittedRequests.filter(r => r.status === "closed").length}</p>
               </div>
             </div>
 
@@ -998,7 +1067,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Track Status</h3>
               <div className="space-y-3">
-                {ALL_REQUESTS.map(request => (
+                {submittedRequests.map(request => (
                   <div key={request.id} className="border border-white/10 rounded-lg p-3">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -1052,68 +1121,110 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
       {/* Request Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-lg font-bold text-white mb-4">
-              {modalType === "pto" && "Submit PTO Request"}
-              {modalType === "dispute" && "Submit Attendance Dispute"}
-              {modalType === "correction" && "Submit Time Correction Request"}
-              {modalType === "inquiry" && "Submit Payroll Inquiry"}
-            </h2>
-
-            <div className="space-y-3">
-              {modalType === "pto" && (
-                <>
-                  <div>
-                    <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
-                    <select className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500">
-                      <option>Vacation</option>
-                      <option>Sick Leave</option>
-                      <option>Personal</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-semibold text-white block mb-1">Start Date</label>
-                      <input type="date" className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-white block mb-1">End Date</label>
-                      <input type="date" className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm" />
-                    </div>
-                  </div>
-                </>
-              )}
-              {modalType === "correction" && (
-                <div>
-                  <label className="text-xs font-semibold text-white block mb-1">Date</label>
-                  <input type="date" className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm" />
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !submitSuccess && setShowModal(false)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            {!submitSuccess ? (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-white">
+                    {modalType === "pto" && "Submit PTO Request"}
+                    {modalType === "dispute" && "Submit Attendance Dispute"}
+                    {modalType === "correction" && "Submit Time Correction Request"}
+                    {modalType === "inquiry" && "Submit Payroll Inquiry"}
+                  </h2>
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="text-slate-400 hover:text-white transition"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-              )}
-              <div>
-                <label className="text-xs font-semibold text-white block mb-1">Details / Reason</label>
-                <textarea
-                  placeholder="Please provide details..."
-                  rows={3}
-                  className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
 
-            <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-semibold transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition"
-              >
-                Submit
-              </button>
-            </div>
+                <div className="space-y-3">
+                  {modalType === "pto" && (
+                    <>
+                      <div>
+                        <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
+                        <select 
+                          value={formData.leaveType}
+                          onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option>Vacation</option>
+                          <option>Sick Leave</option>
+                          <option>Personal</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Start Date</label>
+                          <input 
+                            type="date" 
+                            value={formData.startDate}
+                            onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">End Date</label>
+                          <input 
+                            type="date"
+                            value={formData.endDate}
+                            onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {modalType === "correction" && (
+                    <div>
+                      <label className="text-xs font-semibold text-white block mb-1">Date</label>
+                      <input 
+                        type="date" 
+                        value={formData.correctionDate}
+                        onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-xs font-semibold text-white block mb-1">Details / Reason</label>
+                    <textarea
+                      placeholder="Please provide details..."
+                      value={formData.details}
+                      onChange={(e) => setFormData({ ...formData, details: e.target.value })}
+                      rows={3}
+                      className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mt-4">
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-semibold transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSubmitRequest}
+                    className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Submit
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8">
+                <div className="rounded-full bg-green-500/20 p-3 mb-4">
+                  <CheckCircle2 className="h-8 w-8 text-green-300" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-1">Request Submitted</h3>
+                <p className="text-sm text-slate-300 text-center">Your request has been submitted successfully. You can track its status in the Track Status section.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
