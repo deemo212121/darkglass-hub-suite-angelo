@@ -82,7 +82,7 @@ const CORRECTION_HISTORY: CorrectionHistory[] = [
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [activeTab, setActiveTab] = useState<"daily-attendance" | "pto-management" | "corrections">("daily-attendance");
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly">("weekly");
-  const [sortBy, setSortBy] = useState<"name" | "department" | "location">("name");
+  const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [filterLocation, setFilterLocation] = useState<string>("all");
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
@@ -92,6 +92,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [newNote, setNewNote] = useState("");
   const [notifyIndividual, setNotifyIndividual] = useState(false);
   const [notifyTeamLead, setNotifyTeamLead] = useState(false);
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
+  const [selectedAlertType, setSelectedAlertType] = useState<"missing-clockin" | "missing-clockout" | "late-arrival" | null>(null);
 
   const totalEmployees = ATTENDANCE_DATA.length;
   const presentToday = ATTENDANCE_DATA.filter((r) => r.checkIn !== "—").length;
@@ -108,14 +110,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   const filteredAndSortedData = ATTENDANCE_DATA.filter((record) => {
+    if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
     if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
     if (filterLocation !== "all" && record.location !== filterLocation) return false;
     return true;
   }).sort((a, b) => {
-    if (sortBy === "name") return a.name.localeCompare(b.name);
-    if (sortBy === "department") return a.department.localeCompare(b.department);
-    if (sortBy === "location") return a.location.localeCompare(b.location);
-    return 0;
+    return a.name.localeCompare(b.name);
   });
 
   const departments = Array.from(new Set(ATTENDANCE_DATA.map(r => r.department)));
@@ -241,7 +241,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     Attendance Alerts
                   </h2>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <div className="bg-gradient-to-br from-red-500/15 to-red-600/5 border border-red-500/40 rounded p-2 hover:border-red-500/60 transition">
+                    <button 
+                      onClick={() => { setSelectedAlertType("missing-clockin"); setAlertModalOpen(true); }}
+                      className="bg-gradient-to-br from-red-500/15 to-red-600/5 border border-red-500/40 rounded p-2 hover:border-red-500/60 hover:bg-red-500/20 transition cursor-pointer"
+                    >
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-red-500/20 rounded">
                           <AlertCircle className="h-3 w-3 text-red-400" />
@@ -254,8 +257,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="bg-gradient-to-br from-yellow-500/15 to-yellow-600/5 border border-yellow-500/40 rounded p-2 hover:border-yellow-500/60 transition">
+                    </button>
+                    <button 
+                      onClick={() => { setSelectedAlertType("missing-clockout"); setAlertModalOpen(true); }}
+                      className="bg-gradient-to-br from-yellow-500/15 to-yellow-600/5 border border-yellow-500/40 rounded p-2 hover:border-yellow-500/60 hover:bg-yellow-500/20 transition cursor-pointer"
+                    >
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-yellow-500/20 rounded">
                           <AlertCircle className="h-3 w-3 text-yellow-400" />
@@ -268,8 +274,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-500/15 to-orange-600/5 border border-orange-500/40 rounded p-2 hover:border-orange-500/60 transition">
+                    </button>
+                    <button 
+                      onClick={() => { setSelectedAlertType("late-arrival"); setAlertModalOpen(true); }}
+                      className="bg-gradient-to-br from-orange-500/15 to-orange-600/5 border border-orange-500/40 rounded p-2 hover:border-orange-500/60 hover:bg-orange-500/20 transition cursor-pointer"
+                    >
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-orange-500/20 rounded">
                           <AlertCircle className="h-3 w-3 text-orange-400" />
@@ -282,7 +291,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   </div>
                 </div>
                 <button onClick={handleDownloadSummary} className="group relative px-4 py-3 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 flex flex-col items-center justify-center gap-1 h-fit min-w-fit">
@@ -291,16 +300,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </button>
               </div>
 
-              {/* Filters and Sort for Daily */}
+              {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <div className="grid gap-3 md:grid-cols-3">
                   <div>
-                    <label className="block text-xs text-slate-400 uppercase mb-2">Sort By</label>
-                    <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                      <option value="name">Employee Name</option>
-                      <option value="department">Department</option>
-                      <option value="location">Location</option>
-                    </select>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
+                    <input 
+                      type="text" 
+                      placeholder="Enter employee name..." 
+                      value={searchEmployee} 
+                      onChange={(e) => setSearchEmployee(e.target.value)} 
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition" 
+                    />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Department</label>
@@ -766,6 +777,98 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <p className="text-slate-500 text-xs">No history yet</p>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Alert Details Modal */}
+        {alertModalOpen && selectedAlertType && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setAlertModalOpen(false)}>
+            <div className="bg-slate-900 border border-white/10 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+                <h2 className="text-lg font-bold text-white">
+                  {selectedAlertType === "missing-clockin" && "Missing Clock In"}
+                  {selectedAlertType === "missing-clockout" && "Missing Clock Out"}
+                  {selectedAlertType === "late-arrival" && "Late Arrival"}
+                </h2>
+                <button
+                  onClick={() => setAlertModalOpen(false)}
+                  className="p-1 hover:bg-white/10 rounded transition"
+                >
+                  <svg className="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="space-y-3">
+                  {selectedAlertType === "missing-clockin" && ATTENDANCE_DATA.filter(r => r.checkIn === "—").map(record => (
+                    <div key={record.id} className="bg-slate-800/50 border border-red-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-white font-semibold">{record.name}</p>
+                          <p className="text-xs text-slate-400 mt-1">{record.department} • {record.location}</p>
+                          <p className="text-xs text-slate-500 mt-2">Manager: {record.manager}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-block px-3 py-1 bg-red-500/20 text-red-300 text-xs font-semibold rounded border border-red-500/40">
+                            No Clock In
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {selectedAlertType === "missing-clockout" && ATTENDANCE_DATA.filter(r => r.checkOut === "—" && r.checkIn !== "—").map(record => (
+                    <div key={record.id} className="bg-slate-800/50 border border-yellow-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-white font-semibold">{record.name}</p>
+                          <p className="text-xs text-slate-400 mt-1">{record.department} • {record.location}</p>
+                          <p className="text-xs text-slate-400 mt-2">Clock In: <span className="font-mono font-semibold">{record.checkIn}</span></p>
+                          <p className="text-xs text-slate-500 mt-1">Manager: {record.manager}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-block px-3 py-1 bg-yellow-500/20 text-yellow-300 text-xs font-semibold rounded border border-yellow-500/40">
+                            No Clock Out
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {selectedAlertType === "late-arrival" && ATTENDANCE_DATA.filter(r => r.alerts.some(a => a.includes("Late"))).map(record => (
+                    <div key={record.id} className="bg-slate-800/50 border border-orange-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-white font-semibold">{record.name}</p>
+                          <p className="text-xs text-slate-400 mt-1">{record.department} • {record.location}</p>
+                          <p className="text-xs text-slate-400 mt-2">Check In: <span className="font-mono font-semibold">{record.checkIn}</span></p>
+                          <p className="text-xs text-slate-500 mt-1">Manager: {record.manager}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-block px-3 py-1 bg-orange-500/20 text-orange-300 text-xs font-semibold rounded border border-orange-500/40">
+                            Late
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-white/10 px-6 py-4">
+                <button
+                  onClick={() => setAlertModalOpen(false)}
+                  className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                >
+                  Done
+                </button>
               </div>
             </div>
           </div>

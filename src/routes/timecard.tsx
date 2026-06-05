@@ -397,8 +397,8 @@ function TimecardPage() {
 
           {/* Modal */}
           {modalOpen && editingDate && modalEntry && (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-              <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-md shadow-2xl">
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closeEntryModal}>
+              <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-white/10">
                   <div>
@@ -495,17 +495,11 @@ function TimecardPage() {
                 {/* Footer */}
                 <div className="flex gap-2 p-6 border-t border-white/10">
                   <button
-                    onClick={closeEntryModal}
-                    className="flex-1 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-lg font-semibold transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
                     onClick={() => {
                       saveEntry();
                       closeEntryModal();
                     }}
-                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                    className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
                   >
                     Save
                   </button>
