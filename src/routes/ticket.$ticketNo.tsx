@@ -2086,7 +2086,7 @@ function TicketDetailsPage() {
                     ) : (
                       partRows.map((row, index) => (
                         <React.Fragment key={row.id}>
-                          <tr className="bg-slate-900/30 align-top" className="bg-slate-900/30 align-top">
+                          <tr className="bg-slate-900/30 align-top">
                             <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>P{index + 1}</td>
                             <td className="px-2 py-1.5 text-blue-300 font-semibold">{row.partNo}</td>
                             <td className="px-2 py-1.5 text-slate-300">{row.partDist || "—"}</td>
