@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, DollarSign, TrendingUp, PieChart as PieChartIcon, BarChart3, Download, Filter, BarChart4, FileText, Edit2, Save, X, Trash2, LogOut } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
+import { DUMMY_EMPLOYEES, initializeDummyData } from "@/lib/dummyData";
 
 interface PayrollSummary {
   currency: "USD" | "PHP";
@@ -63,32 +64,6 @@ const COLORS = ["#34d399", "#f87171", "#fb923c", "#3b82f6", "#a78bfa", "#06b6d4"
 
 const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 
-// Mock employee data
-const MOCK_EMPLOYEES: Employee[] = [
-  // US Employees
-  { id: "us-001", name: "James Mitchell", department: "Operations", country: "US", hoursWorked: 160, hourlyRate: 28.50, totalWages: 4560 },
-  { id: "us-002", name: "Sarah Johnson", department: "Customer Service", country: "US", hoursWorked: 160, hourlyRate: 22.00, totalWages: 3520 },
-  { id: "us-003", name: "Michael Chen", department: "Operations", country: "US", hoursWorked: 168, hourlyRate: 31.25, totalWages: 5250 },
-  { id: "us-004", name: "Emily Rodriguez", department: "Finance", country: "US", hoursWorked: 160, hourlyRate: 26.50, totalWages: 4240 },
-  { id: "us-005", name: "David Thompson", department: "Parts", country: "US", hoursWorked: 160, hourlyRate: 24.00, totalWages: 3840 },
-  { id: "us-006", name: "Jennifer Lee", department: "Customer Service", country: "US", hoursWorked: 160, hourlyRate: 21.00, totalWages: 3360 },
-  { id: "us-007", name: "Robert Williams", department: "Management", country: "US", hoursWorked: 152, hourlyRate: 35.00, totalWages: 5320 },
-  { id: "us-008", name: "Amanda Davis", department: "Operations", country: "US", hoursWorked: 160, hourlyRate: 27.50, totalWages: 4400 },
-  // PH Employees
-  { id: "ph-001", name: "Maria Santos", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 375, totalWages: 60000 },
-  { id: "ph-002", name: "Juan Dela Cruz", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 320, totalWages: 51200 },
-  { id: "ph-003", name: "Anna Reyes", department: "Operations", country: "PH", hoursWorked: 168, hourlyRate: 400, totalWages: 67200 },
-  { id: "ph-004", name: "Carlos Gutierrez", department: "Finance", country: "PH", hoursWorked: 160, hourlyRate: 450, totalWages: 72000 },
-  { id: "ph-005", name: "Rosa Morales", department: "Parts", country: "PH", hoursWorked: 160, hourlyRate: 350, totalWages: 56000 },
-  { id: "ph-006", name: "Miguel Fernandez", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 310, totalWages: 49600 },
-  { id: "ph-007", name: "Lucia Gonzales", department: "Management", country: "PH", hoursWorked: 152, hourlyRate: 550, totalWages: 83600 },
-  { id: "ph-008", name: "Ricardo Flores", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 380, totalWages: 60800 },
-  { id: "ph-009", name: "Carmen Ramirez", department: "Finance", country: "PH", hoursWorked: 160, hourlyRate: 420, totalWages: 67200 },
-  { id: "ph-010", name: "Diego Ruiz", department: "Parts", country: "PH", hoursWorked: 164, hourlyRate: 360, totalWages: 59040 },
-  { id: "ph-011", name: "Isabella Ortega", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 330, totalWages: 52800 },
-  { id: "ph-012", name: "Fernando Lopez", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 390, totalWages: 62400 },
-];
-
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "expenses" | "reports">("overview");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
@@ -98,16 +73,41 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [auditLogs, setAuditLogs] = useState<PayrollAuditLog[]>([]);
   const [showAuditLog, setShowAuditLog] = useState(false);
 
-  // Initialize employees from localStorage or use mock data
+  // Initialize employees from localStorage or use dummy data
   useEffect(() => {
     const storedEmployees = localStorage.getItem("payroll_employees");
     const storedAuditLogs = localStorage.getItem("payroll_audit_logs");
     
     if (storedEmployees) {
-      setEmployees(JSON.parse(storedEmployees));
+      try {
+        setEmployees(JSON.parse(storedEmployees));
+      } catch (e) {
+        // If parse fails, use dummy employees
+        const dummyEmployeesFormatted: Employee[] = DUMMY_EMPLOYEES.map(emp => ({
+          id: emp.id,
+          name: emp.name,
+          department: emp.department,
+          country: emp.country,
+          hoursWorked: emp.hoursWorked,
+          hourlyRate: emp.hourlyRate,
+          totalWages: emp.totalWages,
+        }));
+        setEmployees(dummyEmployeesFormatted);
+        localStorage.setItem("payroll_employees", JSON.stringify(dummyEmployeesFormatted));
+      }
     } else {
-      setEmployees(MOCK_EMPLOYEES);
-      localStorage.setItem("payroll_employees", JSON.stringify(MOCK_EMPLOYEES));
+      // Use dummy employees instead of mock data
+      const dummyEmployeesFormatted: Employee[] = DUMMY_EMPLOYEES.map(emp => ({
+        id: emp.id,
+        name: emp.name,
+        department: emp.department,
+        country: emp.country,
+        hoursWorked: emp.hoursWorked,
+        hourlyRate: emp.hourlyRate,
+        totalWages: emp.totalWages,
+      }));
+      setEmployees(dummyEmployeesFormatted);
+      localStorage.setItem("payroll_employees", JSON.stringify(dummyEmployeesFormatted));
     }
 
     if (storedAuditLogs) {
@@ -546,7 +546,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   {selectedCurrency === "USD" ? "US Employees" : "PH Employees"} Payroll Details
                 </span>
                 <span className="text-xs text-slate-400 font-normal">
-                  {employees.filter(emp => emp.country === selectedCurrency).length} employees
+                  {employees.filter(emp => emp.country === (selectedCurrency === "USD" ? "US" : "PH")).length} employees
                 </span>
               </div>
               <table className="w-full text-sm min-w-[1200px]">
@@ -562,7 +562,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </thead>
                 <tbody>
                   {employees
-                    .filter(emp => emp.country === selectedCurrency)
+                    .filter(emp => emp.country === (selectedCurrency === "USD" ? "US" : "PH"))
                     .map(employee => (
                       <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
                         <td className="px-4 py-3 font-medium text-white">{employee.name}</td>

@@ -1,279 +1,278 @@
-# Payroll Feature - Quick Reference Card
+# Pro-Rata Payroll Calculator - Quick Reference
 
-## 🎯 Quick Start (30 seconds)
+## One-Minute Overview
 
-1. Open AccountingDashboard component
-2. Navigate to "Payroll" tab
-3. Select USD or PHP
-4. View employee payroll table
-5. Edit/Generate/Delete as needed
-6. Check "Audit Log (N)" for history
+The pro-rata payroll system automatically calculates correct pay when an employee's salary changes during a pay period.
 
-## 📍 File Locations
+**The Problem:**
+- Employee works 5 days at $4/hour, then promoted to $6/hour for remaining 5 days
+- Simple calculation: 40 hours × something? → Wrong!
+- Need to split and calculate each portion separately
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `src/components/AccountingDashboard.tsx` | Enhanced payroll tab | ✅ Modified |
-| `src/lib/payroll.ts` | Utility functions | ✅ Created |
-| `src/components/EmployeePayrollSection.tsx` | Portal component | ✅ Created |
+**The Solution:**
+- Split period at change point
+- Calculate each portion with its rate
+- Add them together
+- Result: Accurate pro-rata pay
 
-## 👥 Employee Data
+## Quick Examples
 
-**US (8)**: James, Sarah, Michael, Emily, David, Jennifer, Robert, Amanda
-- Rates: $21-$35/hr
-- Total: $34,490
-
-**PH (12)**: Maria, Juan, Anna, Carlos, Rosa, Miguel, Lucia, Ricardo, Carmen, Diego, Isabella, Fernando
-- Rates: ₱310-₱550/hr
-- Total: ₱741,840
-
-## 🎮 How to Use
-
-### View Payroll
+### Example 1: Basic Promotion
 ```
-Dashboard → Payroll Tab → Select Currency → View Table
+Monday-Friday: $4/hr (20 hours)
+Saturday-Sunday + Monday-Wednesday: $6/hr (20 hours)
+Total: (20 × $4) + (20 × $6) = $80 + $120 = $200
 ```
 
-### Edit Employee
+### Example 2: With Overtime
 ```
-Click Edit → Modify Hours/Rate → Click Save → Logged ✓
-```
-
-### Generate Payroll
-```
-Option A: "Generate Payroll (All Employees)" button
-Option B: Click individual "Generate" button on employee row
+Days 1-4: 20 hours @ $15 = $300 (no OT)
+Days 5-10: 30 hours @ $20 = $600 regular + $300 OT (10hrs × $30) = $900
+Total: $300 + $900 = $1,200
 ```
 
-### View Audit Log
-```
-Click "Audit Log (N)" button → Scroll history → Click again to hide
-```
+## Code Snippets
 
-### Employee Portal Access
-```
-import { EmployeePayrollSection } from "@/components/EmployeePayrollSection";
-<EmployeePayrollSection employeeId="us-001" />
-```
-
-## 💾 Data Storage
-
-| Key | Stores | Location |
-|-----|--------|----------|
-| `payroll_employees` | All 20 employees | localStorage |
-| `payroll_audit_logs` | All actions | localStorage |
-
-## 🔑 Key Functions
-
+### Setup
 ```typescript
-// In AccountingDashboard component:
-generatePayrollAll()              // Generate for all
-generatePayrollIndividual(emp)    // Generate for one
-startEdit(employee)               // Begin editing
-saveEdit(employee)                // Save changes
-deletePayrollRecord(employee)     // Remove record
+// Import
+import {
+  createSalaryHistory,
+  addSalaryChange,
+  calculateSplitPayroll,
+} from './lib/payrollCalculations';
 
-// In payroll.ts library:
-loadEmployees()                   // Load from storage
-saveEmployees(employees)          // Save to storage
-createAuditLog(...)              // Create log entry
-calculateTotalPayroll(employees)  // Sum all wages
-calculatePayrollByCountry(...)    // Filter by location
-generateCountryPayrollReport(...) // Create report
+// Create history
+const history = createSalaryHistory('EMP001', 4.00, new Date('2024-01-01'));
 ```
 
-## 💡 Common Tasks
+### Add Changes
+```typescript
+// Promotion
+const withPromo = addSalaryChange(
+  history,
+  new Date('2024-01-06'),
+  6.00,
+  'promotion',
+  'Senior Developer'
+);
 
-### Task: Edit James Mitchell's Hours to 170
-```
-1. Find "James Mitchell" row in US payroll table
-2. Click Edit button (pencil icon)
-3. Change hours from 160 to 170
-4. Click Save (checkmark icon)
-5. Total updates to: 170 × $28.50 = $4,845
-6. Audit log: "Updated: Hours 160→170, Rate $28.50→$28.50"
-```
+// Demotion
+const withDemotion = addSalaryChange(
+  history,
+  new Date('2024-01-06'),
+  3.50,
+  'demotion'
+);
 
-### Task: Generate Payroll for Maria Santos
-```
-1. Find "Maria Santos" row in PH payroll table
-2. Click Generate Payroll button (dollar icon)
-3. Confirmation: "Payroll generated for Maria Santos!"
-4. Audit log: "Generated payroll: 160 hours @ ₱375/hr = ₱60,000"
-```
-
-### Task: View Employee's Payroll in Portal
-```
-1. In Employee Portal component:
-   import { EmployeePayrollSection } from "@/components/EmployeePayrollSection";
-2. Add to component:
-   <EmployeePayrollSection employeeId={employeeId} />
-3. Employee sees real-time payroll synced from Dashboard
-4. Can view history, download CSV, or print
-```
-
-### Task: Delete Payroll Record
-```
-1. Find employee in payroll table
-2. Click Delete button (trash icon)
-3. Confirm in dialog
-4. Record removed
-5. Audit log: "Deleted payroll record: $AMOUNT"
+// Adjustment
+const withAdjustment = addSalaryChange(
+  history,
+  new Date('2024-01-06'),
+  4.25,
+  'adjustment',
+  'COLA raise'
+);
 ```
 
-## 🎨 Color Guide
+### Calculate
+```typescript
+const breakdown = calculateSplitPayroll(
+  'EMP001',        // Employee ID
+  withPromo,       // Salary history
+  new Date('2024-01-01'),  // Period start
+  new Date('2024-01-10'),  // Period end
+  40               // Total hours worked
+);
 
-| Color | Meaning |
-|-------|---------|
-| Green | Wages, success, money |
-| Blue | Edit, actions, UI |
-| Orange | Overtime, warnings |
-| Red | Delete, cancel, danger |
-| White | Headers, main text |
-| Slate | Secondary text, borders |
-
-## 🔄 Data Flow
-
-```
-User Action (Edit/Generate/Delete)
-        ↓
-Component State Updated
-        ↓
-localStorage Updated
-        ↓
-Audit Log Created
-        ↓
-Employee Portal Auto-Syncs
-        ↓
-Employee Sees Changes ✓
+console.log(breakdown.totalPay);  // Total payroll
+console.log(breakdown.portions);  // Breakdown by portion
 ```
 
-## ⚙️ Exchange Rate
+### Display
+```typescript
+import { PayrollBreakdownDisplay } from './components/PayrollBreakdownDisplay';
 
-```
-1 USD = 57 PHP
-
-Examples:
-$100 USD = ₱5,700 PHP
-₱1,000 PHP = $17.54 USD
+<PayrollBreakdownDisplay breakdown={breakdown} />
 ```
 
-## 🔐 Audit Log Fields
+## Key Functions
+
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `createSalaryHistory()` | Initialize employee | SalaryHistory |
+| `addSalaryChange()` | Record rate change | SalaryHistory |
+| `calculateSplitPayroll()` | Calculate payroll | SplitPayrollBreakdown |
+| `getEffectiveRate()` | Get rate for date | number |
+| `findSalaryChangesInPeriod()` | List changes in period | SalaryEntry[] |
+| `calculateRegularPay()` | Regular pay only | number |
+| `calculateOvertimePay()` | Overtime pay (1.5x) | number |
+
+## Result Structure
 
 ```typescript
 {
-  timestamp: "2026-06-15T10:30:00Z",    // When
-  action: "generate",                   // What (generate/edit/delete)
-  employeeName: "James Mitchell",       // Who
-  details: "Generated payroll...",      // How
-  amount: 4560,                         // Amount affected
-  userId: "admin-user"                  // Who did it
+  employeeId: string;
+  payPeriodStart: Date;
+  payPeriodEnd: Date;
+  totalHoursWorked: number;
+  portions: [
+    {
+      periodName: string;
+      startDate: Date;
+      endDate: Date;
+      hoursWorked: number;
+      hourlyRate: number;
+      regularPay: number;
+      overtimePay: number;
+      totalPay: number;
+    }
+  ];
+  totalRegularPay: number;
+  totalOvertimePay: number;
+  totalPay: number;
+  salaryChangeOccurred: boolean;
 }
 ```
 
-## 🛠️ Troubleshooting
+## Common Scenarios
 
-| Problem | Solution |
-|---------|----------|
-| Data not showing | Check `localStorage.getItem("payroll_employees")` in console |
-| Changes not saving | Verify localStorage is enabled in browser |
-| Portal not syncing | Ensure `EmployeePayrollSection` imports correct component |
-| Calculations wrong | Refresh page and check numeric value types |
-
-## 📊 Summary Stats
-
-| Metric | Value |
-|--------|-------|
-| Total Employees | 20 |
-| US Employees | 8 |
-| PH Employees | 12 |
-| US Payroll | $34,490 |
-| PH Payroll | ₱741,840 |
-| Combined (USD) | ~$47,509 |
-| Data Persistence | localStorage |
-| Sync Method | Storage events |
-
-## 📱 Responsive Breakpoints
-
-- **Mobile**: < 768px (stacked cards, scrollable table)
-- **Tablet**: 768px - 1024px (grid-cols-2)
-- **Desktop**: > 1024px (full multi-column grid)
-
-## 🎓 Documentation Quick Links
-
-```
-Full Features      → PAYROLL_FEATURE_DOCUMENTATION.md
-Portal Setup       → PAYROLL_PORTAL_INTEGRATION.md
-Implementation     → IMPLEMENTATION_GUIDE.md
-This Reference     → PAYROLL_QUICK_REFERENCE.md
+### New Hire Starting Mid-Pay-Period
+```typescript
+const initial = createSalaryHistory('EMP_NEW', 15, new Date('2024-01-15'));
+const breakdown = calculateSplitPayroll(
+  'EMP_NEW',
+  initial,
+  new Date('2024-01-15'),  // Start mid-period
+  new Date('2024-01-31'),
+  32  // Partial hours worked
+);
 ```
 
-## ⚡ Performance Tips
+### Multiple Rate Changes
+```typescript
+let history = createSalaryHistory('EMP002', 12, new Date('2024-01-01'));
+history = addSalaryChange(history, new Date('2024-01-05'), 14, 'promotion');
+history = addSalaryChange(history, new Date('2024-01-15'), 16, 'promotion');
+// Both changes included in calculation automatically
+```
+
+### Long Pay Period (2+ weeks)
+```typescript
+const breakdown = calculateSplitPayroll(
+  'EMP001',
+  history,
+  new Date('2024-01-01'),
+  new Date('2024-01-31'),  // Full month
+  160  // 4 weeks × 40 hours
+);
+```
+
+## Formulas
+
+### Regular Pay (No OT)
+```
+regularPay = min(hoursWorked, 40) × hourlyRate
+```
+
+### Overtime Pay (Hours > 40)
+```
+overtimePay = max(0, hoursWorked - 40) × hourlyRate × 1.5
+```
+
+### Split Period Distribution
+```
+hoursInPortion = (daysInPortion / totalDays) × totalHoursWorked
+```
+
+### Total Pay
+```
+totalPay = regularPay + overtimePay
+```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/payrollCalculations.ts` | Core logic |
+| `src/components/PayrollBreakdownDisplay.tsx` | React display |
+| `src/lib/payrollExamples.ts` | 7 examples |
+| `src/routes/payroll-demo.tsx` | Interactive demo |
+| `src/lib/payrollCalculations.test.ts` | Unit tests |
+
+## Testing
 
 ```typescript
-// Use useMemo for calculations
-const total = useMemo(() => calculateTotalPayroll(employees), [employees]);
-
-// Debounce sync events
-const debouncedSync = debounce(() => loadData(), 500);
-
-// Lazy load large lists
-const visible = employees.slice(0, 20);
+import { runTests } from './lib/payrollCalculations.test';
+runTests();
 ```
 
-## 🔒 Security Notes
+## Demo
 
-- ✅ Access control: Employee can only see own data
-- ✅ Data validation: Hours/rates must be positive numbers
-- ✅ Audit trail: All changes logged for compliance
-- ⚠️ localStorage: Client-side only, not encrypted
-- ⚠️ Backend: Consider server-side validation in production
+Visit: `/payroll-demo` route for interactive demonstration
 
-## 🚀 Deployment Checklist
+## Pro Tips
 
-- [ ] Test all CRUD operations
-- [ ] Verify localStorage persists data
-- [ ] Check cross-tab sync works
-- [ ] Integrate with Employee Portal
-- [ ] Customize colors/branding
-- [ ] Test mobile responsiveness
-- [ ] Backup existing payroll data
-- [ ] Test with real employee IDs
-- [ ] Verify audit logs work
-- [ ] Deploy to staging first
-- [ ] Deploy to production
+✓ **Tip 1**: Use descriptive notes in salary changes for audit trail
+```typescript
+addSalaryChange(history, date, rate, 'promotion', 'Promoted to Manager - Approval #123')
+```
 
-## 📞 Quick Help
+✓ **Tip 2**: Round calculations to 2 decimals (system does this automatically)
 
-**Q: Where is payroll data stored?**
-A: Browser localStorage under keys `payroll_employees` and `payroll_audit_logs`
+✓ **Tip 3**: Store salary history with employee record for future calculations
 
-**Q: How do employees see payroll?**
-A: Use `<EmployeePayrollSection employeeId={id} />` in Portal
+✓ **Tip 4**: Use the demo page to verify calculations before deploying
 
-**Q: Can I add more employees?**
-A: Yes, add to MOCK_EMPLOYEES array or create new records
+✓ **Tip 5**: Each portion's overtime calculated independently (see Example 2)
 
-**Q: Is data backed up?**
-A: Backed up in localStorage only. Implement server backup for production.
+## FAQ
 
-**Q: How to reset all data?**
-A: `localStorage.clear()` then reload page
+**Q: What if salary changes on same day as period start/end?**
+A: Handled correctly - day count algorithms account for boundary dates
 
-**Q: Can I export payroll?**
-A: Yes, use utility function `exportPayrollData()` or CSV button in Portal
+**Q: How are hours distributed across portions?**
+A: Proportionally by number of days - (days in portion / total days) × total hours
 
-## 🎯 Key Takeaways
+**Q: Does it handle fractional hours?**
+A: Yes, accurate to 2 decimal places
 
-1. ✅ Fully functional payroll management system
-2. ✅ 20 realistic employees (US + PH)
-3. ✅ Real-time calculations and updates
-4. ✅ Complete audit trail
-5. ✅ Employee portal integration ready
-6. ✅ No external dependencies
-7. ✅ localStorage persistence
-8. ✅ Production ready
+**Q: What about different overtime rules?**
+A: Modify `OVERTIME_THRESHOLD` and `OVERTIME_MULTIPLIER` constants
 
----
+**Q: Can it handle monthly pay periods?**
+A: Yes, just pass the appropriate dates and total hours
 
-**Version**: 1.0 | **Status**: Production Ready ✅
+**Q: Is it precise for large numbers?**
+A: All calculations use JavaScript number type with 2 decimal rounding
+
+## Constants to Customize
+
+```typescript
+// For different overtime rules
+const OVERTIME_THRESHOLD = 40;  // Change for different weekly threshold
+const OVERTIME_MULTIPLIER = 1.5; // Change for different OT rate (e.g., 2.0)
+```
+
+## Error Handling
+
+```typescript
+// This throws - no rate found for date
+getEffectiveRate(history, dateBeforeFirstEntry);
+
+// Solution: Always ensure first entry is before query date
+const history = createSalaryHistory('EMP', 15, new Date('2024-01-01'));
+// Now safe to query dates >= 2024-01-01
+```
+
+## Next Steps
+
+1. **Understand**: Review the examples in `payrollExamples.ts`
+2. **Implement**: Copy code snippets into your application
+3. **Test**: Run the demo at `/payroll-demo`
+4. **Verify**: Check unit tests in `payrollCalculations.test.ts`
+5. **Deploy**: Use in production payroll system
+
+## Support
+
+See full documentation in `PAYROLL_DOCUMENTATION.md`

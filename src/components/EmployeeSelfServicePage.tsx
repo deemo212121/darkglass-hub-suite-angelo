@@ -2,6 +2,8 @@ import { ChevronLeft, DollarSign, Calendar, Clock, ListTodo, Download, Eye, EyeO
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
+import { useAuth } from "@/lib/auth";
+import { getEmployeeFromEmail, getUserPayslips, getUserAttendance } from "@/lib/userDataSync";
 
 interface PayrollRecord {
   id: string;
@@ -479,6 +481,25 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
 }
 
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
+  const { email } = useAuth();
+  const employee = getEmployeeFromEmail(email);
+  const userPayslips = getUserPayslips(email);
+  
+  // Load current payslip data
+  const currentPayslip = userPayslips.length > 0 ? userPayslips[userPayslips.length - 1] : null;
+  const payslipData = currentPayslip ? {
+    id: currentPayslip.employeeId,
+    name: currentPayslip.employeeName,
+    department: currentPayslip.department,
+    dailyTimecards: [],
+    totalHoursMonth: currentPayslip.hoursWorked,
+    totalOvertimeMonth: currentPayslip.overtimeHours,
+    totalPTOHours: currentPayslip.ptoHours,
+    totalAbsences: 0,
+    totalHolidayPay: currentPayslip.holidayPay || 0,
+    notes: "Payslip generated from employee data sync system",
+  } : EMPLOYEE_PAYSLIP_DATA;
+  
   const [activeTab, setActiveTab] = useState<"dashboard" | "payroll" | "attendance" | "pto" | "requests">("dashboard");
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
   const [payslipModalOpen, setPayslipModalOpen] = useState(false);
@@ -1250,7 +1271,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="flex-1 overflow-y-auto bg-white">
               <iframe
                 ref={iframeRef}
-                srcDoc={generatePayslipHTML(EMPLOYEE_PAYSLIP_DATA)}
+                srcDoc={generatePayslipHTML(payslipData)}
                 className="w-full h-full border-none"
                 title="Payslip"
               />

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
+import { getEmployeeFromEmail } from "@/lib/userDataSync";
 import { Save } from "lucide-react";
 
 export const Route = createFileRoute("/profile")({
@@ -22,6 +23,8 @@ const KEY = "ahs:profile";
 
 function ProfilePage() {
   const { email } = useAuth();
+  const employee = getEmployeeFromEmail(email);
+  
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
     lastName: "",
@@ -33,14 +36,33 @@ function ProfilePage() {
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saved, setSaved] = useState<string>("");
 
+  // Load profile data - prioritize current employee, then localStorage, then defaults
   useEffect(() => {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      try {
-        setProfile((current) => ({ ...current, ...JSON.parse(raw) }));
-      } catch {}
+    if (employee) {
+      // Always load from current employee first - this is the source of truth
+      const parts = employee.name.split(" ");
+      const employeeProfile: Profile = {
+        firstName: parts[0] || "",
+        lastName: parts.slice(1).join(" ") || "",
+        email: employee.email,
+        phone: "", // Phone not in employee data
+        department: employee.department,
+        title: employee.role,
+      };
+      setProfile(employeeProfile);
+      
+      // Clear old localStorage data for this email to prevent confusion
+      localStorage.removeItem(KEY);
+    } else {
+      // Only if not an employee email, try localStorage
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        try {
+          setProfile((current) => ({ ...current, ...JSON.parse(raw) }));
+        } catch {}
+      }
     }
-  }, []);
+  }, [employee, email]);
 
   const save = () => {
     localStorage.setItem(KEY, JSON.stringify(profile));
@@ -75,6 +97,13 @@ function ProfilePage() {
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="panel">
           <h2 className="text-lg font-semibold mb-4">Account details</h2>
+          {employee && (
+            <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <p className="text-xs text-blue-200">
+                📋 Your profile is synced with employee data for {employee.name}. Department and role reflect your current assignment.
+              </p>
+            </div>
+          )}
           <div className="grid sm:grid-cols-2 gap-4">
             {field("First name", "firstName")}
             {field("Last name", "lastName")}

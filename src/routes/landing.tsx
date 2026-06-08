@@ -10,6 +10,7 @@ import { LOGIN_COMPANY_OPTIONS } from "@/lib/modules";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const DEFAULT_LOGIN_EMAILS = [
+  // Admin/Standard Testing Accounts
   "admin@ahsolutions.com",
   "manager@ahsolutions.com",
   "tech@ahsolutions.com",
@@ -19,6 +20,20 @@ const DEFAULT_LOGIN_EMAILS = [
   "csr@ahsolutions.com",
   "hr@ahsolutions.com",
   "parts@ahsolutions.com",
+  
+  // US Employees (5)
+  "john.richardson@ahsolutions.com",
+  "sarah.mitchell@ahsolutions.com",
+  "michael.chen@ahsolutions.com",
+  "emily.watson@ahsolutions.com",
+  "david.rodriguez@ahsolutions.com",
+  
+  // Philippines Employees (5)
+  "maria.santos@ahsolutions.com.ph",
+  "juan.delacruz@ahsolutions.com.ph",
+  "anna.reyes@ahsolutions.com.ph",
+  "carlos.gutierrez@ahsolutions.com.ph",
+  "rosa.morales@ahsolutions.com.ph",
 ];
 
 export const Route = createFileRoute("/landing")({
@@ -125,15 +140,32 @@ function Landing() {
             <DialogTitle className="font-display">Sign in</DialogTitle>
             <DialogDescription>Access your Admin Hub operations console.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={submit} className="space-y-3">
+          <form onSubmit={submit} className="space-y-4">
             <label className="block text-sm">
-              <span className="text-muted-foreground text-xs">Email</span>
+              <span className="text-muted-foreground text-xs font-semibold uppercase">Email</span>
+              <p className="text-muted-foreground text-xs mt-1 mb-2">
+                📧 Select a test account. Employee emails are preloaded with full data for testing.
+              </p>
               <Select value={form.email} onValueChange={(value) => setForm({ ...form, email: value })}>
                 <SelectTrigger className="glass-input mt-1 w-full">
                   <SelectValue placeholder="Select email" />
                 </SelectTrigger>
                 <SelectContent>
-                  {emailOptions.map((option) => (
+                  {/* Admin Accounts */}
+                  <div className="px-2 py-1.5 text-xs text-slate-400 font-semibold">Admin Accounts</div>
+                  {["admin@ahsolutions.com", "manager@ahsolutions.com", "tech@ahsolutions.com", "viewer@ahsolutions.com", "superadmin@ahsolutions.com", "finance@ahsolutions.com", "csr@ahsolutions.com", "hr@ahsolutions.com", "parts@ahsolutions.com"].map((option) => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                  
+                  {/* US Employees */}
+                  <div className="px-2 py-1.5 text-xs text-slate-400 font-semibold">US Employees</div>
+                  {["john.richardson@ahsolutions.com", "sarah.mitchell@ahsolutions.com", "michael.chen@ahsolutions.com", "emily.watson@ahsolutions.com", "david.rodriguez@ahsolutions.com"].map((option) => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                  
+                  {/* Philippines Employees */}
+                  <div className="px-2 py-1.5 text-xs text-slate-400 font-semibold">Philippines Employees</div>
+                  {["maria.santos@ahsolutions.com.ph", "juan.delacruz@ahsolutions.com.ph", "anna.reyes@ahsolutions.com.ph", "carlos.gutierrez@ahsolutions.com.ph", "rosa.morales@ahsolutions.com.ph"].map((option) => (
                     <SelectItem key={option} value={option}>{option}</SelectItem>
                   ))}
                 </SelectContent>
@@ -163,9 +195,15 @@ function Landing() {
             </label>
             {err && <div className="text-sm text-destructive">{err}</div>}
             <button type="submit" className="btn btn-primary w-full justify-center">Sign in</button>
-            <p className="text-xs text-muted-foreground text-center">
-              Demo only — any email/password works.
-            </p>
+            <div className="space-y-2 bg-blue-500/10 border border-blue-500/30 rounded p-3 text-xs text-blue-200">
+              <p className="font-semibold">🧪 Testing Notes:</p>
+              <ul className="space-y-1 ml-2">
+                <li>• Any password works for demo</li>
+                <li>• Employee emails (10 accounts) have full preloaded data</li>
+                <li>• Each account shows personalized timecards, payroll, attendance</li>
+                <li>• Test cross-module data flow with different employee accounts</li>
+              </ul>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
