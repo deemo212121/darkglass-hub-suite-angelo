@@ -1,8 +1,18 @@
-import { ChevronLeft, TrendingUp, AlertCircle, Download, CheckCircle2, AlertTriangle, X, Activity, BarChart3, LineChart as LineChartIcon } from "lucide-react";
+import { ChevronLeft, TrendingUp, AlertCircle, Download, CheckCircle2, AlertTriangle, X, Activity, BarChart3, LineChart as LineChartIcon, RefreshCw } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
+
+interface PayrollEmployee {
+  id: string;
+  name: string;
+  department: string;
+  country: "US" | "PH";
+  hoursWorked: number;
+  hourlyRate: number;
+  totalWages: number;
+}
 
 interface SalaryHistory {
   effectiveDate: string; // YYYY-MM-DD
@@ -118,7 +128,55 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [processedEmployees, setProcessedEmployees] = useState<string[]>([]);
   const [showSalaryHistory, setShowSalaryHistory] = useState<string | null>(null);
+  const [payrollEmployees, setPayrollEmployees] = useState<PayrollEmployee[]>([]);
+  const [dataSource, setDataSource] = useState<"accounting" | "local">("accounting");
   const downloadHandlerRef = useRef<() => void>(() => {});
+
+  // Load payroll data from AccountingDashboard or use local data
+  useEffect(() => {
+    try {
+      const storedEmployees = localStorage.getItem("payroll_employees");
+      if (storedEmployees) {
+        const employees = JSON.parse(storedEmployees);
+        setPayrollEmployees(employees);
+        setDataSource("accounting");
+      } else {
+        // Fallback to local employees if no shared data
+        const localEmployees = EMPLOYEES.map(e => ({
+          id: e.id,
+          name: e.name,
+          department: e.department,
+          country: e.currency as "US" | "PH",
+          hoursWorked: PAYROLL_DATA[e.id]?.hoursWorked || 160,
+          hourlyRate: e.hourlyRate,
+          totalWages: (PAYROLL_DATA[e.id]?.hoursWorked || 160) * e.hourlyRate,
+        }));
+        setPayrollEmployees(localEmployees);
+        setDataSource("local");
+      }
+    } catch (error) {
+      console.error("Error loading payroll employees:", error);
+      setDataSource("local");
+    }
+  }, []);
+
+  // Listen for updates from AccountingDashboard
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "payroll_employees") {
+        try {
+          const updated = JSON.parse(e.newValue || "[]");
+          setPayrollEmployees(updated);
+          setDataSource("accounting");
+        } catch (error) {
+          console.error("Error updating payroll employees:", error);
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
   const departments = [...new Set(EMPLOYEES.map(e => e.department))];
 
@@ -181,32 +239,57 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   };
 
   const payrollCalculations = useMemo<PayrollCalculation[]>(() => {
-    return EMPLOYEES.map(emp => {
-      const data = PAYROLL_DATA[emp.id];
-      if (!data) return null;
+    // Merge AccountingDashboard data with local EMPLOYEES data
+    const employeeMap = new Map(EMPLOYEES.map(e => [e.id, e]));
+    
+    // Use payrollEmployees if available, otherwise fall back to EMPLOYEES
+    const dataSource = payrollEmployees.length > 0 ? payrollEmployees : EMPLOYEES.map(e => ({
+      id: e.id,
+      name: e.name,
+      department: e.department,
+      country: e.currency as "US" | "PH",
+      hoursWorked: PAYROLL_DATA[e.id]?.hoursWorked || 160,
+      hourlyRate: e.hourlyRate,
+      totalWages: 0,
+    }));
 
-      const regularPay = data.hoursWorked * emp.hourlyRate;
-      const overtimePay = data.overtimeHours * emp.hourlyRate * OT_MULTIPLIER;
-      const ptoPay = data.ptoHours * emp.hourlyRate;
-      const grossPay = regularPay + overtimePay + ptoPay + data.holidayPay;
+    return dataSource.map((emp: any) => {
+      const localEmployee = employeeMap.get(emp.id);
+      const data = PAYROLL_DATA[emp.id];
+      if (!data && !payrollEmployees.length) return null;
+
+      // Use from AccountingDashboard if available
+      const hoursWorked = emp.hoursWorked || data?.hoursWorked || 160;
+      const hourlyRate = emp.hourlyRate || localEmployee?.hourlyRate || 0;
+      
+      // Calculate based on AccountingDashboard data if available
+      const overtimeHours = data?.overtimeHours || 0;
+      const ptoHours = data?.ptoHours || 0;
+      const absenceHours = data?.absenceHours || 0;
+      const holidayPay = data?.holidayPay || 0;
+
+      const regularPay = hoursWorked * hourlyRate;
+      const overtimePay = overtimeHours * hourlyRate * OT_MULTIPLIER;
+      const ptoPay = ptoHours * hourlyRate;
+      const grossPay = regularPay + overtimePay + ptoPay + holidayPay;
 
       return {
         employeeId: emp.id,
         employeeName: emp.name,
         department: emp.department,
-        hoursWorked: data.hoursWorked,
-        overtimeHours: data.overtimeHours,
-        ptoHours: data.ptoHours,
-        absenceHours: data.absenceHours,
+        hoursWorked,
+        overtimeHours,
+        ptoHours,
+        absenceHours,
         regularPay: Math.round(regularPay * 100) / 100,
         overtimePay: Math.round(overtimePay * 100) / 100,
         ptoPay: Math.round(ptoPay * 100) / 100,
-        holidayPay: data.holidayPay,
+        holidayPay,
         grossPay: Math.round(grossPay * 100) / 100,
-        currency: emp.currency,
+        currency: emp.country || localEmployee?.currency || "USD",
       };
     }).filter(Boolean) as PayrollCalculation[];
-  }, []);
+  }, [payrollEmployees]);
 
   const filteredPayroll = selectedDepartment
     ? payrollCalculations.filter(p => p.department === selectedDepartment)
@@ -302,6 +385,30 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         </div>
 
         <div className="space-y-6">
+          {/* Data Source & Sync Indicator */}
+          <div className="flex items-center justify-between gap-4 p-3 rounded-lg border border-blue-500/30 bg-blue-900/20">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 text-blue-400" />
+              <span className="text-sm text-slate-300">
+                Data Source: <span className="font-semibold text-blue-300">
+                  {dataSource === "accounting" ? "Accounting Dashboard (Real-time Sync)" : "Local Demo Data"}
+                </span>
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                const storedEmployees = localStorage.getItem("payroll_employees");
+                if (storedEmployees) {
+                  setPayrollEmployees(JSON.parse(storedEmployees));
+                  setDataSource("accounting");
+                }
+              }}
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center gap-1"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Sync Now
+            </button>
+          </div>
           {/* KPI Cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">

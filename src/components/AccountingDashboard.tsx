@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, DollarSign, TrendingUp, PieChart as PieChartIcon, BarChart3, Download, Filter, BarChart4, FileText } from "lucide-react";
+import { ChevronLeft, DollarSign, TrendingUp, PieChart as PieChartIcon, BarChart3, Download, Filter, BarChart4, FileText, Edit2, Save, X, Trash2, LogOut } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
 
@@ -38,29 +38,222 @@ interface MonthlyFinancialReport {
   overtimeCost: number;
 }
 
+interface Employee {
+  id: string;
+  name: string;
+  department: string;
+  country: "US" | "PH";
+  hoursWorked: number;
+  hourlyRate: number;
+  totalWages: number;
+}
+
+interface PayrollAuditLog {
+  id: string;
+  timestamp: string;
+  action: "generate" | "edit" | "delete";
+  employeeId: string;
+  employeeName: string;
+  details: string;
+  userId: string;
+  amount?: number;
+}
+
 const COLORS = ["#34d399", "#f87171", "#fb923c", "#3b82f6", "#a78bfa", "#06b6d4"];
 
 const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 
+// Mock employee data
+const MOCK_EMPLOYEES: Employee[] = [
+  // US Employees
+  { id: "us-001", name: "James Mitchell", department: "Operations", country: "US", hoursWorked: 160, hourlyRate: 28.50, totalWages: 4560 },
+  { id: "us-002", name: "Sarah Johnson", department: "Customer Service", country: "US", hoursWorked: 160, hourlyRate: 22.00, totalWages: 3520 },
+  { id: "us-003", name: "Michael Chen", department: "Operations", country: "US", hoursWorked: 168, hourlyRate: 31.25, totalWages: 5250 },
+  { id: "us-004", name: "Emily Rodriguez", department: "Finance", country: "US", hoursWorked: 160, hourlyRate: 26.50, totalWages: 4240 },
+  { id: "us-005", name: "David Thompson", department: "Parts", country: "US", hoursWorked: 160, hourlyRate: 24.00, totalWages: 3840 },
+  { id: "us-006", name: "Jennifer Lee", department: "Customer Service", country: "US", hoursWorked: 160, hourlyRate: 21.00, totalWages: 3360 },
+  { id: "us-007", name: "Robert Williams", department: "Management", country: "US", hoursWorked: 152, hourlyRate: 35.00, totalWages: 5320 },
+  { id: "us-008", name: "Amanda Davis", department: "Operations", country: "US", hoursWorked: 160, hourlyRate: 27.50, totalWages: 4400 },
+  // PH Employees
+  { id: "ph-001", name: "Maria Santos", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 375, totalWages: 60000 },
+  { id: "ph-002", name: "Juan Dela Cruz", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 320, totalWages: 51200 },
+  { id: "ph-003", name: "Anna Reyes", department: "Operations", country: "PH", hoursWorked: 168, hourlyRate: 400, totalWages: 67200 },
+  { id: "ph-004", name: "Carlos Gutierrez", department: "Finance", country: "PH", hoursWorked: 160, hourlyRate: 450, totalWages: 72000 },
+  { id: "ph-005", name: "Rosa Morales", department: "Parts", country: "PH", hoursWorked: 160, hourlyRate: 350, totalWages: 56000 },
+  { id: "ph-006", name: "Miguel Fernandez", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 310, totalWages: 49600 },
+  { id: "ph-007", name: "Lucia Gonzales", department: "Management", country: "PH", hoursWorked: 152, hourlyRate: 550, totalWages: 83600 },
+  { id: "ph-008", name: "Ricardo Flores", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 380, totalWages: 60800 },
+  { id: "ph-009", name: "Carmen Ramirez", department: "Finance", country: "PH", hoursWorked: 160, hourlyRate: 420, totalWages: 67200 },
+  { id: "ph-010", name: "Diego Ruiz", department: "Parts", country: "PH", hoursWorked: 164, hourlyRate: 360, totalWages: 59040 },
+  { id: "ph-011", name: "Isabella Ortega", department: "Customer Service", country: "PH", hoursWorked: 160, hourlyRate: 330, totalWages: 52800 },
+  { id: "ph-012", name: "Fernando Lopez", department: "Operations", country: "PH", hoursWorked: 160, hourlyRate: 390, totalWages: 62400 },
+];
+
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "expenses" | "reports">("overview");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState<{ hoursWorked: number; hourlyRate: number }>({ hoursWorked: 0, hourlyRate: 0 });
+  const [auditLogs, setAuditLogs] = useState<PayrollAuditLog[]>([]);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+
+  // Initialize employees from localStorage or use mock data
+  useEffect(() => {
+    const storedEmployees = localStorage.getItem("payroll_employees");
+    const storedAuditLogs = localStorage.getItem("payroll_audit_logs");
+    
+    if (storedEmployees) {
+      setEmployees(JSON.parse(storedEmployees));
+    } else {
+      setEmployees(MOCK_EMPLOYEES);
+      localStorage.setItem("payroll_employees", JSON.stringify(MOCK_EMPLOYEES));
+    }
+
+    if (storedAuditLogs) {
+      setAuditLogs(JSON.parse(storedAuditLogs));
+    }
+  }, []);
+
+  // Save employees to localStorage and log audit
+  const saveEmployees = (updatedEmployees: Employee[], logAction: PayrollAuditLog) => {
+    setEmployees(updatedEmployees);
+    localStorage.setItem("payroll_employees", JSON.stringify(updatedEmployees));
+    
+    const newAuditLog = {
+      ...logAction,
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: "admin-user",
+    };
+    
+    const updatedLogs = [...auditLogs, newAuditLog];
+    setAuditLogs(updatedLogs);
+    localStorage.setItem("payroll_audit_logs", JSON.stringify(updatedLogs));
+  };
+
+  // Generate payroll for all employees
+  const generatePayrollAll = () => {
+    const log: PayrollAuditLog = {
+      id: "",
+      timestamp: "",
+      action: "generate",
+      employeeId: "all",
+      employeeName: "All Employees",
+      details: `Generated payroll for ${employees.length} employees. Total cost: $${calculateTotalPayroll().toLocaleString("en-US", { maximumFractionDigits: 2 })}`,
+      userId: "",
+      amount: calculateTotalPayroll(),
+    };
+    
+    // Show success notification (in real app, would use toast)
+    saveEmployees(employees, log);
+    alert("Payroll generated for all employees!");
+  };
+
+  // Generate payroll for individual employee
+  const generatePayrollIndividual = (employee: Employee) => {
+    const log: PayrollAuditLog = {
+      id: "",
+      timestamp: "",
+      action: "generate",
+      employeeId: employee.id,
+      employeeName: employee.name,
+      details: `Generated payroll: ${employee.hoursWorked} hours @ $${employee.hourlyRate}/hr = $${employee.totalWages}`,
+      userId: "",
+      amount: employee.totalWages,
+    };
+    
+    saveEmployees(employees, log);
+    alert(`Payroll generated for ${employee.name}!`);
+  };
+
+  // Edit employee payroll
+  const startEdit = (employee: Employee) => {
+    setEditingId(employee.id);
+    setEditValues({ hoursWorked: employee.hoursWorked, hourlyRate: employee.hourlyRate });
+  };
+
+  const saveEdit = (employee: Employee) => {
+    const updatedEmployees = employees.map(emp => {
+      if (emp.id === employee.id) {
+        const newTotalWages = editValues.hoursWorked * editValues.hourlyRate;
+        return {
+          ...emp,
+          hoursWorked: editValues.hoursWorked,
+          hourlyRate: editValues.hourlyRate,
+          totalWages: newTotalWages,
+        };
+      }
+      return emp;
+    });
+
+    const log: PayrollAuditLog = {
+      id: "",
+      timestamp: "",
+      action: "edit",
+      employeeId: employee.id,
+      employeeName: employee.name,
+      details: `Updated: Hours ${employee.hoursWorked}→${editValues.hoursWorked}, Rate $${employee.hourlyRate}→$${editValues.hourlyRate}`,
+      userId: "",
+      amount: editValues.hoursWorked * editValues.hourlyRate,
+    };
+
+    saveEmployees(updatedEmployees, log);
+    setEditingId(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+  };
+
+  // Delete employee payroll record
+  const deletePayrollRecord = (employee: Employee) => {
+    if (confirm(`Delete payroll record for ${employee.name}?`)) {
+      const updatedEmployees = employees.filter(emp => emp.id !== employee.id);
+      
+      const log: PayrollAuditLog = {
+        id: "",
+        timestamp: "",
+        action: "delete",
+        employeeId: employee.id,
+        employeeName: employee.name,
+        details: `Deleted payroll record: ${employee.totalWages}`,
+        userId: "",
+        amount: employee.totalWages,
+      };
+
+      saveEmployees(updatedEmployees, log);
+    }
+  };
+
+  // Calculate totals
+  const calculateTotalPayroll = () => {
+    return employees.reduce((sum, emp) => sum + emp.totalWages, 0);
+  };
+
+  const calculateTotalByCountry = (country: "US" | "PH") => {
+    return employees.filter(emp => emp.country === country).reduce((sum, emp) => sum + emp.totalWages, 0);
+  };
+
+  const calculateEmployeeCount = (country: "US" | "PH") => {
+    return employees.filter(emp => emp.country === country).length;
+  };
 
   // Mock Data
   const usPayroll: PayrollSummary = {
     currency: "USD",
-    totalCost: 28500,
-    employeeCount: 8,
-    overtimeCost: 2400,
-    averagePerEmployee: 3562.50,
+    totalCost: calculateTotalByCountry("US"),
+    employeeCount: calculateEmployeeCount("US"),
+    overtimeCost: Math.round(calculateTotalByCountry("US") * 0.084),
+    averagePerEmployee: calculateTotalByCountry("US") / Math.max(calculateEmployeeCount("US"), 1),
   };
 
   const phPayroll: PayrollSummary = {
     currency: "PHP",
-    totalCost: 1624500,
-    employeeCount: 12,
-    overtimeCost: 136800,
-    averagePerEmployee: 135375,
+    totalCost: calculateTotalByCountry("PH"),
+    employeeCount: calculateEmployeeCount("PH"),
+    overtimeCost: Math.round(calculateTotalByCountry("PH") * 0.084),
+    averagePerEmployee: calculateTotalByCountry("PH") / Math.max(calculateEmployeeCount("PH"), 1),
   };
 
   const expenseData: ExpenseData[] = [
@@ -217,6 +410,63 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* Payroll Tab */}
         {activeTab === "payroll" && (
           <div className="space-y-6">
+            {/* Generate Payroll Button */}
+            <div className="flex gap-4 items-center mb-4">
+              <button
+                onClick={generatePayrollAll}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-semibold transition flex items-center gap-2"
+              >
+                <DollarSign className="h-4 w-4" />
+                Generate Payroll (All Employees)
+              </button>
+              <button
+                onClick={() => setShowAuditLog(!showAuditLog)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
+              >
+                <LogOut className="h-4 w-4" />
+                Audit Log ({auditLogs.length})
+              </button>
+            </div>
+
+            {/* Audit Log */}
+            {showAuditLog && (
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4 max-h-96 overflow-y-auto">
+                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                  <LogOut className="h-4 w-4" />
+                  Payroll Audit Log
+                </h3>
+                {auditLogs.length === 0 ? (
+                  <p className="text-slate-400 text-sm">No audit logs yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {[...auditLogs].reverse().map((log, idx) => (
+                      <div key={log.id} className="bg-slate-800/50 rounded p-3 border border-white/5">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-xs font-semibold text-white">
+                              {log.action.toUpperCase()}: {log.employeeName}
+                            </p>
+                            <p className="text-xs text-slate-400 mt-1">{log.details}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-slate-500">
+                              {new Date(log.timestamp).toLocaleString()}
+                            </p>
+                            {log.amount && (
+                              <p className="text-xs text-green-300 font-semibold">
+                                ${log.amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Currency Toggle */}
             <div className="flex gap-4 mb-4">
               <button
                 onClick={() => setSelectedCurrency("USD")}
@@ -226,7 +476,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     : "bg-slate-700 text-slate-300 hover:bg-slate-600"
                 }`}
               >
-                US Payroll Summary
+                US Payroll
               </button>
               <button
                 onClick={() => setSelectedCurrency("PHP")}
@@ -236,16 +486,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     : "bg-slate-700 text-slate-300 hover:bg-slate-600"
                 }`}
               >
-                PH Payroll Summary
+                PH Payroll
               </button>
             </div>
 
+            {/* Payroll Summary Cards */}
             {selectedCurrency === "USD" ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Total Payroll Cost</p>
                   <p className="text-2xl font-bold text-green-300">${usPayroll.totalCost.toLocaleString()}</p>
-                  <p className="text-xs text-slate-500 mt-2">June 2026</p>
+                  <p className="text-xs text-slate-500 mt-2">Current period</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Employees</p>
@@ -255,7 +506,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Overtime Cost</p>
                   <p className="text-2xl font-bold text-orange-300">${usPayroll.overtimeCost.toLocaleString()}</p>
-                  <p className="text-xs text-slate-500 mt-2">8.4% of total</p>
+                  <p className="text-xs text-slate-500 mt-2">Estimated</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Average per Employee</p>
@@ -268,7 +519,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Total Payroll Cost (PHP)</p>
                   <p className="text-2xl font-bold text-green-300">₱{phPayroll.totalCost.toLocaleString()}</p>
-                  <p className="text-xs text-slate-500 mt-2">June 2026</p>
+                  <p className="text-xs text-slate-500 mt-2">Current period</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Employees</p>
@@ -278,7 +529,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Overtime Cost (PHP)</p>
                   <p className="text-2xl font-bold text-orange-300">₱{phPayroll.overtimeCost.toLocaleString()}</p>
-                  <p className="text-xs text-slate-500 mt-2">8.4% of total</p>
+                  <p className="text-xs text-slate-500 mt-2">Estimated</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                   <p className="text-xs text-slate-400 mb-1">Average per Employee (PHP)</p>
@@ -287,6 +538,132 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </div>
               </div>
             )}
+
+            {/* Employee Payroll Details Table */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-0 overflow-x-auto">
+              <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center justify-between">
+                <span>
+                  {selectedCurrency === "USD" ? "US Employees" : "PH Employees"} Payroll Details
+                </span>
+                <span className="text-xs text-slate-400 font-normal">
+                  {employees.filter(emp => emp.country === selectedCurrency).length} employees
+                </span>
+              </div>
+              <table className="w-full text-sm min-w-[1200px]">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Name</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Department</th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Hours</th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Rate</th>
+                    <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Total Wages</th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees
+                    .filter(emp => emp.country === selectedCurrency)
+                    .map(employee => (
+                      <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="px-4 py-3 font-medium text-white">{employee.name}</td>
+                        <td className="px-4 py-3 text-slate-300">{employee.department}</td>
+                        <td className="px-4 py-3 text-center">
+                          {editingId === employee.id ? (
+                            <input
+                              type="number"
+                              value={editValues.hoursWorked}
+                              onChange={(e) =>
+                                setEditValues({ ...editValues, hoursWorked: parseFloat(e.target.value) || 0 })
+                              }
+                              className="w-20 px-2 py-1 bg-slate-700 text-white rounded border border-white/20 text-center"
+                            />
+                          ) : (
+                            <span className="text-slate-300">{employee.hoursWorked}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {editingId === employee.id ? (
+                            <input
+                              type="number"
+                              value={editValues.hourlyRate}
+                              onChange={(e) =>
+                                setEditValues({ ...editValues, hourlyRate: parseFloat(e.target.value) || 0 })
+                              }
+                              className="w-24 px-2 py-1 bg-slate-700 text-white rounded border border-white/20 text-center"
+                              step="0.01"
+                            />
+                          ) : (
+                            <span className="text-slate-300">
+                              {selectedCurrency === "USD" ? "$" : "₱"}{employee.hourlyRate.toFixed(2)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {editingId === employee.id ? (
+                            <span className="font-semibold text-green-300">
+                              {selectedCurrency === "USD" ? "$" : "₱"}
+                              {(editValues.hoursWorked * editValues.hourlyRate).toLocaleString("en-US", {
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-green-300">
+                              {selectedCurrency === "USD" ? "$" : "₱"}
+                              {employee.totalWages.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex gap-2 justify-center">
+                            {editingId === employee.id ? (
+                              <>
+                                <button
+                                  onClick={() => saveEdit(employee)}
+                                  className="p-1 bg-green-600 hover:bg-green-700 text-white rounded transition"
+                                  title="Save"
+                                >
+                                  <Save className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  className="p-1 bg-red-600 hover:bg-red-700 text-white rounded transition"
+                                  title="Cancel"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startEdit(employee)}
+                                  className="p-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition"
+                                  title="Edit"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => generatePayrollIndividual(employee)}
+                                  className="p-1 bg-green-600 hover:bg-green-700 text-white rounded transition"
+                                  title="Generate Payroll"
+                                >
+                                  <DollarSign className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => deletePayrollRecord(employee)}
+                                  className="p-1 bg-red-600 hover:bg-red-700 text-white rounded transition"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
 
             {/* Currency Conversion Info */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -298,9 +675,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <p className="text-xs text-slate-500 mt-1">Current rate (as of June 2026)</p>
                 </div>
                 <div className="bg-slate-800/50 rounded p-3">
-                  <p className="text-xs text-slate-400 mb-2">Conversion</p>
-                  <p className="text-sm text-slate-300">US Payroll: ${usPayroll.totalCost.toLocaleString()} = ₱{(usPayroll.totalCost * EXCHANGE_RATE).toLocaleString()}</p>
-                  <p className="text-xs text-slate-500 mt-2">Combined: ${(totalPayroll).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
+                  <p className="text-xs text-slate-400 mb-2">Combined Payroll (USD)</p>
+                  <p className="text-sm text-slate-300">US: ${usPayroll.totalCost.toLocaleString()} + PH: ${(phPayroll.totalCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
+                  <p className="text-xs text-slate-500 mt-2">Total: ${(usPayroll.totalCost + phPayroll.totalCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
                 </div>
               </div>
             </div>
