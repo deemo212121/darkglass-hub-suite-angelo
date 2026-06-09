@@ -434,15 +434,25 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     filteredPayroll.forEach((payroll) => {
       const employee = DUMMY_EMPLOYEES.find(e => e.id === payroll.employeeId);
       if (employee) {
-        const payslipLink = `http://localhost:8080/m/dashboard/employee-self-service`;
-        const message = {
-          id: `payroll-processed-${payroll.employeeId}-${Date.now()}`,
-          sender: "Payroll System",
-          body: `Your payslip for the period ${payrollStartDate} to ${payrollEndDate} is now ready! You can view your payslip on the Employee Self-Service Portal: ${payslipLink}`,
-          createdAt: new Date().toISOString(),
-          kind: "other" as const,
-        };
-        announcementThread.push(message);
+        // Check if an announcement for this employee and payroll period already exists
+        const existingAnnouncement = announcementThread.find(
+          (msg: any) =>
+            msg.id.includes(`payroll-processed-${payroll.employeeId}`) &&
+            msg.body.includes(`${payrollStartDate} to ${payrollEndDate}`)
+        );
+        
+        // Only add if it doesn't already exist
+        if (!existingAnnouncement) {
+          const payslipLink = `http://localhost:8080/m/dashboard/employee-self-service`;
+          const message = {
+            id: `payroll-processed-${payroll.employeeId}-${payrollStartDate}-${payrollEndDate}`,
+            sender: "Payroll System",
+            body: `Your payslip for the period ${payrollStartDate} to ${payrollEndDate} is now ready! You can view your payslip on the Employee Self-Service Portal: ${payslipLink}`,
+            createdAt: new Date().toISOString(),
+            kind: "other" as const,
+          };
+          announcementThread.push(message);
+        }
       }
     });
     

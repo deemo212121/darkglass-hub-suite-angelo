@@ -15,7 +15,7 @@ export function AccountPageShell({
 }) {
   const { ready, email } = useAuth();
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" />;
+  if (!email) return <Navigate to="/landing" replace />;
   return (
     <>
       <AppHeader />

@@ -133,7 +133,8 @@ export function AppHeader() {
                 <DropdownMenuItem
                   onSelect={() => {
                     logout();
-                    navigate({ to: "/landing" });
+                    // Use window.location to bypass router and prevent infinite loop
+                    window.location.href = "/landing";
                   }}
                   className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-destructive focus:text-destructive"
                 >

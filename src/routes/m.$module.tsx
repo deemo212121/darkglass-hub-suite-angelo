@@ -38,7 +38,7 @@ function ModuleIndex() {
   const { module: m } = Route.useLoaderData();
 
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" />;
+  if (!email) return <Navigate to="/landing" replace />;
 
   const hasChildRoute = typeof window !== "undefined" && window.location.pathname.split("/").filter(Boolean).length > 2;
 

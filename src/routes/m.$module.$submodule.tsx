@@ -125,7 +125,7 @@ function SubModule() {
   const { mod, sub } = Route.useLoaderData();
   const location = useLocation();
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" />;
+  if (!email) return <Navigate to="/landing" replace />;
   
   if (mod.slug === "admin" && !canAccessAdminModule(email)) {
     const currentUser = getUserManagementRecord(email);

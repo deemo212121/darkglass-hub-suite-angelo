@@ -35,17 +35,12 @@ export function AnnouncementsPage({ mod, sub }: Props) {
 
   useEffect(() => {
     if (!ready || !email) return;
+    ensureAnnouncementThread(email);
     setMessages(getAnnouncementMessages(email));
   }, [email, ready]);
 
   const unreadCount = useMemo(() => getUnreadAnnouncementCount(email, messages), [email, messages]);
   const canPost = canPostAnnouncements(email);
-
-  useEffect(() => {
-    if (!ready || !email) return;
-    ensureAnnouncementThread(email);
-    setMessages(getAnnouncementMessages(email));
-  }, [email, ready]);
 
   const refresh = () => {
     if (!email) return;

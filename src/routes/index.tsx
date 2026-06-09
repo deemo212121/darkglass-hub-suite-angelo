@@ -8,5 +8,7 @@ export const Route = createFileRoute("/")({
 function Index() {
   const { ready, email } = useAuth();
   if (!ready) return <div className="min-h-screen" />;
-  return <Navigate to={email ? "/home" : "/landing"} />;
+  
+  // Prevent re-renders by using replace instead of push
+  return <Navigate to={email ? "/home" : "/landing"} replace />;
 }

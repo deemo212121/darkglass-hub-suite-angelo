@@ -54,7 +54,7 @@ function Landing() {
       const last = localStorage.getItem("ahs:lastEmail");
       if (last) setForm((f) => ({ ...f, email: last }));
     }
-  }, [form.remember]);
+  }, [form.remember]); // Only depends on form.remember, not entire form
 
   useEffect(() => {
     let active = true;
@@ -82,7 +82,7 @@ function Landing() {
     };
   }, []);
 
-  if (ready && email) return <Navigate to="/home" />;
+  if (ready && email) return <Navigate to="/home" replace />;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

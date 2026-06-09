@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
@@ -52,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const isLoggingOut = useRef(false);
 
   useEffect(() => {
     // Initialize database on app startup (client-side only)
@@ -79,17 +80,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     
     const handler = (e: StorageEvent) => {
-      if (e.key === "userEmail") {
+      // Skip storage updates during logout to prevent infinite loops
+      if (isLoggingOut.current) return;
+      
+      // Only update state if the key actually changed (prevents infinite loops on logout)
+      if (e.key === "userEmail" && e.newValue !== e.oldValue) {
         setEmail(e.newValue);
         setRole(getRoleFromEmail(e.newValue));
       }
-      if (e.key === "userCompanyId") setCompanyId(e.newValue);
+      if (e.key === "userCompanyId" && e.newValue !== e.oldValue) {
+        setCompanyId(e.newValue);
+      }
     };
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
   }, []);
 
   const login = (e: string, c: string) => {
+    isLoggingOut.current = false;
     localStorage.setItem("userEmail", e);
     localStorage.setItem("userCompanyId", c);
     setEmail(e);
@@ -104,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   
   const logout = () => {
+    isLoggingOut.current = true;
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userCompanyId");
     setEmail(null);
