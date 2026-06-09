@@ -36,6 +36,11 @@ interface WeekDay {
   isOffDay: boolean;
 }
 
+interface RequiredSchedule {
+  requiredCheckIn: string;
+  requiredCheckOut: string;
+}
+
 const KEY = "ahs:profile";
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -56,8 +61,12 @@ function ProfilePage() {
   const [timecardData, setTimecardData] = useState<TimecardRecord[]>([]);
   const [currentWeekDays, setCurrentWeekDays] = useState<WeekDay[]>([]);
   const [selectedOffDays, setSelectedOffDays] = useState<number[]>([]);
+  const [requiredSchedule, setRequiredSchedule] = useState<RequiredSchedule>({
+    requiredCheckIn: "08:00",
+    requiredCheckOut: "17:00",
+  });
 
-  // Timecard database mapping - matches PayrollCalculationPage
+  // Timecard database mapping
   const timecardDatabase: { [key: string]: TimecardRecord[] } = {
     "006": [ // Maria Santos
       { date: "06/01/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
@@ -65,11 +74,6 @@ function ProfilePage() {
       { date: "06/03/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
       { date: "06/04/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
       { date: "06/05/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/08/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/09/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/10/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "16:00", working: "9:00:00", rate: 850 },
-      { date: "06/11/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/12/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
     ],
     "008": [ // Anna Reyes
       { date: "06/01/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
@@ -77,11 +81,6 @@ function ProfilePage() {
       { date: "06/03/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
       { date: "06/04/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
       { date: "06/05/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "20:30", working: "12:00:00", rate: 550 },
-      { date: "06/08/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/09/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/10/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "17:30", working: "9:00:00", rate: 550 },
-      { date: "06/11/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/12/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
     ],
     "007": [ // Juan Dela Cruz
       { date: "06/01/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
@@ -89,15 +88,10 @@ function ProfilePage() {
       { date: "06/03/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
       { date: "06/04/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
       { date: "06/05/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/08/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/09/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/10/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "20:00", working: "9:00:00", rate: 650 },
-      { date: "06/11/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/12/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
     ],
   };
 
-  // Generate current week (Mon-Sun)
+  // Generate current week
   const generateCurrentWeek = () => {
     const week: WeekDay[] = [];
     for (let i = 0; i < 7; i++) {
@@ -116,7 +110,6 @@ function ProfilePage() {
         ? prev.filter(d => d !== dayNum)
         : [...prev, dayNum];
       
-      // Save to localStorage
       if (employee) {
         const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
         if (dummyEmployee) {
@@ -124,29 +117,25 @@ function ProfilePage() {
           localStorage.setItem(`offDays_${timecardKey}`, JSON.stringify(newOffDays));
         }
       }
-      
       return newOffDays;
     });
   };
 
-  // Load profile data - prioritize current employee, then localStorage, then defaults
   useEffect(() => {
     generateCurrentWeek();
     
     if (employee) {
-      // Always load from current employee first - this is the source of truth
       const parts = employee.name.split(" ");
       const employeeProfile: Profile = {
         firstName: parts[0] || "",
         lastName: parts.slice(1).join(" ") || "",
         email: employee.email,
-        phone: "", // Phone not in employee data
+        phone: "",
         department: employee.department,
         title: employee.role,
       };
       setProfile(employeeProfile);
       
-      // Load timecard data for this employee
       const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
       if (dummyEmployee) {
         const timecardKey = dummyEmployee.id.split("-").pop() === "001" ? "001" : 
@@ -161,38 +150,39 @@ function ProfilePage() {
         
         setTimecardData(timecardDatabase[timecardKey] || []);
         
-        // Load saved off days from localStorage
         const savedOffDays = localStorage.getItem(`offDays_${timecardKey}`);
         if (savedOffDays) {
-          const offDayIndices = JSON.parse(savedOffDays);
-          setSelectedOffDays(offDayIndices);
+          setSelectedOffDays(JSON.parse(savedOffDays));
         } else {
-          // Default sample days off
-          const defaultOffDays = timecardKey === "008" ? [4, 5] : []; // Friday, Saturday for Anna
+          const defaultOffDays = timecardKey === "008" ? [4, 5] : [];
           setSelectedOffDays(defaultOffDays);
         }
+        
+        const savedSchedule = localStorage.getItem(`requiredSchedule_${timecardKey}`);
+        if (savedSchedule) {
+          setRequiredSchedule(JSON.parse(savedSchedule));
+        }
       }
-      
-      // Clear old localStorage data for this email to prevent confusion
       localStorage.removeItem(KEY);
-    } else {
-      // Only if not an employee email, try localStorage
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        try {
-          setProfile((current) => ({ ...current, ...JSON.parse(raw) }));
-        } catch {}
-      }
     }
   }, [employee, email]);
 
-  // Update week when selected off days change
   useEffect(() => {
     generateCurrentWeek();
   }, [selectedOffDays]);
 
   const save = () => {
     localStorage.setItem(KEY, JSON.stringify(profile));
+    
+    // Also save required schedule
+    if (employee) {
+      const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
+      if (dummyEmployee) {
+        const timecardKey = dummyEmployee.id.split("-").pop() || "unknown";
+        localStorage.setItem(`requiredSchedule_${timecardKey}`, JSON.stringify(requiredSchedule));
+      }
+    }
+    
     setSaved("Profile saved.");
     setTimeout(() => setSaved(""), 2000);
   };
@@ -221,60 +211,87 @@ function ProfilePage() {
 
   return (
     <AccountPageShell title="My Profile" description="Manage your account details and password.">
-      <div className="grid gap-5 lg:grid-cols-2">
-        <section className="panel">
-          <h2 className="text-lg font-semibold mb-4">Account details</h2>
-          {employee && (
-            <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-              <p className="text-xs text-blue-200">
-                📋 Your profile is synced with employee data for {employee.name}. Department and role reflect your current assignment.
-              </p>
-            </div>
-          )}
-          <div className="grid sm:grid-cols-2 gap-4">
-            {field("First name", "firstName")}
-            {field("Last name", "lastName")}
-            {field("Email", "email", "email")}
-            {field("Phone", "phone", "tel")}
-            {field("Department", "department")}
-            {field("Title", "title")}
+      <section className="panel">
+        <h2 className="text-lg font-semibold mb-4">Account details</h2>
+        {employee && (
+          <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <p className="text-xs text-blue-200">
+              📋 Your profile is synced with employee data for {employee.name}. Department and role reflect your current assignment.
+            </p>
           </div>
-          <div className="flex items-center gap-3 mt-5">
-            <button className="btn btn-primary" onClick={save}><Save className="h-4 w-4" />Save changes</button>
-            {saved && <span className="text-xs text-muted-foreground">{saved}</span>}
-          </div>
-        </section>
-        <section className="panel">
-          <h2 className="text-lg font-semibold mb-4">Change password</h2>
-          <div className="grid gap-4">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs text-muted-foreground">Current password</span>
-              <input className="glass-input" type="password" value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs text-muted-foreground">New password</span>
-              <input className="glass-input" type="password" value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs text-muted-foreground">Confirm new password</span>
-              <input className="glass-input" type="password" value={password.confirm} onChange={(e) => setPassword({ ...password, confirm: e.target.value })} />
-            </label>
-          </div>
-          <div className="mt-5">
-            <button className="btn btn-primary" onClick={changePassword}><Save className="h-4 w-4" />Update password</button>
-          </div>
-        </section>
-      </div>
+        )}
+        <div className="grid sm:grid-cols-2 gap-4 mb-6">
+          {field("First name", "firstName")}
+          {field("Last name", "lastName")}
+          {field("Email", "email", "email")}
+          {field("Phone", "phone", "tel")}
+          {field("Department", "department")}
+          {field("Title", "title")}
+        </div>
 
-      {/* Time In/Out Details Section */}
+        {/* Required Schedule */}
+        <div className="pt-6 border-t border-white/10">
+          <h3 className="text-sm font-semibold text-slate-300 mb-4">Required Schedule</h3>
+          <div className="grid sm:grid-cols-2 gap-4 mb-4">
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-slate-400">Check-In Time</span>
+              <input
+                type="time"
+                value={requiredSchedule.requiredCheckIn}
+                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, requiredCheckIn: e.target.value })}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-slate-400">Check-Out Time</span>
+              <input
+                type="time"
+                value={requiredSchedule.requiredCheckOut}
+                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, requiredCheckOut: e.target.value })}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Days Off */}
+        <div className="pt-6 border-t border-white/10">
+          <h3 className="text-sm font-semibold text-slate-300 mb-4">Days Off</h3>
+          <div className="grid grid-cols-7 gap-2 mb-4">
+            {currentWeekDays.map((day) => (
+              <button
+                key={day.dayNum}
+                onClick={() => toggleOffDay(day.dayNum)}
+                className={`p-2 rounded border transition text-xs font-semibold flex flex-col items-center justify-center h-16 ${
+                  day.isOffDay
+                    ? "bg-red-500/20 border-red-500/50 text-red-300"
+                    : "bg-slate-700 border-white/10 text-slate-300 hover:border-white/30"
+                }`}
+              >
+                <span className="text-xs truncate">{day.dayName.slice(0, 3)}</span>
+                <span className="text-xs mt-1 opacity-75">{day.isOffDay ? "OFF" : "WORK"}</span>
+              </button>
+            ))}
+          </div>
+          {selectedOffDays.length > 0 && (
+            <p className="text-xs text-blue-300">Selected: {selectedOffDays.map(d => DAYS_OF_WEEK[d]).join(", ")}</p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 mt-6 flex-wrap">
+          <button className="btn btn-primary" onClick={save}><Save className="h-4 w-4" />Save changes</button>
+          {saved && <span className="text-xs text-muted-foreground">{saved}</span>}
+        </div>
+      </section>
+
+      {/* Time In/Out Details */}
       {timecardData.length > 0 && (
         <section className="panel mt-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Clock className="h-5 w-5 text-blue-400" />
             Time In/Out Details
           </h2>
-          <p className="text-xs text-slate-400 mb-4">Your recent daily clock in/out records for the current payroll period.</p>
-          
+          <p className="text-xs text-slate-400 mb-4">Your recent daily clock in/out records.</p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -304,43 +321,24 @@ function ProfilePage() {
         </section>
       )}
 
-      {/* Days Off Section - Week Selector */}
+      {/* Change Password - At Bottom */}
       <section className="panel mt-6">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Calendar className="h-5 w-5 text-purple-400" />
-          Days Off
-        </h2>
-        
-        {/* Week Calendar */}
-        <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-          <div className="grid grid-cols-7 gap-3">
-            {currentWeekDays.map((day) => (
-              <button
-                key={day.dayNum}
-                onClick={() => toggleOffDay(day.dayNum)}
-                className={`p-4 rounded-lg border-2 transition flex flex-col items-center justify-center min-h-20 ${
-                  day.isOffDay
-                    ? "bg-red-500/20 border-red-500/50 text-red-300"
-                    : "bg-slate-800/50 border-white/10 text-slate-300 hover:border-white/30"
-                }`}
-              >
-                <span className="text-sm font-bold uppercase">{day.dayName}</span>
-                <span className="text-xs mt-2 opacity-75">
-                  {day.isOffDay ? "OFF" : "WORK"}
-                </span>
-              </button>
-            ))}
-          </div>
+        <h2 className="text-lg font-semibold mb-4">Change password</h2>
+        <div className="grid gap-4 mb-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Current password</span>
+            <input className="glass-input" type="password" value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">New password</span>
+            <input className="glass-input" type="password" value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Confirm new password</span>
+            <input className="glass-input" type="password" value={password.confirm} onChange={(e) => setPassword({ ...password, confirm: e.target.value })} />
+          </label>
         </div>
-
-        {/* Summary */}
-        {selectedOffDays.length > 0 && (
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mt-4">
-            <p className="text-sm text-blue-200">
-              <span className="font-semibold">Days off selected:</span> {selectedOffDays.map(d => DAYS_OF_WEEK[d]).join(", ")}
-            </p>
-          </div>
-        )}
+        <button className="btn btn-primary" onClick={changePassword}><Save className="h-4 w-4" />Update password</button>
       </section>
     </AccountPageShell>
   );
