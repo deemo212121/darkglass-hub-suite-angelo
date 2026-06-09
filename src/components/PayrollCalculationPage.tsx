@@ -1297,11 +1297,11 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             </div>
           </div>
 
-          {/* Payroll Details Table */}
+          {/* Payroll Details Table - Simplified */}
           {showTable && (
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-bold text-white">Payroll Details Preview</h3>
+                <h3 className="text-sm font-bold text-white">Payroll Preview</h3>
                 <button
                   onClick={() => setShowTable(!showTable)}
                   className="text-xs text-slate-400 hover:text-white transition"
@@ -1342,180 +1342,47 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                 </div>
               </div>
 
-              {/* Search Results Info */}
-              {(searchQuery || departmentFilter) && (
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
-                  <p className="text-sm text-blue-300">
-                    <span className="font-semibold">{filteredPayroll.length}</span> employee(s) found
-                    {searchQuery && <span> matching "{searchQuery}"</span>}
-                    {departmentFilter && <span> in {departmentFilter}</span>}
-                  </p>
-                </div>
-              )}
-
               <div className="overflow-x-auto">
-                <table className="w-full text-xs" style={{ color: '#fff' }}>
+                <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
-                      <th className="px-3 py-2 text-left font-semibold" style={{ color: '#bfdbfe' }}>Employee</th>
-                      <th className="px-3 py-2 text-left font-semibold" style={{ color: '#bfdbfe' }}>Department</th>
-                      <th className="px-3 py-2 text-center font-semibold" style={{ color: '#bfdbfe' }}>Hours</th>
-                      <th className="px-3 py-2 text-center font-semibold" style={{ color: '#bfdbfe' }}>OT Hours</th>
-                      <th className="px-3 py-2 text-right font-semibold" style={{ color: '#bfdbfe' }}>Rate</th>
-                      <th className="px-3 py-2 text-right font-semibold" style={{ color: '#bfdbfe' }}>Regular Pay</th>
-                      <th className="px-3 py-2 text-right font-semibold" style={{ color: '#bfdbfe' }}>OT Pay</th>
-                      <th className="px-3 py-2 text-right font-semibold" style={{ color: '#bfdbfe' }}>PTO Pay</th>
-                      <th className="px-3 py-2 text-right font-semibold" style={{ color: '#bfdbfe' }}>Gross Pay</th>
-                      <th className="px-3 py-2 text-center font-semibold" style={{ color: '#bfdbfe' }}>Actions</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Name</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Department</th>
+                      <th className="px-4 py-3 text-right font-semibold text-blue-300">Gross Salary</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Notes</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredPayroll.map(payroll => {
+                    {filteredPayroll
+                      .sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+                      .map(payroll => {
                       const hasIssue = payroll.absenceHours > 0 || payroll.hoursWorked === 0 || payroll.overtimeHours > 20;
-                      const isEditing = editingEmployee === payroll.employeeId;
+                      let notes = "";
+                      if (payroll.hoursWorked === 0) notes = "⚠ No hours recorded";
+                      else if (payroll.overtimeHours > 20) notes = `⚠ High OT (${payroll.overtimeHours}h)`;
+                      else if (payroll.absenceHours > 0) notes = `Absence: ${payroll.absenceHours}h`;
+                      else if (payroll.ptoHours > 0) notes = `PTO: +${payroll.ptoHours}h`;
                       
                       return (
                         <tr 
                           key={payroll.employeeId} 
-                          className={`border-b transition ${isEditing ? "bg-blue-500/10" : hasIssue ? "bg-yellow-500/5 border-yellow-500/30" : "border-white/5 hover:bg-white/5"}`}
+                          className={`border-b transition ${hasIssue ? "bg-yellow-500/5 border-yellow-500/30 hover:bg-yellow-500/10" : "border-white/5 hover:bg-white/5"}`}
                         >
-                          <td className="px-3 py-2 font-medium" style={{ color: '#fff' }}>
+                          <td className="px-4 py-3 text-white font-medium">
                             {payroll.employeeName}
-                            {hasIssue && <span className="text-yellow-400 ml-1">⚠</span>}
                           </td>
-                          <td className="px-3 py-2" style={{ color: '#dbeafe' }}>{payroll.department}</td>
-                          
-                          {/* Hours Worked - Editable */}
-                          <td className="px-3 py-2 text-center" style={{ color: payroll.hoursWorked === 0 ? '#fca5a5' : '#dbeafe' }}>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                min="0"
-                                max="200"
-                                value={editValues?.hoursWorked || 0}
-                                onChange={(e) => setEditValues(prev => prev ? { ...prev, hoursWorked: Number(e.target.value) } : null)}
-                                className="w-12 px-2 py-1 bg-slate-700 border border-white/20 rounded text-white text-center"
-                              />
-                            ) : (
-                              <>
-                                {payroll.hoursWorked}
-                                {payroll.hoursWorked === 0 && <span className="text-xs ml-1">⚠</span>}
-                              </>
-                            )}
-                          </td>
-                          
-                          {/* Overtime Hours - Editable */}
-                          <td className="px-3 py-2 text-center" style={{ color: payroll.overtimeHours > 20 ? '#fca5a5' : '#dbeafe' }}>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={editValues?.overtimeHours || 0}
-                                onChange={(e) => setEditValues(prev => prev ? { ...prev, overtimeHours: Number(e.target.value) } : null)}
-                                className="w-12 px-2 py-1 bg-slate-700 border border-white/20 rounded text-white text-center"
-                              />
-                            ) : (
-                              <>
-                                {payroll.overtimeHours}
-                                {payroll.overtimeHours > 20 && <span className="text-xs ml-1">⚠</span>}
-                              </>
-                            )}
-                          </td>
-                          
-                          {/* Hourly Rate - Editable */}
-                          <td className="px-3 py-2 text-right" style={{ color: '#dbeafe' }}>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editValues?.hourlyRate || 0}
-                                onChange={(e) => setEditValues(prev => prev ? { ...prev, hourlyRate: Number(e.target.value) } : null)}
-                                className="w-20 px-2 py-1 bg-slate-700 border border-white/20 rounded text-white text-right"
-                              />
-                            ) : (
-                              <>${payroll.hoursWorked ? ((payroll.regularPay / payroll.hoursWorked)).toFixed(2) : '0.00'}</>
-                            )}
-                          </td>
-                          
-                          <td className="px-3 py-2 text-right" style={{ color: '#dbeafe' }}>${payroll.regularPay.toFixed(2)}</td>
-                          <td className="px-3 py-2 text-right" style={{ color: '#dbeafe' }}>${payroll.overtimePay.toFixed(2)}</td>
-                          
-                          {/* PTO Pay - Editable */}
-                          <td className="px-3 py-2 text-right" style={{ color: payroll.ptoHours > 0 ? '#fbbf24' : '#dbeafe' }}>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={editValues?.ptoHours || 0}
-                                onChange={(e) => setEditValues(prev => prev ? { ...prev, ptoHours: Number(e.target.value) } : null)}
-                                className="w-12 px-2 py-1 bg-slate-700 border border-white/20 rounded text-white text-center"
-                              />
-                            ) : (
-                              <>
-                                ${payroll.ptoPay.toFixed(2)}
-                                {payroll.ptoHours > 0 && <span className="text-xs ml-1">(+{payroll.ptoHours}h)</span>}
-                              </>
-                            )}
-                          </td>
-                          
-                          <td className="px-3 py-2 text-right font-semibold" style={{ color: '#86efac' }}>${payroll.grossPay.toFixed(2)}</td>
-                          
-                          {/* Actions */}
-                          <td className="px-3 py-2 text-center">
-                            <div className="flex gap-1 justify-center">
-                              {isEditing ? (
-                                <>
-                                  <button
-                                    onClick={() => saveEdit(payroll.employeeId)}
-                                    className="p-1 bg-green-600 hover:bg-green-700 rounded text-white transition"
-                                    title="Save changes"
-                                  >
-                                    <Save className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    onClick={cancelEdit}
-                                    className="p-1 bg-slate-600 hover:bg-slate-700 rounded text-white transition"
-                                    title="Cancel"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => startEdit(payroll.employeeId)}
-                                    className="p-1 bg-blue-600 hover:bg-blue-700 rounded text-white transition"
-                                    title="Edit payroll"
-                                  >
-                                    <Edit2 className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => setShowTimecardModal(payroll.employeeId)}
-                                    className="p-1 bg-cyan-600 hover:bg-cyan-700 rounded text-white transition"
-                                    title="View timecard"
-                                  >
-                                    <Activity className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      const emp = EMPLOYEES.find(e => e.id === payroll.employeeId);
-                                      setSalaryChangeForm({
-                                        effectiveDate: new Date().toISOString().split('T')[0],
-                                        newRate: emp?.hourlyRate || 0,
-                                        reason: 'promotion'
-                                      });
-                                      setShowSalaryChangeModal(payroll.employeeId);
-                                    }}
-                                    className="p-1 bg-purple-600 hover:bg-purple-700 rounded text-white transition"
-                                    title="Record salary change (promotion/demotion)"
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </button>
-                                </>
-                              )}
+                          <td className="px-4 py-3 text-slate-300">{payroll.department}</td>
+                          <td className="px-4 py-3 text-right text-green-300 font-semibold">${payroll.grossPay.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-slate-400 text-sm flex items-center justify-between">
+                            <span>{notes || "—"}</span>
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => setShowTimecardModal(payroll.employeeId)}
+                                className="p-1 text-cyan-400 hover:text-cyan-300 transition"
+                                title="View timecard"
+                              >
+                                <Activity className="h-4 w-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>

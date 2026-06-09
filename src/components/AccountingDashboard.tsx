@@ -517,8 +517,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                  <p className="text-xs text-slate-400 mb-1">Total Payroll Cost (PHP)</p>
-                  <p className="text-2xl font-bold text-green-300">₱{phPayroll.totalCost.toLocaleString()}</p>
+                  <p className="text-xs text-slate-400 mb-1">Total Payroll Cost (USD)</p>
+                  <p className="text-2xl font-bold text-green-300">${(phPayroll.totalCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
                   <p className="text-xs text-slate-500 mt-2">Current period</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -527,17 +527,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <p className="text-xs text-slate-500 mt-2">Active staff</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                  <p className="text-xs text-slate-400 mb-1">Overtime Cost (PHP)</p>
-                  <p className="text-2xl font-bold text-orange-300">₱{phPayroll.overtimeCost.toLocaleString()}</p>
+                  <p className="text-xs text-slate-400 mb-1">Overtime Cost (USD)</p>
+                  <p className="text-2xl font-bold text-orange-300">${(phPayroll.overtimeCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
                   <p className="text-xs text-slate-500 mt-2">Estimated</p>
                 </div>
                 <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                  <p className="text-xs text-slate-400 mb-1">Average per Employee (PHP)</p>
-                  <p className="text-2xl font-bold text-purple-300">₱{phPayroll.averagePerEmployee.toLocaleString()}</p>
+                  <p className="text-xs text-slate-400 mb-1">Average per Employee (USD)</p>
+                  <p className="text-2xl font-bold text-purple-300">${(phPayroll.averagePerEmployee / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
                   <p className="text-xs text-slate-500 mt-2">Per employee</p>
                 </div>
               </div>
             )}
+
+            {/* Payroll Summary List Header */}
+            <div className="mt-8 mb-4">
+              <h3 className="text-lg font-bold text-white">Payroll Summary List</h3>
+              <p className="text-sm text-slate-400">List of Employees</p>
+            </div>
 
             {/* Employee Payroll Details Table */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-0 overflow-x-auto">
@@ -665,22 +671,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               </table>
             </div>
 
-            {/* Currency Conversion Info */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-3">Currency Conversion (USD ↔ PHP)</h3>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="bg-slate-800/50 rounded p-3">
-                  <p className="text-xs text-slate-400 mb-2">Exchange Rate</p>
-                  <p className="text-lg font-bold text-white">1 USD = ₱{EXCHANGE_RATE}</p>
-                  <p className="text-xs text-slate-500 mt-1">Current rate (as of June 2026)</p>
-                </div>
-                <div className="bg-slate-800/50 rounded p-3">
-                  <p className="text-xs text-slate-400 mb-2">Combined Payroll (USD)</p>
-                  <p className="text-sm text-slate-300">US: ${usPayroll.totalCost.toLocaleString()} + PH: ${(phPayroll.totalCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
-                  <p className="text-xs text-slate-500 mt-2">Total: ${(usPayroll.totalCost + phPayroll.totalCost / EXCHANGE_RATE).toLocaleString("en-US", { maximumFractionDigits: 0 })}</p>
-                </div>
-              </div>
-            </div>
+
           </div>
         )}
 
