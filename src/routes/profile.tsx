@@ -18,6 +18,7 @@ type Profile = {
   phone: string;
   department: string;
   title: string;
+  officeLocation: string;
 };
 
 interface TimecardRecord {
@@ -43,6 +44,15 @@ interface RequiredSchedule {
 
 const KEY = "ahs:profile";
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const OFFICE_LOCATIONS = [
+  "US - Atlanta",
+  "US - Dallas",
+  "US - New York",
+  "US - Los Angeles",
+  "PH - Manila",
+  "PH - Cebu",
+  "PH - Davao",
+];
 
 function ProfilePage() {
   const { email } = useAuth();
@@ -55,6 +65,7 @@ function ProfilePage() {
     phone: "",
     department: "Service",
     title: "Technician",
+    officeLocation: "US",
   });
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saved, setSaved] = useState<string>("");
@@ -133,6 +144,7 @@ function ProfilePage() {
         phone: "",
         department: employee.department,
         title: employee.role,
+        officeLocation: employee.country === "PH" ? "PH - Manila" : "US - Atlanta",
       };
       setProfile(employeeProfile);
       
@@ -209,6 +221,23 @@ function ProfilePage() {
     </label>
   );
 
+  const locationField = () => (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs text-muted-foreground">Office Location</span>
+      <select
+        value={profile.officeLocation}
+        onChange={(e) => setProfile({ ...profile, officeLocation: e.target.value })}
+        className="glass-input"
+      >
+        {OFFICE_LOCATIONS.map((location) => (
+          <option key={location} value={location}>
+            {location}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   return (
     <AccountPageShell title="My Profile" description="Manage your account details and password.">
       <section className="panel">
@@ -227,6 +256,7 @@ function ProfilePage() {
           {field("Phone", "phone", "tel")}
           {field("Department", "department")}
           {field("Title", "title")}
+          {locationField()}
         </div>
 
         {/* Required Schedule */}
