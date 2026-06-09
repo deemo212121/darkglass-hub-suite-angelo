@@ -82,14 +82,19 @@ function Landing() {
     };
   }, []);
 
-  if (ready && email) return <Navigate to="/home" replace />;
+  // Use useEffect to handle navigation after login completes
+  useEffect(() => {
+    if (ready && email) {
+      navigate({ to: "/home", replace: true });
+    }
+  }, [ready, email, navigate]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.email || !form.password) { setErr("Email and password are required."); return; }
     if (form.remember) localStorage.setItem("ahs:lastEmail", form.email);
     login(form.email, form.company);
-    navigate({ to: "/home" });
+    // Navigation will happen automatically via the conditional render above
   };
 
   return (
