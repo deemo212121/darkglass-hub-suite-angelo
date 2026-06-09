@@ -42,8 +42,8 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
     alert(`Reservation initiated for Ticket: ${ticketNo}`);
   };
 
-  const manualPO = (ticketNo: string) => {
-    alert(`Manual P/O initiated for Ticket: ${ticketNo}`);
+  const viewPartOrder = (ticketNo: string) => {
+    alert(`View part order details for Ticket: ${ticketNo}`);
   };
 
   return (
@@ -65,7 +65,14 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             .form-group label { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em; color: #e5e7eb; }
             .form-group label.required::after { content: " *"; color: #ef4444; }
             .form-section-title { font-size: 0.95rem; font-weight: 600; color: #64b5f6; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+            .info-banner { background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; color: #93c5fd; font-size: 0.85rem; line-height: 1.5; }
           `}</style>
+
+          {/* Info Banner */}
+          <div className="info-banner">
+            <strong>📋 How Part Orders Work:</strong> Part orders are created automatically when you add parts to a ticket in Service Tracking. 
+            View them here to check status, track ETAs, and manage inventory allocation.
+          </div>
           
           {/* Order Criteria Section */}
           <div>
@@ -144,7 +151,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Request</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Avail.</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Reserve</th>
-                  <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Manual P/O</th>
+                  <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">View Order</th>
                 </tr>
               </thead>
               <tbody>
@@ -166,16 +173,11 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <button
-                          onClick={() => manualPO(order.ticketNo)}
-                          disabled={!hasETA}
-                          className={`px-2 py-1 text-xs font-semibold rounded transition-colors ${
-                            hasETA
-                              ? "bg-green-500/20 text-green-400 border border-green-500/40 hover:bg-green-500/30 cursor-pointer"
-                              : "bg-gray-500/20 text-gray-500 border border-gray-500/40 cursor-not-allowed opacity-50"
-                          }`}
-                          title={hasETA ? "Create manual purchase order" : "Visible only when ETA is set"}
+                          onClick={() => viewPartOrder(order.ticketNo)}
+                          className="px-2 py-1 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30 transition-colors"
+                          title="View part order details"
                         >
-                          Manual P/O
+                          View Order
                         </button>
                       </td>
                     </tr>

@@ -19,6 +19,7 @@ type Profile = {
   department: string;
   title: string;
   officeLocation: string;
+  poInitials: string;
 };
 
 interface TimecardRecord {
@@ -44,14 +45,41 @@ interface RequiredSchedule {
 
 const KEY = "ahs:profile";
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const OFFICE_LOCATIONS = [
-  "US - Atlanta",
-  "US - Dallas",
-  "US - New York",
-  "US - Los Angeles",
-  "PH - Manila",
-  "PH - Cebu",
-  "PH - Davao",
+const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
+
+// Default locations matching LocationManagementPage defaults
+const DEFAULT_LOCATIONS = [
+  "Memphis",
+  "Nashville",
+  "Jacksonville",
+  "Tallahassee",
+  "Birmingham",
+  "Huntsville",
+  "Jonesboro",
+  "Atlanta",
+  "Knoxville",
+  "Wilmington",
+  "Mobile",
+  "Savannah",
+  "Montgomery",
+  "Chattanooga",
+  "Columbus",
+  "Jackson,MS",
+  "Raleigh",
+  "New Orleans",
+  "Louisville",
+  "St. Louis",
+  "Richmond",
+  "Jackson,TN",
+  "Asheville",
+  "Norfolk",
+  "Little Rock",
+  "Cape Girardeau",
+  "Destin",
+  "San Antonio",
+  "Lake Charles",
+  "Dallas",
+  "Philippines",
 ];
 
 function ProfilePage() {
@@ -66,6 +94,7 @@ function ProfilePage() {
     department: "Service",
     title: "Technician",
     officeLocation: "US",
+    poInitials: "",
   });
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saved, setSaved] = useState<string>("");
@@ -76,6 +105,7 @@ function ProfilePage() {
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
   });
+  const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS);
 
   // Timecard database mapping
   const timecardDatabase: { [key: string]: TimecardRecord[] } = {
@@ -135,8 +165,48 @@ function ProfilePage() {
   useEffect(() => {
     generateCurrentWeek();
     
+    // Load locations from localStorage (synced with LocationManagementPage)
+    const loadLocations = () => {
+      try {
+        const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed.rows) && parsed.rows.length > 0) {
+            // Extract location names from storage
+            const locationNames = parsed.rows.map((row: any) => row.location).filter(Boolean);
+            
+            // Filter to only include locations that are in DEFAULT_LOCATIONS (removes duplicates/custom entries)
+            const validLocations = locationNames.filter((name: string) => 
+              DEFAULT_LOCATIONS.includes(name)
+            );
+            
+            if (validLocations.length > 0) {
+              // Sort to match DEFAULT_LOCATIONS order
+              const sorted = validLocations.sort((a: string, b: string) => 
+                DEFAULT_LOCATIONS.indexOf(a) - DEFAULT_LOCATIONS.indexOf(b)
+              );
+              setLocations(sorted);
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load locations from storage:', error);
+      }
+      // Fall back to default locations (which includes Asheville)
+      setLocations(DEFAULT_LOCATIONS);
+    };
+    
+    loadLocations();
+    
     if (employee) {
       const parts = employee.name.split(" ");
+      // Determine default office location based on country and available locations
+      let defaultLocation = "Atlanta"; // Default to Atlanta for US
+      if (employee.country === "PH") {
+        defaultLocation = "Philippines"; // Default to Philippines for PH employees
+      }
+      
       const employeeProfile: Profile = {
         firstName: parts[0] || "",
         lastName: parts.slice(1).join(" ") || "",
@@ -144,7 +214,8 @@ function ProfilePage() {
         phone: "",
         department: employee.department,
         title: employee.role,
-        officeLocation: employee.country === "PH" ? "PH - Manila" : "US - Atlanta",
+        officeLocation: defaultLocation,
+        poInitials: "",
       };
       setProfile(employeeProfile);
       
@@ -174,6 +245,11 @@ function ProfilePage() {
         if (savedSchedule) {
           setRequiredSchedule(JSON.parse(savedSchedule));
         }
+        
+        const savedPOInitials = localStorage.getItem(`poInitials_${timecardKey}`);
+        if (savedPOInitials) {
+          setProfile(prev => ({ ...prev, poInitials: savedPOInitials }));
+        }
       }
       localStorage.removeItem(KEY);
     }
@@ -186,12 +262,15 @@ function ProfilePage() {
   const save = () => {
     localStorage.setItem(KEY, JSON.stringify(profile));
     
-    // Also save required schedule
+    // Also save required schedule and PO initials
     if (employee) {
       const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
       if (dummyEmployee) {
         const timecardKey = dummyEmployee.id.split("-").pop() || "unknown";
         localStorage.setItem(`requiredSchedule_${timecardKey}`, JSON.stringify(requiredSchedule));
+        if (profile.poInitials) {
+          localStorage.setItem(`poInitials_${timecardKey}`, profile.poInitials);
+        }
       }
     }
     
@@ -229,7 +308,8 @@ function ProfilePage() {
         onChange={(e) => setProfile({ ...profile, officeLocation: e.target.value })}
         className="glass-input"
       >
-        {OFFICE_LOCATIONS.map((location) => (
+        <option value="">Select a location</option>
+        {locations.map((location) => (
           <option key={location} value={location}>
             {location}
           </option>
@@ -257,6 +337,17 @@ function ProfilePage() {
           {field("Department", "department")}
           {field("Title", "title")}
           {locationField()}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">PO # Initial</span>
+            <input
+              className="glass-input"
+              type="text"
+              placeholder="Enter initials for purchase orders"
+              value={profile.poInitials}
+              onChange={(e) => setProfile({ ...profile, poInitials: e.target.value.toUpperCase() })}
+              maxLength={5}
+            />
+          </label>
         </div>
 
         {/* Required Schedule */}

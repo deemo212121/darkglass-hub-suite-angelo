@@ -1,36 +1,53 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
-
-type PoStatusRow = {
-  ticketNo: string;
-  poNo: string;
-  poDate: string;
-  orderNo: string;
-  accountNo: string;
-  partNo: string;
-  description: string;
-  unitPrice: string;
-  orderQty: string;
-  itemStatus: string;
-  eta: string;
-};
-
-const PO_STATUS_ROWS: PoStatusRow[] = [
-  { ticketNo: "TCK-10452", poNo: "PO-260507-001", poDate: "2026-05-07", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-  { ticketNo: "TCK-10491", poNo: "PO-260508-014", poDate: "2026-05-08", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-  { ticketNo: "TCK-10512", poNo: "PO-260510-022", poDate: "2026-05-10", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-  { ticketNo: "TCK-10518", poNo: "PO-260511-009", poDate: "2026-05-11", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-  { ticketNo: "TCK-10536", poNo: "PO-260513-017", poDate: "2026-05-13", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-  { ticketNo: "TCK-10549", poNo: "PO-260514-031", poDate: "2026-05-14", orderNo: "", accountNo: "", partNo: "", description: "", unitPrice: "", orderQty: "", itemStatus: "No-Invoice", eta: "" },
-];
+import { getAllPartOrders, getFilteredPartOrders } from "@/lib/poDataStore";
+import type { StoredPartOrder } from "@/lib/poDataStore";
 
 export function PoStatusPage() {
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const floatingBarRef = useRef<HTMLDivElement | null>(null);
   const floatingInnerRef = useRef<HTMLDivElement | null>(null);
+  
+  const [filteredOrders, setFilteredOrders] = useState<StoredPartOrder[]>([]);
+  const [location, setLocation] = useState("");
+  const [startDate, setStartDate] = useState("2026-05-07");
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [poNo, setPoNo] = useState("");
+  const [ticketNo, setTicketNo] = useState("");
 
   useEffect(() => {
+    try {
+      // Load all part orders and apply filters
+      const orders = getAllPartOrders();
+      
+      // Apply filters
+      const filtered = getFilteredPartOrders({
+        dateRange: {
+          start: startDate,
+          end: endDate,
+        },
+        partDist: location || undefined,
+      });
+      
+      const filteredArray = Array.isArray(filtered) ? filtered : [];
+      
+      // Additional client-side filtering
+      const finalFiltered = filteredArray.filter(order => {
+        if (poNo && !order.poNo.includes(poNo)) return false;
+        if (ticketNo && !order.ticketNo.includes(ticketNo)) return false;
+        return true;
+      });
+      
+      setFilteredOrders(finalFiltered);
+    } catch (error) {
+      console.error('Error loading part orders:', error);
+      setFilteredOrders([]);
+    }
+  }, [startDate, endDate, location, poNo, ticketNo]);
+
+  useEffect(() => {
+    // Setup scroll synchronization for table
     const tableWrap = tableWrapRef.current;
     const floatingBar = floatingBarRef.current;
     const floatingInner = floatingInnerRef.current;
@@ -143,8 +160,8 @@ export function PoStatusPage() {
           }
           .status-table th { background: #f3f4f6; font-weight: 700; }
           .status-table td:first-child, .status-table td:nth-child(2) { text-align: left; }
-          .ticket-link { color: inherit; text-decoration: none; font-weight: inherit; cursor: pointer; }
-          .ticket-link:hover { text-decoration: underline; }
+          .ticket-link { color: #0369a1; text-decoration: none; font-weight: 600; cursor: pointer; pointer-events: auto; display: inline-block; }
+          .ticket-link:hover { text-decoration: underline; color: #0284c7; }
           .status-pill {
             display: inline-flex;
             align-items: center;
@@ -207,42 +224,63 @@ export function PoStatusPage() {
         <div className="status-panel">
           <div className="status-controls">
             <div className="control-group">
-              <label htmlFor="location">Location</label>
-              <select id="location" defaultValue="">
-                <option value="">All Locations</option>
-                <option value="Philippines">Philippines</option>
-                <option value="Atlanta">Atlanta</option>
-                <option value="Dallas">Dallas</option>
-                <option value="Memphis">Memphis</option>
-                <option value="Tallahassee">Tallahassee</option>
+              <label htmlFor="ticketNo">Ticket #</label>
+              <input 
+                id="ticketNo" 
+                type="text" 
+                placeholder="Search by ticket number"
+                value={ticketNo}
+                onChange={(e) => setTicketNo(e.target.value)}
+              />
+            </div>
+            <div className="control-group">
+              <label htmlFor="location">Distributor</label>
+              <select 
+                id="location" 
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+              >
+                <option value="">All Distributors</option>
+                <option value="LG">LG</option>
+                <option value="Encompass">Encompass</option>
+                <option value="SS">SS</option>
+                <option value="Marcone-162468">Marcone-162468</option>
+                <option value="Encompass-Birmingham/Montgomery">Encompass-Birmingham/Montgomery</option>
               </select>
             </div>
             <div className="control-group">
               <label htmlFor="poDate">P/O Date</label>
-              <input id="poDate" type="date" defaultValue="2026-05-07" />
+              <input 
+                id="poDate" 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
             </div>
             <div className="control-group">
-              <label htmlFor="poDateEnd">~</label>
-              <input id="poDateEnd" type="date" defaultValue="2026-05-14" />
+              <label htmlFor="poDateEnd">to</label>
+              <input 
+                id="poDateEnd" 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
             </div>
             <div className="control-group">
-              <label htmlFor="poNo">P/O No</label>
-              <input id="poNo" type="text" placeholder="Enter P/O number" />
-            </div>
-            <div className="control-group">
-              <label htmlFor="branch">Branch</label>
-              <select id="branch" defaultValue="">
-                <option value="">Select branch</option>
-                <option value="4930403">4930403</option>
-                <option value="6488757">6488757</option>
-              </select>
+              <label htmlFor="poNo">P/O #</label>
+              <input 
+                id="poNo" 
+                type="text" 
+                placeholder="Search by P/O number"
+                value={poNo}
+                onChange={(e) => setPoNo(e.target.value)}
+              />
             </div>
           </div>
 
           <div className="status-meta">
-            <div>Summary: Active P/O and part records</div>
-            <div>Default range: 05/07/2026 ~ 05/14/2026</div>
-            <div>Filter: Open part orders only (No-Invoice)</div>
+            <div>📋 Showing {filteredOrders.length} part order(s) from Service Tracking</div>
+            <div>📅 Date range: {startDate} to {endDate}</div>
           </div>
 
           <div className="table-wrap" ref={tableWrapRef}>
@@ -253,35 +291,47 @@ export function PoStatusPage() {
                   <th>P/O #</th>
                   <th>P/O Date</th>
                   <th>Order #</th>
-                  <th>Account #</th>
                   <th>Part No</th>
                   <th>Description</th>
                   <th>Unit Price</th>
-                  <th>Order Qty</th>
+                  <th>Qty</th>
                   <th>Item Status</th>
                   <th>ETA</th>
                 </tr>
               </thead>
               <tbody>
-                {PO_STATUS_ROWS.map((row) => (
-                  <tr key={row.ticketNo}>
-                    <td>
-                      <Link className="ticket-link" to="/ticket/$ticketNo" params={{ ticketNo: row.ticketNo }} target="_blank" rel="noopener noreferrer">
-                        {row.ticketNo}
-                      </Link>
+                {filteredOrders.length > 0 ? (
+                  filteredOrders.map((order) => (
+                    <tr key={order.poNo}>
+                      <td>
+                        <a 
+                          href={`/ticket/${order.ticketNo}`}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="ticket-link"
+                          title={`Open ${order.ticketNo} in new tab`}
+                        >
+                          {order.ticketNo}
+                        </a>
+                      </td>
+                      <td>{order.poNo}</td>
+                      <td>{order.poDate}</td>
+                      <td>{order.orderNo || "—"}</td>
+                      <td>{order.partNo}</td>
+                      <td>{order.partDesc}</td>
+                      <td>${order.partPrice.toFixed(2)}</td>
+                      <td>{order.quantity}</td>
+                      <td><span className="status-pill status-pending">{order.itemStatus}</span></td>
+                      <td>{order.eta || "—"}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={10} style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+                      No part orders found. Create part orders from Service Tracking to see them here.
                     </td>
-                    <td>{row.poNo}</td>
-                    <td>{row.poDate}</td>
-                    <td>{row.orderNo}</td>
-                    <td>{row.accountNo}</td>
-                    <td>{row.partNo}</td>
-                    <td>{row.description}</td>
-                    <td>{row.unitPrice}</td>
-                    <td>{row.orderQty}</td>
-                    <td><span className="status-pill status-pending">{row.itemStatus}</span></td>
-                    <td>{row.eta}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -290,13 +340,13 @@ export function PoStatusPage() {
             <div id="poStatusFloatingScrollbarInner" className="floating-table-scrollbar-inner" ref={floatingInnerRef} />
           </div>
 
-          <div className="report-footer po-status-footer">Showing 6 P/O status records filtered for open part orders only.</div>
+          <div className="report-footer">Showing {filteredOrders.length} part order(s) auto-populated from Service Tracking.</div>
         </div>
       </main>
 
-      <footer id="contact" className="po-status-footer">
+      <footer id="contact">
         <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="po-status-footer-note">© 2026 Admin Hub Solutions. All rights reserved.</p>
+        <p className="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
       </footer>
     </div>
   );

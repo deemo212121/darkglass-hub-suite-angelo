@@ -657,7 +657,55 @@ function resolveCoverageLocation(query: string, locationRows: LocationRow[], cov
 
 export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [activeTab, setActiveTab] = useState<"locations" | "parts" | "coverage">("locations");
-  const [locationRows, setLocationRows] = useState<LocationRow[]>(() => loadRows(LOCATION_STORAGE_KEY, DEFAULT_LOCATION_ROWS));
+  
+  // Helper function to deduplicate locations, preferring DEFAULT rows
+  const deduplicateLocations = (rows: LocationRow[]): LocationRow[] => {
+    // Create a map of location name -> row, preferring entries from DEFAULT_LOCATION_ROWS
+    const locationMap = new Map<string, LocationRow>();
+    
+    // First pass: add all rows to the map
+    rows.forEach(row => {
+      if (!locationMap.has(row.location)) {
+        locationMap.has(row.location);
+      }
+      locationMap.set(row.location, row);
+    });
+    
+    // Second pass: override with DEFAULT rows if they exist (to prefer ID 52 for Asheville, etc)
+    DEFAULT_LOCATION_ROWS.forEach(defaultRow => {
+      locationMap.set(defaultRow.location, defaultRow);
+    });
+    
+    // Return as array, maintaining insertion order from defaults where possible
+    const result: LocationRow[] = [];
+    const seen = new Set<string>();
+    
+    // First add all rows from DEFAULT_LOCATION_ROWS that are in our map
+    DEFAULT_LOCATION_ROWS.forEach(defaultRow => {
+      if (!seen.has(defaultRow.location)) {
+        const row = locationMap.get(defaultRow.location);
+        if (row) {
+          result.push(row);
+          seen.add(defaultRow.location);
+        }
+      }
+    });
+    
+    // Then add any remaining rows not in defaults
+    rows.forEach(row => {
+      if (!seen.has(row.location)) {
+        result.push(row);
+        seen.add(row.location);
+      }
+    });
+    
+    return result;
+  };
+  
+  const [locationRows, setLocationRows] = useState<LocationRow[]>(() => {
+    const rows = loadRows(LOCATION_STORAGE_KEY, DEFAULT_LOCATION_ROWS);
+    return deduplicateLocations(rows);
+  });
   const [partRows, setPartRows] = useState<PartAddressRow[]>(() => loadRows(PART_ADDRESS_STORAGE_KEY, DEFAULT_PART_ADDRESS_ROWS));
   const [coverageRows, setCoverageRows] = useState<CoverageRow[]>(() => loadRows(COVERAGE_STORAGE_KEY, DEFAULT_COVERAGE_ROWS));
   const [locationSearch, setLocationSearch] = useState("");
@@ -1112,6 +1160,22 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const saveLocationRows = () => saveRows(LOCATION_STORAGE_KEY, locationRows);
   const savePartRows = () => saveRows(PART_ADDRESS_STORAGE_KEY, partRows);
   const saveCoverageRows = () => saveRows(COVERAGE_STORAGE_KEY, coverageRows);
+
+  // Auto-save deduplicated locations to prevent duplicates from returning
+  useEffect(() => {
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem(LOCATION_STORAGE_KEY) : null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.rows) && parsed.rows.length > locationRows.length) {
+          // Duplicates were removed, save the cleaned version
+          saveRows(LOCATION_STORAGE_KEY, locationRows);
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  }, [locationRows]);
 
   return (
     <main className="flex-1 bg-slate-950 py-6">

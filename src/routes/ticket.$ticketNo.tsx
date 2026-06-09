@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
+import { savePartOrder, createPartOrderFromTicket } from "@/lib/poDataStore";
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
@@ -1157,6 +1158,12 @@ function TicketDetailsPage() {
       return [nextRow, ...rows];
     });
 
+    // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered
+    if (nextRow.status === "Need PO" || nextRow.status === "PO Made" || nextRow.poNo.trim()) {
+      const partOrder = createPartOrderFromTicket(ticketNo, nextRow);
+      savePartOrder(partOrder);
+    }
+
     clearPartForm();
   };
 
@@ -2127,10 +2134,10 @@ function TicketDetailsPage() {
                         <input value={partDraft.partDesc} onChange={(e) => setPartDraft((d) => ({ ...d, partDesc: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
                       </td>
                       <td className="px-1 py-1.5">
-                        <input value={partDraft.poNo} onChange={(e) => setPartDraft((d) => ({ ...d, poNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="PO No" />
+                        <input value={partDraft.poNo} onChange={(e) => setPartDraft((d) => ({ ...d, poNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="PO No (Auto-gen)" />
                       </td>
                       <td className="px-1 py-1.5">
-                        <input type="date" value={partDraft.poDate} onChange={(e) => setPartDraft((d) => ({ ...d, poDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                        <input type="date" value={partDraft.poDate} onChange={(e) => setPartDraft((d) => ({ ...d, poDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" title="Auto-populated on PO creation" />
                       </td>
                       <td className="px-1 py-1.5">
                         <input value={partDraft.invoiceNo} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Invoice No" />

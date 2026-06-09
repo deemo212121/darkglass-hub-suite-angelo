@@ -5,6 +5,23 @@ import { USER_MANAGEMENT_RECORDS, type UserManagementRecord } from "@/lib/user-m
 
 type ViewMode = "list" | "hierarchy";
 
+interface NewUserFormData {
+  loginName: string;
+  userName: string;
+  email: string;
+  userType: string;
+  manager: string;
+  technicianId: string;
+  assignedBranch: string;
+  branchAccess: string;
+  poInitials: string;
+  requiredCheckIn: string;
+  requiredCheckOut: string;
+  selectedOffDays: number[];
+}
+
+const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
 function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug: string; submoduleSlug: string; userId: string; children: React.ReactNode }) {
   return (
     <Link
@@ -23,6 +40,20 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUserForm, setNewUserForm] = useState<NewUserFormData>({
+    loginName: "",
+    userName: "",
+    email: "",
+    userType: "",
+    manager: "",
+    technicianId: "",
+    assignedBranch: "",
+    branchAccess: "",
+    poInitials: "",
+    requiredCheckIn: "08:00",
+    requiredCheckOut: "17:00",
+    selectedOffDays: [5, 6], // Saturday and Sunday by default
+  });
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -43,6 +74,74 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     });
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
+
+  const handleAddUserFormChange = (field: keyof NewUserFormData, value: any) => {
+    setNewUserForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const toggleOffDay = (dayNum: number) => {
+    setNewUserForm((prev) => ({
+      ...prev,
+      selectedOffDays: prev.selectedOffDays.includes(dayNum)
+        ? prev.selectedOffDays.filter((d) => d !== dayNum)
+        : [...prev.selectedOffDays, dayNum],
+    }));
+  };
+
+  const handleCreateUser = () => {
+    // Validate required fields
+    if (!newUserForm.loginName || !newUserForm.userName || !newUserForm.email || !newUserForm.userType || !newUserForm.manager || !newUserForm.assignedBranch || !newUserForm.branchAccess) {
+      alert("Please fill in all required fields.");
+      return;
+    }
+
+    // Create new user record (in real app, would save to database)
+    const newRecord: UserManagementRecord = {
+      id: String(300 + USER_MANAGEMENT_RECORDS.length),
+      loginName: newUserForm.loginName,
+      userName: newUserForm.userName,
+      email: newUserForm.email,
+      type: newUserForm.userType,
+      manager: newUserForm.manager,
+      technicianId: newUserForm.technicianId,
+      office: newUserForm.assignedBranch,
+      locations: newUserForm.branchAccess,
+    };
+
+    // Save schedule to localStorage
+    localStorage.setItem(`requiredSchedule_${newRecord.id}`, JSON.stringify({
+      requiredCheckIn: newUserForm.requiredCheckIn,
+      requiredCheckOut: newUserForm.requiredCheckOut,
+    }));
+
+    // Save off days to localStorage
+    localStorage.setItem(`offDays_${newRecord.id}`, JSON.stringify(newUserForm.selectedOffDays));
+
+    // Save PO initials to localStorage
+    if (newUserForm.poInitials) {
+      localStorage.setItem(`poInitials_${newRecord.id}`, newUserForm.poInitials);
+    }
+
+    // In a real app, would add to database
+    alert(`User ${newUserForm.userName} created successfully with ID: ${newRecord.id}`);
+
+    // Reset form
+    setNewUserForm({
+      loginName: "",
+      userName: "",
+      email: "",
+      userType: "",
+      manager: "",
+      technicianId: "",
+      assignedBranch: "",
+      branchAccess: "",
+      poInitials: "",
+      requiredCheckIn: "08:00",
+      requiredCheckOut: "17:00",
+      selectedOffDays: [5, 6],
+    });
+    setShowAddUserModal(false);
+  };
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
@@ -167,51 +266,163 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <button type="button" onClick={() => setShowAddUserModal(false)} className="btn hover:bg-slate-800">Cancel</button>
-                <button type="button" onClick={() => setShowAddUserModal(false)} className="btn btn-primary">Create User</button>
+                <button type="button" onClick={handleCreateUser} className="btn btn-primary">Create User</button>
               </div>
             </div>
-            <div className="p-5">
-              <div className="grid gap-4 lg:grid-cols-2">
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Login Name *</span>
-                  <input placeholder="Enter login name" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Name *</span>
-                  <input placeholder="Enter user name" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email *</span>
-                  <input type="email" placeholder="Enter email address" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Type *</span>
-                  <select className="glass-input w-full text-[11px] px-2 py-1">
-                    <option value="">Select user type</option>
-                    <option value="admin">Admin</option>
-                    <option value="hr">HR</option>
-                    <option value="manager">Manager</option>
-                    <option value="technician">Technician</option>
-                  </select>
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Manager *</span>
-                  <input placeholder="Assign manager" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician ID</span>
-                  <input placeholder="Enter technician ID (optional)" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Assigned Branch *</span>
-                  <input placeholder="Select branch office" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
-                <label className="space-y-2 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch Access *</span>
-                  <input placeholder="Enter branch access (comma separated)" className="glass-input w-full text-[11px] px-2 py-1" />
-                </label>
+            <div className="p-5 space-y-6">
+              {/* Basic Information */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-300 mb-4">Basic Information</h3>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Login Name *</span>
+                    <input 
+                      placeholder="Enter login name" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.loginName}
+                      onChange={(e) => handleAddUserFormChange("loginName", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Name *</span>
+                    <input 
+                      placeholder="Enter user name" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.userName}
+                      onChange={(e) => handleAddUserFormChange("userName", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email *</span>
+                    <input 
+                      type="email" 
+                      placeholder="Enter email address" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.email}
+                      onChange={(e) => handleAddUserFormChange("email", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Type *</span>
+                    <select 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.userType}
+                      onChange={(e) => handleAddUserFormChange("userType", e.target.value)}
+                    >
+                      <option value="">Select user type</option>
+                      <option value="Admin">Admin</option>
+                      <option value="HR">HR</option>
+                      <option value="Manager">Manager</option>
+                      <option value="Technician">Technician</option>
+                    </select>
+                  </label>
+                </div>
               </div>
-              <div className="mt-4 text-xs text-slate-400">
+
+              {/* Assignment Details */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-300 mb-4">Assignment Details</h3>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Manager *</span>
+                    <input 
+                      placeholder="Assign manager" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.manager}
+                      onChange={(e) => handleAddUserFormChange("manager", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician ID</span>
+                    <input 
+                      placeholder="Enter technician ID (optional)" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.technicianId}
+                      onChange={(e) => handleAddUserFormChange("technicianId", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Assigned Branch *</span>
+                    <input 
+                      placeholder="Select branch office" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.assignedBranch}
+                      onChange={(e) => handleAddUserFormChange("assignedBranch", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch Access *</span>
+                    <input 
+                      placeholder="Enter branch access (comma separated)" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.branchAccess}
+                      onChange={(e) => handleAddUserFormChange("branchAccess", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">PO # Initial</span>
+                    <input 
+                      placeholder="Enter initials for purchase orders" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.poInitials}
+                      onChange={(e) => handleAddUserFormChange("poInitials", e.target.value.toUpperCase())}
+                      maxLength={5}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Required Schedule */}
+              <div className="pt-4 border-t border-white/10">
+                <h3 className="text-sm font-semibold text-slate-300 mb-4">Required Schedule</h3>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <label className="flex flex-col gap-2">
+                    <span className="text-xs text-slate-400">Check-In Time</span>
+                    <input
+                      type="time"
+                      value={newUserForm.requiredCheckIn}
+                      onChange={(e) => handleAddUserFormChange("requiredCheckIn", e.target.value)}
+                      className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-2">
+                    <span className="text-xs text-slate-400">Check-Out Time</span>
+                    <input
+                      type="time"
+                      value={newUserForm.requiredCheckOut}
+                      onChange={(e) => handleAddUserFormChange("requiredCheckOut", e.target.value)}
+                      className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Days Off */}
+              <div className="pt-4 border-t border-white/10">
+                <h3 className="text-sm font-semibold text-slate-300 mb-4">Days Off</h3>
+                <div className="grid grid-cols-7 gap-2 mb-4">
+                  {DAYS_OF_WEEK.map((dayName, dayNum) => (
+                    <button
+                      key={dayNum}
+                      type="button"
+                      onClick={() => toggleOffDay(dayNum)}
+                      className={`p-2 rounded border transition text-xs font-semibold flex flex-col items-center justify-center h-16 ${
+                        newUserForm.selectedOffDays.includes(dayNum)
+                          ? "bg-red-500/20 border-red-500/50 text-red-300"
+                          : "bg-slate-700 border-white/10 text-slate-300 hover:border-white/30"
+                      }`}
+                    >
+                      <span className="text-xs truncate">{dayName.slice(0, 3)}</span>
+                      <span className="text-xs mt-1 opacity-75">{newUserForm.selectedOffDays.includes(dayNum) ? "OFF" : "WORK"}</span>
+                    </button>
+                  ))}
+                </div>
+                {newUserForm.selectedOffDays.length > 0 && (
+                  <p className="text-xs text-blue-300">Selected: {newUserForm.selectedOffDays.map((d) => DAYS_OF_WEEK[d]).join(", ")}</p>
+                )}
+              </div>
+
+              <div className="text-xs text-slate-400 pt-4 border-t border-white/10">
                 <span className="font-semibold">Note:</span> Fields marked with * are required. ID will be automatically generated upon creation.
               </div>
             </div>

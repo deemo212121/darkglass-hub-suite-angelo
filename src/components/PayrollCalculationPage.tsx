@@ -2,7 +2,7 @@ import { ChevronLeft, TrendingUp, AlertCircle, Download, CheckCircle2, AlertTria
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import type { ModuleDef, SubModuleDef } from "@/lib/db";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { DUMMY_EMPLOYEES } from "@/lib/dummyData";
 import { 
   createSalaryHistory, 
@@ -26,18 +26,14 @@ interface PayrollEmployee {
   totalWages: number;
 }
 
-interface SalaryHistory {
-  effectiveDate: string; // YYYY-MM-DD
-  hourlyRate: number;
-  reason: string;
-}
+
 
 interface Employee {
   id: string;
   name: string;
   department: string;
   hourlyRate: number; // Current rate
-  salaryHistory: SalaryHistory[];
+  salaryHistory: SalaryHistory; // Single SalaryHistory object
   currency: "USD" | "PHP";
 }
 
@@ -73,18 +69,23 @@ const EMPLOYEES: Employee[] = DUMMY_EMPLOYEES.map(emp => ({
   department: emp.department,
   hourlyRate: emp.hourlyRate,
   currency: emp.country === "US" ? "USD" : "PHP",
-  salaryHistory: [
-    {
-      effectiveDate: emp.hireDate,
-      hourlyRate: emp.hourlyRate * 0.9, // 10% less as starting salary
-      reason: "Initial hire"
-    },
-    {
-      effectiveDate: "2026-06-01",
-      hourlyRate: emp.hourlyRate,
-      reason: "Current rate adjustment"
-    }
-  ]
+  salaryHistory: {
+    employeeId: emp.id,
+    salaryEntries: [
+      {
+        id: `salary_initial_${emp.id}`,
+        effectiveDate: new Date(emp.hireDate),
+        hourlyRate: emp.hourlyRate * 0.9, // 10% less as starting salary
+        reason: "initial" as const
+      },
+      {
+        id: `salary_current_${emp.id}`,
+        effectiveDate: new Date("2026-06-01"),
+        hourlyRate: emp.hourlyRate,
+        reason: "adjustment" as const
+      }
+    ]
+  }
 }));
 
 // Generate PAYROLL_DATA based on DUMMY_EMPLOYEES
@@ -216,34 +217,36 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     const employee = EMPLOYEES.find(e => e.id === employeeId);
     if (!employee) return 0;
 
+    const salaryEntries = employee.salaryHistory.salaryEntries;
+
     // If no salary changes in this period, use current rate
-    const changesInPeriod = employee.salaryHistory.filter(
-      h => h.effectiveDate >= periodStart && h.effectiveDate <= periodEnd
+    const changesInPeriod = salaryEntries.filter(
+      h => h.effectiveDate >= new Date(periodStart) && h.effectiveDate <= new Date(periodEnd)
     );
 
     if (changesInPeriod.length === 0) {
       // No changes in period - use the rate that was active at period start
-      const activeRate = employee.salaryHistory
-        .filter(h => h.effectiveDate <= periodStart)
-        .sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime())[0];
+      const activeRate = salaryEntries
+        .filter(h => h.effectiveDate <= new Date(periodStart))
+        .sort((a, b) => b.effectiveDate.getTime() - a.effectiveDate.getTime())[0];
       return hoursWorked * (activeRate?.hourlyRate || employee.hourlyRate);
     }
 
     // Has changes - calculate pro-rata
-    const sortedHistory = [...employee.salaryHistory].sort(
-      (a, b) => new Date(a.effectiveDate).getTime() - new Date(b.effectiveDate).getTime()
+    const sortedEntries = [...salaryEntries].sort(
+      (a, b) => a.effectiveDate.getTime() - b.effectiveDate.getTime()
     );
 
     let totalPay = 0;
     let currentDate = new Date(periodStart);
     const endDate = new Date(periodEnd);
 
-    for (let i = 0; i < sortedHistory.length; i++) {
-      const changeDate = new Date(sortedHistory[i].effectiveDate);
+    for (let i = 0; i < sortedEntries.length; i++) {
+      const changeDate = sortedEntries[i].effectiveDate;
       if (changeDate > endDate) break;
 
-      const nextChangeDate = i + 1 < sortedHistory.length 
-        ? new Date(sortedHistory[i + 1].effectiveDate)
+      const nextChangeDate = i + 1 < sortedEntries.length 
+        ? sortedEntries[i + 1].effectiveDate
         : endDate;
 
       const rateStart = new Date(Math.max(currentDate.getTime(), changeDate.getTime()));
@@ -252,7 +255,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       const daysInRange = (rateEnd.getTime() - rateStart.getTime()) / (1000 * 60 * 60 * 24);
       const hoursInRange = (daysInRange / 7) * hoursWorked; // Pro-rata based on days
 
-      totalPay += hoursInRange * sortedHistory[i].hourlyRate;
+      totalPay += hoursInRange * sortedEntries[i].hourlyRate;
     }
 
     return totalPay;
@@ -263,9 +266,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     const employee = EMPLOYEES.find(e => e.id === employeeId);
     if (!employee || !employee.salaryHistory) return false;
 
-    // Check if any salary history entry falls within the payroll period
-    return employee.salaryHistory.some(
-      h => h.effectiveDate >= payrollStartDate && h.effectiveDate <= payrollEndDate && h.reason !== "Initial hire"
+    // Check if any salary entry falls within the payroll period
+    return employee.salaryHistory.salaryEntries.some(
+      h => h.effectiveDate >= new Date(payrollStartDate) && h.effectiveDate <= new Date(payrollEndDate) && h.reason !== "initial"
     );
   };
 
@@ -371,27 +374,29 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     }).filter(Boolean) as PayrollCalculation[];
   }, [payrollEmployees, payrollStartDate, payrollEndDate]);
 
-  const filteredPayroll = payrollCalculations.filter(p => {
-    // Filter by department
-    if (departmentFilter && p.department !== departmentFilter) {
-      return false;
-    }
-    
-    // Filter by search query (employee name)
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      return p.employeeName.toLowerCase().includes(query);
-    }
-    
-    return true;
-  });
+  const filteredPayroll = useMemo(() => {
+    return payrollCalculations.filter(p => {
+      // Filter by department
+      if (departmentFilter && p.department !== departmentFilter) {
+        return false;
+      }
+      
+      // Filter by search query (employee name)
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        return p.employeeName.toLowerCase().includes(query);
+      }
+      
+      return true;
+    });
+  }, [payrollCalculations, departmentFilter, searchQuery]);
 
   const totalGrossPay = useMemo(() => {
     return Math.round(filteredPayroll.reduce((sum, p) => sum + p.grossPay, 0) * 100) / 100;
-  }, [filteredPayroll, searchQuery, departmentFilter]);
+  }, [filteredPayroll]);
 
-  // Validation helpers
-  const getPayrollIssues = () => {
+  // Validation helpers - MEMOIZED to prevent infinite render loops
+  const issues = useMemo(() => {
     const issues = [];
     const employeesWithAbsences = filteredPayroll.filter(p => p.absenceHours > 0);
     const employeesWithoutHours = filteredPayroll.filter(p => p.hoursWorked === 0);
@@ -419,9 +424,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       });
     }
     return issues;
-  };
+  }, [filteredPayroll]);
 
-  const issues = getPayrollIssues();
   const hasErrors = issues.some(i => i.severity === "high");
 
   const handleProcessPayroll = () => {
@@ -1419,7 +1423,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
               {filteredPayroll.map(payroll => {
                 const employee = EMPLOYEES.find(e => e.id === payroll.employeeId);
                 const hasChange = hasSalaryChange(payroll.employeeId);
-                const latestChange = employee?.salaryHistory[employee.salaryHistory.length - 1];
+                const latestChange = employee?.salaryHistory.salaryEntries[employee.salaryHistory.salaryEntries.length - 1];
                 
                 return (
                   <div 
@@ -1448,7 +1452,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                       </p>
                       {latestChange && (
                         <p className="text-xs text-slate-300">
-                          <span className="text-slate-400">Effective:</span> <span className="text-yellow-300">{latestChange.effectiveDate}</span>
+                          <span className="text-slate-400">Effective:</span> <span className="text-yellow-300">{latestChange.effectiveDate.toLocaleDateString()}</span>
                         </p>
                       )}
                       {hasChange && (
@@ -1509,7 +1513,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                 </div>
 
                 <div className="space-y-3 mb-6">
-                  {EMPLOYEES.find(e => e.id === showSalaryHistory)?.salaryHistory.map((entry, idx) => (
+                  {EMPLOYEES.find(e => e.id === showSalaryHistory)?.salaryHistory.salaryEntries.map((entry, idx) => (
                     <div key={idx} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1517,13 +1521,13 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                             ${entry.hourlyRate}/hr
                           </p>
                           <p className="text-xs text-slate-400 mt-1">
-                            Effective: <span className="text-slate-300">{entry.effectiveDate}</span>
+                            Effective: <span className="text-slate-300">{entry.effectiveDate.toLocaleDateString()}</span>
                           </p>
                           <p className="text-xs text-slate-400 mt-1">
                             Reason: <span className="text-blue-300">{entry.reason}</span>
                           </p>
                         </div>
-                        {idx === EMPLOYEES.find(e => e.id === showSalaryHistory)?.salaryHistory.length! - 1 && (
+                        {idx === EMPLOYEES.find(e => e.id === showSalaryHistory)?.salaryHistory.salaryEntries.length! - 1 && (
                           <span className="inline-block px-2 py-1 bg-green-600 text-green-100 text-xs font-semibold rounded whitespace-nowrap ml-2">
                             Current
                           </span>
