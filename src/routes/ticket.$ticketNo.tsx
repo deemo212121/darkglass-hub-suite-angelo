@@ -6,6 +6,7 @@ import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket } from "@/lib/poDataStore";
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { loadTickets, updateTicket, getTicketByNumber, type Ticket } from "@/lib/ticketData";
 
 interface TicketData {
   ticketNo: string;
@@ -824,7 +825,74 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
-  const ticket = TICKET_DATA[ticketNo];
+  // Load ticket from centralized system
+  const [ticketData, setTicketData] = useState<TicketData | null>(null);
+  
+  useEffect(() => {
+    // Load ticket from centralized system
+    const loadTicketData = () => {
+      const centralTicket = getTicketByNumber(ticketNo);
+      if (centralTicket) {
+        // Map centralized Ticket to TicketData format
+        const mapped: TicketData = {
+          ticketNo: centralTicket.ticketNo,
+          account: centralTicket.account || "",
+          warranty: centralTicket.warranty,
+          product: centralTicket.model,
+          tat: "",
+          status: centralTicket.status,
+          schedule: centralTicket.schedule,
+          contact: centralTicket.contact || "",
+          location: centralTicket.location,
+          firstName: centralTicket.firstName || "",
+          lastName: centralTicket.lastName || "",
+          address: centralTicket.address || "",
+          city: centralTicket.city,
+          state: "",
+          zip: centralTicket.zip || "",
+          homePhone: centralTicket.phone,
+          cellPhone: "",
+          email: centralTicket.email || "",
+          brand: centralTicket.manufacturer,
+          model: centralTicket.model,
+          serialNo: "",
+          productCategory: "",
+          purchaseDate: "",
+          warrantyType: centralTicket.warranty,
+          claimCompany: "",
+          accountNo: centralTicket.account || "",
+          callNo: "",
+          callType: centralTicket.type || "",
+          callStatus: centralTicket.status,
+          postingDate: centralTicket.created,
+          problemDescription: centralTicket.internalNote,
+          scheduleDate: centralTicket.schedule,
+          schedulePeriod: "",
+          technician: centralTicket.technician,
+          customerNotes: [],
+          servicerNotes: [],
+        };
+        setTicketData(mapped);
+      } else {
+        // Fallback to hardcoded data if not in centralized system
+        setTicketData(TICKET_DATA[ticketNo] || null);
+      }
+    };
+    
+    loadTicketData();
+    
+    // Listen for ticket updates
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "ahs:tickets:data" || e.key === null) {
+        loadTicketData();
+      }
+    };
+    
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, [ticketNo]);
+
+  const ticket = ticketData;
 
   const addServicerNote = () => {
     if (newServicerNote.trim()) {
@@ -880,6 +948,17 @@ function TicketDetailsPage() {
 
         (ticket[field] as any) = editedCustomerInfo[field];
       }
+    });
+
+    // Update centralized ticket system
+    updateTicket(ticketNo, {
+      firstName: editedCustomerInfo.firstName || ticket.firstName,
+      lastName: editedCustomerInfo.lastName || ticket.lastName,
+      address: editedCustomerInfo.address || ticket.address,
+      city: editedCustomerInfo.city || ticket.city,
+      zip: editedCustomerInfo.zip || ticket.zip,
+      phone: editedCustomerInfo.homePhone || ticket.homePhone,
+      email: editedCustomerInfo.email || ticket.email,
     });
 
     setIsEditingCustomerInfo(false);
@@ -961,6 +1040,14 @@ function TicketDetailsPage() {
       before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
       after: summarizeVisitEntry(visitEntry),
     });
+    
+    // Update centralized ticket system with technician and schedule
+    updateTicket(ticketNo, {
+      technician: newVisitTechnician,
+      schedule: newVisitScheduleDate,
+      status: newVisitStatus || ticket.status,
+    });
+    
     clearVisitForm();
     setIsVisitModalOpen(false);
   };
