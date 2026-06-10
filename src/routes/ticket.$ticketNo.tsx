@@ -761,6 +761,10 @@ function TicketDetailsPage() {
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
 
+  // Edit mode state for schedule information
+  const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
+  const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
+
   useEffect(() => {
     setAuditEntries(loadAuditEntries(ticketNo));
     setVisitLogEntries(loadVisitLogEntries(ticketNo));
@@ -968,6 +972,54 @@ function TicketDetailsPage() {
   const cancelEditingCustomerInfo = () => {
     setIsEditingCustomerInfo(false);
     setEditedCustomerInfo({});
+  };
+
+  const startEditingScheduleInfo = () => {
+    if (ticket) {
+      setEditedScheduleInfo({
+        scheduleDate: ticket.scheduleDate,
+        schedulePeriod: ticket.schedulePeriod,
+        technician: ticket.technician,
+      });
+      setIsEditingScheduleInfo(true);
+    }
+  };
+
+  const saveScheduleInfo = () => {
+    if (!ticket) return;
+
+    const fieldsToCheck: (keyof TicketData)[] = ["scheduleDate", "schedulePeriod", "technician"];
+
+    fieldsToCheck.forEach((field) => {
+      const oldValue = formatAuditValue(ticket[field]);
+      const newValue = formatAuditValue(editedScheduleInfo[field]);
+
+      if (oldValue !== newValue) {
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Updated schedule information",
+          field: field.charAt(0).toUpperCase() + field.slice(1).replace(/([A-Z])/g, " $1"),
+          before: oldValue,
+          after: newValue,
+        });
+
+        (ticket[field] as any) = editedScheduleInfo[field];
+      }
+    });
+
+    // Update centralized ticket system
+    updateTicket(ticketNo, {
+      schedule: editedScheduleInfo.scheduleDate || ticket.scheduleDate,
+      technician: editedScheduleInfo.technician || ticket.technician,
+    });
+
+    setIsEditingScheduleInfo(false);
+    setEditedScheduleInfo({});
+  };
+
+  const cancelEditingScheduleInfo = () => {
+    setIsEditingScheduleInfo(false);
+    setEditedScheduleInfo({});
   };
 
   const addVisitLogEntry = () => {
@@ -1652,19 +1704,78 @@ function TicketDetailsPage() {
 
               {/* Schedule Information */}
               <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Schedule Information</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-slate-300">Schedule Information</h4>
+                  {!isEditingScheduleInfo ? (
+                    <button
+                      onClick={() => setIsEditingScheduleInfo(true)}
+                      className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold transition-colors border border-blue-500/30"
+                    >
+                      Edit Schedule
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveScheduleInfo}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEditingScheduleInfo}
+                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <label className="text-slate-500 font-semibold">Schedule Date</label>
-                    <div className="text-white mt-1">{ticket.scheduleDate}</div>
+                    {isEditingScheduleInfo ? (
+                      <input
+                        type="date"
+                        value={editedScheduleInfo.scheduleDate || ticket.scheduleDate}
+                        onChange={(e) => setEditedScheduleInfo({ ...editedScheduleInfo, scheduleDate: e.target.value })}
+                        className="glass-input w-full mt-1"
+                      />
+                    ) : (
+                      <div className="text-white mt-1">{ticket.scheduleDate}</div>
+                    )}
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Schedule Period</label>
-                    <div className="text-white mt-1">{ticket.schedulePeriod}</div>
+                    {isEditingScheduleInfo ? (
+                      <input
+                        type="text"
+                        value={editedScheduleInfo.schedulePeriod || ticket.schedulePeriod}
+                        onChange={(e) => setEditedScheduleInfo({ ...editedScheduleInfo, schedulePeriod: e.target.value })}
+                        className="glass-input w-full mt-1"
+                        placeholder="AM/PM/Eve"
+                      />
+                    ) : (
+                      <div className="text-white mt-1">{ticket.schedulePeriod}</div>
+                    )}
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Technician</label>
-                    <div className="text-white mt-1">{ticket.technician || "Not assigned"}</div>
+                    {isEditingScheduleInfo ? (
+                      <select
+                        value={editedScheduleInfo.technician || ticket.technician}
+                        onChange={(e) => setEditedScheduleInfo({ ...editedScheduleInfo, technician: e.target.value })}
+                        className="glass-input w-full mt-1"
+                      >
+                        <option value="">Not assigned</option>
+                        {ALL_TECHNICIANS.map((tech) => (
+                          <option key={tech} value={tech}>
+                            {tech}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="text-white mt-1">{ticket.technician || "Not assigned"}</div>
+                    )}
                   </div>
                 </div>
               </div>
