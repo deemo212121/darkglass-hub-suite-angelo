@@ -2,22 +2,45 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { TICKET_SEARCH_INDEX, normalizeTicketSearchValue } from "@/lib/ticket-search";
+import { normalizeTicketSearchValue } from "@/lib/ticket-search";
+import { loadTickets } from "@/lib/ticketData";
 
 export function TicketSearchFab() {
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [tickets, setTickets] = useState(() => loadTickets());
+
+  // Load tickets and listen for changes
+  useEffect(() => {
+    setTickets(loadTickets());
+    
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "ahs:tickets:data") {
+        setTickets(loadTickets());
+      }
+    };
+    
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  // Reload tickets when search opens to ensure fresh data
+  useEffect(() => {
+    if (searchOpen) {
+      setTickets(loadTickets());
+    }
+  }, [searchOpen]);
 
   const searchResults = useMemo(() => {
     const query = normalizeTicketSearchValue(searchText);
-    if (!query) return TICKET_SEARCH_INDEX.slice(0, 8);
-    return TICKET_SEARCH_INDEX.filter((entry) =>
-      [entry.ticketNo, entry.customer, entry.city, entry.zip, entry.status].some((value) =>
+    if (!query) return tickets.slice(0, 8);
+    return tickets.filter((ticket) =>
+      [ticket.ticketNo, ticket.customer, ticket.city, ticket.zip || "", ticket.status].some((value) =>
         normalizeTicketSearchValue(value).includes(query),
       ),
     ).slice(0, 8);
-  }, [searchText]);
+  }, [searchText, tickets]);
 
   const openTicket = (ticketNo: string) => {
     setSearchOpen(false);
@@ -66,18 +89,18 @@ export function TicketSearchFab() {
             </label>
             {searchResults.length > 0 && searchText && (
               <div className="space-y-1 max-h-64 overflow-y-auto">
-                {searchResults.map((entry) => (
+                {searchResults.map((ticket) => (
                   <button
-                    key={entry.ticketNo}
+                    key={ticket.ticketNo}
                     type="button"
-                    onClick={() => openTicket(entry.ticketNo)}
+                    onClick={() => openTicket(ticket.ticketNo)}
                     className="w-full text-left px-3 py-2 rounded-md hover:bg-white/10 transition-colors"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs text-blue-400">{entry.ticketNo}</span>
-                      <span className="text-xs text-muted-foreground truncate">{entry.status}</span>
+                      <span className="font-mono text-xs text-blue-400">{ticket.ticketNo}</span>
+                      <span className="text-xs text-muted-foreground truncate">{ticket.status}</span>
                     </div>
-                    <div className="text-xs text-muted-foreground">{entry.customer} — {entry.city} {entry.zip}</div>
+                    <div className="text-xs text-muted-foreground">{ticket.customer} — {ticket.city} {ticket.zip || ""}</div>
                   </button>
                 ))}
               </div>
