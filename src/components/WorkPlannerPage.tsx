@@ -5,6 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getSubModule } from "@/lib/modules";
 import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
+import { loadTickets, type Ticket } from "@/lib/ticketData";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
@@ -162,9 +163,20 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const dragSourceRef = useRef<{ ticketNo: string; slot: PlannerTicket["slot"]; technician: string } | null>(null);
 
   useEffect(() => {
-    const raw = localStorage.getItem(storageKey("tickets", "ticket-list"));
-    const sourceRows = raw ? (() => { try { return JSON.parse(raw) as TicketRecord[]; } catch { return readSeededTickets(); } })() : readSeededTickets();
+    // Load tickets from centralized system instead of old storage key
+    const sourceRows = loadTickets() as TicketRecord[];
     setPlannerTickets(createPlannerTickets(sourceRows));
+    
+    // Listen for ticket updates
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "ahs:tickets:data" || e.key === null) {
+        const updatedTickets = loadTickets() as TicketRecord[];
+        setPlannerTickets(createPlannerTickets(updatedTickets));
+      }
+    };
+    
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
   useEffect(() => {

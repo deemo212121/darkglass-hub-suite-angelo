@@ -4,6 +4,7 @@ import { getSubModule } from "@/lib/modules";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName } from "@/lib/locations";
+import { loadTickets, type Ticket } from "@/lib/ticketData";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -152,11 +153,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
   const tickets = useMemo<TicketRecord[]>(() => {
     if (!ready) return [];
-    try {
-      return JSON.parse(localStorage.getItem("ticket-list") || "[]") as TicketRecord[];
-    } catch {
-      return [];
-    }
+    return loadTickets() as TicketRecord[];
   }, [ready]);
 
   const locationData = useMemo<LocationTickets[]>(() => {
