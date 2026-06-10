@@ -310,6 +310,8 @@ function SubModule() {
         ? <CSRCallTracker mod={mod} sub={sub} />
         : (sub as any).custom === "csr-status-summary"
         ? <CSRStatusSummary mod={mod} sub={sub} />
+        : (sub as any).custom === "hr-dashboard"
+        ? <ReportHRDaily mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"

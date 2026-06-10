@@ -967,43 +967,58 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
               Sync Now
             </button>
           </div>
-          {/* KPI Cards */}
+          {/* KPI Cards - Improved Hierarchy */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Payroll Ready</p>
-                  <p className="text-2xl font-bold text-green-400 mt-2">{filteredPayroll.length}</p>
-                </div>
-                <CheckCircle2 className="h-8 w-8 text-green-400 opacity-50" />
+            {/* Employees Ready */}
+            <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 border border-green-500/30 rounded-lg p-5 hover:border-green-500/50 transition">
+              <div className="flex items-start justify-between mb-3">
+                <CheckCircle2 className="h-5 w-5 text-green-400" />
+                <span className="text-xs font-semibold text-green-400 bg-green-500/20 px-2 py-0.5 rounded">READY</span>
               </div>
+              <p className="text-3xl font-bold text-white mb-1">{filteredPayroll.length}</p>
+              <p className="text-xs text-slate-400 uppercase font-medium tracking-wide">Employees</p>
             </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Payroll Errors</p>
-                  <p className="text-2xl font-bold text-red-400 mt-2">{issues.filter(i => i.severity === "high").length}</p>
-                </div>
-                <AlertTriangle className="h-8 w-8 text-red-400 opacity-50" />
+
+            {/* Total Gross Pay */}
+            <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/30 rounded-lg p-5 hover:border-emerald-500/50 transition">
+              <div className="flex items-start justify-between mb-3">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
+                <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">TOTAL</span>
               </div>
+              <p className="text-3xl font-bold text-white mb-1">${(totalGrossPay / 1000).toFixed(1)}K</p>
+              <p className="text-xs text-slate-400 uppercase font-medium tracking-wide">Gross Pay</p>
             </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Total Hours Worked</p>
-                  <p className="text-2xl font-bold text-blue-400 mt-2">{filteredPayroll.reduce((sum, p) => sum + p.hoursWorked, 0).toFixed(0)}</p>
-                </div>
-                <Activity className="h-8 w-8 text-blue-400 opacity-50" />
+
+            {/* Total Hours */}
+            <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/30 rounded-lg p-5 hover:border-blue-500/50 transition">
+              <div className="flex items-start justify-between mb-3">
+                <Activity className="h-5 w-5 text-blue-400" />
+                <span className="text-xs font-semibold text-blue-400 bg-blue-500/20 px-2 py-0.5 rounded">REGULAR</span>
               </div>
+              <p className="text-3xl font-bold text-white mb-1">{filteredPayroll.reduce((sum, p) => sum + p.hoursWorked, 0).toFixed(0)}</p>
+              <p className="text-xs text-slate-400 uppercase font-medium tracking-wide">Hours Worked</p>
             </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Total OT Hours</p>
-                  <p className="text-2xl font-bold text-yellow-400 mt-2">{filteredPayroll.reduce((sum, p) => sum + p.overtimeHours, 0).toFixed(0)}</p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-yellow-400 opacity-50" />
+
+            {/* Overtime Hours */}
+            <div className={`bg-gradient-to-br ${issues.filter(i => i.severity === "high").length > 0 ? 'from-red-500/10 to-red-600/5 border-red-500/30' : 'from-yellow-500/10 to-yellow-600/5 border-yellow-500/30'} border rounded-lg p-5 hover:border-opacity-70 transition`}>
+              <div className="flex items-start justify-between mb-3">
+                {issues.filter(i => i.severity === "high").length > 0 ? (
+                  <AlertTriangle className="h-5 w-5 text-red-400" />
+                ) : (
+                  <Activity className="h-5 w-5 text-yellow-400" />
+                )}
+                <span className={`text-xs font-semibold ${issues.filter(i => i.severity === "high").length > 0 ? 'text-red-400 bg-red-500/20' : 'text-yellow-400 bg-yellow-500/20'} px-2 py-0.5 rounded`}>
+                  {issues.filter(i => i.severity === "high").length > 0 ? 'ISSUES' : 'OVERTIME'}
+                </span>
               </div>
+              <p className={`text-3xl font-bold mb-1 ${issues.filter(i => i.severity === "high").length > 0 ? 'text-red-400' : 'text-white'}`}>
+                {issues.filter(i => i.severity === "high").length > 0 
+                  ? issues.filter(i => i.severity === "high").length 
+                  : filteredPayroll.reduce((sum, p) => sum + p.overtimeHours, 0).toFixed(0)}
+              </p>
+              <p className="text-xs text-slate-400 uppercase font-medium tracking-wide">
+                {issues.filter(i => i.severity === "high").length > 0 ? 'Errors Found' : 'OT Hours'}
+              </p>
             </div>
           </div>
 
@@ -1201,199 +1216,328 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             </div>
           </div>
 
-          {/* MODULE 3: Payroll Preview */}
-          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-              <Activity className="h-5 w-5 text-green-400" />
-              Payroll Preview
-            </h2>
-            <div className="grid gap-3 mb-4 md:grid-cols-3">
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Employee</p>
-                <p className="text-sm text-slate-300">Name & Department</p>
-              </div>
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Hours Worked</p>
-                <p className="text-sm text-blue-300">{filteredPayroll.reduce((sum, p) => sum + p.hoursWorked, 0).toFixed(0)} hrs</p>
-              </div>
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Overtime</p>
-                <p className="text-sm text-yellow-300">{filteredPayroll.reduce((sum, p) => sum + p.overtimeHours, 0).toFixed(0)} hrs</p>
-              </div>
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Gross Pay</p>
-                <p className="text-sm text-green-300">${totalGrossPay.toFixed(2)}</p>
-              </div>
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Deductions</p>
-                <p className="text-sm text-red-300">$0.00 (pending)</p>
-              </div>
-              <div className="bg-slate-800/50 border border-white/10 rounded p-3">
-                <p className="text-xs text-slate-400 font-semibold mb-2">Net Pay</p>
-                <p className="text-sm text-emerald-300">${totalGrossPay.toFixed(2)}</p>
+          {/* Payroll Summary Banner - Redesigned */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-white/10 rounded-lg p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Activity className="h-5 w-5 text-emerald-400" />
+                Payroll Summary
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => downloadHandlerRef.current()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm flex items-center gap-2 shadow-lg"
+                >
+                  <Download className="h-4 w-4" />
+                  Export CSV
+                </button>
+                <button
+                  disabled={hasErrors}
+                  onClick={() => setShowConfirmDialog(true)}
+                  className={`px-4 py-2 rounded-lg transition font-semibold text-sm flex items-center gap-2 shadow-lg ${
+                    hasErrors
+                      ? "bg-slate-700 text-slate-500 cursor-not-allowed"
+                      : "bg-green-600 hover:bg-green-700 text-white"
+                  }`}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Process Payroll
+                </button>
               </div>
             </div>
-          </div>
-
-          {/* Analytics Section */}
-          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-              <LineChartIcon className="h-5 w-5 text-purple-400" />
-              Analytics
-            </h2>
             
-            {/* Payroll Trends */}
-            <div className="mb-6">
-              <h3 className="text-sm font-bold text-white mb-3">Payroll Trends (Last 6 Periods)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={[
-                  { period: "Week 1", grossPay: 5200, netPay: 4160 },
-                  { period: "Week 2", grossPay: 5450, netPay: 4360 },
-                  { period: "Week 3", grossPay: 5100, netPay: 4080 },
-                  { period: "Week 4", grossPay: 5800, netPay: 4640 },
-                  { period: "Week 5", grossPay: 5600, netPay: 4480 },
-                  { period: "Week 6", grossPay: totalGrossPay, netPay: totalGrossPay },
-                ]}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                  <XAxis dataKey="period" stroke="#999" />
-                  <YAxis stroke="#999" />
-                  <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155" }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="grossPay" stroke="#22c55e" name="Gross Pay" strokeWidth={2} />
-                  <Line type="monotone" dataKey="netPay" stroke="#3b82f6" name="Net Pay" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              {/* Regular Hours & Pay */}
+              <div className="bg-slate-800/50 border border-blue-500/20 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Activity className="h-4 w-4 text-blue-400" />
+                  <p className="text-xs text-slate-400 font-semibold uppercase">Regular Time</p>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <p className="text-2xl font-bold text-white">{filteredPayroll.reduce((sum, p) => sum + p.hoursWorked, 0).toFixed(0)}</p>
+                  <p className="text-xs text-slate-400">hours</p>
+                </div>
+                <p className="text-sm text-blue-300 mt-2">${filteredPayroll.reduce((sum, p) => sum + p.regularPay, 0).toFixed(2)}</p>
+              </div>
 
-            {/* Overtime Trends */}
-            <div className="mb-6">
-              <h3 className="text-sm font-bold text-white mb-3">Overtime Trends (By Employee)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={filteredPayroll.slice(0, 5)}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                  <XAxis dataKey="employeeName" stroke="#999" />
-                  <YAxis stroke="#999" />
-                  <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155" }} />
-                  <Legend />
-                  <Bar dataKey="hoursWorked" fill="#3b82f6" name="Regular Hours" />
-                  <Bar dataKey="overtimeHours" fill="#fbbf24" name="Overtime Hours" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+              {/* Overtime Hours & Pay */}
+              <div className="bg-slate-800/50 border border-yellow-500/20 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="h-4 w-4 text-yellow-400" />
+                  <p className="text-xs text-slate-400 font-semibold uppercase">Overtime</p>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <p className="text-2xl font-bold text-white">{filteredPayroll.reduce((sum, p) => sum + p.overtimeHours, 0).toFixed(0)}</p>
+                  <p className="text-xs text-slate-400">hours</p>
+                </div>
+                <p className="text-sm text-yellow-300 mt-2">${filteredPayroll.reduce((sum, p) => sum + p.overtimePay, 0).toFixed(2)}</p>
+              </div>
 
-            {/* Payroll History Summary */}
-            <div className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-3">Payroll History</h3>
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between items-center p-2 bg-slate-700/30 rounded">
-                  <span className="text-slate-300">Current Period (Jun 1-15)</span>
-                  <span className="text-green-300 font-semibold">${totalGrossPay.toFixed(2)}</span>
+              {/* Total Gross Pay */}
+              <div className="bg-gradient-to-br from-emerald-600/20 to-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <p className="text-xs text-slate-400 font-semibold uppercase">Gross Pay</p>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-slate-700/30 rounded">
-                  <span className="text-slate-300">Previous Period (May 16-31)</span>
-                  <span className="text-slate-400 font-semibold">$5,600.00</span>
+                <div className="flex items-baseline justify-between">
+                  <p className="text-3xl font-bold text-emerald-300">${totalGrossPay.toFixed(2)}</p>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-slate-700/30 rounded">
-                  <span className="text-slate-300">Monthly Total (June)</span>
-                  <span className="text-blue-300 font-semibold">${(totalGrossPay * 2).toFixed(2)}</span>
-                </div>
+                <p className="text-xs text-slate-400 mt-2">Avg: ${(totalGrossPay / filteredPayroll.length).toFixed(2)} per employee</p>
               </div>
             </div>
           </div>
 
-          {/* Payroll Details Table - Simplified */}
+          {/* Analytics Section - Streamlined */}
+          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-purple-400" />
+                Analytics Overview
+              </h2>
+              <button className="text-xs text-slate-400 hover:text-white px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded transition">
+                View Full Report
+              </button>
+            </div>
+            
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Payroll Trends */}
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                  <LineChartIcon className="h-4 w-4 text-green-400" />
+                  Payroll Trends (Last 6 Periods)
+                </h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={[
+                    { period: "W1", grossPay: 5200 },
+                    { period: "W2", grossPay: 5450 },
+                    { period: "W3", grossPay: 5100 },
+                    { period: "W4", grossPay: 5800 },
+                    { period: "W5", grossPay: 5600 },
+                    { period: "W6", grossPay: totalGrossPay },
+                  ]}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
+                    <YAxis stroke="#94a3b8" fontSize={12} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: "#1e293b", 
+                        border: "1px solid #334155",
+                        borderRadius: "8px",
+                        fontSize: "12px"
+                      }} 
+                    />
+                    <Line type="monotone" dataKey="grossPay" stroke="#10b981" name="Gross Pay" strokeWidth={2} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Overtime Distribution */}
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-yellow-400" />
+                  Top 5 - Overtime Hours
+                </h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={filteredPayroll
+                    .sort((a, b) => b.overtimeHours - a.overtimeHours)
+                    .slice(0, 5)
+                    .map(p => ({
+                      name: p.employeeName.split(' ')[0], // First name only
+                      hours: p.hoursWorked,
+                      overtime: p.overtimeHours
+                    }))
+                  }>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
+                    <YAxis stroke="#94a3b8" fontSize={12} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: "#1e293b", 
+                        border: "1px solid #334155",
+                        borderRadius: "8px",
+                        fontSize: "12px"
+                      }} 
+                    />
+                    <Bar dataKey="hours" fill="#3b82f6" name="Regular" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="overtime" fill="#fbbf24" name="Overtime" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Payroll Details Table - Redesigned for Efficiency */}
           {showTable && (
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-bold text-white">Payroll Preview</h3>
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-bold text-white">Employee Payroll</h3>
+                  <span className="text-xs px-2 py-1 bg-blue-500/20 text-blue-300 rounded font-semibold">
+                    {filteredPayroll.length} {filteredPayroll.length === 1 ? 'employee' : 'employees'}
+                  </span>
+                </div>
                 <button
                   onClick={() => setShowTable(!showTable)}
-                  className="text-xs text-slate-400 hover:text-white transition"
+                  className="text-xs text-slate-400 hover:text-white transition px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded"
                 >
-                  {showTable ? "Hide" : "Show"}
+                  {showTable ? "Hide Table" : "Show Table"}
                 </button>
               </div>
 
-              {/* Search and Filter Controls */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                {/* Search Bar */}
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Search employee name..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full px-4 py-2 bg-slate-700 border border-white/20 rounded-lg text-white placeholder-slate-400 text-sm focus:outline-none focus:border-blue-500"
-                  />
-                  <svg className="absolute right-3 top-2.5 h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
+              {/* Search and Filter Controls - Streamlined */}
+              <div className="p-4 bg-slate-800/30 border-b border-white/5">
+                <div className="flex flex-col md:flex-row gap-3">
+                  {/* Search Bar */}
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      placeholder="Search by employee name..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-700 border border-white/20 rounded-lg text-white placeholder-slate-400 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                    />
+                    <svg className="absolute left-3 top-3 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-3 top-3 text-slate-400 hover:text-white"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
 
-                {/* Department Filter */}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-slate-400 font-semibold">Filter by Department:</span>
-                  <select
-                    value={departmentFilter || ""}
-                    onChange={(e) => setDepartmentFilter(e.target.value || null)}
-                    className="flex-1 px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="">All Departments</option>
-                    {Array.from(new Set(payrollCalculations.map(p => p.department))).sort().map(dept => (
-                      <option key={dept} value={dept}>{dept}</option>
-                    ))}
-                  </select>
+                  {/* Department Filter */}
+                  <div className="md:w-64">
+                    <select
+                      value={departmentFilter || ""}
+                      onChange={(e) => setDepartmentFilter(e.target.value || null)}
+                      className="w-full px-4 py-2.5 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition appearance-none cursor-pointer"
+                    >
+                      <option value="">All Departments</option>
+                      {Array.from(new Set(payrollCalculations.map(p => p.department))).sort().map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
+              {/* Table with Compact Design */}
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
+                <table className="w-full">
+                  <thead className="bg-slate-800/70 sticky top-0">
                     <tr className="border-b border-white/10">
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Name</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Department</th>
-                      <th className="px-4 py-3 text-right font-semibold text-blue-300">Gross Salary</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Notes</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">Employee</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-300 uppercase tracking-wider">Department</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-300 uppercase tracking-wider">Hours</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-300 uppercase tracking-wider">OT</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-300 uppercase tracking-wider">Gross Pay</th>
+                      <th className="px-4 py-3 text-center text-xs font-semibold text-slate-300 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-center text-xs font-semibold text-slate-300 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {filteredPayroll
-                      .sort((a, b) => a.employeeName.localeCompare(b.employeeName))
-                      .map(payroll => {
-                      const hasIssue = payroll.absenceHours > 0 || payroll.hoursWorked === 0 || payroll.overtimeHours > 20;
-                      let notes = "";
-                      if (payroll.hoursWorked === 0) notes = "⚠ No hours recorded";
-                      else if (payroll.overtimeHours > 20) notes = `⚠ High OT (${payroll.overtimeHours}h)`;
-                      else if (payroll.absenceHours > 0) notes = `Absence: ${payroll.absenceHours}h`;
-                      else if (payroll.ptoHours > 0) notes = `PTO: +${payroll.ptoHours}h`;
-                      
-                      return (
-                        <tr 
-                          key={payroll.employeeId} 
-                          className={`border-b transition ${hasIssue ? "bg-yellow-500/5 border-yellow-500/30 hover:bg-yellow-500/10" : "border-white/5 hover:bg-white/5"}`}
-                        >
-                          <td className="px-4 py-3 text-white font-medium">
-                            {payroll.employeeName}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300">{payroll.department}</td>
-                          <td className="px-4 py-3 text-right text-green-300 font-semibold">${payroll.grossPay.toFixed(2)}</td>
-                          <td className="px-4 py-3 text-slate-400 text-sm flex items-center justify-between">
-                            <span>{notes || "—"}</span>
-                            <div className="flex gap-1">
-                              <button
-                                onClick={() => setShowTimecardModal(payroll.employeeId)}
-                                className="p-1 text-cyan-400 hover:text-cyan-300 transition"
-                                title="View timecard"
-                              >
-                                <Activity className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                  <tbody className="divide-y divide-white/5">
+                    {filteredPayroll.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
+                          <div className="flex flex-col items-center gap-2">
+                            <AlertCircle className="h-8 w-8 text-slate-500" />
+                            <p>No employees found matching your filters</p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPayroll
+                        .sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+                        .map(payroll => {
+                          const hasIssue = payroll.absenceHours > 0 || payroll.hoursWorked === 0 || payroll.overtimeHours > 20;
+                          let statusText = "Normal";
+                          let statusColor = "text-green-400 bg-green-500/10 border-green-500/30";
+                          
+                          if (payroll.hoursWorked === 0) {
+                            statusText = "No Hours";
+                            statusColor = "text-red-400 bg-red-500/10 border-red-500/30";
+                          } else if (payroll.overtimeHours > 20) {
+                            statusText = "High OT";
+                            statusColor = "text-yellow-400 bg-yellow-500/10 border-yellow-500/30";
+                          } else if (payroll.ptoHours > 0) {
+                            statusText = `PTO: ${payroll.ptoHours}h`;
+                            statusColor = "text-blue-400 bg-blue-500/10 border-blue-500/30";
+                          }
+                          
+                          return (
+                            <tr 
+                              key={payroll.employeeId} 
+                              className={`transition hover:bg-white/5 ${hasIssue ? "bg-yellow-500/5" : ""}`}
+                            >
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">
+                                    {payroll.employeeName.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                                  </div>
+                                  <span className="text-sm font-medium text-white">{payroll.employeeName}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="text-sm text-slate-300">{payroll.department}</span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <span className="text-sm font-semibold text-blue-300">{payroll.hoursWorked}h</span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <span className={`text-sm font-semibold ${payroll.overtimeHours > 20 ? 'text-yellow-300' : payroll.overtimeHours > 0 ? 'text-slate-300' : 'text-slate-500'}`}>
+                                  {payroll.overtimeHours}h
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <span className="text-sm font-bold text-emerald-300">${payroll.grossPay.toFixed(2)}</span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold border ${statusColor}`}>
+                                  {statusText}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={() => setShowTimecardModal(payroll.employeeId)}
+                                    className="p-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded transition"
+                                    title="View timecard"
+                                  >
+                                    <Activity className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                    )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Table Footer with Summary */}
+              <div className="p-4 bg-slate-800/50 border-t border-white/10">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+                  <p className="text-xs text-slate-400">
+                    Showing <span className="font-semibold text-white">{filteredPayroll.length}</span> of{' '}
+                    <span className="font-semibold text-white">{payrollCalculations.length}</span> employees
+                  </p>
+                  <div className="flex items-center gap-4 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">Total Hours:</span>
+                      <span className="font-semibold text-blue-300">{filteredPayroll.reduce((sum, p) => sum + p.hoursWorked + p.overtimeHours, 0).toFixed(0)}</span>
+                    </div>
+                    <div className="h-4 w-px bg-white/10" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">Total Pay:</span>
+                      <span className="font-semibold text-emerald-300">${totalGrossPay.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

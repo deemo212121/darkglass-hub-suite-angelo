@@ -542,7 +542,7 @@ function UserDetailsPage() {
                           className="glass-input w-full text-sm"
                         >
                           {LOCATIONS.map((location) => (
-                            <option key={location} value={location}>{location}</option>
+                            <option key={`select-${location}`} value={location}>{location}</option>
                           ))}
                         </select>
                       }
@@ -609,7 +609,7 @@ function UserDetailsPage() {
                         const hasAccess = branchAccess.includes(location);
                         const row = branchSettings[location] ?? defaultBranchSettings(location, hasAccess);
                         return (
-                          <tr key={location} className={hasAccess ? "bg-blue-500/10" : index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
+                          <tr key={`row-${location}`} className={hasAccess ? "bg-blue-500/10" : index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
                             <td className="px-4 py-3 font-medium text-white whitespace-nowrap">{location}</td>
                             <td className="px-4 py-3 align-middle">
                               <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/60 px-3 py-1.5 text-xs text-slate-200">

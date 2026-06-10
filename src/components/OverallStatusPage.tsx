@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Search } from "lucide-react";
+import { ChevronLeft, Search, Plus, Trash2 } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTicketStatistics, getTickets } from "@/lib/db-api";
 import type { ModuleDef, SubModuleDef, DashboardOverallStatus, LocationRankingRecord, TechRankingRecord, TicketStatistic, Ticket } from "@/lib/db";
+import { LOCATIONS } from "@/lib/locations";
 
 type StatsSnapshot = {
   totalTickets: number;
@@ -52,6 +53,17 @@ function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
+interface InterviewCandidate {
+  id: string;
+  name: string;
+  position: string;
+  branch: string;
+  interviewDate: string;
+  interviewTime: string;
+  status: "scheduled" | "completed" | "hired" | "rejected";
+  notes: string;
+}
+
 export function OverallStatusPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticketStats, setTicketStats] = useState<TicketStatistic[]>([]);
@@ -60,6 +72,24 @@ export function OverallStatusPage({ mod, sub, companyId }: { mod: ModuleDef; sub
   const [overallStatus, setOverallStatus] = useState<DashboardOverallStatus | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [activeStatType, setActiveStatType] = useState<"monthly" | "daily">("monthly");
+  
+  // HR Interview Management State
+  const [candidates, setCandidates] = useState<InterviewCandidate[]>([
+    { id: "1", name: "John Smith", position: "Technician", branch: "Atlanta", interviewDate: "2026-06-12", interviewTime: "10:00", status: "scheduled", notes: "" },
+    { id: "2", name: "Sarah Johnson", position: "CSR", branch: "Nashville", interviewDate: "2026-06-15", interviewTime: "14:00", status: "scheduled", notes: "" },
+    { id: "3", name: "Mike Davis", position: "Technician", branch: "Memphis", interviewDate: "2026-06-10", interviewTime: "09:30", status: "completed", notes: "Strong technical background" },
+    { id: "4", name: "Emily Wilson", position: "Tech Manager", branch: "Birmingham", interviewDate: "2026-06-08", interviewTime: "11:00", status: "hired", notes: "Excellent fit for team" },
+  ]);
+  const [showAddInterview, setShowAddInterview] = useState(false);
+  const [newCandidate, setNewCandidate] = useState<Partial<InterviewCandidate>>({
+    name: "",
+    position: "",
+    branch: "",
+    interviewDate: "",
+    interviewTime: "",
+    status: "scheduled",
+    notes: "",
+  });
 
   useEffect(() => {
     let mounted = true;

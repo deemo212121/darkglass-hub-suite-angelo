@@ -177,33 +177,7 @@ const dashboardMod: ModuleDef = {
         pendingRequests: i % 3,
       }),
     },
-    {
-      slug: "pto-leave-management",
-      title: "PTO & Leave Management Dashboard",
-      description: "Manage vacation, sick leave, and time-off requests.",
-      fields: [
-        { key: "employeeName", label: "Employee", filterable: true },
-        { key: "leaveType", label: "Leave Type", type: "select", options: ["Vacation", "Sick Leave", "Personal", "Unpaid"], filterable: true },
-        { key: "startDate", label: "Start Date", type: "date" },
-        { key: "endDate", label: "End Date", type: "date" },
-        { key: "daysRequested", label: "Days", type: "number" },
-        { key: "status", label: "Status", type: "select", options: ["Pending", "Approved", "Denied"], filterable: true },
-      ],
-      count: 35,
-      seed: (i) => {
-        const leaveTypes = ["Vacation", "Sick Leave", "Personal", "Unpaid"];
-        const statuses = ["Pending", "Approved", "Denied"];
-        const daysRequested = (i % 7) + 1;
-        return {
-          employeeName: pick(TECHS, i),
-          leaveType: pick(leaveTypes, i),
-          startDate: dateStr(i % 30),
-          endDate: dateStr((i % 30) + daysRequested),
-          daysRequested,
-          status: pick(statuses, i),
-        };
-      },
-    },
+
     {
       slug: "expense-tracking",
       title: "Tracking Expenses Dashboard",
@@ -262,6 +236,15 @@ const dashboardMod: ModuleDef = {
       title: "Status Summary",
       description: "View CSR status summary and real-time metrics.",
       custom: "csr-status-summary" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "hr-dashboard",
+      title: "HR & Recruitment Dashboard",
+      description: "Manage job interviews, hiring pipeline, and HR metrics.",
+      custom: "hr-dashboard" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

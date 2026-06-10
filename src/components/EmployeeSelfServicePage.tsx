@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 import { getEmployeeFromEmail, getUserPayslips, getUserAttendance } from "@/lib/userDataSync";
+import { LOCATIONS } from "@/lib/locations";
 
 interface PayrollRecord {
   id: string;
@@ -516,6 +517,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     endDate: "",
     correctionDate: "",
     details: "",
+    branch: LOCATIONS[0] || "",
   });
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -563,7 +565,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           return;
         }
         typeLabel = "PTO Request";
-        details = `${formData.leaveType}: ${formData.startDate} to ${formData.endDate} - ${formData.details}`;
+        details = `Branch: ${formData.branch} | Position: ${employee?.role || "N/A"} | ${formData.leaveType}: ${formData.startDate} to ${formData.endDate} - ${formData.details}`;
         break;
       case "dispute":
         typeLabel = "Attendance Dispute";
@@ -603,6 +605,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         endDate: "",
         correctionDate: "",
         details: "",
+        branch: LOCATIONS[0] || "",
       });
     }, 1500);
   };
@@ -1175,6 +1178,28 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <option>Sick Leave</option>
                           <option>Personal</option>
                         </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Position</label>
+                          <div className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm">
+                            {employee?.role || "N/A"}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Branch</label>
+                          <select 
+                            value={formData.branch}
+                            onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          >
+                            {LOCATIONS.map((location) => (
+                              <option key={location} value={location}>
+                                {location}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>

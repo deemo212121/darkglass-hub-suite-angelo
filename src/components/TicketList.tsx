@@ -2,53 +2,29 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Clock, History, X, User } from "lucide-react";
+import { ChevronLeft, Clock, History, X, User, Plus } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
+import { LOCATIONS, mergeLocationOptions, getTechniciansForLocation } from "@/lib/locations";
+import { 
+  loadTickets, 
+  addTicket, 
+  updateTicket, 
+  TICKET_SOURCES, 
+  REPAIR_STATUS_OPTIONS, 
+  type Ticket 
+} from "@/lib/ticketData";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
-interface TicketItem {
-  ticketNo: string;
-  ticketSource?: string;
-  warranty: string;
-  manufacturer: string;
-  customer: string;
-  city: string;
-  location: string;
-  model: string;
-  internalNote: string;
-  diagnosed: string;
-  technician: string;
-  customerPref: string;
-  schedule: string;
-  status: string;
-  phone: string;
-  redo: string;
-  aging: number;
-  calls: number;
-  partOrder: string;
-  created: string;
-  statusChangedAt?: string;  // ISO timestamp of last status change
-  statusChangedBy?: string; // who made the last change
-}
+// Use the centralized Ticket interface
+interface TicketItem extends Ticket {}
 
-const TICKET_SOURCES = ["LG", "Midea-104268", "NSA GSLEE", "NSA MEMPHIS", "SB", "SB-1276506820", "SB-Miele", "SP", "SP1", "SS", "SS-6488757", "EarlyRepair"] as const;
-const REPAIR_STATUS_OPTIONS = [
-  "CL-Need",
-  "Cancel",
-  "CL-Parts Back Ordered",
-  "CL-Ready to Complete",
-  "CSR-Acknowledged",
-  "CSR-Assigned to ASC",
-  "CSR-Left Message for Cx",
-  "CSR-Needs Scheduling",
-  "OP-Ready for Service",
-  "OP-Reschedule Follow up",
-  "OP-UPDATE HOLD",
-  "OP-Waiting for Part",
-  "PT-Need PreAuthorization",
-  "TR-Need PO",
-  "TR-Need Trage",
-] as const;
+// Use centralized TICKET_SOURCES and REPAIR_STATUS_OPTIONS from ticketData.ts
 const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
 const STATUS_LOG_KEY = "ahs:ticket:status-log";
 const TICKET_VISITS_KEY = "ahs:ticket:visits"; // Track who visited which tickets
@@ -141,225 +117,27 @@ function isWithinDateRange(value: string, startDate: string, endDate: string) {
   return true;
 }
 
-const RAW_SAMPLE_TICKETS: TicketItem[] = [
-  {
-    ticketNo: "SA-3458831",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Neal Market",
-    city: "GREENSBORO",
-    location: "Atlanta",
-    model: "GNE27JYMFFS",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "",
-    customerPref: "N",
-    schedule: "05/21/26",
-    status: "CSR-Assigned to ASC",
-    phone: "706.817.2900",
-    redo: "N",
-    aging: 0,
-    calls: 0,
-    partOrder: "Not Diagnosed",
-    created: "05/18/26",
-  },
-  {
-    ticketNo: "26000679102DF",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Brian Rowe",
-    city: "SHADY DALE",
-    location: "Atlanta",
-    model: "FCRE3083AS",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "",
-    customerPref: "N",
-    schedule: "05/19/26",
-    status: "CSR-Assigned to ASC",
-    phone: "706.366.1043",
-    redo: "N",
-    aging: 1,
-    calls: 0,
-    partOrder: "Not Diagnosed",
-    created: "05/17/26",
-  },
-  {
-    ticketNo: "1007208750-10",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Charles Mcdonald",
-    city: "GREENSBORO",
-    location: "Atlanta",
-    model: "FRUF2020AW",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "",
-    customerPref: "N",
-    schedule: "05/19/26",
-    status: "CSR-Assigned to ASC",
-    phone: "404.680.4022",
-    redo: "N",
-    aging: 1,
-    calls: 0,
-    partOrder: "Not Diagnosed",
-    created: "05/17/26",
-  },
-  {
-    ticketNo: "026000671769DF1",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Rose Phillips",
-    city: "ELLENWOOD",
-    location: "Atlanta",
-    model: "DV45K7600EW",
-    internalNote: "",
-    diagnosed: "Y",
-    technician: "Nathan Napora",
-    customerPref: "Y",
-    schedule: "05/18/26",
-    status: "OP-Waiting for Part",
-    phone: "404.640.7141",
-    redo: "Y",
-    aging: 3,
-    calls: 0,
-    partOrder: "Part Ordered",
-    created: "05/15/26",
-  },
-  {
-    ticketNo: "7039321404BL-13",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Melissa Beaver",
-    city: "EATONTON",
-    location: "Atlanta",
-    model: "GCCE3670AS",
-    internalNote: "WF 05/15 waiting for parts tracking",
-    diagnosed: "Y",
-    technician: "Joshua Silva",
-    customerPref: "N",
-    schedule: "05/15/26",
-    status: "OP-Waiting for Part",
-    phone: "703.932.1404",
-    redo: "Y",
-    aging: 4,
-    calls: 0,
-    partOrder: "Partially Ordered",
-    created: "05/14/26",
-  },
-  {
-    ticketNo: "SA-3433383",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Accent Overlook",
-    city: "CANTON",
-    location: "Atlanta",
-    model: "GDT535PSRSS",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "",
-    customerPref: "Y",
-    schedule: "05/18/26",
-    status: "CSR-Left Message for Cx",
-    phone: "770.766.0064",
-    redo: "N",
-    aging: 4,
-    calls: 2,
-    partOrder: "Not Diagnosed",
-    created: "05/14/26",
-  },
-  {
-    ticketNo: "SA-3431358",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Evelin Tirado",
-    city: "EATONTON",
-    location: "Atlanta",
-    model: "HDF330PGRBB",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "",
-    customerPref: "N",
-    schedule: "05/19/26",
-    status: "CSR-Left Message for Cx",
-    phone: "706.816.6545",
-    redo: "N",
-    aging: 4,
-    calls: 2,
-    partOrder: "Not Diagnosed",
-    created: "05/14/26",
-  },
-  {
-    ticketNo: "3850106E11",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Tricon Propertymanager",
-    city: "DALLAS",
-    location: "Atlanta",
-    model: "GTX22EASK1WW",
-    internalNote: "WF 05/16 - Sent message to tech",
-    diagnosed: "N",
-    technician: "Abel Severino",
-    customerPref: "N",
-    schedule: "05/15/26",
-    status: "OP-UPDATE HOLD",
-    phone: "678.508.7857",
-    redo: "N",
-    aging: 5,
-    calls: 0,
-    partOrder: "Not Diagnosed",
-    created: "05/13/26",
-  },
-  {
-    ticketNo: "26000663669DF1",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Shirley Gentry",
-    city: "TAYLORSVILLE",
-    location: "Atlanta",
-    model: "MVW7232HW",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "Abel Severino",
-    customerPref: "N",
-    schedule: "05/15/26",
-    status: "TR-Need Triage",
-    phone: "770.316.3847",
-    redo: "N",
-    aging: 5,
-    calls: 0,
-    partOrder: "Not Diagnosed",
-    created: "05/13/26",
-  },
-  {
-    ticketNo: "SA-34125461",
-    warranty: "IW",
-    manufacturer: "IH",
-    customer: "Mike Daly",
-    city: "ACWORTH",
-    location: "Atlanta",
-    model: "PDT715SYVFS",
-    internalNote: "",
-    diagnosed: "N",
-    technician: "Gerrell Berg",
-    customerPref: "N",
-    schedule: "05/15/26",
-    status: "TR-Need Triage",
-    phone: "262.707.4813",
-    redo: "N",
-    aging: 5,
-    calls: 1,
-    partOrder: "Not Diagnosed",
-    created: "05/13/26",
-  },
-];
-
-const SAMPLE_TICKETS: TicketItem[] = RAW_SAMPLE_TICKETS.map((ticket, index) => ({
-  ...ticket,
-  ticketSource: TICKET_SOURCES[index % TICKET_SOURCES.length],
-}));
-
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  // Use centralized ticket data - load from localStorage to include custom tickets
+  const [tickets, setTickets] = useState<TicketItem[]>([]);
+
+  // Load tickets on mount
+  useEffect(() => {
+    setTickets(loadTickets());
+  }, []);
+
+  // Refresh tickets when they change in other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "ahs:tickets:data") {
+        setTickets(loadTickets());
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  const SAMPLE_TICKETS: TicketItem[] = tickets;
   const { email } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
@@ -373,6 +151,27 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [changeNoteInput, setChangeNoteInput] = useState("");
   const [changeByInput, setChangeByInput] = useState("");
   const [visitedTickets, setVisitedTickets] = useState<Set<string>>(new Set());
+  
+  // Create Ticket Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createFormData, setCreateFormData] = useState({
+    customer: "",
+    firstName: "",
+    lastName: "",
+    phone: "",
+    email: "",
+    address: "",
+    city: "",
+    zip: "",
+    location: "",
+    model: "",
+    manufacturer: "IH",
+    warranty: "IW",
+    ticketSource: TICKET_SOURCES[0],
+    status: "CSR-Assigned to ASC",
+    technician: "",
+    internalNote: "",
+  });
 
   useEffect(() => { setStatusLog(loadStatusLog()); }, []);
   useEffect(() => { 
@@ -459,14 +258,68 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     }
   };
 
+  // Handle create ticket form submission
+  const handleCreateTicket = () => {
+    // Validate required fields
+    if (!createFormData.customer || !createFormData.phone || !createFormData.city || 
+        !createFormData.location || !createFormData.model) {
+      alert("Please fill in all required fields: Customer Name, Phone, City, Location, and Model");
+      return;
+    }
+
+    // Create the ticket
+    const updatedTickets = addTicket({
+      ...createFormData,
+      statusChangedBy: email || "System",
+    });
+    
+    // Update local state
+    setTickets(updatedTickets);
+    
+    // Reset form and close modal
+    setCreateFormData({
+      customer: "",
+      firstName: "",
+      lastName: "",
+      phone: "",
+      email: "",
+      address: "",
+      city: "",
+      zip: "",
+      location: "",
+      model: "",
+      manufacturer: "IH",
+      warranty: "IW",
+      ticketSource: TICKET_SOURCES[0],
+      status: "CSR-Assigned to ASC",
+      technician: "",
+      internalNote: "",
+    });
+    setShowCreateModal(false);
+    
+    // Show success message
+    alert(`Ticket created successfully!`);
+  };
+
+  // Get technicians for selected location
+  const availableTechnicians = useMemo(() => {
+    return createFormData.location ? getTechniciansForLocation(createFormData.location) : [];
+  }, [createFormData.location]);
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1900px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
+          <div className="flex items-center justify-between gap-3 mb-6">
             <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="btn bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 font-semibold flex items-center gap-2"
+            >
+              <Plus className="h-4 w-4" /> Create Ticket
+            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>
@@ -689,6 +542,221 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             </div>
           </div>
         )}
+
+        {/* ── Create Ticket Modal ── */}
+        <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-slate-900 border-white/15">
+            <DialogHeader>
+              <DialogTitle className="text-2xl flex items-center gap-2">
+                <Plus className="h-5 w-5 text-blue-400" />
+                Create New Ticket
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              {/* Customer Information */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-blue-300 uppercase tracking-wide">Customer Information</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Customer Name *</label>
+                    <input
+                      type="text"
+                      value={createFormData.customer}
+                      onChange={e => setCreateFormData({...createFormData, customer: e.target.value})}
+                      className="glass-input w-full"
+                      placeholder="Full name or business"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Phone *</label>
+                    <input
+                      type="tel"
+                      value={createFormData.phone}
+                      onChange={e => setCreateFormData({...createFormData, phone: e.target.value})}
+                      className="glass-input w-full"
+                      placeholder="xxx.xxx.xxxx"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">First Name</label>
+                    <input
+                      type="text"
+                      value={createFormData.firstName}
+                      onChange={e => setCreateFormData({...createFormData, firstName: e.target.value})}
+                      className="glass-input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Last Name</label>
+                    <input
+                      type="text"
+                      value={createFormData.lastName}
+                      onChange={e => setCreateFormData({...createFormData, lastName: e.target.value})}
+                      className="glass-input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={createFormData.email}
+                      onChange={e => setCreateFormData({...createFormData, email: e.target.value})}
+                      className="glass-input w-full"
+                      placeholder="customer@email.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">City *</label>
+                    <input
+                      type="text"
+                      value={createFormData.city}
+                      onChange={e => setCreateFormData({...createFormData, city: e.target.value})}
+                      className="glass-input w-full"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Address</label>
+                    <input
+                      type="text"
+                      value={createFormData.address}
+                      onChange={e => setCreateFormData({...createFormData, address: e.target.value})}
+                      className="glass-input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">ZIP Code</label>
+                    <input
+                      type="text"
+                      value={createFormData.zip}
+                      onChange={e => setCreateFormData({...createFormData, zip: e.target.value})}
+                      className="glass-input w-full"
+                      placeholder="12345"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Ticket Information */}
+              <div className="space-y-3 pt-4 border-t border-white/10">
+                <h3 className="text-sm font-semibold text-blue-300 uppercase tracking-wide">Ticket Information</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Location *</label>
+                    <select
+                      value={createFormData.location}
+                      onChange={e => setCreateFormData({...createFormData, location: e.target.value, technician: ""})}
+                      className="glass-input w-full"
+                      required
+                    >
+                      <option value="">Select location</option>
+                      {LOCATIONS.map(loc => (
+                        <option key={loc} value={loc}>{loc}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Model *</label>
+                    <input
+                      type="text"
+                      value={createFormData.model}
+                      onChange={e => setCreateFormData({...createFormData, model: e.target.value})}
+                      className="glass-input w-full"
+                      placeholder="e.g., GNE27JYMFFS"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Warranty Type</label>
+                    <select
+                      value={createFormData.warranty}
+                      onChange={e => setCreateFormData({...createFormData, warranty: e.target.value})}
+                      className="glass-input w-full"
+                    >
+                      <option value="IW">IW (In Warranty)</option>
+                      <option value="OW">OW (Out of Warranty)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Manufacturer</label>
+                    <input
+                      type="text"
+                      value={createFormData.manufacturer}
+                      onChange={e => setCreateFormData({...createFormData, manufacturer: e.target.value})}
+                      className="glass-input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Ticket Source</label>
+                    <select
+                      value={createFormData.ticketSource}
+                      onChange={e => setCreateFormData({...createFormData, ticketSource: e.target.value})}
+                      className="glass-input w-full"
+                    >
+                      {TICKET_SOURCES.map(source => (
+                        <option key={source} value={source}>{source}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Status</label>
+                    <select
+                      value={createFormData.status}
+                      onChange={e => setCreateFormData({...createFormData, status: e.target.value})}
+                      className="glass-input w-full"
+                    >
+                      {REPAIR_STATUS_OPTIONS.map(status => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-muted-foreground mb-1">Technician</label>
+                    <select
+                      value={createFormData.technician}
+                      onChange={e => setCreateFormData({...createFormData, technician: e.target.value})}
+                      className="glass-input w-full"
+                      disabled={!createFormData.location}
+                    >
+                      <option value="">Select technician (optional)</option>
+                      {availableTechnicians.map(tech => (
+                        <option key={tech} value={tech}>{tech}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-muted-foreground mb-1">Internal Note</label>
+                    <textarea
+                      value={createFormData.internalNote}
+                      onChange={e => setCreateFormData({...createFormData, internalNote: e.target.value})}
+                      className="glass-input w-full min-h-[80px]"
+                      placeholder="Add any internal notes here..."
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateTicket}
+                className="px-4 py-2 rounded-md bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 font-semibold transition-colors flex items-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Create Ticket
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
