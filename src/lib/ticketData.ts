@@ -642,6 +642,11 @@ const TICKETS_STORAGE_KEY = "ahs:tickets:data";
  * Returns centralized tickets merged with any custom tickets
  */
 export function loadTickets(): Ticket[] {
+  // Guard against SSR - return default tickets if window is not defined
+  if (typeof window === "undefined" || typeof localStorage === "undefined") {
+    return TICKETS;
+  }
+  
   try {
     const stored = localStorage.getItem(TICKETS_STORAGE_KEY);
     if (stored) {
@@ -661,6 +666,11 @@ export function loadTickets(): Ticket[] {
  * Only saves tickets that are not in the original TICKETS array
  */
 export function saveCustomTickets(tickets: Ticket[]): void {
+  // Guard against SSR
+  if (typeof window === "undefined" || typeof localStorage === "undefined") {
+    return;
+  }
+  
   try {
     // Get original ticket numbers for comparison
     const originalTicketNos = new Set(TICKETS.map(t => t.ticketNo));
@@ -669,6 +679,13 @@ export function saveCustomTickets(tickets: Ticket[]): void {
     const customTickets = tickets.filter(t => !originalTicketNos.has(t.ticketNo));
     
     localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(customTickets));
+    
+    // Trigger storage event for same-tab updates
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: TICKETS_STORAGE_KEY,
+      newValue: JSON.stringify(customTickets),
+      storageArea: localStorage
+    }));
   } catch (error) {
     console.error("Error saving tickets to localStorage:", error);
   }
@@ -784,6 +801,11 @@ export function deleteTicket(ticketNo: string): Ticket[] {
  * Clear all custom tickets (reset to original data)
  */
 export function clearCustomTickets(): void {
+  // Guard against SSR
+  if (typeof window === "undefined" || typeof localStorage === "undefined") {
+    return;
+  }
+  
   try {
     localStorage.removeItem(TICKETS_STORAGE_KEY);
   } catch (error) {

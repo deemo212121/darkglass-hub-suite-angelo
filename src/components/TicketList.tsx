@@ -119,17 +119,12 @@ function isWithinDateRange(value: string, startDate: string, endDate: string) {
 
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   // Use centralized ticket data - load from localStorage to include custom tickets
-  const [tickets, setTickets] = useState<TicketItem[]>([]);
+  const [tickets, setTickets] = useState<TicketItem[]>(() => loadTickets());
 
-  // Load tickets on mount
-  useEffect(() => {
-    setTickets(loadTickets());
-  }, []);
-
-  // Refresh tickets when they change in other tabs
+  // Refresh tickets when they change in other tabs or same tab
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "ahs:tickets:data") {
+      if (e.key === "ahs:tickets:data" || e.key === null) {
         setTickets(loadTickets());
       }
     };

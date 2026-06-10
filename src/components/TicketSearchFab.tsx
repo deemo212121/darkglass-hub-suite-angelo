@@ -11,12 +11,10 @@ export function TicketSearchFab() {
   const [searchText, setSearchText] = useState("");
   const [tickets, setTickets] = useState(() => loadTickets());
 
-  // Load tickets and listen for changes
+  // Listen for changes
   useEffect(() => {
-    setTickets(loadTickets());
-    
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "ahs:tickets:data") {
+      if (e.key === "ahs:tickets:data" || e.key === null) {
         setTickets(loadTickets());
       }
     };
