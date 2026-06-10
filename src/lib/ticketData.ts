@@ -639,7 +639,7 @@ const TICKETS_STORAGE_KEY = "ahs:tickets:data";
 
 /**
  * Load tickets from localStorage
- * Returns centralized tickets merged with any custom tickets
+ * Returns centralized tickets merged with any custom/modified tickets
  */
 export function loadTickets(): Ticket[] {
   // Guard against SSR - return default tickets if window is not defined
@@ -650,10 +650,27 @@ export function loadTickets(): Ticket[] {
   try {
     const stored = localStorage.getItem(TICKETS_STORAGE_KEY);
     if (stored) {
-      const customTickets = JSON.parse(stored) as Ticket[];
-      // Merge centralized tickets with custom tickets
-      // Custom tickets come first so they appear at the top
-      return [...customTickets, ...TICKETS];
+      const savedTickets = JSON.parse(stored) as Ticket[];
+      
+      // Create a map of saved tickets by ticketNo for quick lookup
+      const savedTicketsMap = new Map(savedTickets.map(t => [t.ticketNo, t]));
+      
+      // Merge: Use saved version if exists, otherwise use original
+      const mergedTickets = TICKETS.map(originalTicket => {
+        const savedVersion = savedTicketsMap.get(originalTicket.ticketNo);
+        if (savedVersion) {
+          // Remove from map so we don't add it twice
+          savedTicketsMap.delete(originalTicket.ticketNo);
+          return savedVersion; // Use modified version
+        }
+        return originalTicket; // Use original version
+      });
+      
+      // Add any remaining custom tickets (not in original TICKETS array)
+      const customTickets = Array.from(savedTicketsMap.values());
+      
+      // Return: custom tickets first, then merged tickets
+      return [...customTickets, ...mergedTickets];
     }
   } catch (error) {
     console.error("Error loading tickets from localStorage:", error);
@@ -663,7 +680,7 @@ export function loadTickets(): Ticket[] {
 
 /**
  * Save custom tickets to localStorage
- * Only saves tickets that are not in the original TICKETS array
+ * Saves ALL tickets that have been modified from their original state
  */
 export function saveCustomTickets(tickets: Ticket[]): void {
   // Guard against SSR
@@ -675,15 +692,30 @@ export function saveCustomTickets(tickets: Ticket[]): void {
     // Get original ticket numbers for comparison
     const originalTicketNos = new Set(TICKETS.map(t => t.ticketNo));
     
-    // Filter out original tickets, only save custom ones
-    const customTickets = tickets.filter(t => !originalTicketNos.has(t.ticketNo));
+    // Save tickets that are either:
+    // 1. Custom tickets (not in original TICKETS array)
+    // 2. Original tickets that have been modified
+    const ticketsToSave = tickets.filter(t => {
+      // If it's a custom ticket (not in original array), save it
+      if (!originalTicketNos.has(t.ticketNo)) {
+        return true;
+      }
+      
+      // If it's an original ticket, check if it has been modified
+      // We check for statusChangedAt or statusChangedBy fields which indicate modifications
+      if (t.statusChangedAt || t.statusChangedBy) {
+        return true;
+      }
+      
+      return false;
+    });
     
-    localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(customTickets));
+    localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(ticketsToSave));
     
     // Trigger storage event for same-tab updates
     window.dispatchEvent(new StorageEvent("storage", {
       key: TICKETS_STORAGE_KEY,
-      newValue: JSON.stringify(customTickets),
+      newValue: JSON.stringify(ticketsToSave),
       storageArea: localStorage
     }));
   } catch (error) {
