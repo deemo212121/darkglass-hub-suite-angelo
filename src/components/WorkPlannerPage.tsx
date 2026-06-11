@@ -5,7 +5,8 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getSubModule } from "@/lib/modules";
 import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
-import { loadTickets, type Ticket } from "@/lib/ticketData";
+import { loadTickets, getTicketByNumber, updateTicket, type Ticket } from "@/lib/ticketData";
+import { useAuth } from "@/lib/auth";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
@@ -26,7 +27,7 @@ type TicketRecord = Record<string, any> & {
 };
 
 type PlannerTicket = TicketRecord & {
-  slot: "AM" | "PM" | "Eve";
+  slot: "AM" | "PM" | "ANYTIME";
   scheduleTime: string;
   lat?: number;
   lng?: number;
@@ -41,11 +42,11 @@ const STATUS_LEGEND = [
   { label: "Completed", className: "color-completed" },
   { label: "Claimed", className: "color-claimed" },
 ];
-const TIME_SLOTS: Array<PlannerTicket["slot"]> = ["AM", "PM", "Eve"];
+const TIME_SLOTS: Array<PlannerTicket["slot"]> = ["AM", "PM", "ANYTIME"];
 const SLOT_TIMES: Record<PlannerTicket["slot"], string> = {
   AM: "08:30",
   PM: "14:30",
-  Eve: "17:30",
+  ANYTIME: "17:30",
 };
 function getLocalDateStr(date = new Date()) {
   const year = date.getFullYear();
@@ -83,8 +84,16 @@ function getToneClass(ticket: PlannerTicket, index: number) {
 
 function getInitials(value: string | null | undefined) {
   if (!value) return "U";
-  const parts = value.split(/[\s._-]+/).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  
+  // Split by spaces to get first and last name
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  
+  if (parts.length >= 2) {
+    // Use first letter of first name + first letter of last name
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
+  
+  // Fallback: if only one word, use first two letters
   return value.slice(0, 2).toUpperCase();
 }
 
@@ -107,7 +116,27 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
     const slot = TIME_SLOTS[index % TIME_SLOTS.length];
     const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
     const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
-    const address = row.customer_address || row.address || `${row.city || row.location || "Unknown"}`;
+    
+    // Build complete address with street, city, state, and zip for accurate geocoding
+    const streetAddress = row.customer_address || row.address || "";
+    const city = row.city || row.customer_city || row.location || "";
+    const state = row.state || row.customer_state || "GA"; // Default to GA if no state
+    const zip = row.zip || row.customer_zip || row.zipcode || "";
+    
+    // Format: "Street Address, City, State ZIP" - this gives best geocoding results
+    let fullAddress = "";
+    if (streetAddress && city && zip) {
+      fullAddress = `${streetAddress}, ${city}, ${state} ${zip}`;
+    } else if (city && zip) {
+      fullAddress = `${city}, ${state} ${zip}`;
+    } else if (streetAddress && city) {
+      fullAddress = `${streetAddress}, ${city}, ${state}`;
+    } else if (city) {
+      fullAddress = `${city}, ${state}`;
+    } else {
+      fullAddress = city || row.location || "Unknown";
+    }
+    
     return {
       ...row,
       location: normalizeBranch(row.location || row.city || row.branch),
@@ -118,8 +147,8 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
       status: row.status || "Pending",
       created: String(row.created || row.created_at || getLocalDateStr()),
       customer: String(row.customer || row.customer_name || "Unknown"),
-      city: String(row.city || row.customer_city || row.location || ""),
-      address,
+      city: String(city),
+      address: fullAddress,
       delay: Number(row.delay ?? 0),
       aging: Number(row.aging ?? 0),
       phone: String(row.phone || row.customer_cell_phone_1 || ""),
@@ -136,16 +165,8 @@ function getSelectedTechRoster(location: string) {
   return ALL_TECHNICIANS.slice(0, 8);
 }
 
-function buildPinPosition(ticket: PlannerTicket, index: number) {
-  const seed = String(ticket.location || ticket.customer || ticket.city || ticket.address || "");
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 100000;
-  }
-  return `map-pin-pos-${(hash + index) % 16}`;
-}
-
 export function WorkPlannerPage({ mod, sub }: Props) {
+  const { email } = useAuth();
   const [location, setLocation] = useState("");
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
@@ -275,6 +296,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     markersRef.current = [];
 
     const geocoder = new maps.Geocoder();
+    
+    // Enhanced geocoding with fallback strategy
     const geocode = (address: string) => new Promise<{ lat: number; lng: number } | null>((resolve) => {
       geocoder.geocode({ address }, (results: any, status: string) => {
         if (status === "OK" && results?.[0]) {
@@ -282,6 +305,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
           resolve({ lat: position.lat(), lng: position.lng() });
           return;
         }
+        console.warn(`Geocoding failed for: ${address}, status: ${status}`);
         resolve(null);
       });
     });
@@ -296,21 +320,100 @@ export function WorkPlannerPage({ mod, sub }: Props) {
           return { ticket, position: geocodeCacheRef.current.get(cacheKey) };
         }
 
-        const query = ticket.address || ticket.city || ticket.location;
-        const position = query ? await geocode(query) : null;
+        // Try full address first
+        let position = ticket.address ? await geocode(ticket.address) : null;
+        
+        // Fallback 1: Try city + state + zip if full address fails
+        if (!position && ticket.city) {
+          const cityStateZip = `${ticket.city}, GA ${(ticket as any).zip || ""}`.trim();
+          console.log(`Trying fallback for ${ticket.ticketNo}: ${cityStateZip}`);
+          position = await geocode(cityStateZip);
+        }
+        
+        // Fallback 2: Try just city + state
+        if (!position && ticket.city) {
+          console.log(`Trying city fallback for ${ticket.ticketNo}: ${ticket.city}, GA`);
+          position = await geocode(`${ticket.city}, GA`);
+        }
+        
+        // Fallback 3: Try location name
+        if (!position && ticket.location) {
+          console.log(`Trying location fallback for ${ticket.ticketNo}: ${ticket.location}`);
+          position = await geocode(ticket.location);
+        }
+        
+        if (!position) {
+          console.error(`All geocoding attempts failed for ticket ${ticket.ticketNo}`);
+        }
+        
         geocodeCacheRef.current.set(cacheKey, position);
         return { ticket, position };
       }),
     ).then((results) => {
       if (cancelled || !mapRef.current) return;
 
+      // Group tickets by technician to determine hierarchy numbers
+      const ticketsByTech = new Map<string, number>();
+      
       results.forEach(({ ticket, position }, index) => {
-        if (!position) return;
+        if (!position) {
+          console.warn(`No position found for ticket ${ticket.ticketNo}, skipping marker`);
+          return;
+        }
+
+        // Determine hierarchy number for this technician
+        const techName = ticket.technician || "Unassigned";
+        const currentCount = ticketsByTech.get(techName) || 0;
+        const hierarchyNumber = currentCount + 1;
+        ticketsByTech.set(techName, hierarchyNumber);
+
+        // Get technician initials
+        const initials = ticket.technician ? getInitials(ticket.technician) : "??";
+        
+        // Create label text: initials + number (e.g., "JR1", "AM2")
+        const labelText = `${initials}${hierarchyNumber}`;
+        
+        // Determine color based on technician
+        const techIndex = selectedTechRoster.indexOf(techName);
+        let markerColor = "#3B82F6"; // Default blue
+        
+        if (techIndex >= 0) {
+          // Use technician-specific colors
+          const techColors = [
+            "#3B82F6", // Blue
+            "#10B981", // Green
+            "#F59E0B", // Amber
+            "#EF4444", // Red
+            "#8B5CF6", // Purple
+            "#EC4899", // Pink
+          ];
+          markerColor = techColors[techIndex % techColors.length];
+        }
+
+        // Create custom marker with badge/text box icon with pointer at bottom
+        const svgMarker = {
+          // SVG path for a rounded rectangle with a pointer at the bottom center
+          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+          fillColor: markerColor,
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+          scale: 1.8, // Increased from 1 to 1.8 for better visibility
+          anchor: new maps.Point(20, 22), // Anchor at the pointer tip
+          labelOrigin: new maps.Point(20, 10), // Center label in the badge
+        };
 
         const marker = new maps.Marker({
           map: mapRef.current,
           position,
-          title: ticket.ticketNo,
+          title: `${ticket.ticketNo} - ${ticket.customer}\n${techName} - Ticket #${hierarchyNumber}`,
+          icon: svgMarker,
+          label: {
+            text: labelText,
+            color: "#ffffff",
+            fontSize: "13px", // Increased from 11px to 13px
+            fontWeight: "bold",
+          },
         });
 
         marker.addListener("click", () => {
@@ -382,14 +485,106 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     const dragSource = dragSourceRef.current;
     if (!dragSource) return;
 
-    setPlannerTickets((current) => current.map((ticket) => {
-      if (ticket.ticketNo !== dragSource.ticketNo) return ticket;
-      return { ...ticket, technician, slot, scheduleTime: SLOT_TIMES[slot] };
-    }));
+    // Check if ticket has a time slot restriction from latest visit
+    const fullTicket = getTicketByNumber(dragSource.ticketNo);
+    const latestVisit = fullTicket?.visits?.[0];
+    const visitTimeSlot = latestVisit?.timeSlot; // "AM", "PM", or "ANYTIME"
+    
+    // If visit has a time slot set, only allow dropping in that slot (unless it's ANYTIME)
+    if (visitTimeSlot && visitTimeSlot !== "ANYTIME" && visitTimeSlot !== slot) {
+      alert(`This ticket is scheduled for ${visitTimeSlot} time slot and cannot be moved to ${slot}. Please update the visit in Ticket Details first.`);
+      dragSourceRef.current = null;
+      return;
+    }
 
+    // Get old technician name for logging
+    const oldTechnician = dragSource.technician;
+    const technicianChanged = oldTechnician !== technician;
+    const slotChanged = dragSource.slot !== slot;
+
+    // Update centralized ticket if technician changed
+    if (technicianChanged && fullTicket) {
+      console.log(`Updating ticket ${dragSource.ticketNo}: technician ${oldTechnician} → ${technician}`);
+      
+      // Update the latest visit's technician if a visit exists
+      let updatedVisits = fullTicket.visits;
+      if (latestVisit) {
+        updatedVisits = fullTicket.visits?.map((visit, index) => {
+          // Update only the latest visit (first in array)
+          if (index === 0) {
+            return {
+              ...visit,
+              technician: technician,
+              updatedAt: new Date().toISOString(),
+              updatedBy: email || "Work Planner",
+              updateReason: `Technician changed from ${latestVisit.technician} to ${technician} via Work Planner drag/drop`,
+            };
+          }
+          return visit;
+        });
+        
+        console.log(`Updated latest visit technician from ${latestVisit.technician} to ${technician}`);
+      }
+      
+      // Update the ticket in centralized system (includes visits)
+      const updatedTickets = updateTicket(dragSource.ticketNo, {
+        technician: technician,
+        visits: updatedVisits,
+      });
+      
+      // Create audit log entry for technician change
+      const auditKey = `ahs:ticket-audit:${dragSource.ticketNo}`;
+      const existingAudit = localStorage.getItem(auditKey);
+      const auditEntries = existingAudit ? JSON.parse(existingAudit) : [];
+      
+      const auditEntry = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        timestamp: new Date().toISOString(),
+        by: email || "Work Planner",
+        action: "Technician reassignment via Work Planner",
+        field: "Technician",
+        before: oldTechnician || "—",
+        after: technician,
+      };
+      
+      auditEntries.unshift(auditEntry);
+      localStorage.setItem(auditKey, JSON.stringify(auditEntries));
+      
+      // Also create audit entry for visit technician change if visit exists
+      if (latestVisit) {
+        const visitAuditEntry = {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2, 11)}`,
+          timestamp: new Date().toISOString(),
+          by: email || "Work Planner",
+          action: "Updated visit technician via Work Planner drag/drop",
+          field: "Visit Technician",
+          before: latestVisit.technician || "—",
+          after: technician,
+        };
+        
+        auditEntries.unshift(visitAuditEntry);
+        localStorage.setItem(auditKey, JSON.stringify(auditEntries));
+        
+        console.log(`Visit audit log created for ticket ${dragSource.ticketNo}:`, visitAuditEntry);
+      }
+      
+      console.log(`Audit log created for ticket ${dragSource.ticketNo}:`, auditEntry);
+      
+      // Reload planner tickets from centralized system to ensure persistence
+      const reloadedTickets = loadTickets() as TicketRecord[];
+      setPlannerTickets(createPlannerTickets(reloadedTickets));
+    } else {
+      // Just update the planner display for time slot changes
+      setPlannerTickets((current) => current.map((ticket) => {
+        if (ticket.ticketNo !== dragSource.ticketNo) return ticket;
+        return { ...ticket, technician, slot, scheduleTime: SLOT_TIMES[slot] };
+      }));
+    }
+
+    // Add to changed tickets log
     setChangedTickets((current) => [
       {
-        type: "Reassignment",
+        type: technicianChanged ? "Technician Reassignment" : "Time Slot Change",
         ticketNum: dragSource.ticketNo,
         scheduleDate: plannerDate,
         newTimeSlot: slot,
@@ -485,31 +680,38 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                       {tickets.length === 0 ? (
                         <div className="time-slot-empty">Drop tickets here</div>
                       ) : (
-                        tickets.map((ticket, index) => (
-                          <div
-                            key={ticket.ticketNo}
-                            className={`work-order-card ${getToneClass(ticket, techIndex + index)}`}
-                            draggable
-                            onDragStart={() => handleDragStart(ticket.ticketNo, ticket.slot, ticket.technician)}
-                            onClick={() => setSelectedTicket(ticket)}
-                          >
-                            <a
-                              className="work-order-ticket"
-                              href={`/ticket/${encodeURIComponent(ticket.ticketNo)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(event) => event.stopPropagation()}
+                        tickets.map((ticket, index) => {
+                          // Get full ticket with visits from centralized system
+                          const fullTicket = getTicketByNumber(ticket.ticketNo);
+                          const latestVisit = fullTicket?.visits?.[0];
+                          const displayStatus = latestVisit?.repairStatus || ticket.status || "Pending";
+                          
+                          return (
+                            <div
+                              key={ticket.ticketNo}
+                              className={`work-order-card ${getToneClass(ticket, techIndex + index)}`}
+                              draggable
+                              onDragStart={() => handleDragStart(ticket.ticketNo, ticket.slot, ticket.technician)}
+                              onClick={() => setSelectedTicket(ticket)}
                             >
-                              {ticket.ticketNo}
-                            </a>
-                            <div className="work-order-customer">{ticket.customer}</div>
-                            <div className="work-order-address">{ticket.address || ticket.city || ticket.location || "Unknown address"}</div>
-                            <div className="work-order-status">
-                              <span className={`work-order-status-dot ${getToneClass(ticket, index)}`} />
-                              {ticket.status || "Pending"}
+                              <a
+                                className="work-order-ticket"
+                                href={`/ticket/${encodeURIComponent(ticket.ticketNo)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {ticket.ticketNo}
+                              </a>
+                              <div className="work-order-customer">{ticket.customer}</div>
+                              <div className="work-order-address">{ticket.address || ticket.city || ticket.location || "Unknown address"}</div>
+                              <div className="work-order-status">
+                                <span className={`work-order-status-dot ${getToneClass(ticket, index)}`} />
+                                {displayStatus}
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   );
@@ -539,28 +741,6 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 {mapError ? <div className="text-xs text-rose-300 mt-2">{mapError}</div> : null}
               </div>
             )}
-            <div className="map-pins-container">
-              {visibleTickets.map((ticket, index) => {
-                const position = buildPinPosition(ticket, index);
-                const toneClass = getToneClass(ticket, index);
-                const initials = getInitials(ticket.technician || ticket.customer || ticket.ticketNo);
-                return (
-                  <button
-                    key={`${ticket.ticketNo}-${index}`}
-                    type="button"
-                    className={`map-pin ${position}`}
-                    onClick={() => setSelectedTicket(ticket)}
-                    aria-label={`Open ${ticket.ticketNo}`}
-                  >
-                    <div className={`pin-bubble ${toneClass}`}>
-                      <span className="pin-initials">{initials}</span>
-                      <span className="pin-time">{ticket.scheduleTime || "Today"}</span>
-                    </div>
-                    <div className={`pin-tail ${toneClass}`} />
-                  </button>
-                );
-              })}
-            </div>
             <div className="legend-for-map" id="mapLegend">
               {selectedTechRoster.slice(0, 5).map((tech, index) => (
                 <div key={tech} className="legend-for-map-item">
@@ -662,7 +842,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
               <a className="detail-ticket-no detail-ticket-link" href={`/ticket/${encodeURIComponent(selectedTicket?.ticketNo || "")}`} target="_blank" rel="noopener noreferrer">
                 {selectedTicket?.ticketNo || "Ticket details"}
               </a>
-              <button className="google-btn" type="button" onClick={() => selectedTicket && window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedTicket.ticketNo || selectedTicket.customer || "ticket")}`, "_blank", "noopener,noreferrer")}>Google</button>
+              <button className="google-btn" type="button" onClick={() => selectedTicket && window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedTicket.address || selectedTicket.city || selectedTicket.location || "")}`, "_blank", "noopener,noreferrer")}>Google Maps</button>
             </div>
             <button className="modal-close-btn" type="button" aria-label="Close" onClick={() => setSelectedTicket(null)}><X className="h-5 w-5" /></button>
           </div>
@@ -672,7 +852,21 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 <div className="detail-row">
                   <div className="detail-field grow"><div className="detail-label">Customer</div><div className="detail-value">{selectedTicket.customer || "Unknown"}</div></div>
                   <div className="detail-field"><div className="detail-label">Technician</div><div className="detail-value">{selectedTicket.technician || "Unassigned"}</div></div>
-                  <div className="detail-field"><div className="detail-label">Status</div><div className="detail-value"><span className={`status-pill-detail tone-tech-0`}>{selectedTicket.status || "Open"}</span></div></div>
+                  <div className="detail-field">
+                    <div className="detail-label">Repair Status</div>
+                    <div className="detail-value">
+                      <span className={`status-pill-detail tone-tech-0`}>
+                        {(() => {
+                          // Get full ticket data with visits from centralized system
+                          const fullTicket = getTicketByNumber(selectedTicket.ticketNo);
+                          // Get latest visit's repair status if available
+                          const latestVisit = fullTicket?.visits?.[0]; // Assumes visits are sorted by date (newest first)
+                          const repairStatus = latestVisit?.repairStatus || selectedTicket.status || "Open";
+                          return repairStatus;
+                        })()}
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <hr className="detail-divider" />
                 <div className="detail-row">

@@ -6,7 +6,14 @@ import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket } from "@/lib/poDataStore";
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { loadTickets, updateTicket, getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { 
+  loadTickets, 
+  updateTicket, 
+  getTicketByNumber, 
+  updateTicketVisits, 
+  updateTicketParts, 
+  type Ticket 
+} from "@/lib/ticketData";
 
 interface TicketData {
   ticketNo: string;
@@ -109,6 +116,8 @@ interface VisitLogEntry {
   visitNo: string;
   timestamp: string;
   updatedAt?: string;
+  updatedBy?: string;
+  updateReason?: string;
   by: string;
   scheduleDate: string;
   technician: string;
@@ -117,6 +126,7 @@ interface VisitLogEntry {
   actionType: string;
   repairStatus: string;
   repairType: string;
+  schedNotes: string;
   reclaim: string;
   visited: string;
   notCompleted: string;
@@ -335,7 +345,8 @@ function summarizeVisitEntry(entry: VisitLogEntry) {
     ["Activity", entry.activity],
     ["Action Type", entry.actionType],
     ["Repair Status", entry.repairStatus],
-    ["Repair Type", entry.repairType],
+    ["Repair Type (2nd Tech)", entry.repairType],
+    ["Sched Notes (CSR)", entry.schedNotes],
     ["Reclaim", entry.reclaim],
     ["Visited", entry.visited],
     ["Not Completed", entry.notCompleted],
@@ -732,6 +743,10 @@ function TicketDetailsPage() {
   const [newVisitTriageNote, setNewVisitTriageNote] = useState("");
   const [newVisitSchedNotes, setNewVisitSchedNotes] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
+  
+  // Alert message system
+  const [alertMessages, setAlertMessages] = useState<Array<{id: string, text: string, by: string, timestamp: string}>>([]);
+  const [newAlertMessage, setNewAlertMessage] = useState("");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
@@ -739,6 +754,7 @@ function TicketDetailsPage() {
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
+  const [visitsLoaded, setVisitsLoaded] = useState(false);
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
   const [partRowsLoaded, setPartRowsLoaded] = useState(false);
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
@@ -762,19 +778,36 @@ function TicketDetailsPage() {
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
 
+  // Edit mode state for product information
+  const [isEditingProductInfo, setIsEditingProductInfo] = useState(false);
+  const [editedProductInfo, setEditedProductInfo] = useState<Partial<TicketData>>({});
+
   // Edit mode state for schedule information
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
 
   useEffect(() => {
     setAuditEntries(loadAuditEntries(ticketNo));
-    setVisitLogEntries(loadVisitLogEntries(ticketNo));
+    
+    // Reset loaded flags when ticket changes
+    setVisitsLoaded(false);
     setPartRowsLoaded(false);
-    setPartRows(loadPartRows(ticketNo));
+    
+    // Load visits from centralized ticket
+    const ticket = getTicketByNumber(ticketNo);
+    setVisitLogEntries(ticket?.visits || []);
+    setVisitsLoaded(true);
+    
+    // Load parts from centralized ticket
+    setPartRows(ticket?.parts || []);
+    setPartRowsLoaded(true);
+    
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
     setIsEditingCustomerInfo(false);
     setEditedCustomerInfo({});
+    setIsEditingProductInfo(false);
+    setEditedProductInfo({});
   }, [ticketNo]);
 
   useEffect(() => {
@@ -782,16 +815,19 @@ function TicketDetailsPage() {
   }, [auditEntries, ticketNo]);
 
   useEffect(() => {
-    saveVisitLogEntries(ticketNo, visitLogEntries);
-  }, [ticketNo, visitLogEntries]);
+    // Only save visits after they've been loaded from the ticket
+    if (!visitsLoaded) return;
+    
+    // Save visits to centralized ticket whenever they change
+    updateTicketVisits(ticketNo, visitLogEntries);
+  }, [ticketNo, visitLogEntries, visitsLoaded]);
 
   useEffect(() => {
-    if (!partRowsLoaded) {
-      setPartRowsLoaded(true);
-      return;
-    }
+    // Only save parts after they've been loaded from the ticket
+    if (!partRowsLoaded) return;
 
-    savePartRows(ticketNo, partRows);
+    // Save parts to centralized ticket whenever they change
+    updateTicketParts(ticketNo, partRows);
   }, [partRows, partRowsLoaded, ticketNo]);
 
   const appendAuditEntry = (entry: Omit<AuditLogEntry, "id" | "timestamp">) => {
@@ -853,16 +889,16 @@ function TicketDetailsPage() {
           lastName: centralTicket.lastName || "",
           address: centralTicket.address || "",
           city: centralTicket.city,
-          state: "",
+          state: centralTicket.state || "",
           zip: centralTicket.zip || "",
           homePhone: centralTicket.phone,
-          cellPhone: "",
+          cellPhone: centralTicket.secondPhone || "",
           email: centralTicket.email || "",
           brand: centralTicket.manufacturer,
           model: centralTicket.model,
-          serialNo: "",
-          productCategory: "",
-          purchaseDate: "",
+          serialNo: centralTicket.serial || "",
+          productCategory: centralTicket.productType || "",
+          purchaseDate: centralTicket.purchaseDate || "",
           warrantyType: centralTicket.warranty,
           claimCompany: "",
           accountNo: centralTicket.account || "",
@@ -870,7 +906,7 @@ function TicketDetailsPage() {
           callType: centralTicket.type || "",
           callStatus: centralTicket.status,
           postingDate: centralTicket.created,
-          problemDescription: centralTicket.internalNote,
+          problemDescription: centralTicket.diagnosed || centralTicket.internalNote,
           scheduleDate: centralTicket.schedule,
           schedulePeriod: "",
           technician: centralTicket.technician,
@@ -975,6 +1011,61 @@ function TicketDetailsPage() {
     setEditedCustomerInfo({});
   };
 
+  const startEditingProductInfo = () => {
+    if (ticket) {
+      setEditedProductInfo({
+        brand: ticket.brand,
+        model: ticket.model,
+        serialNo: ticket.serialNo,
+        productCategory: ticket.productCategory,
+        purchaseDate: ticket.purchaseDate,
+        warrantyType: ticket.warrantyType,
+        claimCompany: ticket.claimCompany,
+      });
+      setIsEditingProductInfo(true);
+    }
+  };
+
+  const saveProductInfo = () => {
+    if (!ticket) return;
+
+    const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
+    fieldsToCheck.forEach((field) => {
+      const oldValue = formatAuditValue(ticket[field]);
+      const newValue = formatAuditValue(editedProductInfo[field]);
+
+      if (oldValue !== newValue) {
+        appendAuditEntry({
+          by: currentUserEmail || "Unknown",
+          action: "Updated",
+          field: String(field),
+          before: oldValue,
+          after: newValue,
+        });
+
+        (ticket[field] as any) = editedProductInfo[field];
+      }
+    });
+
+    // Update centralized ticket system
+    updateTicket(ticketNo, {
+      manufacturer: editedProductInfo.brand || ticket.brand,
+      model: editedProductInfo.model || ticket.model,
+      serial: editedProductInfo.serialNo || ticket.serialNo,
+      productType: editedProductInfo.productCategory || ticket.productCategory,
+      purchaseDate: editedProductInfo.purchaseDate || ticket.purchaseDate,
+      warranty: editedProductInfo.warrantyType || ticket.warrantyType,
+    });
+
+    setIsEditingProductInfo(false);
+    setEditedProductInfo({});
+  };
+
+  const cancelEditingProductInfo = () => {
+    setIsEditingProductInfo(false);
+    setEditedProductInfo({});
+  };
+
   const startEditingScheduleInfo = () => {
     if (ticket) {
       setEditedScheduleInfo({
@@ -1044,6 +1135,7 @@ function TicketDetailsPage() {
         actionType: newVisitActionType,
         repairStatus: newVisitRepairStatus,
         repairType: newVisitRepairType,
+        schedNotes: newVisitSchedNotes,
         reclaim: newVisitReclaim,
         visited: newVisitVisited,
         notCompleted: newVisitNotCompleted,
@@ -1064,6 +1156,7 @@ function TicketDetailsPage() {
       actionType: newVisitActionType,
       repairStatus: newVisitRepairStatus,
       repairType: newVisitRepairType,
+      schedNotes: newVisitSchedNotes,
       reclaim: newVisitReclaim,
       visited: newVisitVisited,
       notCompleted: newVisitNotCompleted,
@@ -1076,8 +1169,6 @@ function TicketDetailsPage() {
       status: newVisitStatus,
       note: trimmedNote,
     };
-
-    (visitEntry as any).schedNotes = newVisitSchedNotes;
 
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
 
@@ -1162,7 +1253,7 @@ function TicketDetailsPage() {
     setNewVisitResolution(entry.resolution || "");
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
-    setNewVisitSchedNotes((entry as any).schedNotes || "");
+    setNewVisitSchedNotes(entry.schedNotes || "");
   };
 
   const loadVisitForView = (entry: VisitLogEntry) => {
@@ -1192,6 +1283,43 @@ function TicketDetailsPage() {
   const closeVisitView = () => {
     setViewingVisitEntry(null);
     setVisitFormMode("edit");
+  };
+
+  // Alert message system
+  const addAlertMessage = () => {
+    if (newAlertMessage.trim()) {
+      const alertEntry = {
+        id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        text: newAlertMessage.trim(),
+        by: currentEditor,
+        timestamp: new Date().toLocaleString(),
+      };
+      setAlertMessages((messages) => [alertEntry, ...messages]);
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Added alert message",
+        field: "Alert Messages",
+        before: "—",
+        after: newAlertMessage.trim(),
+      });
+      setNewAlertMessage("");
+    }
+  };
+
+  const removeAlertMessage = (alertId: string) => {
+    const alertToRemove = alertMessages.find((msg) => msg.id === alertId);
+    if (alertToRemove && confirm("Remove this alert message?")) {
+      setAlertMessages((messages) => messages.filter((msg) => msg.id !== alertId));
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Removed alert message",
+        field: "Alert Messages",
+        before: alertToRemove.text,
+        after: "Removed",
+      });
+    }
   };
 
   const closeVisitModal = () => {
@@ -1396,8 +1524,8 @@ function TicketDetailsPage() {
       <main className="flex-1 bg-slate-950 py-6">
         <div className="max-w-6xl mx-auto px-6">
           <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
-            <div className="mb-4 flex flex-wrap items-center gap-4">
-              <label htmlFor="ticket-selector" className="text-slate-400 font-semibold">Select Ticket:</label>
+            <div className="mb-4 flex items-center gap-4">
+              <label htmlFor="ticket-selector" className="text-slate-400 font-semibold whitespace-nowrap">Select Ticket:</label>
               <input
                 id="ticket-selector"
                 type="text"
@@ -1405,7 +1533,7 @@ function TicketDetailsPage() {
                 onChange={handleInputChange}
                 onKeyPress={handleKeyPress}
                 placeholder="Enter ticket number... (Press Enter)"
-                className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                className="bg-slate-900 border border-white/20 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500 w-64"
               />
               <button
                 type="button"
@@ -1417,10 +1545,40 @@ function TicketDetailsPage() {
               >
                 <Copy className="h-4 w-4" />
               </button>
+              
+              {/* Alert Messages Display - Inline beside controls */}
+              {alertMessages.length > 0 && (
+                <div className="flex items-center gap-2 flex-1">
+                  {alertMessages.slice(0, 1).map((alert) => (
+                    <div 
+                      key={alert.id} 
+                      className="bg-amber-500/30 border-2 border-amber-400/60 rounded px-4 py-2.5 flex items-center gap-3 flex-1 min-w-0 shadow-lg"
+                      title={`By ${alert.by} • ${alert.timestamp}`}
+                    >
+                      <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
+                      <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
+                      <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
+                        {alert.by.split('@')[0]} • {alert.timestamp.split(',')[0]}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeAlertMessage(alert.id)}
+                        className="text-amber-200 hover:text-white transition text-sm font-bold whitespace-nowrap ml-2 hover:scale-110"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  {alertMessages.length > 1 && (
+                    <span className="text-amber-300 text-sm font-semibold whitespace-nowrap">+{alertMessages.length - 1} more</span>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <div className="flex flex-col gap-2">
                 <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
+                
                 {ticket ? (
                   <div className="text-sm text-slate-300 leading-relaxed">
                     <span className="text-slate-400">Account</span> <span className="font-semibold text-white">{ticket.account}</span>
@@ -1429,7 +1587,7 @@ function TicketDetailsPage() {
                     <span className="mx-3 text-slate-600">•</span>
                     <span className="text-slate-400">Status</span> <span className="font-semibold text-blue-300">{ticket.status}</span>
                     <span className="mx-3 text-slate-600">•</span>
-                    <span className="text-slate-400">Product</span> <span className="font-semibold text-white">{ticket.product}</span>
+                    <span className="text-slate-400">Product</span> <span className="font-semibold text-white">{ticket.productCategory || ticket.product}</span>
                     <span className="mx-3 text-slate-600">•</span>
                     <span className="text-slate-400">TAT</span> <span className="font-semibold text-white">{ticket.tat}</span>
                     <span className="mx-3 text-slate-600">•</span>
@@ -1647,37 +1805,130 @@ function TicketDetailsPage() {
 
               {/* Product Information */}
               <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Product Information</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <label className="text-slate-500 font-semibold">Brand</label>
-                    <div className="text-white mt-1">{ticket.brand}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Model Code</label>
-                    <div className="text-white mt-1">{ticket.model}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Serial No</label>
-                    <div className="text-white mt-1">{ticket.serialNo || "—"}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Product Category</label>
-                    <div className="text-white mt-1">{ticket.productCategory}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Purchase Date</label>
-                    <div className="text-white mt-1">{ticket.purchaseDate}</div>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 font-semibold">Warranty Type</label>
-                    <div className="text-white mt-1">{ticket.warrantyType}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">Claim Company</label>
-                    <div className="text-white mt-1">{ticket.claimCompany}</div>
-                  </div>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-slate-300">Product Information</h4>
+                  {!isEditingProductInfo ? (
+                    <button
+                      onClick={startEditingProductInfo}
+                      className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold transition-colors border border-blue-500/30"
+                    >
+                      Edit Product Info
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveProductInfo}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEditingProductInfo}
+                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
+                {!isEditingProductInfo ? (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold">Brand</label>
+                      <div className="text-white mt-1">{ticket.brand || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Model Code</label>
+                      <div className="text-white mt-1">{ticket.model || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Serial No</label>
+                      <div className="text-white mt-1">{ticket.serialNo || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Product Category</label>
+                      <div className="text-white mt-1">{ticket.productCategory || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Purchase Date</label>
+                      <div className="text-white mt-1">{ticket.purchaseDate || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Warranty Type</label>
+                      <div className="text-white mt-1">{ticket.warrantyType || "—"}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-slate-500 font-semibold">Claim Company</label>
+                      <div className="text-white mt-1">{ticket.claimCompany || "—"}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Brand</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.brand || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, brand: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Model Code</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.model || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, model: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Serial No</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.serialNo || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, serialNo: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Product Category</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.productCategory || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, productCategory: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Purchase Date</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.purchaseDate || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, purchaseDate: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Warranty Type</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.warrantyType || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, warrantyType: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Claim Company</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.claimCompany || ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, claimCompany: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Call Service Information */}
@@ -1952,27 +2203,67 @@ function TicketDetailsPage() {
                             <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
                           </div>
                           {entry.updatedAt ? (
-                            <div className="mt-1 text-xs text-amber-200">Edited: {new Date(entry.updatedAt).toLocaleString()}</div>
+                            <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs">
+                              <div className="font-semibold text-amber-200">
+                                Edited: {new Date(entry.updatedAt).toLocaleString()}
+                                {entry.updatedBy ? ` by ${entry.updatedBy}` : ""}
+                              </div>
+                              {entry.updateReason ? (
+                                <div className="mt-1 text-amber-100/90">{entry.updateReason}</div>
+                              ) : null}
+                            </div>
                           ) : null}
-                          <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-2 xl:grid-cols-3">
+                          
+                          {/* Schedule Information */}
+                          <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-3">
                             <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
                             <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
                             <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
-                            <div><span className="font-semibold text-slate-400">Activity:</span> {entry.activity || "—"}</div>
-                            <div><span className="font-semibold text-slate-400">Visited:</span> {entry.visited || "—"}</div>
-                            <div><span className="font-semibold text-slate-400">Not Completed?:</span> {entry.notCompleted || "—"}</div>
                           </div>
-                          <div className="mt-3 grid gap-2 text-sm text-slate-200 md:grid-cols-2">
-                            <p><span className="font-semibold text-slate-400">Symptom (Cx):</span> {entry.symptomCx || "—"}</p>
-                            <p><span className="font-semibold text-slate-400">Diagnosis:</span> {entry.diagnosis || "—"}</p>
-                            <p><span className="font-semibold text-slate-400">Symptom (Tech):</span> {entry.symptomTech || "—"}</p>
-                            <p><span className="font-semibold text-slate-400">Resolution:</span> {entry.resolution || "—"}</p>
-                            <p><span className="font-semibold text-slate-400">Repair Type:</span> {entry.repairType || "—"}</p>
-                            <p><span className="font-semibold text-slate-400">Reclaim:</span> {entry.reclaim || "—"}</p>
-                          </div>
-                          <p className="mt-3 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Note:</span> {entry.note || "—"}</p>
-                          <p className="mt-2 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {entry.nonCompletionReason || "—"}</p>
-                          <p className="mt-2 whitespace-pre-wrap text-slate-200"><span className="font-semibold text-slate-400">Triage Note:</span> {entry.triageNote || "—"}</p>
+
+                          {/* CSR Notes - Only show if has content */}
+                          {(entry.schedNotes || entry.symptomCx) ? (
+                            <div className="mt-3 rounded-md border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">CSR Information</div>
+                              {entry.schedNotes ? (
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Sched Notes:</span> {entry.schedNotes}</p>
+                              ) : null}
+                              {entry.symptomCx ? (
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Symptom:</span> {entry.symptomCx}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Tech Notes - Only show if has content */}
+                          {(entry.diagnosis || entry.resolution || entry.repairType) ? (
+                            <div className="mt-3 rounded-md border border-green-500/20 bg-green-500/5 p-3 space-y-2">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
+                              {entry.repairType ? (
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Repair Type (2nd Tech):</span> {entry.repairType}</p>
+                              ) : null}
+                              {entry.diagnosis ? (
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Cause of Failure:</span> {entry.diagnosis}</p>
+                              ) : null}
+                              {entry.resolution ? (
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Repair Notes:</span> {entry.resolution}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Additional Notes - Only show if has content */}
+                          {(entry.nonCompletionReason || entry.triageNote || entry.note) ? (
+                            <div className="mt-3 space-y-2 text-sm text-slate-200">
+                              {entry.nonCompletionReason ? (
+                                <p><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {entry.nonCompletionReason}</p>
+                              ) : null}
+                              {entry.triageNote ? (
+                                <p><span className="font-semibold text-slate-400">Triage Note:</span> {entry.triageNote}</p>
+                              ) : null}
+                              {entry.note ? (
+                                <p><span className="font-semibold text-slate-400">Internal Note:</span> {entry.note}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button type="button" onClick={() => loadVisitForView(entry)} className="rounded-md border border-white/15 bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-200/40">
                               View
@@ -2037,7 +2328,7 @@ function TicketDetailsPage() {
                             <option value="">— select —</option>
                             <option>AM</option>
                             <option>PM</option>
-                            <option>ALL DAY</option>
+                            <option>ANYTIME</option>
                           </select>
                         </div>
                         <div className="space-y-1.5">
@@ -2154,28 +2445,77 @@ function TicketDetailsPage() {
                   </div>
 
                   {viewingVisitEntry.updatedAt ? (
-                    <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-                      Edited: {new Date(viewingVisitEntry.updatedAt).toLocaleString()}
+                    <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm">
+                      <div className="font-semibold text-amber-200">
+                        Edited: {new Date(viewingVisitEntry.updatedAt).toLocaleString()}
+                        {viewingVisitEntry.updatedBy ? ` by ${viewingVisitEntry.updatedBy}` : ""}
+                      </div>
+                      {viewingVisitEntry.updateReason ? (
+                        <div className="mt-1 text-amber-100/90">{viewingVisitEntry.updateReason}</div>
+                      ) : null}
                     </div>
                   ) : null}
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3 text-sm text-slate-200">
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Schedule Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Activity:</span> {viewingVisitEntry.activity || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Visited:</span> {viewingVisitEntry.visited || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Not Completed?:</span> {viewingVisitEntry.notCompleted || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Symptom (Cx):</span> {viewingVisitEntry.symptomCx || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Diagnosis:</span> {viewingVisitEntry.diagnosis || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Symptom (Tech):</span> {viewingVisitEntry.symptomTech || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Resolution:</span> {viewingVisitEntry.resolution || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Repair Type:</span> {viewingVisitEntry.repairType || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Reclaim:</span> {viewingVisitEntry.reclaim || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Note:</span> {viewingVisitEntry.note || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {viewingVisitEntry.nonCompletionReason || "—"}</div>
-                    <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 md:col-span-2 xl:col-span-3"><span className="font-semibold text-slate-400">Triage Note:</span> {viewingVisitEntry.triageNote || "—"}</div>
+                  {/* Schedule Information */}
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Schedule Information</div>
+                    <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
+                    </div>
                   </div>
+
+                  {/* CSR Information */}
+                  {(viewingVisitEntry.schedNotes || viewingVisitEntry.symptomCx) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-blue-300">CSR Information</div>
+                      <div className="space-y-3 text-sm text-slate-200">
+                        {viewingVisitEntry.schedNotes ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Sched Notes:</span> {viewingVisitEntry.schedNotes}</div>
+                        ) : null}
+                        {viewingVisitEntry.symptomCx ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Symptom:</span> {viewingVisitEntry.symptomCx}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Technician Information */}
+                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
+                      <div className="space-y-3 text-sm text-slate-200">
+                        {viewingVisitEntry.repairType ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Repair Type (2nd Tech):</span> {viewingVisitEntry.repairType}</div>
+                        ) : null}
+                        {viewingVisitEntry.diagnosis ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Cause of Failure:</span> {viewingVisitEntry.diagnosis}</div>
+                        ) : null}
+                        {viewingVisitEntry.resolution ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Repair Notes:</span> {viewingVisitEntry.resolution}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Additional Notes */}
+                  {(viewingVisitEntry.nonCompletionReason || viewingVisitEntry.triageNote || viewingVisitEntry.note) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Additional Notes</div>
+                      <div className="space-y-3 text-sm text-slate-200">
+                        {viewingVisitEntry.nonCompletionReason ? (
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Non-Completion Reason:</span> {viewingVisitEntry.nonCompletionReason}</div>
+                        ) : null}
+                        {viewingVisitEntry.triageNote ? (
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Triage Note:</span> {viewingVisitEntry.triageNote}</div>
+                        ) : null}
+                        {viewingVisitEntry.note ? (
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Internal Note:</span> {viewingVisitEntry.note}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-6 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
@@ -2494,21 +2834,21 @@ function TicketDetailsPage() {
               </div>
             </div>
 
-            {/* Comments */}
+            {/* Alert Message Input */}
             <div>
-              <h4 className="font-semibold text-slate-300 mb-4">Comments</h4>
-              <div className="space-y-3 mb-4">
-                <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
-                  <div className="text-slate-400 mb-2">No comments yet</div>
-                </div>
-              </div>
+              <h4 className="font-semibold text-slate-300 mb-4">Alert Message</h4>
               <div className="flex gap-2">
                 <textarea
-                  placeholder="Add a comment..."
-                  className="flex-1 bg-slate-900 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  placeholder="Type an alert message that will display at the top..."
+                  className="flex-1 bg-slate-900 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                   rows={3}
+                  value={newAlertMessage}
+                  onChange={(e) => setNewAlertMessage(e.target.value)}
                 />
-                <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded text-sm transition">
+                <button 
+                  onClick={addAlertMessage}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded text-sm transition"
+                >
                   Add
                 </button>
               </div>

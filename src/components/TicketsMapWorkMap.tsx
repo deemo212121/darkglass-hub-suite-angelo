@@ -3,8 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { getSubModule } from "@/lib/modules";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, MapPin, X } from "lucide-react";
-import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName } from "@/lib/locations";
-import { loadTickets, type Ticket } from "@/lib/ticketData";
+import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
+import { loadTickets, getTicketByNumber, type Ticket } from "@/lib/ticketData";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -37,10 +37,17 @@ function deriveStatusGroup(status: string) {
 
 function getInitials(value: string | null | undefined) {
   if (!value) return "U";
-  const localPart = value.split("@")[0] ?? value;
-  const parts = localPart.split(/[._-]/).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-  return localPart.slice(0, 2).toUpperCase();
+  
+  // Split by spaces to get first and last name
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  
+  if (parts.length >= 2) {
+    // Use first letter of first name + first letter of last name
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
+  
+  // Fallback: if only one word, use first two letters
+  return value.slice(0, 2).toUpperCase();
 }
 
 function getToneClass(mode: ColorMode, ticket: TicketRecord, index: number) {
@@ -54,17 +61,6 @@ function getToneClass(mode: ColorMode, ticket: TicketRecord, index: number) {
 
 function getStatusDotClass(status: "ready" | "op" | "clNeed" | "comp") {
   return `status-dot status-dot-${status}`;
-}
-
-function buildPinPosition(ticket: TicketRecord, index: number) {
-  const seed = String(ticket.location || ticket.customer || ticket.city || ticket.address || "");
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 100000;
-  }
-  const left = 10 + ((hash + index * 17) % 78);
-  const top = 15 + (((hash >> 3) + index * 11) % 68);
-  return { left: `${left}%`, top: `${top}%` };
 }
 
 export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -98,7 +94,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     let cancelled = false;
 
     const initializeMap = () => {
-      if (cancelled || !mapContainerRef.current) return;
+      if (cancelled || !mapContainerRef.current || !ready) return;
       const maps = (window as Window & { google?: any }).google?.maps;
       if (!maps) return;
 
@@ -115,6 +111,9 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       setMapReady(true);
       setMapError(null);
     };
+
+    // If data isn't ready yet, wait
+    if (!ready) return;
 
     const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps="work-map"]');
     if ((window as Window & { google?: any }).google?.maps) {
@@ -149,7 +148,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [ready]); // Add ready as dependency
 
   const tickets = useMemo<TicketRecord[]>(() => {
     if (!ready) return [];
@@ -203,6 +202,33 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     });
   }, [tickets, selectedLocation, mapDate]);
 
+  // Get all technicians for the selected location (not just those with scheduled tickets)
+  const uniqueTechnicians = useMemo(() => {
+    // First, get technicians from the selected location's roster
+    const locationTechs = selectedLocation ? (TECHNICIANS_BY_LOCATION[selectedLocation] || []) : [];
+    
+    // Also include any technicians that have tickets scheduled (in case they're not in the roster)
+    const ticketTechs = visibleTickets.map(t => t.technician_name || t.technician).filter(Boolean);
+    
+    // Combine and deduplicate, prioritizing roster order
+    const combined = [...locationTechs, ...ticketTechs];
+    return Array.from(new Set(combined)).filter(tech => tech !== "Unassigned");
+  }, [selectedLocation, visibleTickets]);
+
+  // Helper to get technician color
+  const getTechColor = (techName: string) => {
+    const techColors = [
+      "#3B82F6", // Blue
+      "#10B981", // Green
+      "#F59E0B", // Amber
+      "#EF4444", // Red
+      "#8B5CF6", // Purple
+      "#EC4899", // Pink
+    ];
+    const techIndex = uniqueTechnicians.indexOf(techName);
+    return techColors[techIndex % techColors.length];
+  };
+
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
 
@@ -234,20 +260,68 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
       const query = ticket.customer_address || ticket.customer_city || ticket.location;
       if (!query) return { ticket, position: null };
-      return { ticket, position: await geocode(query) };
+      
+      // Build full address for accurate geocoding
+      const streetAddr = ticket.address || ticket.customer_address || "";
+      const cityName = ticket.city || ticket.customer_city || "";
+      const zipCode = ticket.zip || "";
+      const fullQuery = streetAddr && cityName && zipCode
+        ? `${streetAddr}, ${cityName}, GA ${zipCode}`
+        : query;
+      
+      return { ticket, position: await geocode(fullQuery) };
     });
 
     Promise.all(ticketPositions).then((results) => {
       if (cancelled || !mapRef.current) return;
 
       const bounds = new maps.LatLngBounds();
+      
+      // Group tickets by technician to determine hierarchy numbers
+      const ticketsByTech = new Map<string, number>();
+      
       results.forEach(({ ticket, position }, index) => {
         if (!position) return;
+
+        // Determine hierarchy number for this technician
+        const techName = ticket.technician_name || ticket.technician || "Unassigned";
+        const currentCount = ticketsByTech.get(techName) || 0;
+        const hierarchyNumber = currentCount + 1;
+        ticketsByTech.set(techName, hierarchyNumber);
+
+        // Get technician initials
+        const initials = getInitials(ticket.technician_name || ticket.technician || "Unassigned");
+        
+        // Create label text: initials + number (e.g., "JR1", "AM2")
+        const labelText = `${initials}${hierarchyNumber}`;
+        
+        // Always use technician color for marker background
+        const markerColor = getTechColor(techName);
+
+        // Create custom marker with badge/text box icon with pointer at bottom
+        const svgMarker = {
+          // SVG path for a rounded rectangle with a pointer at the bottom center
+          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+          fillColor: markerColor,
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+          scale: 1.8, // Large size for visibility
+          anchor: new maps.Point(20, 22), // Anchor at the pointer tip
+          labelOrigin: new maps.Point(20, 10), // Center label in the badge
+        };
 
         const marker = new maps.Marker({
           map: mapRef.current,
           position,
-          title: ticket.ticket_no || ticket.customer_name || `Ticket ${index + 1}`,
+          title: `${ticket.ticketNo || ticket.ticket_no || `Ticket ${index + 1}`} - ${ticket.customer || ticket.customer_name || 'Unknown'}\n${techName} - Ticket #${hierarchyNumber}`,
+          icon: svgMarker,
+          label: {
+            text: labelText,
+            color: "#ffffff",
+            fontSize: "13px",
+            fontWeight: "bold",
+          },
         });
 
         marker.addListener("click", () => setSelectedTicket(ticket));
@@ -286,17 +360,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       { ready: 0, op: 0, clNeed: 0, comp: 0 },
     );
   }, [locationData, selectedLocation, tickets]);
-
-  const pinStyles = useMemo(
-    () =>
-      visibleTickets
-        .map((ticket, index) => {
-          const position = buildPinPosition(ticket, index);
-          return `.map-pin-${index} { left: ${position.left}; top: ${position.top}; }`;
-        })
-        .join("\n"),
-    [visibleTickets],
-  );
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -361,14 +424,40 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                   ) : (
                     visibleTickets.map((ticket, index) => {
                       const toneClass = getToneClass(colorMode, ticket, index);
-                      const selected = selectedTicket?.ticket_no === ticket.ticket_no;
+                      const selected = selectedTicket?.ticketNo === ticket.ticketNo || selectedTicket?.ticket_no === ticket.ticket_no;
+                      const techName = ticket.technician_name || ticket.technician || "Unassigned";
+                      const initials = getInitials(techName);
+                      const ticketNumber = ticket.ticketNo || ticket.ticket_no || `T-${index + 1}`;
+                      const address = ticket.address || ticket.customer_address || ticket.city || ticket.customer_city || ticket.location || "Unknown address";
+                      
+                      // Always get technician color for background to show assigned technician clearly
+                      const bgColor = getTechColor(techName);
+                      const cardStyle = { 
+                        backgroundColor: `${bgColor}15`, // 15 = ~8% opacity
+                        borderLeftColor: bgColor,
+                        borderLeftWidth: '4px',
+                        borderLeftStyle: 'solid'
+                      };
+                      
                       return (
-                        <button key={`${ticket.ticket_no}-${index}`} type="button" className={`ticket-card ${selected ? "selected" : ""}`} onClick={() => setSelectedTicket(ticket)}>
+                        <button 
+                          key={`${ticketNumber}-${index}`} 
+                          type="button" 
+                          className={`ticket-card ${selected ? "selected" : ""}`} 
+                          style={cardStyle}
+                          onClick={() => setSelectedTicket(ticket)}
+                        >
                           <div className="ticket-card-top">
-                            <span className="ticket-card-no">{ticket.ticket_no}</span>
-                            <span className={`tech-badge ${toneClass}`}>{ticket.technician_name || ticket.technician || "Unassigned"}</span>
+                            <span className="ticket-card-no">{ticketNumber}</span>
+                            <span 
+                              className={`tech-badge ${colorMode === "tech" ? "" : toneClass}`}
+                              style={colorMode === "tech" ? { backgroundColor: bgColor } : {}}
+                              title={techName}
+                            >
+                              {initials}
+                            </span>
                           </div>
-                          <span className="ticket-card-addr">{ticket.customer_address || ticket.customer_name || ticket.customer_city || ticket.location || "Unknown address"}</span>
+                          <span className="ticket-card-addr">{address}</span>
                         </button>
                       );
                     })
@@ -392,19 +481,18 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                   </div>
                 )}
 
-                <div className="map-pins">
-                  {visibleTickets.map((ticket, index) => {
-                    const toneClass = getToneClass(colorMode, ticket, index);
-                    const initials = getInitials(ticket.technician_name || ticket.technician || ticket.customer_name || ticket.ticket_no);
-                    const time = String(ticket.schedule || ticket.created || ticket.created_at || "").slice(11, 16) || ticket.schedule_date || "";
+                {/* Technician Color Legend */}
+                <div className="legend-for-map" id="mapLegend">
+                  {uniqueTechnicians.map((tech, index) => {
+                    const techColor = getTechColor(tech);
                     return (
-                      <button key={`pin-${ticket.ticket_no}-${index}`} type="button" className={`map-pin map-pin-${index}`} onClick={() => setSelectedTicket(ticket)} aria-label={`Open ${ticket.ticket_no}`}>
-                        <div className={`pin-bubble ${toneClass}`}>
-                          <span className="pin-initials">{initials}</span>
-                          <span className="pin-time">{time || "Today"}</span>
-                        </div>
-                        <div className={`pin-tail ${toneClass}`} />
-                      </button>
+                      <div key={tech} className="legend-for-map-item">
+                        <span 
+                          className="legend-color-dot" 
+                          style={{ backgroundColor: techColor }}
+                        />
+                        <span>{tech}</span>
+                      </div>
                     );
                   })}
                 </div>
@@ -428,75 +516,99 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         <div className="detail-modal">
           <div className="detail-modal-header">
             <div className="detail-title-row">
-              <a className="detail-ticket-no detail-ticket-link" href={selectedTicket ? "ticket_details.html" : "#"} target="_blank" rel="noopener noreferrer">
-                {selectedTicket?.ticket_no || "Ticket details"}
+              <a 
+                className="detail-ticket-no detail-ticket-link" 
+                href={selectedTicket ? `/ticket/${selectedTicket.ticketNo || selectedTicket.ticket_no}` : "#"} 
+                target="_blank" 
+                rel="noopener noreferrer"
+              >
+                {selectedTicket?.ticketNo || selectedTicket?.ticket_no || "Ticket details"}
               </a>
-              <button className="google-btn" type="button" onClick={() => selectedTicket && window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedTicket.ticket_no || selectedTicket.customer_name || "ticket")}`, "_blank", "noopener,noreferrer")}>Google</button>
+              <button className="google-btn" type="button" onClick={() => selectedTicket && window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((selectedTicket.address || selectedTicket.customer_address || "") + ", " + (selectedTicket.city || selectedTicket.customer_city || ""))}`, "_blank", "noopener,noreferrer")}>Google Maps</button>
             </div>
             <button className="modal-close-btn" type="button" aria-label="Close" onClick={() => setSelectedTicket(null)}><X className="h-5 w-5" /></button>
           </div>
 
           <div className="detail-body">
             {selectedTicket ? (
-              <>
-                <div className="detail-row">
-                  <div className="detail-field grow">
-                    <div className="detail-label">Customer</div>
-                    <div className="detail-value">{selectedTicket.customer_name || selectedTicket.customer || "Unknown"}</div>
-                  </div>
-                  <div className="detail-field">
-                    <div className="detail-label">Technician</div>
-                    <div className="detail-value">{selectedTicket.technician_name || selectedTicket.technician || "Unassigned"}</div>
-                  </div>
-                  <div className="detail-field">
-                    <div className="detail-label">Status</div>
-                    <div className="detail-value"><span className={`status-pill-detail ${getToneClass(colorMode, selectedTicket, 0)}`}>{selectedTicket.status || "Open"}</span></div>
-                  </div>
-                </div>
-
-                <hr className="detail-divider" />
-
-                <div className="detail-row">
-                  <div className="detail-field grow">
-                    <div className="detail-label">Address</div>
-                    <div className="detail-value">{selectedTicket.customer_address || selectedTicket.location || selectedTicket.customer_city || "-"}</div>
-                  </div>
-                  <div className="detail-field">
-                    <div className="detail-label">Schedule</div>
-                    <div className="detail-value"><span className="schedule-box"><CalendarDays className="h-4 w-4" /><span>{String(selectedTicket.schedule || selectedTicket.schedule_date || mapDate)}</span></span></div>
-                  </div>
-                </div>
-
-                <div className="detail-row">
-                  <div className="detail-field grow">
-                    <div className="detail-label">Problem</div>
-                    <div className="detail-value">{selectedTicket.problem_description || selectedTicket.note || "No additional notes."}</div>
-                  </div>
-                </div>
-
-                <hr className="detail-divider" />
-
-                <div className="detail-row">
-                  <div className="detail-field grow">
-                    <div className="detail-label">Contact</div>
-                    <div className="detail-value">{selectedTicket.customer_cell_phone_1 || selectedTicket.phone || "-"}</div>
-                    <div className="contact-actions">
-                      <button className="contact-btn" type="button">Call</button>
-                      <button className="contact-btn" type="button">Text</button>
-                      <button className="contact-btn" type="button">Email</button>
+              (() => {
+                // Get full ticket data with visits from centralized system
+                const ticketNo = selectedTicket.ticketNo || selectedTicket.ticket_no;
+                const fullTicket = ticketNo ? getTicketByNumber(ticketNo) : null;
+                const latestVisit = fullTicket?.visits?.[0];
+                const displayStatus = latestVisit?.repairStatus || selectedTicket.status || "Open";
+                
+                return (
+                  <>
+                    <div className="detail-row">
+                      <div className="detail-field grow">
+                        <div className="detail-label">Customer</div>
+                        <div className="detail-value">{selectedTicket.customer_name || selectedTicket.customer || "Unknown"}</div>
+                      </div>
+                      <div className="detail-field">
+                        <div className="detail-label">Technician</div>
+                        <div className="detail-value">{selectedTicket.technician_name || selectedTicket.technician || "Unassigned"}</div>
+                      </div>
+                      <div className="detail-field">
+                        <div className="detail-label">Repair Status</div>
+                        <div className="detail-value"><span className={`status-pill-detail ${getToneClass(colorMode, selectedTicket, 0)}`}>{displayStatus}</span></div>
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                <hr className="detail-divider" />
+                    <hr className="detail-divider" />
 
-                <div className="detail-row">
-                  <div className="detail-field grow">
-                    <div className="detail-label">Internal Note</div>
-                    <div className="internal-note-box">{selectedTicket.internal_note || selectedTicket.problem_description || "No internal note available."}</div>
-                  </div>
-                </div>
-              </>
+                    <div className="detail-row">
+                      <div className="detail-field grow">
+                        <div className="detail-label">Address</div>
+                        <div className="detail-value">
+                          {(() => {
+                            const street = selectedTicket.address || selectedTicket.customer_address || "";
+                            const city = selectedTicket.city || selectedTicket.customer_city || "";
+                            const zip = selectedTicket.zip || "";
+                            return street && city
+                              ? `${street}, ${city}${zip ? `, ${zip}` : ""}`
+                              : selectedTicket.location || "-";
+                          })()}
+                        </div>
+                      </div>
+                      <div className="detail-field">
+                        <div className="detail-label">Schedule</div>
+                        <div className="detail-value"><span className="schedule-box"><CalendarDays className="h-4 w-4" /><span>{String(selectedTicket.schedule || selectedTicket.schedule_date || mapDate)}</span></span></div>
+                      </div>
+                    </div>
+
+                    <div className="detail-row">
+                      <div className="detail-field grow">
+                        <div className="detail-label">Problem</div>
+                        <div className="detail-value">{selectedTicket.problem_description || selectedTicket.note || "No additional notes."}</div>
+                      </div>
+                    </div>
+
+                    <hr className="detail-divider" />
+
+                    <div className="detail-row">
+                      <div className="detail-field grow">
+                        <div className="detail-label">Contact</div>
+                        <div className="detail-value">{selectedTicket.customer_cell_phone_1 || selectedTicket.phone || "-"}</div>
+                        <div className="contact-actions">
+                          <button className="contact-btn" type="button">Call</button>
+                          <button className="contact-btn" type="button">Text</button>
+                          <button className="contact-btn" type="button">Email</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <hr className="detail-divider" />
+
+                    <div className="detail-row">
+                      <div className="detail-field grow">
+                        <div className="detail-label">Internal Note</div>
+                        <div className="internal-note-box">{selectedTicket.internal_note || selectedTicket.problem_description || "No internal note available."}</div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()
             ) : (
               <div className="text-sm text-slate-300">Select a ticket to view its details.</div>
             )}
@@ -544,14 +656,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .map-type-btn.active { background: #fff; box-shadow: inset 0 -2px 0 #3b82f6; }
         .map-placeholder-inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; pointer-events: none; }
         .map-placeholder-icon { opacity: 0.35; }
-        .map-pins { position: absolute; inset: 0; pointer-events: none; }
-        .map-pin { position: absolute; display: flex; flex-direction: column; align-items: center; cursor: pointer; pointer-events: all; transform: translate(-50%, -100%); background: transparent; border: none; padding: 0; }
-        .map-pin:hover { transform: translate(-50%, -105%) scale(1.15); z-index: 10; }
-        .pin-bubble { padding: 0.35rem 0.75rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; align-items: center; gap: 0.3rem; flex-direction: column; color: #fff; }
-        .pin-initials { min-width: 1rem; line-height: 1; } .pin-time { font-size: 0.65rem; opacity: 0.9; line-height: 1; }
-        .pin-tail { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid transparent; margin-top: -1px; }
-        .pin-tail.tone-ready { border-top-color: #3b82f6; } .pin-tail.tone-op { border-top-color: #f59e0b; } .pin-tail.tone-cl-need { border-top-color: #ef4444; } .pin-tail.tone-comp { border-top-color: #22c55e; }
-        .pin-tail.tone-tech-0 { border-top-color: #2563eb; } .pin-tail.tone-tech-1 { border-top-color: #7c3aed; } .pin-tail.tone-tech-2 { border-top-color: #0f766e; } .pin-tail.tone-tech-3 { border-top-color: #b45309; } .pin-tail.tone-tech-4 { border-top-color: #be123c; } .pin-tail.tone-tech-5 { border-top-color: #4f46e5; }
         .selected-day-panel { position: absolute; top: 1rem; right: 1rem; width: 285px; background: rgba(10,15,30,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; z-index: 20; overflow: hidden; }
         .selected-day-header { background: #0f172a; padding: 0.55rem 0.9rem; font-size: 0.88rem; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .selected-day-filters { display: flex; gap: 0.6rem; padding: 0.55rem 0.85rem; flex-wrap: wrap; }
@@ -581,7 +685,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) { .ticket-sidebar { width: 175px; min-width: 150px; } .color-legend { position: static; right: auto; } .selected-day-panel { width: 220px; } .map-body { min-height: 480px; } }
       `}</style>
-      <style>{pinStyles}</style>
     </div>
   );
 }

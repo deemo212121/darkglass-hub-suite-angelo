@@ -46,7 +46,80 @@ export interface Ticket {
   lastName?: string;
   address?: string;
   zip?: string;
+  state?: string;
   email?: string;
+  secondPhone?: string;
+  // Product details
+  serial?: string;
+  modelVersion?: string;
+  productType?: string;
+  purchaseDate?: string;
+  // Additional tracking fields
+  fakeTicket?: boolean;
+  originalTicketNo?: string;
+  callReceivedDate?: string;
+  addressNote?: string;
+  claimCompany?: string;
+  // Service tracking data - visits and parts integrated into ticket
+  visits?: Array<{
+    id: string;
+    visitNo: string;
+    timestamp: string;
+    updatedAt?: string;
+    updatedBy?: string;
+    updateReason?: string;
+    by: string;
+    scheduleDate: string;
+    technician: string;
+    timeSlot: string;
+    activity: string;
+    actionType: string;
+    repairStatus: string;
+    repairType: string;
+    schedNotes: string;
+    reclaim: string;
+    visited: string;
+    notCompleted: string;
+    symptomCx: string;
+    diagnosis: string;
+    symptomTech: string;
+    resolution: string;
+    nonCompletionReason: string;
+    triageNote: string;
+    status: string;
+    note: string;
+  }>;
+  parts?: Array<{
+    id: string;
+    partNo: string;
+    partDist: string;
+    partDesc: string;
+    poNo: string;
+    poDate: string;
+    invoiceNo: string;
+    invoiceDate: string;
+    quantity: string;
+    partPrice: string;
+    coreValue: string;
+    shipCost: string;
+    markup: string;
+    totalMarkup: string;
+    claimTo: string;
+    status: string;
+    note: string;
+    visitId: string;
+    orderNo: string;
+    eta: string;
+    inTracking: string;
+    raDate: string;
+    raNo: string;
+    outTracking: string;
+    creditNo: string;
+    hold: string;
+    cxPaid: string;
+    createdBy: string;
+    lastModifiedBy: string;
+  }>;
 }
 
 export const TICKET_SOURCES = [
@@ -566,28 +639,32 @@ export const TICKETS: Ticket[] = RAW_TICKETS.map((ticket, index) => ({
  * Helper function to get a ticket by ticket number
  */
 export function getTicketByNumber(ticketNo: string): Ticket | undefined {
-  return TICKETS.find(t => t.ticketNo === ticketNo);
+  const allTickets = loadTickets();
+  return allTickets.find(t => t.ticketNo === ticketNo);
 }
 
 /**
  * Helper function to get tickets by location
  */
 export function getTicketsByLocation(location: string): Ticket[] {
-  return TICKETS.filter(t => t.location === location);
+  const allTickets = loadTickets();
+  return allTickets.filter(t => t.location === location);
 }
 
 /**
  * Helper function to get tickets by status
  */
 export function getTicketsByStatus(status: string): Ticket[] {
-  return TICKETS.filter(t => t.status === status);
+  const allTickets = loadTickets();
+  return allTickets.filter(t => t.status === status);
 }
 
 /**
  * Helper function to get tickets by technician
  */
 export function getTicketsByTechnician(technician: string): Ticket[] {
-  return TICKETS.filter(t => t.technician === technician);
+  const allTickets = loadTickets();
+  return allTickets.filter(t => t.technician === technician);
 }
 
 /**
@@ -600,7 +677,7 @@ export function filterTickets(filters: {
   technician?: string;
   diagnosed?: string;
 }): Ticket[] {
-  let filtered = [...TICKETS];
+  let filtered = loadTickets();
 
   if (filters.search) {
     const query = filters.search.toLowerCase();
@@ -669,8 +746,19 @@ export function loadTickets(): Ticket[] {
       // Add any remaining custom tickets (not in original TICKETS array)
       const customTickets = Array.from(savedTicketsMap.values());
       
-      // Return: custom tickets first, then merged tickets
-      return [...customTickets, ...mergedTickets];
+      // Combine: custom tickets first, then merged tickets
+      const allTickets = [...customTickets, ...mergedTickets];
+      
+      // IMPORTANT: Deduplicate by ticketNo to prevent any duplicates
+      const deduplicatedMap = new Map<string, Ticket>();
+      allTickets.forEach(ticket => {
+        // Keep the first occurrence (custom/modified versions come first)
+        if (!deduplicatedMap.has(ticket.ticketNo)) {
+          deduplicatedMap.set(ticket.ticketNo, ticket);
+        }
+      });
+      
+      return Array.from(deduplicatedMap.values());
     }
   } catch (error) {
     console.error("Error loading tickets from localStorage:", error);
@@ -710,6 +798,8 @@ export function saveCustomTickets(tickets: Ticket[]): void {
       return false;
     });
     
+    console.log(`Saving ${ticketsToSave.length} tickets to localStorage (${tickets.length} total tickets)`, ticketsToSave.map(t => t.ticketNo));
+    
     localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(ticketsToSave));
     
     // Trigger storage event for same-tab updates
@@ -718,6 +808,8 @@ export function saveCustomTickets(tickets: Ticket[]): void {
       newValue: JSON.stringify(ticketsToSave),
       storageArea: localStorage
     }));
+    
+    console.log(`Tickets saved successfully to ${TICKETS_STORAGE_KEY}`);
   } catch (error) {
     console.error("Error saving tickets to localStorage:", error);
   }
@@ -753,9 +845,15 @@ export function createTicket(ticketData: Partial<Ticket>): Ticket {
     location: ticketData.location || "",
     address: ticketData.address || "",
     zip: ticketData.zip || "",
+    state: ticketData.state || "",
     phone: ticketData.phone || "",
+    secondPhone: ticketData.secondPhone || "",
     email: ticketData.email || "",
     model: ticketData.model || "",
+    serial: ticketData.serial || "",
+    modelVersion: ticketData.modelVersion || "",
+    productType: ticketData.productType || "",
+    purchaseDate: ticketData.purchaseDate || "",
     technician: ticketData.technician || "",
     diagnosed: ticketData.diagnosed || "N",
     status: ticketData.status || "CSR-Assigned to ASC",
@@ -773,9 +871,16 @@ export function createTicket(ticketData: Partial<Ticket>): Ticket {
     branch: ticketData.branch,
     contact: ticketData.contact,
     delay: ticketData.delay,
+    addressNote: ticketData.addressNote,
+    fakeTicket: ticketData.fakeTicket,
+    originalTicketNo: ticketData.originalTicketNo,
+    callReceivedDate: ticketData.callReceivedDate,
     statusChangedAt: now.toISOString(),
     statusChangedBy: ticketData.statusChangedBy,
   };
+
+  console.log("Created ticket object:", newTicket);
+  console.log("Product Type value:", newTicket.productType);
 
   return newTicket;
 }
@@ -786,8 +891,13 @@ export function createTicket(ticketData: Partial<Ticket>): Ticket {
  */
 export function addTicket(ticketData: Partial<Ticket>): Ticket[] {
   const newTicket = createTicket(ticketData);
+  console.log("Adding new ticket:", newTicket.ticketNo, newTicket);
+  
   const currentTickets = loadTickets();
+  console.log("Current tickets before adding:", currentTickets.length);
+  
   const updatedTickets = [newTicket, ...currentTickets];
+  console.log("Updated tickets after adding:", updatedTickets.length);
   
   saveCustomTickets(updatedTickets);
   
@@ -843,4 +953,67 @@ export function clearCustomTickets(): void {
   } catch (error) {
     console.error("Error clearing custom tickets:", error);
   }
+}
+
+
+/**
+ * Update ticket visits
+ * Saves visits array to the ticket in centralized system
+ */
+export function updateTicketVisits(ticketNo: string, visits: Ticket['visits']): Ticket[] {
+  const currentTickets = loadTickets();
+  const updatedTickets = currentTickets.map(ticket => {
+    if (ticket.ticketNo === ticketNo) {
+      return {
+        ...ticket,
+        visits: visits || [],
+        statusChangedAt: new Date().toISOString(),
+      };
+    }
+    return ticket;
+  });
+  
+  saveCustomTickets(updatedTickets);
+  console.log(`Updated visits for ticket ${ticketNo}:`, visits);
+  
+  return updatedTickets;
+}
+
+/**
+ * Update ticket parts
+ * Saves parts array to the ticket in centralized system
+ */
+export function updateTicketParts(ticketNo: string, parts: Ticket['parts']): Ticket[] {
+  const currentTickets = loadTickets();
+  const updatedTickets = currentTickets.map(ticket => {
+    if (ticket.ticketNo === ticketNo) {
+      return {
+        ...ticket,
+        parts: parts || [],
+        statusChangedAt: new Date().toISOString(),
+      };
+    }
+    return ticket;
+  });
+  
+  saveCustomTickets(updatedTickets);
+  console.log(`Updated parts for ticket ${ticketNo}:`, parts);
+  
+  return updatedTickets;
+}
+
+/**
+ * Get ticket visits
+ */
+export function getTicketVisits(ticketNo: string): Ticket['visits'] {
+  const ticket = getTicketByNumber(ticketNo);
+  return ticket?.visits || [];
+}
+
+/**
+ * Get ticket parts
+ */
+export function getTicketParts(ticketNo: string): Ticket['parts'] {
+  const ticket = getTicketByNumber(ticketNo);
+  return ticket?.parts || [];
 }

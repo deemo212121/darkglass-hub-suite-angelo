@@ -1333,16 +1333,19 @@
 
   .legend-for-map {
     position: absolute;
-    top: 1rem;
+    top: 4rem;
     right: 1rem;
     background: rgba(10, 15, 30, 0.95);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 0.75rem 1rem;
     font-size: 0.75rem;
     color: #cbd5e1;
-    z-index: 20;
+    z-index: 30;
     max-width: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
   }
 
   .legend-for-map-item {
