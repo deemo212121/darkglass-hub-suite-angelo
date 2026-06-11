@@ -718,7 +718,7 @@ function TicketDetailsPage() {
   const [newVisitTechnician, setNewVisitTechnician] = useState("");
   const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
   const [newVisitActivity, setNewVisitActivity] = useState("");
-  const [newVisitActionType, setNewVisitActionType] = useState("Visited");
+  const [newVisitActionType, setNewVisitActionType] = useState("SCHEDULE");
   const [newVisitRepairStatus, setNewVisitRepairStatus] = useState("");
   const [newVisitRepairType, setNewVisitRepairType] = useState("");
   const [newVisitReclaim, setNewVisitReclaim] = useState("");
@@ -730,6 +730,7 @@ function TicketDetailsPage() {
   const [newVisitResolution, setNewVisitResolution] = useState("");
   const [newVisitNonCompletionReason, setNewVisitNonCompletionReason] = useState("");
   const [newVisitTriageNote, setNewVisitTriageNote] = useState("");
+  const [newVisitSchedNotes, setNewVisitSchedNotes] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
@@ -1028,7 +1029,7 @@ function TicketDetailsPage() {
     }
 
     const trimmedNote = newVisitNote.trim();
-    if (!newVisitScheduleDate || !newVisitTechnician) return;
+    if (!newVisitScheduleDate || !newVisitTechnician || !newVisitTimeSlot) return;
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
 
@@ -1076,6 +1077,8 @@ function TicketDetailsPage() {
       note: trimmedNote,
     };
 
+    (visitEntry as any).schedNotes = newVisitSchedNotes;
+
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
 
     setVisitLogEntries((entries) => {
@@ -1113,7 +1116,7 @@ function TicketDetailsPage() {
     setNewVisitTechnician("");
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
-    setNewVisitActionType("Visited");
+    setNewVisitActionType("SCHEDULE");
     setNewVisitRepairStatus("");
     setNewVisitRepairType("");
     setNewVisitReclaim("");
@@ -1125,6 +1128,7 @@ function TicketDetailsPage() {
     setNewVisitResolution("");
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
+    setNewVisitSchedNotes("");
   };
 
   const openVisitCreateModal = () => {
@@ -1158,6 +1162,7 @@ function TicketDetailsPage() {
     setNewVisitResolution(entry.resolution || "");
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
+    setNewVisitSchedNotes((entry as any).schedNotes || "");
   };
 
   const loadVisitForView = (entry: VisitLogEntry) => {
@@ -1937,7 +1942,7 @@ function TicketDetailsPage() {
                         No visit logs yet.
                       </div>
                     ) : (
-                      visitLogEntries.map((entry) => (
+                      [...visitLogEntries].reverse().map((entry) => (
                         <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
@@ -2027,7 +2032,7 @@ function TicketDetailsPage() {
                           </select>
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot</label>
+                          <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot *</label>
                           <select id="visit-time-slot-modal" value={newVisitTimeSlot} onChange={(event) => setNewVisitTimeSlot(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
                             <option>AM</option>
@@ -2036,17 +2041,21 @@ function TicketDetailsPage() {
                           </select>
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-activity-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Activity</label>
-                          <input id="visit-activity-modal" type="text" value={newVisitActivity} onChange={(event) => setNewVisitActivity(event.target.value)} placeholder="e.g. 1.0 hr" className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="space-y-1.5">
                           <label htmlFor="visit-action-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action Type *</label>
                           <select id="visit-action-type-modal" value={newVisitActionType} onChange={(event) => setNewVisitActionType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
-                            <option>Visited</option>
-                            <option>Cx Conf.</option>
-                            <option>Not Completed</option>
-                            <option>Cancelled</option>
+                            <option>SCHEDULE</option>
+                            <option>ACKNOWLEDGE</option>
+                            <option>CALL ATTEMPT</option>
+                            <option>CANCEL</option>
+                            <option>CLAIM REQUESTED</option>
+                            <option>COMPLETED</option>
+                            <option>OSR</option>
+                            <option>UPDATE INFO.</option>
+                            <option>UPDATE</option>
+                            <option>RESCHEDULE</option>
+                            <option>TRIAGE</option>
+                            <option>SUPPORT</option>
                           </select>
                         </div>
                         <div className="space-y-1.5">
@@ -2073,36 +2082,20 @@ function TicketDetailsPage() {
                           <label htmlFor="visit-repair-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Type (2nd Tech)</label>
                           <input id="visit-repair-type-modal" type="text" value={newVisitRepairType} onChange={(event) => setNewVisitRepairType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
-                        <div className="space-y-1.5">
-                          <label htmlFor="visit-reclaim-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reclaim</label>
-                          <input id="visit-reclaim-modal" type="text" value={newVisitReclaim} onChange={(event) => setNewVisitReclaim(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label htmlFor="visit-visited-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Visited</label>
-                          <select id="visit-visited-modal" value={newVisitVisited} onChange={(event) => setNewVisitVisited(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                            <option value="">— select —</option>
-                            <option>Visited</option>
-                            <option>Not Visited</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label htmlFor="visit-not-completed-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Not Completed?</label>
-                          <input id="visit-not-completed-modal" type="text" value={newVisitNotCompleted} onChange={(event) => setNewVisitNotCompleted(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                        <div className="space-y-1.5 xl:col-span-3">
+                          <label htmlFor="visit-sched-notes-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Sched Notes (CSR)</label>
+                          <textarea id="visit-sched-notes-modal" value={newVisitSchedNotes} onChange={(event) => setNewVisitSchedNotes(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-symptom-cx-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Symptom (Cx)</label>
+                          <label htmlFor="visit-symptom-cx-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Symptom (CSR)</label>
                           <textarea id="visit-symptom-cx-modal" value={newVisitSymptomCx} onChange={(event) => setNewVisitSymptomCx(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-diagnosis-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Diagnosis</label>
+                          <label htmlFor="visit-diagnosis-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Cause of Failure (Tech)</label>
                           <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-symptom-tech-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Symptom (Tech)</label>
-                          <textarea id="visit-symptom-tech-modal" value={newVisitSymptomTech} onChange={(event) => setNewVisitSymptomTech(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Resolution</label>
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech)</label>
                           <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
@@ -2230,41 +2223,6 @@ function TicketDetailsPage() {
                 </div>
               </div>
             ) : null}
-
-            {/* Visit Details Table */}
-            <div>
-              <h4 className="font-semibold text-slate-300 mb-4">Visit Details</h4>
-              <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">ID</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Schedule Date</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Technician*</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Symptom (Cx)</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Diagnosis</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Repair Type</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Status*</th>
-                      <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-white/5 hover:bg-white/5">
-                      <td className="px-4 py-3 text-slate-300">V1</td>
-                      <td className="px-4 py-3 text-slate-300">05/28/2026</td>
-                      <td className="px-4 py-3 text-slate-300">Danny Thornton</td>
-                      <td className="px-4 py-3 text-slate-300">THE START BUTTON IS NOT WORKING</td>
-                      <td className="px-4 py-3 text-slate-300">Faulty control board</td>
-                      <td className="px-4 py-3 text-slate-300">Board Replacement</td>
-                      <td className="px-4 py-3 text-blue-300 font-semibold">Completed</td>
-                      <td className="px-4 py-3">
-                        <button className="text-blue-400 hover:text-blue-300 text-sm">View</button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
 
             {/* Part Transaction */}
             <div>
