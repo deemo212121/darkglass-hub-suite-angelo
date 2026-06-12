@@ -12,9 +12,13 @@ export const Route = createFileRoute("/home")({
 });
 
 function Home() {
-  const { ready, email } = useAuth();
+  const { ready, email, role } = useAuth();
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
+  
+  // Redirect SuperAdmin to their dashboard
+  if (role === "superadmin") return <Navigate to="/superadmin" replace />;
+  
   return (
     <>
       <AppHeader />

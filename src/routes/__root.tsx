@@ -84,13 +84,15 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const location = useLocation();
   const isLandingPage = location.pathname === "/landing" || location.pathname === "/announcements";
+  const isSuperAdminPage = location.pathname === "/superadmin";
+  
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SystemDataInitializer />
-        {!isLandingPage && <AnnouncementBanner />}
+        {!isLandingPage && !isSuperAdminPage && <AnnouncementBanner />}
         <Outlet />
-        {!isLandingPage && <TicketSearchFab />}
+        {!isLandingPage && !isSuperAdminPage && <TicketSearchFab />}
       </AuthProvider>
     </QueryClientProvider>
   );

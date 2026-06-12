@@ -1,7 +1,9 @@
 import { useMemo, useState, useEffect } from "react";
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { addTicket, type Ticket } from "@/lib/ticketData";
+import { lookupZip } from "@/lib/zipCoverage";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -72,6 +74,8 @@ const DEFAULT_FORM = {
 export function NewTicketPage({ mod, sub }: Props) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState("");
+  const [location, setLocation] = useState("");
+  const navigate = useNavigate();
   const createdTicketStatus = "Acknowledged";
   
   // Get query parameters using router's useSearch
@@ -137,6 +141,120 @@ export function NewTicketPage({ mod, sub }: Props) {
 
   const update = <K extends keyof typeof DEFAULT_FORM>(key: K, value: (typeof DEFAULT_FORM)[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleCreateTicket = () => {
+    // Validate required fields
+    if (!form.ticketNo.trim()) {
+      setStatus("Error: Ticket number is required");
+      return;
+    }
+    if (!form.source) {
+      setStatus("Error: Source is required");
+      return;
+    }
+    if (!form.customerName.trim()) {
+      setStatus("Error: Customer name is required");
+      return;
+    }
+    if (!form.primaryPhone.trim()) {
+      setStatus("Error: Primary phone is required");
+      return;
+    }
+    if (!form.address.trim()) {
+      setStatus("Error: Address is required");
+      return;
+    }
+    if (!form.city.trim()) {
+      setStatus("Error: City is required");
+      return;
+    }
+    if (!form.zipCode.trim()) {
+      setStatus("Error: Zip code is required");
+      return;
+    }
+    if (!form.state) {
+      setStatus("Error: State is required");
+      return;
+    }
+    if (!form.model.trim()) {
+      setStatus("Error: Model is required");
+      return;
+    }
+    if (!form.serialNo.trim()) {
+      setStatus("Error: Serial number is required");
+      return;
+    }
+    if (!form.brand.trim()) {
+      setStatus("Error: Brand is required");
+      return;
+    }
+    if (!form.productCategory) {
+      setStatus("Error: Product category is required");
+      return;
+    }
+    if (!form.warrantyType) {
+      setStatus("Error: Warranty type is required");
+      return;
+    }
+    if (!form.problemDescription.trim()) {
+      setStatus("Error: Problem description is required");
+      return;
+    }
+
+    // Create ticket object matching Ticket interface
+    const newTicket: Ticket = {
+      ticketNo: form.ticketNo.trim().toUpperCase(),
+      warranty: form.warrantyType.includes("In warranty") ? "IW" : "OW",
+      manufacturer: form.brand,
+      ticketSource: form.source,
+      customer: form.customerName,
+      firstName: form.customerName.split(" ")[0] || "",
+      lastName: form.customerName.split(" ").slice(1).join(" ") || "",
+      phone: form.primaryPhone,
+      secondPhone: form.secondaryPhone || "",
+      email: form.email1 || "",
+      address: form.address,
+      city: form.city,
+      zip: form.zipCode,
+      state: form.state,
+      addressNote: form.addressNote || "",
+      location: location || "Unknown",
+      model: form.model,
+      serial: form.serialNo,
+      modelVersion: form.modelVersion || "",
+      productType: form.productCategory,
+      purchaseDate: form.purchaseDate || "",
+      diagnosed: form.problemDescription,
+      internalNote: "",
+      status: createdTicketStatus,
+      schedule: form.cxPreferredDate ? new Date(form.cxPreferredDate).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : "",
+      technician: "",
+      customerPref: form.cxPreferredDate ? "Yes" : "No",
+      redo: form.isRedo ? "Yes" : "No",
+      aging: 0,
+      calls: 0,
+      partOrder: "",
+      created: new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }),
+      statusChangedAt: new Date().toISOString(),
+      fakeTicket: form.fakeTicket,
+      originalTicketNo: form.originalTicketNo || undefined,
+      callReceivedDate: form.callTakenDate,
+    };
+
+    console.log("Creating new ticket with data:", newTicket);
+    console.log("Product Category from form:", form.productCategory);
+    console.log("Product Type in ticket:", newTicket.productType);
+
+    // Add ticket using centralized function
+    addTicket(newTicket);
+    
+    setStatus(`✓ Ticket ${newTicket.ticketNo} created successfully!`);
+    
+    // Navigate to the ticket details page after a short delay
+    setTimeout(() => {
+      navigate({ to: `/ticket/${newTicket.ticketNo}` });
+    }, 1500);
   };
 
   return (
@@ -226,7 +344,7 @@ export function NewTicketPage({ mod, sub }: Props) {
                     if (val.length === 5) {
                       const found = lookupZip(val);
                       if (found) {
-                        update("location", found.location);
+                        setLocation(found.location);
                         update("city", found.city || form.city);
                       }
                     }
@@ -326,13 +444,17 @@ export function NewTicketPage({ mod, sub }: Props) {
 
           <div className="ticket-form-actions">
             <p className="ticket-form-status">{status}</p>
-            <button type="button" className="btn btn-secondary" onClick={() => setForm(DEFAULT_FORM)}>
+            <button type="button" className="btn btn-secondary" onClick={() => {
+              setForm(DEFAULT_FORM);
+              setStatus("");
+              setLocation("");
+            }}>
               Cancel
             </button>
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => setStatus(`Ticket ${ticketNoPreview} created with status ${createdTicketStatus}.`)}
+              onClick={handleCreateTicket}
             >
               Create Ticket
             </button>

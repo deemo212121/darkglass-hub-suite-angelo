@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { getSubModule } from "@/lib/modules";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { CalendarDays, ChevronLeft, MapPin, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
 import { loadTickets, getTicketByNumber, type Ticket } from "@/lib/ticketData";
 
@@ -12,6 +12,20 @@ type SidebarTab = "tickets" | "status";
 type TicketRecord = Record<string, any>;
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+
+const STATUS_OPTIONS = [
+  "CL-Need Cancel",
+  "CL-Parts Back Ordered",
+  "CSR-Acknowledged",
+  "CSR-Assigned to ASC",
+  "CSR-Left Message for Cx",
+  "CSR-Needs Scheduling",
+  "OP-Reschedule Follow up",
+  "OP-Waiting for Part",
+  "PT-Need PreAuthorization",
+  "TR-Need PO",
+  "TR-Need Triage",
+] as const;
 
 interface LocationTickets {
   location: string;
@@ -73,6 +87,10 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const [ready, setReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
+  const [selectedTechnicians, setSelectedTechnicians] = useState<Set<string>>(new Set());
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
+  const [filterMode, setFilterMode] = useState<"technician" | "status">("technician");
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
@@ -196,11 +214,35 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       ? tickets.filter((ticket) => normalizeLocationName(ticket.location || ticket.customer_city || ticket.city || "Richmond, VA") === selectedLocation)
       : tickets;
 
-    return filtered.filter((ticket) => {
+    const dateFiltered = filtered.filter((ticket) => {
       const ticketDate = String(ticket.schedule || ticket.created || ticket.created_at || "").slice(0, 10);
       return !ticketDate || ticketDate === mapDate;
     });
-  }, [tickets, selectedLocation, mapDate]);
+
+    // Apply filters based on current filter mode
+    if (filterMode === "technician") {
+      // Filter by technician visibility
+      // selectedTechnicians contains the HIDDEN technicians (unchecked)
+      if (selectedTechnicians.size > 0) {
+        return dateFiltered.filter((ticket) => {
+          const techName = ticket.technician_name || ticket.technician || "Unassigned";
+          return !selectedTechnicians.has(techName);
+        });
+      }
+    } else {
+      // Filter by status visibility
+      // selectedStatuses contains the HIDDEN statuses (unchecked)
+      if (selectedStatuses.size > 0) {
+        return dateFiltered.filter((ticket) => {
+          const status = ticket.status || "";
+          return !selectedStatuses.has(status);
+        });
+      }
+    }
+
+    // If no filters are applied, show all tickets
+    return dateFiltered;
+  }, [tickets, selectedLocation, mapDate, selectedTechnicians, selectedStatuses, filterMode]);
 
   // Get all technicians for the selected location (not just those with scheduled tickets)
   const uniqueTechnicians = useMemo(() => {
@@ -481,30 +523,178 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                   </div>
                 )}
 
-                {/* Technician Color Legend */}
-                <div className="legend-for-map" id="mapLegend">
-                  {uniqueTechnicians.map((tech, index) => {
-                    const techColor = getTechColor(tech);
-                    return (
-                      <div key={tech} className="legend-for-map-item">
-                        <span 
-                          className="legend-color-dot" 
-                          style={{ backgroundColor: techColor }}
-                        />
-                        <span>{tech}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
                 <div className="selected-day-panel">
-                  <div className="selected-day-header">Selected Day's Tickets</div>
-                  <div className="selected-day-filters">
-                    <label className="filter-chip"><input type="checkbox" defaultChecked /> Technician</label>
-                    <label className="filter-chip"><input type="checkbox" defaultChecked /> Ready</label>
-                    <label className="filter-chip"><input type="checkbox" defaultChecked /> CL-Need</label>
-                    <label className="filter-chip"><input type="checkbox" defaultChecked /> Comp.</label>
+                  <div 
+                    className="selected-day-header" 
+                    onClick={() => setIsPanelCollapsed(!isPanelCollapsed)}
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <span>Selected Day's Tickets</span>
+                    <ChevronDown 
+                      className="h-4 w-4 transition-transform" 
+                      style={{ transform: isPanelCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+                    />
                   </div>
+                  {!isPanelCollapsed && (
+                    <>
+                      {/* Filter Mode Tabs */}
+                      <div style={{ 
+                        display: 'flex', 
+                        borderBottom: '1px solid rgba(255,255,255,0.1)',
+                        background: 'rgba(15, 23, 42, 0.5)'
+                      }}>
+                        <button
+                          onClick={() => setFilterMode("technician")}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            color: filterMode === "technician" ? '#60a5fa' : '#94a3b8',
+                            background: filterMode === "technician" ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                            borderBottom: filterMode === "technician" ? '2px solid #60a5fa' : '2px solid transparent',
+                            cursor: 'pointer',
+                            border: 'none',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          By Technician
+                        </button>
+                        <button
+                          onClick={() => setFilterMode("status")}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            color: filterMode === "status" ? '#60a5fa' : '#94a3b8',
+                            background: filterMode === "status" ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                            borderBottom: filterMode === "status" ? '2px solid #60a5fa' : '2px solid transparent',
+                            cursor: 'pointer',
+                            border: 'none',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          By Status
+                        </button>
+                      </div>
+
+                      <div className="selected-day-filters">
+                        {filterMode === "technician" ? (
+                          // Technician Filter
+                          <div style={{ width: '100%' }}>
+                            <div style={{ 
+                              fontSize: '0.7rem', 
+                              fontWeight: '600', 
+                              color: '#94a3b8', 
+                              marginBottom: '0.5rem', 
+                              textTransform: 'uppercase', 
+                              letterSpacing: '0.05em' 
+                            }}>
+                              Filter by Technician
+                            </div>
+                            {uniqueTechnicians.map((tech) => {
+                              const techColor = getTechColor(tech);
+                              const isHidden = selectedTechnicians.has(tech);
+                              const isChecked = !isHidden;
+                              
+                              return (
+                                <label key={tech} className="filter-chip" style={{ width: '100%', marginBottom: '0.3rem' }}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      const newHidden = new Set(selectedTechnicians);
+                                      if (e.target.checked) {
+                                        newHidden.delete(tech);
+                                      } else {
+                                        newHidden.add(tech);
+                                      }
+                                      setSelectedTechnicians(newHidden);
+                                    }}
+                                  />
+                                  <span 
+                                    className="legend-color-dot" 
+                                    style={{ 
+                                      backgroundColor: techColor,
+                                      width: '10px',
+                                      height: '10px',
+                                      borderRadius: '50%',
+                                      display: 'inline-block',
+                                      marginRight: '0.3rem'
+                                    }}
+                                  />
+                                  <span style={{ flex: 1 }}>{tech}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          // Status Filter
+                          <div style={{ width: '100%' }}>
+                            <div style={{ 
+                              fontSize: '0.7rem', 
+                              fontWeight: '600', 
+                              color: '#94a3b8', 
+                              marginBottom: '0.5rem', 
+                              textTransform: 'uppercase', 
+                              letterSpacing: '0.05em',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between'
+                            }}>
+                              <span>Filter by Status</span>
+                              <button
+                                onClick={() => {
+                                  if (selectedStatuses.size === 0) {
+                                    // If all checked, uncheck all
+                                    setSelectedStatuses(new Set(STATUS_OPTIONS));
+                                  } else {
+                                    // If some unchecked, check all
+                                    setSelectedStatuses(new Set());
+                                  }
+                                }}
+                                style={{
+                                  fontSize: '0.65rem',
+                                  padding: '0.2rem 0.4rem',
+                                  background: 'rgba(59, 130, 246, 0.2)',
+                                  color: '#60a5fa',
+                                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                {selectedStatuses.size === 0 ? 'Uncheck All' : 'Check All'}
+                              </button>
+                            </div>
+                            {STATUS_OPTIONS.map((status) => {
+                              const isHidden = selectedStatuses.has(status);
+                              const isChecked = !isHidden;
+                              
+                              return (
+                                <label key={status} className="filter-chip" style={{ width: '100%', marginBottom: '0.3rem' }}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      const newHidden = new Set(selectedStatuses);
+                                      if (e.target.checked) {
+                                        newHidden.delete(status);
+                                      } else {
+                                        newHidden.add(status);
+                                      }
+                                      setSelectedStatuses(newHidden);
+                                    }}
+                                  />
+                                  <span style={{ flex: 1, fontSize: '0.75rem' }}>{status}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </section>
             </div>
@@ -656,9 +846,9 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .map-type-btn.active { background: #fff; box-shadow: inset 0 -2px 0 #3b82f6; }
         .map-placeholder-inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; pointer-events: none; }
         .map-placeholder-icon { opacity: 0.35; }
-        .selected-day-panel { position: absolute; top: 1rem; right: 1rem; width: 285px; background: rgba(10,15,30,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; z-index: 20; overflow: hidden; }
+        .selected-day-panel { position: absolute; top: 1rem; right: 1rem; width: 240px; max-height: 500px; background: rgba(10,15,30,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; z-index: 20; overflow: hidden; }
         .selected-day-header { background: #0f172a; padding: 0.55rem 0.9rem; font-size: 0.88rem; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .selected-day-filters { display: flex; gap: 0.6rem; padding: 0.55rem 0.85rem; flex-wrap: wrap; }
+        .selected-day-filters { display: flex; flex-direction: column; gap: 0; padding: 0.55rem 0.85rem; max-height: 400px; overflow-y: auto; }
         .filter-chip { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: #e2e8f0; cursor: pointer; }
         .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 200; display: none; align-items: center; justify-content: center; padding: 1rem; }
         .detail-overlay.open { display: flex; }

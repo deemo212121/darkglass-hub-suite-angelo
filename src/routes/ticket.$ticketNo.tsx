@@ -168,6 +168,7 @@ const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 const TICKET_AUDIT_KEY_PREFIX = "ahs:ticket-audit:";
 const TICKET_VISIT_LOG_KEY_PREFIX = "ahs:ticket-visit-log:";
 const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
+const TICKET_ALERT_KEY_PREFIX = "ahs:ticket-alert:";
 
 function formatAuditValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -203,6 +204,10 @@ function getVisitLogKey(ticketNo: string) {
 
 function getPartLogKey(ticketNo: string) {
   return `${TICKET_PART_LOG_KEY_PREFIX}${ticketNo}`;
+}
+
+function getAlertKey(ticketNo: string) {
+  return `${TICKET_ALERT_KEY_PREFIX}${ticketNo}`;
 }
 
 function createEmptyPartDraft(): PartTransactionDraft {
@@ -272,6 +277,25 @@ function loadPartRows(ticketNo: string) {
 function savePartRows(ticketNo: string, rows: PartTransactionRow[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(getPartLogKey(ticketNo), JSON.stringify(rows));
+}
+
+function loadAlertMessages(ticketNo: string) {
+  if (typeof window === "undefined") return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+
+  const raw = window.localStorage.getItem(getAlertKey(ticketNo));
+  if (!raw) return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+
+  try {
+    const parsed = JSON.parse(raw) as Array<{id: string, text: string, by: string, timestamp: string}>;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+  }
+}
+
+function saveAlertMessages(ticketNo: string, messages: Array<{id: string, text: string, by: string, timestamp: string}>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getAlertKey(ticketNo), JSON.stringify(messages));
 }
 
 function normalizePartRow(row: Partial<PartTransactionRow> & { id: string }): PartTransactionRow {
@@ -366,20 +390,25 @@ function renderVisitSummary(summary: string, comparedSummary?: string) {
   const summaryParts = summary.split(" | ");
   const comparedParts = comparedSummary?.split(" | ") ?? [];
 
-  return summaryParts.map((part, index) => {
-    const isChanged = comparedSummary ? comparedParts[index] !== part : false;
+  return (
+    <div className="space-y-1">
+      {summaryParts.map((part, index) => {
+        const isChanged = comparedSummary ? comparedParts[index] !== part : false;
 
-    return (
-      <span
-        key={`${part}-${index}`}
-        className={isChanged
-          ? "mt-1 block rounded-md bg-amber-500/10 px-1.5 py-0.5 font-semibold text-amber-200"
-          : "block whitespace-pre-wrap text-slate-200"}
-      >
-        {isChanged ? part : part}
-      </span>
-    );
-  });
+        return (
+          <div
+            key={`${part}-${index}`}
+            className={isChanged
+              ? "rounded-md bg-amber-500/10 px-2 py-1 font-semibold text-amber-200 border border-amber-500/20"
+              : "px-2 py-1 text-slate-200"}
+            style={{ minHeight: '1.75rem', display: 'flex', alignItems: 'center' }}
+          >
+            {part}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function summarizePartRow(row: PartTransactionRow) {
@@ -747,12 +776,17 @@ function TicketDetailsPage() {
   // Alert message system
   const [alertMessages, setAlertMessages] = useState<Array<{id: string, text: string, by: string, timestamp: string}>>([]);
   const [newAlertMessage, setNewAlertMessage] = useState("");
+  const [alertsLoaded, setAlertsLoaded] = useState(false);
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
   const [viewingVisitEntry, setViewingVisitEntry] = useState<VisitLogEntry | null>(null);
+  const [isPartModalOpen, setIsPartModalOpen] = useState(false);
+  const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
+  const [isPartListModalOpen, setIsPartListModalOpen] = useState(false);
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
+  const [auditEntriesLoaded, setAuditEntriesLoaded] = useState(false);
   const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
   const [visitsLoaded, setVisitsLoaded] = useState(false);
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
@@ -787,11 +821,14 @@ function TicketDetailsPage() {
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
 
   useEffect(() => {
+    // Load audit entries from localStorage
     setAuditEntries(loadAuditEntries(ticketNo));
+    setAuditEntriesLoaded(true);
     
     // Reset loaded flags when ticket changes
     setVisitsLoaded(false);
     setPartRowsLoaded(false);
+    setAlertsLoaded(false);
     
     // Load visits from centralized ticket
     const ticket = getTicketByNumber(ticketNo);
@@ -802,6 +839,10 @@ function TicketDetailsPage() {
     setPartRows(ticket?.parts || []);
     setPartRowsLoaded(true);
     
+    // Load alert messages from localStorage
+    setAlertMessages(loadAlertMessages(ticketNo));
+    setAlertsLoaded(true);
+    
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
     setIsEditingCustomerInfo(false);
@@ -811,24 +852,88 @@ function TicketDetailsPage() {
   }, [ticketNo]);
 
   useEffect(() => {
+    // Only save audit entries after they've been loaded
+    if (!auditEntriesLoaded) return;
     saveAuditEntries(ticketNo, auditEntries);
-  }, [auditEntries, ticketNo]);
+  }, [auditEntries, ticketNo, auditEntriesLoaded]);
 
   useEffect(() => {
     // Only save visits after they've been loaded from the ticket
     if (!visitsLoaded) return;
     
-    // Save visits to centralized ticket whenever they change
-    updateTicketVisits(ticketNo, visitLogEntries);
+    // Check if visits actually changed from what's in centralized storage
+    const currentTicket = getTicketByNumber(ticketNo);
+    const currentVisitsJson = JSON.stringify(currentTicket?.visits || []);
+    const newVisitsJson = JSON.stringify(visitLogEntries);
+    
+    // Only save if data actually changed
+    if (currentVisitsJson !== newVisitsJson) {
+      // Save visits to centralized ticket whenever they change
+      updateTicketVisits(ticketNo, visitLogEntries);
+    }
   }, [ticketNo, visitLogEntries, visitsLoaded]);
 
   useEffect(() => {
     // Only save parts after they've been loaded from the ticket
     if (!partRowsLoaded) return;
 
-    // Save parts to centralized ticket whenever they change
-    updateTicketParts(ticketNo, partRows);
+    // Check if parts actually changed from what's in centralized storage
+    const currentTicket = getTicketByNumber(ticketNo);
+    const currentPartsJson = JSON.stringify(currentTicket?.parts || []);
+    const newPartsJson = JSON.stringify(partRows);
+    
+    // Only save if data actually changed
+    if (currentPartsJson !== newPartsJson) {
+      // Save parts to centralized ticket whenever they change
+      updateTicketParts(ticketNo, partRows);
+    }
   }, [partRows, partRowsLoaded, ticketNo]);
+
+  useEffect(() => {
+    // Save alert messages to localStorage whenever they change
+    if (!alertsLoaded) return;
+    saveAlertMessages(ticketNo, alertMessages);
+  }, [alertMessages, ticketNo, alertsLoaded]);
+
+  useEffect(() => {
+    // Listen for ticket data changes from Work Planner or other sources
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "ahs:tickets:data" || e.key === null) {
+        // Reload visits and parts from centralized ticket when data changes (cross-tab)
+        const ticket = getTicketByNumber(ticketNo);
+        if (ticket) {
+          // Don't update loaded flags - just update the data
+          // The save useEffect will skip because loaded flags are already true
+          setVisitLogEntries(ticket?.visits || []);
+          setPartRows(ticket?.parts || []);
+        }
+      }
+    };
+    
+    // Listen for custom event from same-page updates (like Work Planner drag/drop)
+    const handleCustomUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ ticketNo: string }>;
+      if (customEvent.detail.ticketNo === ticketNo) {
+        // Reload visits and parts from centralized ticket  
+        const ticket = getTicketByNumber(ticketNo);
+        if (ticket) {
+          // Don't update loaded flags - just update the data
+          setVisitLogEntries(ticket?.visits || []);
+          setPartRows(ticket?.parts || []);
+          
+          // Also reload audit entries
+          setAuditEntries(loadAuditEntries(ticketNo));
+        }
+      }
+    };
+    
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("ticket-data-updated", handleCustomUpdate);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("ticket-data-updated", handleCustomUpdate);
+    };
+  }, [ticketNo]);
 
   const appendAuditEntry = (entry: Omit<AuditLogEntry, "id" | "timestamp">) => {
     setAuditEntries((entries) => [createAuditEntry(entry), ...entries]);
@@ -1285,6 +1390,142 @@ function TicketDetailsPage() {
     setVisitFormMode("edit");
   };
 
+  // Part viewing functions
+  const loadPartForView = (part: PartTransactionRow) => {
+    setViewingPartEntry(part);
+    setIsPartModalOpen(true);
+  };
+
+  const closePartView = () => {
+    setViewingPartEntry(null);
+    setIsPartModalOpen(false);
+  };
+
+  // Submit PO for a part
+  const submitPartPO = (part: PartTransactionRow) => {
+    // Check if part already has a PO
+    if (part.poNo) {
+      alert(`This part already has PO #${part.poNo}. Cannot create duplicate PO.`);
+      return;
+    }
+
+    // Check if status is already "PO Made"
+    if (part.status === 'PO Made') {
+      alert('This part already has status "PO Made". Cannot create duplicate PO.');
+      return;
+    }
+
+    if (!confirm(`Submit PO for part ${part.partNo}?`)) return;
+
+    // Create PO from part
+    const partOrder = createPartOrderFromTicket(ticketNo, part);
+    savePartOrder(partOrder);
+
+    // Update part status to "PO Made" and add PO number
+    const updatedParts = partRows.map(p => {
+      if (p.id === part.id) {
+        return {
+          ...p,
+          status: 'PO Made',
+          poNo: partOrder.poNo,
+          poDate: partOrder.poDate,
+        };
+      }
+      return p;
+    });
+    setPartRows(updatedParts);
+
+    // Add audit entry
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Submitted PO",
+      field: "Part Transaction",
+      before: `${part.partNo} - Status: ${part.status || 'No status'}`,
+      after: `${part.partNo} - Status: PO Made - PO #: ${partOrder.poNo}`,
+    });
+
+    alert(`PO ${partOrder.poNo} created successfully! View it in Part Order page.`);
+  };
+
+  // Submit POs for all parts that need them
+  const submitAllPOs = () => {
+    // First, fix any parts that have PO numbers but incorrect status
+    const partsToFix = partRows.filter(part => part.poNo && part.status !== 'PO Made');
+    if (partsToFix.length > 0) {
+      const fixedParts = partRows.map(part => {
+        if (part.poNo && part.status !== 'PO Made') {
+          appendAuditEntry({
+            by: currentEditor,
+            action: "Auto-corrected status",
+            field: "Part Transaction",
+            before: `${part.partNo} - Status: ${part.status || 'No status'} - PO #: ${part.poNo}`,
+            after: `${part.partNo} - Status: PO Made - PO #: ${part.poNo}`,
+          });
+          return { ...part, status: 'PO Made' };
+        }
+        return part;
+      });
+      setPartRows(fixedParts);
+      
+      // Give a moment for state to update
+      setTimeout(() => {
+        alert(`Fixed ${partsToFix.length} part(s) with inconsistent status.\nParts with PO numbers have been updated to "PO Made" status.`);
+      }, 100);
+    }
+
+    // Filter parts that need PO:
+    // - Must NOT already have a PO number (most important check)
+    // - Status must NOT be "PO Made" or "Cancelled"
+    // - Status should be "Need PO" or empty/other status indicating parts need ordering
+    const partsNeedingPO = partRows.filter(part => 
+      // Primary check: no existing PO number
+      !part.poNo &&
+      // Secondary check: status is not already "PO Made" or "Cancelled"
+      part.status !== 'PO Made' && 
+      part.status !== 'Cancelled' &&
+      // Optional: explicitly include "Need PO" status or allow other statuses that need ordering
+      (part.status === 'Need PO' || part.status === 'Tech Pickup' || part.status === 'Part Ready' || !part.status)
+    );
+
+    if (partsNeedingPO.length === 0) {
+      alert('No parts need PO submission. All parts either already have POs or are cancelled.');
+      return;
+    }
+
+    if (!confirm(`Submit ${partsNeedingPO.length} PO(s) for parts without existing orders?`)) return;
+
+    const poNumbers: string[] = [];
+    const updatedParts = partRows.map(part => {
+      const needsPO = partsNeedingPO.some(p => p.id === part.id);
+      if (needsPO) {
+        // Create PO from part
+        const partOrder = createPartOrderFromTicket(ticketNo, part);
+        savePartOrder(partOrder);
+        poNumbers.push(partOrder.poNo);
+
+        // Add audit entry
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Submitted PO (Batch)",
+          field: "Part Transaction",
+          before: `${part.partNo} - Status: ${part.status || 'No status'}`,
+          after: `${part.partNo} - Status: PO Made - PO #: ${partOrder.poNo}`,
+        });
+
+        return {
+          ...part,
+          status: 'PO Made',
+          poNo: partOrder.poNo,
+          poDate: partOrder.poDate,
+        };
+      }
+      return part;
+    });
+
+    setPartRows(updatedParts);
+    alert(`${poNumbers.length} PO(s) created successfully:\n${poNumbers.join('\n')}\n\nView them in Part Order page.`);
+  };
+
   // Alert message system
   const addAlertMessage = () => {
     if (newAlertMessage.trim()) {
@@ -1375,6 +1616,12 @@ function TicketDetailsPage() {
       .filter((value) => value.trim())
       .join(" + ");
 
+    // Auto-set status to "PO Made" if PO number is provided and status is not already set or is "Need PO"
+    let finalStatus = partDraft.status.trim();
+    if (partDraft.poNo.trim() && (!finalStatus || finalStatus === 'Need PO')) {
+      finalStatus = 'PO Made';
+    }
+
     const nextRow: PartTransactionRow = {
       id: rowId,
       partNo: partDraft.partNo.trim(),
@@ -1391,7 +1638,7 @@ function TicketDetailsPage() {
       markup: partDraft.markup.trim(),
       totalMarkup,
       claimTo: partDraft.claimTo.trim(),
-      status: partDraft.status.trim(),
+      status: finalStatus,
       note: partDraft.note.trim(),
       visitId: partDraft.visitId.trim(),
       orderNo: partDraft.orderNo.trim(),
@@ -2525,39 +2772,48 @@ function TicketDetailsPage() {
                       </div>
                       <div className="text-xs font-semibold text-blue-300">{auditCountLabel}</div>
                     </div>
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Time</th>
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Changed By</th>
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Action</th>
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Field</th>
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">Before</th>
-                            <th className="px-4 py-3 text-left font-semibold text-blue-300">After</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {auditEntries.length === 0 ? (
-                            <tr className="border-b border-white/5">
-                              <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                                No tracked changes yet.
-                              </td>
-                            </tr>
-                          ) : (
-                            auditEntries.map((entry) => (
-                              <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 align-top">
-                                <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{new Date(entry.timestamp).toLocaleString()}</td>
-                                <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{entry.by}</td>
-                                <td className="px-4 py-3 text-slate-300">{entry.action}</td>
-                                <td className="px-4 py-3 text-slate-300">{entry.field}</td>
-                                <td className="px-4 py-3 text-slate-400">{renderVisitSummary(entry.before)}</td>
-                                <td className="px-4 py-3 text-slate-200">{renderVisitSummary(entry.after, entry.before)}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
+                    <div className="mt-4 space-y-3">
+                      {auditEntries.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-slate-400">
+                          No tracked changes yet.
+                        </div>
+                      ) : (
+                        auditEntries.map((entry) => (
+                          <div key={entry.id} className="border border-white/10 rounded-lg bg-slate-900/30 hover:bg-slate-900/50 transition">
+                            {/* Header Row */}
+                            <div className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20">
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Time</div>
+                                <div className="text-sm text-slate-300">{new Date(entry.timestamp).toLocaleString()}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Changed By</div>
+                                <div className="text-sm text-slate-300 break-words">{entry.by}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Action</div>
+                                <div className="text-sm text-slate-300">{entry.action}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Field</div>
+                                <div className="text-sm text-slate-300">{entry.field}</div>
+                              </div>
+                            </div>
+                            
+                            {/* Before/After Row */}
+                            <div className="grid grid-cols-2 gap-0">
+                              <div className="px-4 py-3 border-r border-white/10">
+                                <div className="text-xs text-slate-400 font-semibold mb-2">BEFORE</div>
+                                <div className="text-sm text-slate-400">{renderVisitSummary(entry.before)}</div>
+                              </div>
+                              <div className="px-4 py-3">
+                                <div className="text-xs text-green-400 font-semibold mb-2">AFTER</div>
+                                <div className="text-sm text-slate-200">{renderVisitSummary(entry.after, entry.before)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2567,8 +2823,34 @@ function TicketDetailsPage() {
             {/* Part Transaction */}
             <div>
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <h4 className="font-semibold text-slate-300">Part Transaction</h4>
-                <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
+                <div className="flex items-center gap-2">
+                  <h4 className="font-semibold text-slate-300">Part Transaction</h4>
+                  <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (partRows.length === 0) {
+                        alert('No parts to view');
+                        return;
+                      }
+                      setIsPartListModalOpen(true);
+                    }}
+                    className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
+                    title="View all parts"
+                  >
+                    View Log
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={submitAllPOs}
+                    className="rounded border border-green-400/40 bg-green-600/20 px-3 py-1.5 text-xs font-semibold text-green-200 transition hover:bg-green-600/30"
+                    title="Submit PO for all parts that need ordering"
+                  >
+                    Submit All POs
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto border border-white/10 rounded-lg">
@@ -2790,49 +3072,278 @@ function TicketDetailsPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
 
-              <div className="mt-6 rounded-lg border border-white/10 bg-slate-900/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Part Change Log</div>
-                    <div className="text-sm text-slate-300">Every tracked edit on this part transaction list</div>
+            {/* Part List Modal */}
+            {isPartListModalOpen ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Part Transaction Log</p>
+                      <h3 className="text-xl font-bold text-white">Select a part to view details</h3>
+                      <p className="text-sm text-slate-400 mt-1">{partRows.length} part{partRows.length === 1 ? '' : 's'} recorded</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsPartListModalOpen(false)}
+                      className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                    >
+                      Close
+                    </button>
                   </div>
-                  <div className="text-xs font-semibold text-blue-300">{partAuditEntries.length} change{partAuditEntries.length === 1 ? "" : "s"} logged</div>
-                </div>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Time</th>
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Changed By</th>
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Action</th>
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Field</th>
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">Before</th>
-                        <th className="px-4 py-3 text-left font-semibold text-blue-300">After</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {partAuditEntries.length === 0 ? (
-                        <tr className="border-b border-white/5">
-                          <td colSpan={6} className="px-4 py-8 text-center text-slate-400">No part changes tracked yet.</td>
-                        </tr>
-                      ) : (
-                        partAuditEntries.map((entry) => (
-                          <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 align-top">
-                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{new Date(entry.timestamp).toLocaleString()}</td>
-                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{entry.by}</td>
-                            <td className="px-4 py-3 text-slate-300">{entry.action}</td>
-                            <td className="px-4 py-3 text-slate-300">{entry.field}</td>
-                            <td className="px-4 py-3 text-slate-400">{renderVisitSummary(entry.before)}</td>
-                            <td className="px-4 py-3 text-slate-200">{renderVisitSummary(entry.after, entry.before)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+
+                  {/* Part List */}
+                  <div className="mt-4 space-y-3">
+                    {partRows.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-slate-400">
+                        No parts recorded yet.
+                      </div>
+                    ) : (
+                      partRows.map((part) => (
+                        <div 
+                          key={part.id} 
+                          className="border border-white/10 rounded-lg bg-slate-900/50 hover:bg-slate-900/70 transition cursor-pointer"
+                          onClick={() => {
+                            setIsPartListModalOpen(false);
+                            loadPartForView(part);
+                          }}
+                        >
+                          <div className="px-4 py-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <h4 className="text-base font-semibold text-white">{part.partNo}</h4>
+                                  {part.status ? (
+                                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${
+                                      part.status === 'PO Made' ? 'bg-green-500/20 text-green-300' :
+                                      part.status === 'Need PO' ? 'bg-amber-500/20 text-amber-300' :
+                                      part.status === 'Tech Pickup' ? 'bg-blue-500/20 text-blue-300' :
+                                      'bg-slate-500/20 text-slate-300'
+                                    }`}>
+                                      {part.status}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-slate-300">
+                                  <div><span className="text-slate-400">Distributor:</span> {part.partDist || '—'}</div>
+                                  <div><span className="text-slate-400">Description:</span> {part.partDesc || '—'}</div>
+                                  <div><span className="text-slate-400">Visit ID:</span> {part.visitId || '—'}</div>
+                                  <div><span className="text-slate-400">Quantity:</span> {part.quantity || '—'}</div>
+                                  {part.poNo ? (
+                                    <div><span className="text-slate-400">PO No:</span> {part.poNo}</div>
+                                  ) : null}
+                                  {part.orderNo ? (
+                                    <div><span className="text-slate-400">Order #:</span> {part.orderNo}</div>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIsPartListModalOpen(false);
+                                  loadPartForView(part);
+                                }}
+                              >
+                                View Details
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : null}
+
+            {/* Part Details Modal */}
+            {viewingPartEntry ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Part Details</p>
+                      <h3 className="text-xl font-bold text-white">{viewingPartEntry.partNo} — {viewingPartEntry.status || "No status"}</h3>
+                      <p className="text-sm text-slate-400 mt-1">Added {new Date(viewingPartEntry.id).toLocaleString()} by {viewingPartEntry.createdBy}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closePartView}
+                      className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {/* Part Information */}
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Part Information</div>
+                    <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Part No:</span> {viewingPartEntry.partNo || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Distributor:</span> {viewingPartEntry.partDist || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Description:</span> {viewingPartEntry.partDesc || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Status:</span> {viewingPartEntry.status || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Visit ID:</span> {viewingPartEntry.visitId || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Quantity:</span> {viewingPartEntry.quantity || "—"}</div>
+                    </div>
+                  </div>
+
+                  {/* Pricing Information */}
+                  {(viewingPartEntry.partPrice || viewingPartEntry.coreValue || viewingPartEntry.shipCost || viewingPartEntry.markup) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-300">Pricing Information</div>
+                      <div className="grid gap-3 md:grid-cols-4 text-sm text-slate-200">
+                        {viewingPartEntry.partPrice ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Part Price:</span> ${viewingPartEntry.partPrice}</div>
+                        ) : null}
+                        {viewingPartEntry.coreValue ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Core Value:</span> ${viewingPartEntry.coreValue}</div>
+                        ) : null}
+                        {viewingPartEntry.shipCost ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Ship Cost:</span> ${viewingPartEntry.shipCost}</div>
+                        ) : null}
+                        {viewingPartEntry.markup ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Markup:</span> {viewingPartEntry.markup}%</div>
+                        ) : null}
+                        {viewingPartEntry.totalMarkup ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Total:</span> ${viewingPartEntry.totalMarkup}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Order & Tracking Information */}
+                  {(viewingPartEntry.poNo || viewingPartEntry.orderNo || viewingPartEntry.invoiceNo || viewingPartEntry.inTracking) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-blue-300">Order & Tracking</div>
+                      <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
+                        {viewingPartEntry.poNo ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">PO No:</span> {viewingPartEntry.poNo}</div>
+                        ) : null}
+                        {viewingPartEntry.poDate ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">PO Date:</span> {viewingPartEntry.poDate}</div>
+                        ) : null}
+                        {viewingPartEntry.orderNo ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Order #:</span> {viewingPartEntry.orderNo}</div>
+                        ) : null}
+                        {viewingPartEntry.invoiceNo ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Invoice No:</span> {viewingPartEntry.invoiceNo}</div>
+                        ) : null}
+                        {viewingPartEntry.invoiceDate ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Invoice Date:</span> {viewingPartEntry.invoiceDate}</div>
+                        ) : null}
+                        {viewingPartEntry.eta ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">ETA:</span> {viewingPartEntry.eta}</div>
+                        ) : null}
+                        {viewingPartEntry.inTracking ? (
+                          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2"><span className="font-semibold text-slate-400">In Tracking:</span> {viewingPartEntry.inTracking}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Return & Credit Information */}
+                  {(viewingPartEntry.raNo || viewingPartEntry.outTracking || viewingPartEntry.creditNo) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-300">Return & Credit</div>
+                      <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
+                        {viewingPartEntry.raNo ? (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2"><span className="font-semibold text-slate-400">RA #:</span> {viewingPartEntry.raNo}</div>
+                        ) : null}
+                        {viewingPartEntry.raDate ? (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2"><span className="font-semibold text-slate-400">RA Date:</span> {viewingPartEntry.raDate}</div>
+                        ) : null}
+                        {viewingPartEntry.outTracking ? (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Out Tracking:</span> {viewingPartEntry.outTracking}</div>
+                        ) : null}
+                        {viewingPartEntry.creditNo ? (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Credit #:</span> {viewingPartEntry.creditNo}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Additional Notes */}
+                  {(viewingPartEntry.note || viewingPartEntry.claimTo) ? (
+                    <div className="mt-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Additional Information</div>
+                      <div className="space-y-3 text-sm text-slate-200">
+                        {viewingPartEntry.note ? (
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Note:</span> {viewingPartEntry.note}</div>
+                        ) : null}
+                        {viewingPartEntry.claimTo ? (
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Claim To:</span> {viewingPartEntry.claimTo}</div>
+                        ) : null}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2">
+                            <span className="font-semibold text-slate-400">Hold:</span> {viewingPartEntry.hold === "Hold" ? <span className="ml-2 rounded bg-amber-500/20 px-2 py-0.5 text-amber-300">Hold</span> : "No"}
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2">
+                            <span className="font-semibold text-slate-400">Cx Paid:</span> {viewingPartEntry.cxPaid === "Paid" ? <span className="ml-2 rounded bg-green-500/20 px-2 py-0.5 text-green-300">Paid</span> : "No"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Change Log for this specific part */}
+                  <div className="mt-6 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Change Log</div>
+                        <div className="text-sm text-slate-300">Changes for this part only</div>
+                      </div>
+                      <div className="text-xs font-semibold text-blue-300">
+                        {partAuditEntries.filter(e => e.after.includes(viewingPartEntry.partNo)).length} change{partAuditEntries.filter(e => e.after.includes(viewingPartEntry.partNo)).length === 1 ? "" : "s"} logged
+                      </div>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {partAuditEntries.filter(e => e.after.includes(viewingPartEntry.partNo) || e.before.includes(viewingPartEntry.partNo)).length === 0 ? (
+                        <div className="px-4 py-8 text-center text-slate-400">
+                          No tracked changes yet.
+                        </div>
+                      ) : (
+                        partAuditEntries.filter(e => e.after.includes(viewingPartEntry.partNo) || e.before.includes(viewingPartEntry.partNo)).map((entry) => (
+                          <div key={entry.id} className="border border-white/10 rounded-lg bg-slate-900/30 hover:bg-slate-900/50 transition">
+                            <div className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20">
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Time</div>
+                                <div className="text-sm text-slate-300">{new Date(entry.timestamp).toLocaleString()}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Changed By</div>
+                                <div className="text-sm text-slate-300 break-words">{entry.by}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Action</div>
+                                <div className="text-sm text-slate-300">{entry.action}</div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-blue-300 font-semibold mb-1">Field</div>
+                                <div className="text-sm text-slate-300">{entry.field}</div>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-0">
+                              <div className="px-4 py-3 border-r border-white/10">
+                                <div className="text-xs text-slate-400 font-semibold mb-2">BEFORE</div>
+                                <div className="text-sm text-slate-400">{renderVisitSummary(entry.before)}</div>
+                              </div>
+                              <div className="px-4 py-3">
+                                <div className="text-xs text-green-400 font-semibold mb-2">AFTER</div>
+                                <div className="text-sm text-slate-200">{renderVisitSummary(entry.after, entry.before)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {/* Alert Message Input */}
             <div>

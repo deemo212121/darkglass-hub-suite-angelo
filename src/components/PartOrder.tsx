@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
-import { ALL_TECHNICIANS, LOCATIONS } from "@/lib/locations";
+import { LOCATIONS } from "@/lib/locations";
+import { loadTickets } from "@/lib/ticketData";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface OrderItem {
@@ -13,37 +14,64 @@ interface OrderItem {
   requestQty: number;
   availQty: number;
   eta: string;
+  location: string;
 }
 
-const PART_DIST_OPTIONS = ["LG", "Encompass", "SS", "Marcone-162468", "Encompass-Birmingham/Montgomery"];
+const PART_DIST_OPTIONS = ["LG", "Encompass", "SS", "Marcone-162468", "Encompass-Birmingham/Montgomery", "PartSelect", "Johnstone", "RepairClinic", "Other"];
 const WARRANTY_TYPES = [
   "Concession LP", "Concession L", "Concession P", "In warranty", "Labor only Wty",
   "Out-of-warranty", "Part only Wty", "Special Part 5 year", "Unknown", "Ext Wty",
   "Ext Labor Wty", "Ext Part Wty"
 ];
 
-const SAMPLE_ORDERS: OrderItem[] = [
-  { ticketNo: "TK-001549", status: "Need PO", partDist: "LG", partNo: "ACQ86576404", description: "Compressor Motor", requestQty: 1, availQty: 0, eta: "2026-06-05" },
-  { ticketNo: "TK-001548", status: "Need PO", partDist: "Encompass", partNo: "WPW10217825", description: "Wire Harness", requestQty: 2, availQty: 1, eta: "" },
-  { ticketNo: "TK-001547", status: "Need PO", partDist: "SS", partNo: "RPS345-78", description: "Pump Assembly", requestQty: 1, availQty: 0, eta: "2026-06-10" },
-  { ticketNo: "TK-001546", status: "Need PO", partDist: "Marcone-162468", partNo: "EVT456-12", description: "Evaporator Coil", requestQty: 1, availQty: 0, eta: "" },
-  { ticketNo: "TK-001545", status: "Need PO", partDist: "LG", partNo: "LG123-456", description: "Door Seal", requestQty: 1, availQty: 1, eta: "2026-06-08" },
-];
-
 export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [location, setLocation] = useState("");
   const [partDist, setPartDist] = useState("");
-  const [technician, setTechnician] = useState("");
   const [scheduleDate, setScheduleDate] = useState("2026-05-15");
   const [warrantyType, setWarrantyType] = useState("");
-  const [repairStatus] = useState("Need PO");
+
+  // Load all tickets with "Need PO" status parts from centralized data
+  const ordersFromTickets = useMemo(() => {
+    const allTickets = loadTickets();
+    const orders: OrderItem[] = [];
+
+    allTickets.forEach(ticket => {
+      // Get parts with "Need PO" status
+      const needPOParts = ticket.parts?.filter(part => 
+        part.status === 'Need PO' || 
+        (!part.poNo && part.status !== 'PO Made' && part.status !== 'Cancelled')
+      ) || [];
+
+      needPOParts.forEach(part => {
+        orders.push({
+          ticketNo: ticket.ticketNo,
+          status: part.status || 'Need PO',
+          partDist: part.partDist || '—',
+          partNo: part.partNo || '—',
+          description: part.partDesc || '—',
+          requestQty: parseInt(part.quantity) || 1,
+          availQty: 0, // This would come from inventory system
+          eta: part.eta || '',
+          location: ticket.location || '—',
+        });
+      });
+    });
+
+    return orders;
+  }, []);
+
+  // Filter orders based on selected criteria
+  const filteredOrders = useMemo(() => {
+    return ordersFromTickets.filter(order => {
+      if (location && order.location !== location) return false;
+      if (partDist && order.partDist !== partDist) return false;
+      // Add more filters as needed
+      return true;
+    });
+  }, [ordersFromTickets, location, partDist]);
 
   const reservePart = (ticketNo: string) => {
     alert(`Reservation initiated for Ticket: ${ticketNo}`);
-  };
-
-  const viewPartOrder = (ticketNo: string) => {
-    alert(`View part order details for Ticket: ${ticketNo}`);
   };
 
   return (
@@ -77,11 +105,11 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           {/* Order Criteria Section */}
           <div>
             <h3 className="form-section-title">Filter Criteria</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="form-group">
-                <label className="required">Location</label>
+                <label>Location</label>
                 <select value={location} onChange={(e) => setLocation(e.target.value)} className="glass-input">
-                  <option value="">Select Location</option>
+                  <option value="">All Locations</option>
                   {LOCATIONS.map(loc => (
                     <option key={loc} value={loc}>{loc}</option>
                   ))}
@@ -91,7 +119,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
               <div className="form-group">
                 <label>Part Dist.</label>
                 <select value={partDist} onChange={(e) => setPartDist(e.target.value)} className="glass-input">
-                  <option value="">Select Distributor</option>
+                  <option value="">All Distributors</option>
                   {PART_DIST_OPTIONS.map(dist => (
                     <option key={dist} value={dist}>{dist}</option>
                   ))}
@@ -99,55 +127,47 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
               </div>
 
               <div className="form-group">
-                <label>Technician</label>
-                <select value={technician} onChange={(e) => setTechnician(e.target.value)} className="glass-input">
-                  <option value="">Select Technician</option>
-                  {ALL_TECHNICIANS.map((tech) => (
-                    <option key={tech} value={tech}>{tech}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="required">Schedule Date</label>
+                <label>Schedule Date</label>
                 <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="glass-input" />
               </div>
 
               <div className="form-group">
-                <label className="required">Warranty Type</label>
+                <label>Warranty Type</label>
                 <select value={warrantyType} onChange={(e) => setWarrantyType(e.target.value)} className="glass-input">
-                  <option value="">Select Warranty Type</option>
+                  <option value="">All Warranty Types</option>
                   {WARRANTY_TYPES.map(wt => (
                     <option key={wt} value={wt}>{wt}</option>
                   ))}
                 </select>
               </div>
+            </div>
+          </div>
 
-              <div className="form-group">
-                <label>Repair Status</label>
-                <select disabled value={repairStatus} className="glass-input opacity-75 cursor-not-allowed">
-                  <option value="Need PO">Need PO</option>
-                </select>
-                <small className="text-xs text-slate-400 mt-1">Locked to "Need PO"</small>
-              </div>
+          {/* Order Count */}
+          <div className="mt-6 mb-4">
+            <div className="text-sm font-semibold text-blue-300">
+              {filteredOrders.length} part{filteredOrders.length === 1 ? '' : 's'} need{filteredOrders.length === 1 ? 's' : ''} PO
+              {location ? ` in ${location}` : ''}
             </div>
           </div>
 
           {/* Order Table */}
-          <div className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
+          <div className="mt-4 overflow-x-auto border border-white/10 rounded-lg">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket #</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Location</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Dist.</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part No</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Description</th>
-                  <th colSpan={2} className="px-4 py-3 text-center font-semibold text-blue-300">ETA on Inventory</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">ETA</th>
+                  <th colSpan={2} className="px-4 py-3 text-center font-semibold text-blue-300">Inventory Qty</th>
                   <th colSpan={2} className="px-4 py-3 text-center font-semibold text-blue-300">Action</th>
                 </tr>
                 <tr className="bg-blue-900/30 border-b border-blue-500/20">
-                  <th colSpan={5} className="px-4 py-2"></th>
+                  <th colSpan={7} className="px-4 py-2"></th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Request</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Avail.</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Reserve</th>
@@ -155,34 +175,54 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                 </tr>
               </thead>
               <tbody>
-                {SAMPLE_ORDERS.map((order, idx) => {
-                  const hasETA = order.eta && order.eta.trim() !== "";
-                  return (
-                    <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3 font-mono text-slate-300">{order.ticketNo}</td>
-                      <td className="px-4 py-3 font-semibold text-blue-400">{order.status}</td>
-                      <td className="px-4 py-3 text-slate-300">{order.partDist}</td>
-                      <td className="px-4 py-3 font-mono text-slate-300">{order.partNo}</td>
-                      <td className="px-4 py-3 text-slate-300">{order.description}</td>
-                      <td className="px-4 py-3 text-center text-slate-400">{order.requestQty}</td>
-                      <td className="px-4 py-3 text-center text-slate-400">{order.availQty}</td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => reservePart(order.ticketNo)} className="px-2 py-1 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30 transition-colors">
-                          Reserve
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => viewPartOrder(order.ticketNo)}
-                          className="px-2 py-1 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30 transition-colors"
-                          title="View part order details"
-                        >
-                          View Order
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-4 py-8 text-center text-slate-400">
+                      No parts with "Need PO" status found
+                    </td>
+                  </tr>
+                ) : (
+                  filteredOrders.map((order, idx) => {
+                    const hasETA = order.eta && order.eta.trim() !== "";
+                    return (
+                      <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                        <td className="px-4 py-3 font-mono">
+                          <a 
+                            href={`/ticket/${order.ticketNo}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300 underline font-semibold transition-colors"
+                          >
+                            {order.ticketNo}
+                          </a>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">{order.location}</td>
+                        <td className="px-4 py-3 font-semibold text-blue-400">{order.status}</td>
+                        <td className="px-4 py-3 text-slate-300">{order.partDist}</td>
+                        <td className="px-4 py-3 font-mono text-slate-300">{order.partNo}</td>
+                        <td className="px-4 py-3 text-slate-300">{order.description}</td>
+                        <td className="px-4 py-3 text-slate-300">{hasETA ? order.eta : "—"}</td>
+                        <td className="px-4 py-3 text-center text-slate-400">{order.requestQty}</td>
+                        <td className="px-4 py-3 text-center text-slate-400">{order.availQty}</td>
+                        <td className="px-4 py-3 text-center">
+                          <button onClick={() => reservePart(order.ticketNo)} className="px-2 py-1 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30 transition-colors">
+                            Reserve
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <a
+                            href={`/ticket/${order.ticketNo}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block px-2 py-1 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30 transition-colors"
+                          >
+                            View Order
+                          </a>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>

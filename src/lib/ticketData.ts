@@ -120,6 +120,12 @@ export interface Ticket {
     createdBy: string;
     lastModifiedBy: string;
   }>;
+  alertMessages?: Array<{
+    id: string;
+    text: string;
+    by: string;
+    timestamp: string;
+  }>;
 }
 
 export const TICKET_SOURCES = [

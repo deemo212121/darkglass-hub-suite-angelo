@@ -113,7 +113,12 @@ function readSeededTickets(): TicketRecord[] {
 
 function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
   return rows.map((row, index) => {
-    const slot = TIME_SLOTS[index % TIME_SLOTS.length];
+    // Get the actual time slot from the latest visit, or default based on index
+    const fullTicket = getTicketByNumber(String(row.ticketNo || row.ticket_no || row.no));
+    const latestVisit = fullTicket?.visits?.[0];
+    const visitTimeSlot = latestVisit?.timeSlot as "AM" | "PM" | "ANYTIME" | undefined;
+    const slot = visitTimeSlot || TIME_SLOTS[index % TIME_SLOTS.length];
+    
     const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
     const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
     
@@ -569,6 +574,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       }
       
       console.log(`Audit log created for ticket ${dragSource.ticketNo}:`, auditEntry);
+      
+      // Dispatch custom event to notify same-page components (like open ticket details)
+      window.dispatchEvent(new CustomEvent("ticket-data-updated", { 
+        detail: { ticketNo: dragSource.ticketNo } 
+      }));
       
       // Reload planner tickets from centralized system to ensure persistence
       const reloadedTickets = loadTickets() as TicketRecord[];

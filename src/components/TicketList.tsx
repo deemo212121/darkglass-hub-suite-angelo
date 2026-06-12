@@ -2,24 +2,15 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Clock, History, X, User, Plus } from "lucide-react";
+import { ChevronLeft, Clock, History, X, User } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { LOCATIONS, mergeLocationOptions, getTechniciansForLocation } from "@/lib/locations";
+import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import { 
   loadTickets, 
-  addTicket, 
-  updateTicket, 
   TICKET_SOURCES, 
   REPAIR_STATUS_OPTIONS, 
   type Ticket 
 } from "@/lib/ticketData";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
@@ -146,27 +137,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [changeNoteInput, setChangeNoteInput] = useState("");
   const [changeByInput, setChangeByInput] = useState("");
   const [visitedTickets, setVisitedTickets] = useState<Set<string>>(new Set());
-  
-  // Create Ticket Modal State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createFormData, setCreateFormData] = useState({
-    customer: "",
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    address: "",
-    city: "",
-    zip: "",
-    location: "",
-    model: "",
-    manufacturer: "IH",
-    warranty: "IW",
-    ticketSource: TICKET_SOURCES[0],
-    status: "CSR-Assigned to ASC",
-    technician: "",
-    internalNote: "",
-  });
+
 
   useEffect(() => { setStatusLog(loadStatusLog()); }, []);
   useEffect(() => { 
@@ -253,68 +224,14 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     }
   };
 
-  // Handle create ticket form submission
-  const handleCreateTicket = () => {
-    // Validate required fields
-    if (!createFormData.customer || !createFormData.phone || !createFormData.city || 
-        !createFormData.location || !createFormData.model) {
-      alert("Please fill in all required fields: Customer Name, Phone, City, Location, and Model");
-      return;
-    }
-
-    // Create the ticket
-    const updatedTickets = addTicket({
-      ...createFormData,
-      statusChangedBy: email || "System",
-    });
-    
-    // Update local state
-    setTickets(updatedTickets);
-    
-    // Reset form and close modal
-    setCreateFormData({
-      customer: "",
-      firstName: "",
-      lastName: "",
-      phone: "",
-      email: "",
-      address: "",
-      city: "",
-      zip: "",
-      location: "",
-      model: "",
-      manufacturer: "IH",
-      warranty: "IW",
-      ticketSource: TICKET_SOURCES[0],
-      status: "CSR-Assigned to ASC",
-      technician: "",
-      internalNote: "",
-    });
-    setShowCreateModal(false);
-    
-    // Show success message
-    alert(`Ticket created successfully!`);
-  };
-
-  // Get technicians for selected location
-  const availableTechnicians = useMemo(() => {
-    return createFormData.location ? getTechniciansForLocation(createFormData.location) : [];
-  }, [createFormData.location]);
-
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1900px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
-          <div className="flex items-center justify-between gap-3 mb-6">
+          <div className="flex items-center gap-3 mb-6">
             <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
-            <button 
-              onClick={() => setShowCreateModal(true)}
-              className="btn bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 font-semibold flex items-center gap-2"
-            >
-              <Plus className="h-4 w-4" /> Create Ticket
-            </button>
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>
@@ -538,220 +455,6 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           </div>
         )}
 
-        {/* ── Create Ticket Modal ── */}
-        <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-slate-900 border-white/15">
-            <DialogHeader>
-              <DialogTitle className="text-2xl flex items-center gap-2">
-                <Plus className="h-5 w-5 text-blue-400" />
-                Create New Ticket
-              </DialogTitle>
-            </DialogHeader>
-            
-            <div className="space-y-4 py-4">
-              {/* Customer Information */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-blue-300 uppercase tracking-wide">Customer Information</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Customer Name *</label>
-                    <input
-                      type="text"
-                      value={createFormData.customer}
-                      onChange={e => setCreateFormData({...createFormData, customer: e.target.value})}
-                      className="glass-input w-full"
-                      placeholder="Full name or business"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Phone *</label>
-                    <input
-                      type="tel"
-                      value={createFormData.phone}
-                      onChange={e => setCreateFormData({...createFormData, phone: e.target.value})}
-                      className="glass-input w-full"
-                      placeholder="xxx.xxx.xxxx"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">First Name</label>
-                    <input
-                      type="text"
-                      value={createFormData.firstName}
-                      onChange={e => setCreateFormData({...createFormData, firstName: e.target.value})}
-                      className="glass-input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Last Name</label>
-                    <input
-                      type="text"
-                      value={createFormData.lastName}
-                      onChange={e => setCreateFormData({...createFormData, lastName: e.target.value})}
-                      className="glass-input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={createFormData.email}
-                      onChange={e => setCreateFormData({...createFormData, email: e.target.value})}
-                      className="glass-input w-full"
-                      placeholder="customer@email.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">City *</label>
-                    <input
-                      type="text"
-                      value={createFormData.city}
-                      onChange={e => setCreateFormData({...createFormData, city: e.target.value})}
-                      className="glass-input w-full"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Address</label>
-                    <input
-                      type="text"
-                      value={createFormData.address}
-                      onChange={e => setCreateFormData({...createFormData, address: e.target.value})}
-                      className="glass-input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">ZIP Code</label>
-                    <input
-                      type="text"
-                      value={createFormData.zip}
-                      onChange={e => setCreateFormData({...createFormData, zip: e.target.value})}
-                      className="glass-input w-full"
-                      placeholder="12345"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Ticket Information */}
-              <div className="space-y-3 pt-4 border-t border-white/10">
-                <h3 className="text-sm font-semibold text-blue-300 uppercase tracking-wide">Ticket Information</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Location *</label>
-                    <select
-                      value={createFormData.location}
-                      onChange={e => setCreateFormData({...createFormData, location: e.target.value, technician: ""})}
-                      className="glass-input w-full"
-                      required
-                    >
-                      <option value="">Select location</option>
-                      {LOCATIONS.map(loc => (
-                        <option key={loc} value={loc}>{loc}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Model *</label>
-                    <input
-                      type="text"
-                      value={createFormData.model}
-                      onChange={e => setCreateFormData({...createFormData, model: e.target.value})}
-                      className="glass-input w-full"
-                      placeholder="e.g., GNE27JYMFFS"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Warranty Type</label>
-                    <select
-                      value={createFormData.warranty}
-                      onChange={e => setCreateFormData({...createFormData, warranty: e.target.value})}
-                      className="glass-input w-full"
-                    >
-                      <option value="IW">IW (In Warranty)</option>
-                      <option value="OW">OW (Out of Warranty)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Manufacturer</label>
-                    <input
-                      type="text"
-                      value={createFormData.manufacturer}
-                      onChange={e => setCreateFormData({...createFormData, manufacturer: e.target.value})}
-                      className="glass-input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Ticket Source</label>
-                    <select
-                      value={createFormData.ticketSource}
-                      onChange={e => setCreateFormData({...createFormData, ticketSource: e.target.value})}
-                      className="glass-input w-full"
-                    >
-                      {TICKET_SOURCES.map(source => (
-                        <option key={source} value={source}>{source}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">Status</label>
-                    <select
-                      value={createFormData.status}
-                      onChange={e => setCreateFormData({...createFormData, status: e.target.value})}
-                      className="glass-input w-full"
-                    >
-                      {REPAIR_STATUS_OPTIONS.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs text-muted-foreground mb-1">Technician</label>
-                    <select
-                      value={createFormData.technician}
-                      onChange={e => setCreateFormData({...createFormData, technician: e.target.value})}
-                      className="glass-input w-full"
-                      disabled={!createFormData.location}
-                    >
-                      <option value="">Select technician (optional)</option>
-                      {availableTechnicians.map(tech => (
-                        <option key={tech} value={tech}>{tech}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs text-muted-foreground mb-1">Internal Note</label>
-                    <textarea
-                      value={createFormData.internalNote}
-                      onChange={e => setCreateFormData({...createFormData, internalNote: e.target.value})}
-                      className="glass-input w-full min-h-[80px]"
-                      placeholder="Add any internal notes here..."
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter className="gap-2">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="px-4 py-2 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateTicket}
-                className="px-4 py-2 rounded-md bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 font-semibold transition-colors flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Create Ticket
-              </button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </main>
     </div>
   );

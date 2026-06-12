@@ -1,0 +1,121 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function getUserCompany() {
+      return getUserData().companyId;
+    }
+    
+    function isSuperAdmin() {
+      return isAuthenticated() && getUserData().role == 'SUPERADMIN';
+    }
+    
+    function hasCompanyAccess(companyId) {
+      return isAuthenticated() && (getUserCompany() == companyId || isSuperAdmin());
+    }
+    
+    function isValidImageType() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    
+    function isValidDocumentType() {
+      return request.resource.contentType == 'application/pdf';
+    }
+    
+    function isValidImageSize() {
+      return request.resource.size < 5 * 1024 * 1024; // 5MB
+    }
+    
+    function isValidDocumentSize() {
+      return request.resource.size < 10 * 1024 * 1024; // 10MB
+    }
+    
+    // Companies folder - all files must be under a company
+    match /companies/{companyId} {
+      
+      // User profile pictures
+      match /users/{uid}/profile.jpg {
+        // Users can read/write their own profile picture within their company
+        allow read: if hasCompanyAccess(companyId);
+        allow write: if hasCompanyAccess(companyId) 
+          && request.auth.uid == uid
+          && isValidImageType()
+          && isValidImageSize();
+      }
+      
+      // Ticket before images
+      match /tickets/{ticketId}/before/{imageFile} {
+        // Any authenticated user from the company can read
+        allow read: if hasCompanyAccess(companyId);
+        
+        // Authenticated users from the company can upload
+        allow write: if hasCompanyAccess(companyId)
+          && isValidImageType()
+          && isValidImageSize();
+      }
+      
+      // Ticket after images
+      match /tickets/{ticketId}/after/{imageFile} {
+        // Any authenticated user from the company can read
+        allow read: if hasCompanyAccess(companyId);
+        
+        // Authenticated users from the company can upload
+        allow write: if hasCompanyAccess(companyId)
+          && isValidImageType()
+          && isValidImageSize();
+      }
+      
+      // Part images
+      match /parts/{partId}/{imageFile} {
+        // Any authenticated user from the company can read
+        allow read: if hasCompanyAccess(companyId);
+        
+        // Authenticated users from the company can upload
+        allow write: if hasCompanyAccess(companyId)
+          && isValidImageType()
+          && isValidImageSize();
+      }
+      
+      // Invoice documents
+      match /documents/invoices/{invoiceFile} {
+        // Any authenticated user from the company can read
+        allow read: if hasCompanyAccess(companyId);
+        
+        // Authenticated users from the company can upload
+        allow write: if hasCompanyAccess(companyId)
+          && isValidDocumentType()
+          && isValidDocumentSize();
+      }
+      
+      // Receipt documents
+      match /documents/receipts/{receiptFile} {
+        // Any authenticated user from the company can read
+        allow read: if hasCompanyAccess(companyId);
+        
+        // Authenticated users from the company can upload
+        allow write: if hasCompanyAccess(companyId)
+          && isValidDocumentType()
+          && isValidDocumentSize();
+      }
+      
+      // Deny all other paths under company
+      match /{allPaths=**} {
+        allow read, write: if false;
+      }
+    }
+    
+    // Deny all access outside /companies/ folder
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
