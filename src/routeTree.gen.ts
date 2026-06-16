@@ -12,15 +12,19 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimecardRouteImport } from './routes/timecard'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as HomeRouteImport } from './routes/home'
+import { Route as FirebaseSetupRouteImport } from './routes/firebase-setup'
 import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
+import { Route as ApiServicepowerRouteImport } from './routes/api/servicepower'
+import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 import { Route as MModuleSubmoduleUserIdRouteImport } from './routes/m.$module.$submodule.$userId'
 
@@ -37,6 +41,11 @@ const SuperadminRoute = SuperadminRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServicepowerTestRoute = ServicepowerTestRouteImport.update({
+  id: '/servicepower-test',
+  path: '/servicepower-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -57,6 +66,11 @@ const LandingRoute = LandingRouteImport.update({
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FirebaseSetupRoute = FirebaseSetupRouteImport.update({
+  id: '/firebase-setup',
+  path: '/firebase-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AnnouncementsRoute = AnnouncementsRouteImport.update({
@@ -84,6 +98,16 @@ const EmployeeEmployeeIdRoute = EmployeeEmployeeIdRouteImport.update({
   path: '/employee/$employeeId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiServicepowerRoute = ApiServicepowerRouteImport.update({
+  id: '/api/servicepower',
+  path: '/api/servicepower',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminUsersRoute = AdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MModuleSubmoduleRoute = MModuleSubmoduleRouteImport.update({
   id: '/$submodule',
   path: '/$submodule',
@@ -98,13 +122,17 @@ const MModuleSubmoduleUserIdRoute = MModuleSubmoduleUserIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
+  '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/api/servicepower': typeof ApiServicepowerRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -114,13 +142,17 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
+  '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/api/servicepower': typeof ApiServicepowerRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -131,13 +163,17 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/announcements': typeof AnnouncementsRoute
+  '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
+  '/admin/users': typeof AdminUsersRoute
+  '/api/servicepower': typeof ApiServicepowerRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -149,13 +185,17 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/announcements'
+    | '/firebase-setup'
     | '/home'
     | '/landing'
     | '/privacy'
     | '/profile'
+    | '/servicepower-test'
     | '/settings'
     | '/superadmin'
     | '/timecard'
+    | '/admin/users'
+    | '/api/servicepower'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -165,13 +205,17 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/announcements'
+    | '/firebase-setup'
     | '/home'
     | '/landing'
     | '/privacy'
     | '/profile'
+    | '/servicepower-test'
     | '/settings'
     | '/superadmin'
     | '/timecard'
+    | '/admin/users'
+    | '/api/servicepower'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -181,13 +225,17 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/announcements'
+    | '/firebase-setup'
     | '/home'
     | '/landing'
     | '/privacy'
     | '/profile'
+    | '/servicepower-test'
     | '/settings'
     | '/superadmin'
     | '/timecard'
+    | '/admin/users'
+    | '/api/servicepower'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -198,13 +246,17 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnnouncementsRoute: typeof AnnouncementsRoute
+  FirebaseSetupRoute: typeof FirebaseSetupRoute
   HomeRoute: typeof HomeRoute
   LandingRoute: typeof LandingRoute
   PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
+  ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
   SuperadminRoute: typeof SuperadminRoute
   TimecardRoute: typeof TimecardRoute
+  AdminUsersRoute: typeof AdminUsersRoute
+  ApiServicepowerRoute: typeof ApiServicepowerRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
   TicketTicketNoRoute: typeof TicketTicketNoRoute
@@ -233,6 +285,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/servicepower-test': {
+      id: '/servicepower-test'
+      path: '/servicepower-test'
+      fullPath: '/servicepower-test'
+      preLoaderRoute: typeof ServicepowerTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profile': {
       id: '/profile'
       path: '/profile'
@@ -259,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/firebase-setup': {
+      id: '/firebase-setup'
+      path: '/firebase-setup'
+      fullPath: '/firebase-setup'
+      preLoaderRoute: typeof FirebaseSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/announcements': {
@@ -294,6 +360,20 @@ declare module '@tanstack/react-router' {
       path: '/employee/$employeeId'
       fullPath: '/employee/$employeeId'
       preLoaderRoute: typeof EmployeeEmployeeIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/servicepower': {
+      id: '/api/servicepower'
+      path: '/api/servicepower'
+      fullPath: '/api/servicepower'
+      preLoaderRoute: typeof ApiServicepowerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/users': {
+      id: '/admin/users'
+      path: '/admin/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AdminUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/m/$module/$submodule': {
@@ -338,13 +418,17 @@ const MModuleRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnnouncementsRoute: AnnouncementsRoute,
+  FirebaseSetupRoute: FirebaseSetupRoute,
   HomeRoute: HomeRoute,
   LandingRoute: LandingRoute,
   PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
+  ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
   SuperadminRoute: SuperadminRoute,
   TimecardRoute: TimecardRoute,
+  AdminUsersRoute: AdminUsersRoute,
+  ApiServicepowerRoute: ApiServicepowerRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
   TicketTicketNoRoute: TicketTicketNoRoute,

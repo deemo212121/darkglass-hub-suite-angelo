@@ -121,14 +121,16 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 });
 
 function SubModule() {
-  const { ready, email, companyId } = useAuth();
+  const { ready, email, companyId, role } = useAuth();
   const { mod, sub } = Route.useLoaderData();
   const location = useLocation();
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
   
-  if (mod.slug === "admin" && !canAccessAdminModule(email)) {
-    const currentUser = getUserManagementRecord(email);
+  // Check admin access using Firebase role
+  const hasAdminAccess = role && (role.toUpperCase() === "ADMIN" || role.toUpperCase() === "SUPERADMIN");
+  
+  if (mod.slug === "admin" && !hasAdminAccess) {
     return (
       <>
         <AppHeader />
@@ -137,10 +139,13 @@ function SubModule() {
             <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
               <h1 className="text-2xl font-bold">Access restricted</h1>
               <p className="mt-2 text-sm text-slate-300">
-                The admin module is only available to Admin users.
+                The admin module is only available to Admin and SuperAdmin users.
               </p>
               <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {currentUser?.userName ?? email}
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
               </p>
             </div>
           </div>
@@ -150,8 +155,10 @@ function SubModule() {
     );
   }
   
-  if (sub.custom === "user-management" && !canAccessUserManagement(email)) {
-    const currentUser = getUserManagementRecord(email);
+  // Check user management access using Firebase role
+  const hasUserManagementAccess = role && ["HR", "MANAGER", "ADMIN", "SUPERADMIN"].includes(role.toUpperCase());
+  
+  if (sub.custom === "user-management" && !hasUserManagementAccess) {
     return (
       <>
         <AppHeader />
@@ -160,10 +167,13 @@ function SubModule() {
             <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
               <h1 className="text-2xl font-bold">Access restricted</h1>
               <p className="mt-2 text-sm text-slate-300">
-                User management is only available to HR, Manager, Admin, and Super Admin users.
+                User management is only available to HR, Manager, Admin, and SuperAdmin users.
               </p>
               <p className="mt-2 text-sm text-slate-400">
-                Current sign-in: {currentUser?.userName ?? email}
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
               </p>
             </div>
           </div>

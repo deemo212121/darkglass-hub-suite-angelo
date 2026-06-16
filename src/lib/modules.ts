@@ -697,7 +697,7 @@ const ticketsMod: ModuleDef = {
     },
     {
       slug: "work-planner",
-      title: "Work Planner",
+      title: "Daily Schedule",
       description: "Plan technician assignments and task sequences.",
       fields: [
         { key: "date", label: "Date", type: "date", filterable: true },

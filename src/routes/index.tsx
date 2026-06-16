@@ -1,5 +1,6 @@
-import { createFileRoute, Navigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -7,8 +8,14 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { ready, email } = useAuth();
-  if (!ready) return <div className="min-h-screen" />;
+  const navigate = useNavigate();
   
-  // Prevent re-renders by using replace instead of push
-  return <Navigate to={email ? "/home" : "/landing"} replace />;
+  useEffect(() => {
+    if (!ready) return;
+    
+    const target = email ? "/home" : "/landing";
+    navigate({ to: target, replace: true });
+  }, [ready, email, navigate]);
+  
+  return <div className="min-h-screen" />;
 }

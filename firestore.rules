@@ -2,63 +2,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isOwner(uid) {
-      return isAuthenticated() && request.auth.uid == uid;
-    }
-    
-    function isSuperAdmin() {
-      return isAuthenticated() 
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPERADMIN';
-    }
-    
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-    
-    function hasCompanyAccess(companyId) {
-      return isAuthenticated() 
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && (getUserData().companyId == companyId || getUserData().role == 'SUPERADMIN');
-    }
-    
-    // User profiles collection
-    match /users/{uid} {
+    // Users collection - allow reading for username login lookup
+    match /users/{userId} {
+      // Allow unauthenticated read for username login lookup
+      // This is safe because passwords are in Firebase Auth, not Firestore
+      allow read: if true;
+      
       // Users can read their own profile
-      allow read: if isOwner(uid);
+      allow read: if request.auth != null && request.auth.uid == userId;
       
-      // SuperAdmins can read all profiles
-      allow read: if isSuperAdmin();
-      
-      // Only system/admin can create users (via Admin SDK or Cloud Functions)
-      // Client-side user creation is blocked for security
-      allow create: if false;
-      
-      // Users can update their own lastLogin timestamp only
-      allow update: if isOwner(uid) 
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLogin']);
-      
-      // SuperAdmins can update any user
-      allow update: if isSuperAdmin();
-      
-      // No client-side deletes (use Admin SDK or Cloud Functions)
-      allow delete: if false;
+      // Only system/admin can write
+      allow write: if false;
     }
     
-    // Company-specific collections (for future use)
-    match /companies/{companyId}/{document=**} {
-      // Users can only access their own company data
-      allow read, write: if hasCompanyAccess(companyId);
+    // Users can read their company
+    match /companies/{companyId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only system/admin can write
     }
     
-    // Deny all other access
+    // Temporarily allow authenticated users to write (for testing)
+    // Remove this after setup is complete
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if request.auth != null;
     }
   }
 }

@@ -1,48 +1,23 @@
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
-
-// Map email to role - includes all 10 dummy employees
-const EMAIL_TO_ROLE: Record<string, string> = {
-  // Admin accounts
-  "admin@ahsolutions.com": "admin",
-  "superadmin@ahsolutions.com": "superadmin",
-  
-  // Dummy employee accounts (10 employees)
-  "john.richardson@ahsolutions.com": "admin",
-  "sarah.mitchell@ahsolutions.com": "manager",
-  "michael.chen@ahsolutions.com": "technician",
-  "emily.watson@ahsolutions.com": "technician",
-  "david.rodriguez@ahsolutions.com": "csr",
-  "maria.santos@ahsolutions.com.ph": "finance",
-  "juan.delacruz@ahsolutions.com.ph": "technician",
-  "anna.reyes@ahsolutions.com.ph": "accounting",
-  "carlos.gutierrez@ahsolutions.com.ph": "csr",
-  "rosa.morales@ahsolutions.com.ph": "operations",
-  
-  // Legacy accounts
-  "manager@ahsolutions.com": "manager",
-  "tech@ahsolutions.com": "technician",
-  "viewer@ahsolutions.com": "viewer",
-  "finance@ahsolutions.com": "finance",
-  "csr@ahsolutions.com": "csr",
-  "hr@ahsolutions.com": "hr",
-  "parts@ahsolutions.com": "parts",
-};
-
-function getRoleFromEmail(email: string | null): string | null {
-  if (!email) return null;
-  return EMAIL_TO_ROLE[email.toLowerCase()] || null;
-}
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, isFirebaseReady } from "./firebase/config";
+import { getUserAccount, updateLastLogin } from "./firebase/users";
+import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 
 type AuthState = {
   email: string | null;
   companyId: string | null;
   role: string | null;
-  login: (email: string, companyId: string) => void;
-  logout: () => void;
+  uid: string | null;
+  displayName: string | null;
+  isActive: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
   ready: boolean;
+  loading: boolean;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -51,77 +26,151 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [uid, setUid] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [isActive, setIsActive] = useState<boolean>(false);
   const [ready, setReady] = useState(false);
-  const isLoggingOut = useRef(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
       initDatabase().then(() => {
         void getFirebaseAnalytics();
-        const savedEmail = localStorage.getItem("userEmail");
-        const savedCompanyId = localStorage.getItem("userCompanyId");
-        setEmail(savedEmail);
-        setCompanyId(savedCompanyId);
         
-        // Get user role from email mapping
-        if (savedEmail) {
-          const userRole = getRoleFromEmail(savedEmail);
-          setRole(userRole);
-          
-          // Initialize user-specific data
-          initializeUserData(savedEmail);
+        // Check if Firebase is ready
+        if (!isFirebaseReady() || !auth) {
+          console.warn("⚠️ Firebase not configured. Auth will not work.");
+          setReady(true);
+          setLoading(false);
+          return;
         }
-        
-        setReady(true);
+
+        // Set up Firebase Auth listener
+        console.log("🔐 Setting up Firebase Auth listener...");
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+          if (firebaseUser) {
+            console.log("✅ Firebase user authenticated:", firebaseUser.email);
+            
+            try {
+              // Get user profile from Firestore
+              const userProfile = await getUserAccount(firebaseUser.uid);
+              
+              if (userProfile) {
+                console.log("✅ User profile loaded:", {
+                  email: userProfile.email,
+                  role: userProfile.role,
+                  companyId: userProfile.companyId,
+                  isActive: userProfile.isActive
+                });
+
+                // Update last login
+                await updateLastLogin(firebaseUser.uid);
+
+                // Set auth state
+                setUid(firebaseUser.uid);
+                setEmail(userProfile.email);
+                setCompanyId(userProfile.companyId);
+                setRole(userProfile.role);
+                setDisplayName(userProfile.displayName);
+                setIsActive(userProfile.isActive);
+
+                // Initialize user-specific data
+                if (userProfile.email) {
+                  initializeUserData(userProfile.email);
+                }
+              } else {
+                console.error("❌ User profile not found in Firestore for UID:", firebaseUser.uid);
+                // Sign out if no profile exists
+                await firebaseSignOut();
+              }
+            } catch (error) {
+              console.error("❌ Error loading user profile:", error);
+              await firebaseSignOut();
+            }
+          } else {
+            console.log("🔓 No Firebase user authenticated");
+            // Clear auth state
+            setUid(null);
+            setEmail(null);
+            setCompanyId(null);
+            setRole(null);
+            setDisplayName(null);
+            setIsActive(false);
+          }
+          
+          setReady(true);
+          setLoading(false);
+        });
+
+        // Cleanup listener on unmount
+        return () => {
+          console.log("🔒 Cleaning up Firebase Auth listener");
+          unsubscribe();
+        };
       });
     } else {
       setReady(true);
+      setLoading(false);
     }
-    
-    const handler = (e: StorageEvent) => {
-      // Skip storage updates during logout to prevent infinite loops
-      if (isLoggingOut.current) return;
-      
-      // Only update state if the key actually changed (prevents infinite loops on logout)
-      if (e.key === "userEmail" && e.newValue !== e.oldValue) {
-        setEmail(e.newValue);
-        setRole(getRoleFromEmail(e.newValue));
-      }
-      if (e.key === "userCompanyId" && e.newValue !== e.oldValue) {
-        setCompanyId(e.newValue);
-      }
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
   }, []);
 
-  const login = (e: string, c: string) => {
-    isLoggingOut.current = false;
-    localStorage.setItem("userEmail", e);
-    localStorage.setItem("userCompanyId", c);
-    setEmail(e);
-    setCompanyId(c);
-    
-    // Get user role from email mapping
-    const userRole = getRoleFromEmail(e);
-    setRole(userRole);
-    
-    // Initialize user-specific data on login
-    initializeUserData(e);
+  const login = async (email: string, password: string) => {
+    if (!isFirebaseReady() || !auth) {
+      throw new Error("Firebase not configured. Cannot login.");
+    }
+
+    setLoading(true);
+    try {
+      console.log("🔐 Attempting Firebase login for:", email);
+      const authUser = await firebaseSignIn(email, password);
+      
+      console.log("✅ Login successful:", {
+        email: authUser.email,
+        role: authUser.role,
+        companyId: authUser.companyId
+      });
+
+      // State will be updated by onAuthStateChanged listener
+    } catch (error: any) {
+      console.error("❌ Login failed:", error.message);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   };
   
-  const logout = () => {
-    isLoggingOut.current = true;
-    localStorage.removeItem("userEmail");
-    localStorage.removeItem("userCompanyId");
-    setEmail(null);
-    setCompanyId(null);
-    setRole(null);
+  const logout = async () => {
+    if (!isFirebaseReady() || !auth) {
+      console.warn("Firebase not configured");
+      return;
+    }
+
+    try {
+      console.log("🔓 Logging out...");
+      await firebaseSignOut();
+      console.log("✅ Logout successful");
+      
+      // State will be cleared by onAuthStateChanged listener
+    } catch (error) {
+      console.error("❌ Logout failed:", error);
+      throw error;
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ email, companyId, role, login, logout, ready }}>
+    <AuthContext.Provider value={{ 
+      email, 
+      companyId, 
+      role, 
+      uid,
+      displayName,
+      isActive,
+      login, 
+      logout, 
+      ready,
+      loading 
+    }}>
       {children}
     </AuthContext.Provider>
   );

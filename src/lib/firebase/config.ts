@@ -1,4 +1,4 @@
-import { initializeApp, FirebaseApp } from "firebase/app";
+import { initializeApp, FirebaseApp, getApps, getApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
@@ -46,11 +46,18 @@ const isConfigured = validateConfig();
 
 if (isConfigured) {
   try {
-    app = initializeApp(firebaseConfig);
+    // Check if Firebase app already exists, if so use it
+    if (getApps().length === 0) {
+      app = initializeApp(firebaseConfig);
+      console.log("✅ Firebase initialized successfully");
+    } else {
+      app = getApp(); // Use existing app
+      console.log("✅ Firebase app already initialized, using existing instance");
+    }
+    
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
-    console.log("✅ Firebase initialized successfully");
   } catch (error) {
     console.error("❌ Firebase initialization failed:", error);
   }

@@ -521,8 +521,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
               ...visit,
               technician: technician,
               updatedAt: new Date().toISOString(),
-              updatedBy: email || "Work Planner",
-              updateReason: `Technician changed from ${latestVisit.technician} to ${technician} via Work Planner drag/drop`,
+              updatedBy: email || "Daily Schedule",
+              updateReason: `Technician changed from ${latestVisit.technician} to ${technician} via Daily Schedule drag/drop`,
             };
           }
           return visit;
@@ -545,8 +545,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       const auditEntry = {
         id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
         timestamp: new Date().toISOString(),
-        by: email || "Work Planner",
-        action: "Technician reassignment via Work Planner",
+        by: email || "Daily Schedule",
+        action: "Technician reassignment via Daily Schedule",
         field: "Technician",
         before: oldTechnician || "—",
         after: technician,
@@ -560,8 +560,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         const visitAuditEntry = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2, 11)}`,
           timestamp: new Date().toISOString(),
-          by: email || "Work Planner",
-          action: "Updated visit technician via Work Planner drag/drop",
+          by: email || "Daily Schedule",
+          action: "Updated visit technician via Daily Schedule drag/drop",
           field: "Visit Technician",
           before: latestVisit.technician || "—",
           after: technician,

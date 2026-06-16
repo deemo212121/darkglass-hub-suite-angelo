@@ -146,6 +146,18 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   return (
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
+        {/* Back Button */}
+        <Link 
+          to="/m/$module" 
+          params={{ module: mod.slug }}
+          className="inline-flex items-center gap-2 text-slate-300 hover:text-white mb-4 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to {mod.label}
+        </Link>
+        
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 flex-1">

@@ -1,9 +1,10 @@
-import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -13,11 +14,26 @@ export const Route = createFileRoute("/home")({
 
 function Home() {
   const { ready, email, role } = useAuth();
-  if (!ready) return null;
-  if (!email) return <Navigate to="/landing" replace />;
+  const navigate = useNavigate();
   
-  // Redirect SuperAdmin to their dashboard
-  if (role === "superadmin") return <Navigate to="/superadmin" replace />;
+  useEffect(() => {
+    if (!ready) return;
+    
+    if (!email) {
+      navigate({ to: "/landing", replace: true });
+      return;
+    }
+    
+    // Redirect SuperAdmin to their dashboard (case-insensitive check)
+    if (role && role.toUpperCase() === "SUPERADMIN") {
+      navigate({ to: "/superadmin", replace: true });
+      return;
+    }
+  }, [ready, email, role, navigate]);
+  
+  if (!ready) return null;
+  if (!email) return null;
+  if (role && role.toUpperCase() === "SUPERADMIN") return null;
   
   return (
     <>
