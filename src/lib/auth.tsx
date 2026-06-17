@@ -82,6 +82,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Set up Firebase Auth listener
         console.log("🔐 Setting up Firebase Auth listener...");
+        // Periodically re-mint the Supabase JWT before it expires. The minted
+        // token has a 1h TTL; refresh every 45 min so long-open tabs never hit
+        // "JWT expired" (which silently breaks all Supabase reads/writes).
+        let refreshTimer: ReturnType<typeof setInterval> | null = null;
+        const startTokenRefresh = () => {
+          if (refreshTimer) clearInterval(refreshTimer);
+          refreshTimer = setInterval(
+            () => {
+              const u = auth?.currentUser;
+              if (u) {
+                refreshSupabaseSession(u).catch((e) =>
+                  console.warn("Periodic Supabase token refresh failed:", e)
+                );
+              }
+            },
+            45 * 60 * 1000
+          );
+        };
+        const stopTokenRefresh = () => {
+          if (refreshTimer) clearInterval(refreshTimer);
+          refreshTimer = null;
+        };
+        // Also refresh when the tab regains focus — covers laptop sleep / long
+        // idle where the interval may not have fired in time.
+        const onVisible = () => {
+          if (document.visibilityState === "visible") {
+            const u = auth?.currentUser;
+            if (u) refreshSupabaseSession(u).catch(() => {});
+          }
+        };
+        document.addEventListener("visibilitychange", onVisible);
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
             console.log("✅ Firebase user authenticated:", firebaseUser.email);
@@ -89,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
             await refreshSupabaseSession(firebaseUser);
+            startTokenRefresh();
             
             try {
               // Get user profile from Supabase (source of truth). Fall back to
@@ -148,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           } else {
             console.log("🔓 No Firebase user authenticated");
+            stopTokenRefresh();
             // Clear Supabase session
             clearSupabaseSession();
             // Clear auth state
@@ -166,6 +199,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Cleanup listener on unmount
         return () => {
           console.log("🔒 Cleaning up Firebase Auth listener");
+          stopTokenRefresh();
+          document.removeEventListener("visibilitychange", onVisible);
           unsubscribe();
         };
       });
