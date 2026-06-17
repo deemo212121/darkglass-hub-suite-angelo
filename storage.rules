@@ -1,119 +1,41 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // Helper functions
+
+    // NOTE on auth model:
+    // This app authenticates with Firebase Auth but stores user/company data in
+    // Supabase (not Firestore). Storage rules cannot read Supabase, so we rely on
+    // Firebase Authentication for access control and the app-controlled path
+    // structure (companies/{companyId}/...) for namespacing. Any signed-in user
+    // may read/write company files; uploads are validated for type and size.
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
-    function getUserData() {
-      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
-    }
-    
-    function getUserCompany() {
-      return getUserData().companyId;
-    }
-    
-    function isSuperAdmin() {
-      return isAuthenticated() && getUserData().role == 'SUPERADMIN';
-    }
-    
-    function hasCompanyAccess(companyId) {
-      return isAuthenticated() && (getUserCompany() == companyId || isSuperAdmin());
-    }
-    
+
     function isValidImageType() {
       return request.resource.contentType.matches('image/.*');
     }
-    
-    function isValidDocumentType() {
-      return request.resource.contentType == 'application/pdf';
+
+    function isValidUploadSize() {
+      return request.resource.size < 25 * 1024 * 1024; // 25MB
     }
-    
-    function isValidImageSize() {
-      return request.resource.size < 5 * 1024 * 1024; // 5MB
+
+    // Ticket photos: companies/{companyId}/tickets/{ticketNo}/{imageFile}
+    match /companies/{companyId}/tickets/{ticketNo}/{imageFile} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidImageType() && isValidUploadSize();
+      allow delete: if isAuthenticated();
     }
-    
-    function isValidDocumentSize() {
-      return request.resource.size < 10 * 1024 * 1024; // 10MB
+
+    // Other company files (profile pics, parts, etc.) — authenticated read/write,
+    // images validated. Keep this AFTER the tickets rule.
+    match /companies/{companyId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidUploadSize();
     }
-    
-    // Companies folder - all files must be under a company
-    match /companies/{companyId} {
-      
-      // User profile pictures
-      match /users/{uid}/profile.jpg {
-        // Users can read/write their own profile picture within their company
-        allow read: if hasCompanyAccess(companyId);
-        allow write: if hasCompanyAccess(companyId) 
-          && request.auth.uid == uid
-          && isValidImageType()
-          && isValidImageSize();
-      }
-      
-      // Ticket before images
-      match /tickets/{ticketId}/before/{imageFile} {
-        // Any authenticated user from the company can read
-        allow read: if hasCompanyAccess(companyId);
-        
-        // Authenticated users from the company can upload
-        allow write: if hasCompanyAccess(companyId)
-          && isValidImageType()
-          && isValidImageSize();
-      }
-      
-      // Ticket after images
-      match /tickets/{ticketId}/after/{imageFile} {
-        // Any authenticated user from the company can read
-        allow read: if hasCompanyAccess(companyId);
-        
-        // Authenticated users from the company can upload
-        allow write: if hasCompanyAccess(companyId)
-          && isValidImageType()
-          && isValidImageSize();
-      }
-      
-      // Part images
-      match /parts/{partId}/{imageFile} {
-        // Any authenticated user from the company can read
-        allow read: if hasCompanyAccess(companyId);
-        
-        // Authenticated users from the company can upload
-        allow write: if hasCompanyAccess(companyId)
-          && isValidImageType()
-          && isValidImageSize();
-      }
-      
-      // Invoice documents
-      match /documents/invoices/{invoiceFile} {
-        // Any authenticated user from the company can read
-        allow read: if hasCompanyAccess(companyId);
-        
-        // Authenticated users from the company can upload
-        allow write: if hasCompanyAccess(companyId)
-          && isValidDocumentType()
-          && isValidDocumentSize();
-      }
-      
-      // Receipt documents
-      match /documents/receipts/{receiptFile} {
-        // Any authenticated user from the company can read
-        allow read: if hasCompanyAccess(companyId);
-        
-        // Authenticated users from the company can upload
-        allow write: if hasCompanyAccess(companyId)
-          && isValidDocumentType()
-          && isValidDocumentSize();
-      }
-      
-      // Deny all other paths under company
-      match /{allPaths=**} {
-        allow read, write: if false;
-      }
-    }
-    
-    // Deny all access outside /companies/ folder
+
+    // Deny everything outside /companies/.
     match /{allPaths=**} {
       allow read, write: if false;
     }

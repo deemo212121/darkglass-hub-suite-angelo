@@ -6,6 +6,7 @@ import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket } from "@/lib/supabase/partOrders";
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { TicketPhotos } from "@/components/TicketPhotos";
 import { 
   loadTickets, 
   updateTicket, 
@@ -2430,6 +2431,9 @@ function TicketDetailsPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Photos */}
+              <TicketPhotos ticketNo={ticketNo} />
             </div>
           </div>
         )}
