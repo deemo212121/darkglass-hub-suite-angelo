@@ -14,6 +14,14 @@ import {
   updateTicketParts, 
   type Ticket 
 } from "@/lib/ticketData";
+import {
+  getTicketByNumber as sbGetTicketByNumber,
+  getTicketVisits as sbGetTicketVisits,
+  addTicketVisit as sbAddTicketVisit,
+  updateTicketVisit as sbUpdateTicketVisit,
+  updateTicketStatus as sbUpdateTicketStatus,
+  updateTicketAssignment as sbUpdateTicketAssignment,
+} from "@/lib/supabase/tickets";
 
 interface TicketData {
   ticketNo: string;
@@ -749,7 +757,7 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail } = useAuth();
+  const { email: currentUserEmail, ready: authReady } = useAuth();
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
@@ -830,12 +838,20 @@ function TicketDetailsPage() {
     setPartRowsLoaded(false);
     setAlertsLoaded(false);
     
-    // Load visits from centralized ticket
-    const ticket = getTicketByNumber(ticketNo);
-    setVisitLogEntries(ticket?.visits || []);
-    setVisitsLoaded(true);
+    // Load visits from Supabase (falls back to empty if none)
+    sbGetTicketVisits(ticketNo)
+      .then((visits) => {
+        setVisitLogEntries(visits as any);
+        setVisitsLoaded(true);
+      })
+      .catch((err) => {
+        console.error("Failed to load visits:", err);
+        setVisitLogEntries([]);
+        setVisitsLoaded(true);
+      });
     
-    // Load parts from centralized ticket
+    // Load parts from centralized ticket (parts domain not yet on Supabase)
+    const ticket = getTicketByNumber(ticketNo);
     setPartRows(ticket?.parts || []);
     setPartRowsLoaded(true);
     
@@ -849,7 +865,7 @@ function TicketDetailsPage() {
     setEditedCustomerInfo({});
     setIsEditingProductInfo(false);
     setEditedProductInfo({});
-  }, [ticketNo]);
+  }, [ticketNo, authReady]);
 
   useEffect(() => {
     // Only save audit entries after they've been loaded
@@ -858,19 +874,9 @@ function TicketDetailsPage() {
   }, [auditEntries, ticketNo, auditEntriesLoaded]);
 
   useEffect(() => {
-    // Only save visits after they've been loaded from the ticket
+    // Visits are persisted directly to Supabase in addVisitLogEntry now.
+    // This effect intentionally does nothing (kept to preserve hook order).
     if (!visitsLoaded) return;
-    
-    // Check if visits actually changed from what's in centralized storage
-    const currentTicket = getTicketByNumber(ticketNo);
-    const currentVisitsJson = JSON.stringify(currentTicket?.visits || []);
-    const newVisitsJson = JSON.stringify(visitLogEntries);
-    
-    // Only save if data actually changed
-    if (currentVisitsJson !== newVisitsJson) {
-      // Save visits to centralized ticket whenever they change
-      updateTicketVisits(ticketNo, visitLogEntries);
-    }
   }, [ticketNo, visitLogEntries, visitsLoaded]);
 
   useEffect(() => {
@@ -975,9 +981,17 @@ function TicketDetailsPage() {
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
   
   useEffect(() => {
-    // Load ticket from centralized system
-    const loadTicketData = () => {
-      const centralTicket = getTicketByNumber(ticketNo);
+    // Load ticket from Supabase first; fall back to centralized/hardcoded.
+    const loadTicketData = async () => {
+      let centralTicket: Ticket | null = null;
+      try {
+        centralTicket = await sbGetTicketByNumber(ticketNo);
+      } catch (err) {
+        console.error("Supabase ticket load failed, falling back:", err);
+      }
+      if (!centralTicket) {
+        centralTicket = getTicketByNumber(ticketNo) ?? null;
+      }
       if (centralTicket) {
         // Map centralized Ticket to TicketData format
         const mapped: TicketData = {
@@ -1036,11 +1050,12 @@ function TicketDetailsPage() {
     
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
-  }, [ticketNo]);
+  }, [ticketNo, authReady]);
 
   const ticket = ticketData;
 
   const addServicerNote = () => {
+    if (!ticket) return;
     if (newServicerNote.trim()) {
       ticket.servicerNotes.push({
         notes: newServicerNote,
@@ -1219,7 +1234,7 @@ function TicketDetailsPage() {
     setEditedScheduleInfo({});
   };
 
-  const addVisitLogEntry = () => {
+  const addVisitLogEntry = async () => {
     if (visitFormMode === "view") {
       return;
     }
@@ -1277,6 +1292,33 @@ function TicketDetailsPage() {
 
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
 
+    // Persist the visit to Supabase
+    try {
+      if (editingVisitId) {
+        await sbUpdateTicketVisit(editingVisitId, visitEntry as any);
+      } else {
+        const saved = await sbAddTicketVisit(ticketNo, visitEntry as any);
+        // adopt the DB-generated id so future edits target the right row
+        visitEntry.id = saved.id;
+      }
+      // Sync the ticket itself with this visit: schedule date, technician, slot.
+      await sbUpdateTicketAssignment(ticketNo, {
+        technician: newVisitTechnician,
+        scheduleDate: newVisitScheduleDate,
+        timeSlot: newVisitTimeSlot,
+      }).catch((e) => console.warn("assignment sync skipped:", e));
+      // Set the ticket's status from the visit's REPAIR STATUS (not the visit status).
+      if (newVisitRepairStatus) {
+        await sbUpdateTicketStatus(ticketNo, newVisitRepairStatus).catch((e) =>
+          console.warn("status update skipped:", e)
+        );
+      }
+    } catch (err) {
+      console.error("Failed to save visit:", err);
+      alert(`Failed to save visit: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+
     setVisitLogEntries((entries) => {
       if (editingVisitId) {
         return entries.map((entry) => (entry.id === editingVisitId ? visitEntry : entry));
@@ -1291,14 +1333,7 @@ function TicketDetailsPage() {
       before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
       after: summarizeVisitEntry(visitEntry),
     });
-    
-    // Update centralized ticket system with technician and schedule
-    updateTicket(ticketNo, {
-      technician: newVisitTechnician,
-      schedule: newVisitScheduleDate,
-      status: newVisitStatus || ticket.status,
-    });
-    
+
     clearVisitForm();
     setIsVisitModalOpen(false);
   };

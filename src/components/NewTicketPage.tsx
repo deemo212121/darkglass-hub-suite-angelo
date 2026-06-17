@@ -2,7 +2,8 @@ import { useMemo, useState, useEffect } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { addTicket, type Ticket } from "@/lib/ticketData";
+import { type Ticket } from "@/lib/ticketData";
+import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
 import { lookupZip } from "@/lib/zipCoverage";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -243,18 +244,26 @@ export function NewTicketPage({ mod, sub }: Props) {
     };
 
     console.log("Creating new ticket with data:", newTicket);
-    console.log("Product Category from form:", form.productCategory);
-    console.log("Product Type in ticket:", newTicket.productType);
 
-    // Add ticket using centralized function
-    addTicket(newTicket);
-    
-    setStatus(`✓ Ticket ${newTicket.ticketNo} created successfully!`);
-    
-    // Navigate to the ticket details page after a short delay
-    setTimeout(() => {
-      navigate({ to: `/ticket/${newTicket.ticketNo}` });
-    }, 1500);
+    // Save to Supabase (company auto-scoped via RLS)
+    (async () => {
+      try {
+        setStatus("Creating ticket...");
+        await createSupabaseTicket(newTicket);
+        setStatus(`✓ Ticket ${newTicket.ticketNo} created successfully!`);
+        setTimeout(() => {
+          navigate({ to: `/ticket/${newTicket.ticketNo}` });
+        }, 1200);
+      } catch (err: any) {
+        console.error("Create ticket failed:", err);
+        const msg = String(err?.message || "");
+        if (msg.includes("duplicate") || msg.includes("unique")) {
+          setStatus(`Error: Ticket number ${newTicket.ticketNo} already exists`);
+        } else {
+          setStatus(`Error creating ticket: ${msg || "Unknown error"}`);
+        }
+      }
+    })();
   };
 
   return (

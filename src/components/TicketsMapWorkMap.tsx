@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { getSubModule } from "@/lib/modules";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
-import { loadTickets, getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { useAuth } from "@/lib/auth";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -94,19 +95,30 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+  const { ready: authReady } = useAuth();
+  const [tickets, setTickets] = useState<TicketRecord[]>([]);
 
+  // Load tickets from Supabase (company-scoped via RLS), gated on auth ready.
   useEffect(() => {
-    const key = "ticket-list";
-    if (!localStorage.getItem(key)) {
-      const seeded = getSubModule("tickets", "ticket-list");
-      if (seeded?.seed) {
-        const count = seeded.count || 24;
-        const data = Array.from({ length: count }, (_, index) => seeded.seed(index));
-        localStorage.setItem(key, JSON.stringify(data));
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
+        if (!cancelled) {
+          setTickets(rows);
+          setReady(true);
+        }
+      } catch (err) {
+        console.error("Work Map: failed to load tickets:", err);
+        if (!cancelled) {
+          setTickets([]);
+          setReady(true);
+        }
       }
-    }
-    setReady(true);
-  }, []);
+    };
+    if (authReady) load();
+    return () => { cancelled = true; };
+  }, [authReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,11 +179,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       cancelled = true;
     };
   }, [ready]); // Add ready as dependency
-
-  const tickets = useMemo<TicketRecord[]>(() => {
-    if (!ready) return [];
-    return loadTickets() as TicketRecord[];
-  }, [ready]);
 
   const locationData = useMemo<LocationTickets[]>(() => {
     const locationMap = new Map<string, TicketRecord[]>();
@@ -300,17 +307,21 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         return { ticket, position: { lat: directLat, lng: directLng } };
       }
 
-      const query = ticket.customer_address || ticket.customer_city || ticket.location;
-      if (!query) return { ticket, position: null };
-      
-      // Build full address for accurate geocoding
+      // Build the best geocode query from the ticket's real fields.
       const streetAddr = ticket.address || ticket.customer_address || "";
       const cityName = ticket.city || ticket.customer_city || "";
-      const zipCode = ticket.zip || "";
-      const fullQuery = streetAddr && cityName && zipCode
-        ? `${streetAddr}, ${cityName}, GA ${zipCode}`
-        : query;
-      
+      const stateName = ticket.state || ticket.customer_state || "";
+      const zipCode = ticket.zip || ticket.customer_zip || "";
+
+      const parts: string[] = [];
+      if (streetAddr) parts.push(streetAddr);
+      const cityStateZip = [cityName, [stateName, zipCode].filter(Boolean).join(" ")]
+        .filter(Boolean)
+        .join(", ");
+      if (cityStateZip) parts.push(cityStateZip);
+      const fullQuery = parts.join(", ").trim() || zipCode || ticket.location || "";
+      if (!fullQuery) return { ticket, position: null };
+
       return { ticket, position: await geocode(fullQuery) };
     });
 

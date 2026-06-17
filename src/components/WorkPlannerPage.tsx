@@ -3,9 +3,9 @@ import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from 
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
-import { getSubModule } from "@/lib/modules";
 import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
-import { loadTickets, getTicketByNumber, updateTicket, type Ticket } from "@/lib/ticketData";
+import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
 import { useAuth } from "@/lib/auth";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -97,27 +97,13 @@ function getInitials(value: string | null | undefined) {
   return value.slice(0, 2).toUpperCase();
 }
 
-function storageKey(mod: string, sub: string) {
-  return `ahs:data:${mod}:${sub}`;
-}
-
-function readSeededTickets(): TicketRecord[] {
-  const seededSub = getSubModule("tickets", "ticket-list");
-  if (!seededSub?.seed) return [];
-  const count = seededSub.count ?? 24;
-  return Array.from({ length: count }, (_, index) => ({
-    __id: `ticket-list-${index}`,
-    ...seededSub.seed(index),
-  })) as TicketRecord[];
-}
-
 function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
   return rows.map((row, index) => {
-    // Get the actual time slot from the latest visit, or default based on index
-    const fullTicket = getTicketByNumber(String(row.ticketNo || row.ticket_no || row.no));
-    const latestVisit = fullTicket?.visits?.[0];
-    const visitTimeSlot = latestVisit?.timeSlot as "AM" | "PM" | "ANYTIME" | undefined;
-    const slot = visitTimeSlot || TIME_SLOTS[index % TIME_SLOTS.length];
+    // Time slot is persisted on the ticket. If a ticket has never been
+    // scheduled into a slot, default it to ANYTIME (stable across reloads,
+    // not a rotating value).
+    const visitTimeSlot = (row.slot || row.timeSlot) as "AM" | "PM" | "ANYTIME" | undefined;
+    const slot = visitTimeSlot || "ANYTIME";
     
     const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
     const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
@@ -125,21 +111,23 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
     // Build complete address with street, city, state, and zip for accurate geocoding
     const streetAddress = row.customer_address || row.address || "";
     const city = row.city || row.customer_city || row.location || "";
-    const state = row.state || row.customer_state || "GA"; // Default to GA if no state
+    const state = row.state || row.customer_state || ""; // use the ticket's real state
     const zip = row.zip || row.customer_zip || row.zipcode || "";
-    
+
     // Format: "Street Address, City, State ZIP" - this gives best geocoding results
     let fullAddress = "";
     if (streetAddress && city && zip) {
-      fullAddress = `${streetAddress}, ${city}, ${state} ${zip}`;
+      fullAddress = `${streetAddress}, ${city}, ${state} ${zip}`.replace(/\s+/g, " ").trim();
     } else if (city && zip) {
-      fullAddress = `${city}, ${state} ${zip}`;
+      fullAddress = `${city}, ${state} ${zip}`.replace(/\s+/g, " ").trim();
     } else if (streetAddress && city) {
-      fullAddress = `${streetAddress}, ${city}, ${state}`;
+      fullAddress = `${streetAddress}, ${city}, ${state}`.replace(/\s+/g, " ").trim();
     } else if (city) {
-      fullAddress = `${city}, ${state}`;
+      fullAddress = `${city}, ${state}`.replace(/\s+/g, " ").trim();
+    } else if (zip) {
+      fullAddress = zip;
     } else {
-      fullAddress = city || row.location || "Unknown";
+      fullAddress = row.location || "Unknown";
     }
     
     return {
@@ -153,6 +141,8 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
       created: String(row.created || row.created_at || getLocalDateStr()),
       customer: String(row.customer || row.customer_name || "Unknown"),
       city: String(city),
+      state: String(state),
+      zip: String(zip),
       address: fullAddress,
       delay: Number(row.delay ?? 0),
       aging: Number(row.aging ?? 0),
@@ -171,7 +161,7 @@ function getSelectedTechRoster(location: string) {
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
-  const { email } = useAuth();
+  const { email, ready } = useAuth();
   const [location, setLocation] = useState("");
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
@@ -189,21 +179,20 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const dragSourceRef = useRef<{ ticketNo: string; slot: PlannerTicket["slot"]; technician: string } | null>(null);
 
   useEffect(() => {
-    // Load tickets from centralized system instead of old storage key
-    const sourceRows = loadTickets() as TicketRecord[];
-    setPlannerTickets(createPlannerTickets(sourceRows));
-    
-    // Listen for ticket updates
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "ahs:tickets:data" || e.key === null) {
-        const updatedTickets = loadTickets() as TicketRecord[];
-        setPlannerTickets(createPlannerTickets(updatedTickets));
+    // Load tickets from Supabase (company-scoped via RLS).
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
+        if (!cancelled) setPlannerTickets(createPlannerTickets(rows));
+      } catch (err) {
+        console.error("Work Planner: failed to load tickets:", err);
+        if (!cancelled) setPlannerTickets([]);
       }
     };
-    
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
-  }, []);
+    if (ready) load();
+    return () => { cancelled = true; };
+  }, [ready]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -328,20 +317,29 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         // Try full address first
         let position = ticket.address ? await geocode(ticket.address) : null;
         
-        // Fallback 1: Try city + state + zip if full address fails
+        const tState = (ticket as any).state || "";
+        const tZip = (ticket as any).zip || "";
+
+        // Fallback 1: city + state + zip
         if (!position && ticket.city) {
-          const cityStateZip = `${ticket.city}, GA ${(ticket as any).zip || ""}`.trim();
+          const cityStateZip = `${ticket.city}, ${tState} ${tZip}`.replace(/\s+/g, " ").trim();
           console.log(`Trying fallback for ${ticket.ticketNo}: ${cityStateZip}`);
           position = await geocode(cityStateZip);
         }
         
-        // Fallback 2: Try just city + state
+        // Fallback 2: city + state
         if (!position && ticket.city) {
-          console.log(`Trying city fallback for ${ticket.ticketNo}: ${ticket.city}, GA`);
-          position = await geocode(`${ticket.city}, GA`);
+          const cityState = `${ticket.city}, ${tState}`.replace(/\s+/g, " ").trim();
+          console.log(`Trying city fallback for ${ticket.ticketNo}: ${cityState}`);
+          position = await geocode(cityState);
+        }
+
+        // Fallback 3: zip only
+        if (!position && tZip) {
+          position = await geocode(tZip);
         }
         
-        // Fallback 3: Try location name
+        // Fallback 4: Try location name
         if (!position && ticket.location) {
           console.log(`Trying location fallback for ${ticket.ticketNo}: ${ticket.location}`);
           position = await geocode(ticket.location);
@@ -486,18 +484,19 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     dragSourceRef.current = { ticketNo, slot, technician };
   };
 
-  const handleDrop = (technician: string, slot: PlannerTicket["slot"]) => {
+  const handleDrop = async (technician: string, slot: PlannerTicket["slot"]) => {
     const dragSource = dragSourceRef.current;
     if (!dragSource) return;
 
-    // Check if ticket has a time slot restriction from latest visit
-    const fullTicket = getTicketByNumber(dragSource.ticketNo);
-    const latestVisit = fullTicket?.visits?.[0];
-    const visitTimeSlot = latestVisit?.timeSlot; // "AM", "PM", or "ANYTIME"
-    
-    // If visit has a time slot set, only allow dropping in that slot (unless it's ANYTIME)
-    if (visitTimeSlot && visitTimeSlot !== "ANYTIME" && visitTimeSlot !== slot) {
-      alert(`This ticket is scheduled for ${visitTimeSlot} time slot and cannot be moved to ${slot}. Please update the visit in Ticket Details first.`);
+    // Time-frame restriction: a ticket fixed to AM or PM can only move between
+    // technicians within that same slot. Only ANYTIME tickets can change slots.
+    if (
+      dragSource.slot !== slot &&
+      dragSource.slot !== "ANYTIME"
+    ) {
+      alert(
+        `This ticket is scheduled for the ${dragSource.slot} time slot and can only be reassigned to another technician in ${dragSource.slot}. To change the time slot, update the ticket's schedule first.`
+      );
       dragSourceRef.current = null;
       return;
     }
@@ -507,88 +506,33 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     const technicianChanged = oldTechnician !== technician;
     const slotChanged = dragSource.slot !== slot;
 
-    // Update centralized ticket if technician changed
-    if (technicianChanged && fullTicket) {
-      console.log(`Updating ticket ${dragSource.ticketNo}: technician ${oldTechnician} → ${technician}`);
-      
-      // Update the latest visit's technician if a visit exists
-      let updatedVisits = fullTicket.visits;
-      if (latestVisit) {
-        updatedVisits = fullTicket.visits?.map((visit, index) => {
-          // Update only the latest visit (first in array)
-          if (index === 0) {
-            return {
-              ...visit,
-              technician: technician,
-              updatedAt: new Date().toISOString(),
-              updatedBy: email || "Daily Schedule",
-              updateReason: `Technician changed from ${latestVisit.technician} to ${technician} via Daily Schedule drag/drop`,
-            };
-          }
-          return visit;
+    // Optimistically update the planner display immediately.
+    setPlannerTickets((current) => current.map((ticket) => {
+      if (ticket.ticketNo !== dragSource.ticketNo) return ticket;
+      return { ...ticket, technician, slot, scheduleTime: SLOT_TIMES[slot] };
+    }));
+
+    // Persist the assignment change to Supabase (audit trigger records who/when).
+    if (technicianChanged || slotChanged) {
+      try {
+        await updateTicketAssignment(dragSource.ticketNo, {
+          technician,
+          timeSlot: slot,
         });
-        
-        console.log(`Updated latest visit technician from ${latestVisit.technician} to ${technician}`);
+        window.dispatchEvent(new CustomEvent("ticket-data-updated", {
+          detail: { ticketNo: dragSource.ticketNo },
+        }));
+      } catch (err) {
+        console.error("Failed to persist assignment change:", err);
+        alert(`Failed to save assignment: ${err instanceof Error ? err.message : "Unknown error"}`);
+        // Reload from Supabase to revert the optimistic change.
+        try {
+          const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
+          setPlannerTickets(createPlannerTickets(rows));
+        } catch { /* ignore */ }
+        dragSourceRef.current = null;
+        return;
       }
-      
-      // Update the ticket in centralized system (includes visits)
-      const updatedTickets = updateTicket(dragSource.ticketNo, {
-        technician: technician,
-        visits: updatedVisits,
-      });
-      
-      // Create audit log entry for technician change
-      const auditKey = `ahs:ticket-audit:${dragSource.ticketNo}`;
-      const existingAudit = localStorage.getItem(auditKey);
-      const auditEntries = existingAudit ? JSON.parse(existingAudit) : [];
-      
-      const auditEntry = {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
-        timestamp: new Date().toISOString(),
-        by: email || "Daily Schedule",
-        action: "Technician reassignment via Daily Schedule",
-        field: "Technician",
-        before: oldTechnician || "—",
-        after: technician,
-      };
-      
-      auditEntries.unshift(auditEntry);
-      localStorage.setItem(auditKey, JSON.stringify(auditEntries));
-      
-      // Also create audit entry for visit technician change if visit exists
-      if (latestVisit) {
-        const visitAuditEntry = {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2, 11)}`,
-          timestamp: new Date().toISOString(),
-          by: email || "Daily Schedule",
-          action: "Updated visit technician via Daily Schedule drag/drop",
-          field: "Visit Technician",
-          before: latestVisit.technician || "—",
-          after: technician,
-        };
-        
-        auditEntries.unshift(visitAuditEntry);
-        localStorage.setItem(auditKey, JSON.stringify(auditEntries));
-        
-        console.log(`Visit audit log created for ticket ${dragSource.ticketNo}:`, visitAuditEntry);
-      }
-      
-      console.log(`Audit log created for ticket ${dragSource.ticketNo}:`, auditEntry);
-      
-      // Dispatch custom event to notify same-page components (like open ticket details)
-      window.dispatchEvent(new CustomEvent("ticket-data-updated", { 
-        detail: { ticketNo: dragSource.ticketNo } 
-      }));
-      
-      // Reload planner tickets from centralized system to ensure persistence
-      const reloadedTickets = loadTickets() as TicketRecord[];
-      setPlannerTickets(createPlannerTickets(reloadedTickets));
-    } else {
-      // Just update the planner display for time slot changes
-      setPlannerTickets((current) => current.map((ticket) => {
-        if (ticket.ticketNo !== dragSource.ticketNo) return ticket;
-        return { ...ticket, technician, slot, scheduleTime: SLOT_TIMES[slot] };
-      }));
     }
 
     // Add to changed tickets log

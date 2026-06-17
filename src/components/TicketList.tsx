@@ -6,11 +6,11 @@ import { ChevronLeft, Clock, History, X, User } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import { 
-  loadTickets, 
   TICKET_SOURCES, 
   REPAIR_STATUS_OPTIONS, 
   type Ticket 
 } from "@/lib/ticketData";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
 
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
@@ -109,18 +109,26 @@ function isWithinDateRange(value: string, startDate: string, endDate: string) {
 }
 
 export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  // Use centralized ticket data - load from localStorage to include custom tickets
-  const [tickets, setTickets] = useState<TicketItem[]>(() => loadTickets());
+  // Load tickets from Supabase (company-scoped via RLS).
+  const [tickets, setTickets] = useState<TicketItem[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
 
-  // Refresh tickets when they change in other tabs or same tab
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "ahs:tickets:data" || e.key === null) {
-        setTickets(loadTickets());
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setTicketsLoading(true);
+        const rows = await getCompanyTickets();
+        if (!cancelled) setTickets(rows as TicketItem[]);
+      } catch (err) {
+        console.error("Failed to load tickets:", err);
+        if (!cancelled) setTickets([]);
+      } finally {
+        if (!cancelled) setTicketsLoading(false);
       }
     };
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   const SAMPLE_TICKETS: TicketItem[] = tickets;
@@ -204,7 +212,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       const matchesSource = !ticketSourceFilter || (ticket.ticketSource || "") === ticketSourceFilter;
       return matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource;
     });
-  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter]);
+  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, tickets]);
 
   const toggleItemSelection = (ticketNo: string) => {
     const newSelected = new Set(selectedItems);
