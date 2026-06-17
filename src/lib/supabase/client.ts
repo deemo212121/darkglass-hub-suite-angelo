@@ -1,175 +1,112 @@
 /**
- * Supabase Client for AH Solutions
- * 
- * This is the main Supabase interface.
- * Currently uses mock implementation until Supabase is ready.
- * 
- * IMPORTANT: When Supabase is ready, replace mockSupabase with real client:
- * import { createClient } from '@supabase/supabase-js'
- * 
- * const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
- * const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
- * export const supabase = createClient(supabaseUrl, supabaseKey)
+ * Supabase client (browser).
+ *
+ * Auth model: login stays in Firebase. We exchange the Firebase ID token for a
+ * Supabase JWT (via /api/supabase-token) and attach it to every Supabase request
+ * so Postgres RLS scopes all data to the caller's company.
+ *
+ * Usage:
+ *   import { supabase, refreshSupabaseSession, clearSupabaseSession } from "@/lib/supabase/client";
+ *   await refreshSupabaseSession(firebaseUser);   // after login
+ *   const { data } = await supabase.from("tickets").select("*");
  */
 
-import { mockSupabase } from "./mock";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { User as FirebaseUser } from "firebase/auth";
 
-// Export mock for now
-export const supabase = mockSupabase;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-// Type definitions for Supabase database schema
-export interface Database {
-  public: {
-    Tables: {
-      tickets: {
-        Row: TicketRow;
-        Insert: TicketInsert;
-        Update: TicketUpdate;
-      };
-      parts: {
-        Row: PartRow;
-        Insert: PartInsert;
-        Update: PartUpdate;
-      };
-      visits: {
-        Row: VisitRow;
-        Insert: VisitInsert;
-        Update: VisitUpdate;
-      };
-      employees: {
-        Row: EmployeeRow;
-        Insert: EmployeeInsert;
-        Update: EmployeeUpdate;
-      };
-    };
-  };
-}
-
-// Ticket types
-export interface TicketRow {
-  id: string;
-  ticket_no: string;
-  company_id: string;
-  customer_name: string;
-  customer_phone: string;
-  customer_email: string;
-  location: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface TicketInsert {
-  ticket_no: string;
-  company_id: string;
-  customer_name: string;
-  customer_phone?: string;
-  customer_email?: string;
-  location: string;
-  status: string;
-}
-
-export interface TicketUpdate {
-  status?: string;
-  updated_at?: string;
-}
-
-// Part types
-export interface PartRow {
-  id: string;
-  ticket_id: string;
-  part_no: string;
-  part_distributor: string;
-  description: string;
-  quantity: number;
-  price: number;
-  status: string;
-  po_no?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PartInsert {
-  ticket_id: string;
-  part_no: string;
-  part_distributor: string;
-  description: string;
-  quantity: number;
-  price: number;
-  status: string;
-}
-
-export interface PartUpdate {
-  status?: string;
-  po_no?: string;
-  updated_at?: string;
-}
-
-// Visit types
-export interface VisitRow {
-  id: string;
-  ticket_id: string;
-  visit_date: string;
-  technician_id: string;
-  time_slot: string;
-  status: string;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface VisitInsert {
-  ticket_id: string;
-  visit_date: string;
-  technician_id: string;
-  time_slot: string;
-  status: string;
-  notes?: string;
-}
-
-export interface VisitUpdate {
-  status?: string;
-  notes?: string;
-  updated_at?: string;
-}
-
-// Employee types
-export interface EmployeeRow {
-  id: string;
-  company_id: string;
-  email: string;
-  name: string;
-  role: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface EmployeeInsert {
-  company_id: string;
-  email: string;
-  name: string;
-  role: string;
-  is_active?: boolean;
-}
-
-export interface EmployeeUpdate {
-  name?: string;
-  role?: string;
-  is_active?: boolean;
-  updated_at?: string;
-}
-
-// Helper functions to check if Supabase is ready
 export function isSupabaseConfigured(): boolean {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  return Boolean(url && key);
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
 
-export function getSupabaseStatus(): string {
-  if (isSupabaseConfigured()) {
-    return "✅ Supabase configured (using mock until ready)";
+// The minted Supabase JWT is held here and injected into every request.
+let supabaseAccessToken: string | null = null;
+let tokenExpiresAt = 0; // unix seconds
+
+// Single shared client. We override the Authorization header per request via
+// the global fetch wrapper so we always send the freshest minted token.
+export const supabase: SupabaseClient = createClient(
+  SUPABASE_URL ?? "http://localhost",
+  SUPABASE_ANON_KEY ?? "public-anon-key",
+  {
+    auth: {
+      persistSession: false,    // Firebase owns the session, not Supabase
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      fetch: (input, init = {}) => {
+        const headers = new Headers(init.headers);
+        if (supabaseAccessToken) {
+          headers.set("Authorization", `Bearer ${supabaseAccessToken}`);
+        }
+        return fetch(input, { ...init, headers });
+      },
+    },
   }
-  return "⚠️ Supabase not configured (using mock)";
+);
+
+/**
+ * Exchange the current Firebase user's ID token for a Supabase JWT and store it.
+ * Call this right after login and whenever the token is near expiry.
+ */
+export async function refreshSupabaseSession(firebaseUser: FirebaseUser | null): Promise<boolean> {
+  if (!isSupabaseConfigured()) {
+    console.warn("⚠️ Supabase not configured (.env). Skipping token exchange.");
+    return false;
+  }
+  if (!firebaseUser) {
+    clearSupabaseSession();
+    return false;
+  }
+
+  try {
+    const idToken = await firebaseUser.getIdToken(/* forceRefresh */ false);
+    const res = await fetch("/api/supabase-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error("❌ Supabase token exchange failed:", err);
+      clearSupabaseSession();
+      return false;
+    }
+
+    const { token, expiresAt } = (await res.json()) as { token: string; expiresAt: number };
+    supabaseAccessToken = token;
+    tokenExpiresAt = expiresAt;
+    console.log("✅ Supabase session established (expires", new Date(expiresAt * 1000).toLocaleTimeString(), ")");
+    return true;
+  } catch (error) {
+    console.error("❌ Error exchanging Firebase token for Supabase token:", error);
+    clearSupabaseSession();
+    return false;
+  }
+}
+
+/**
+ * Ensure we have a valid (non-expired) Supabase token, refreshing if needed.
+ * Call before making important queries if the session has been idle.
+ */
+export async function ensureSupabaseSession(firebaseUser: FirebaseUser | null): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  // refresh if missing or within 5 min of expiry
+  if (!supabaseAccessToken || tokenExpiresAt - now < 300) {
+    return refreshSupabaseSession(firebaseUser);
+  }
+  return true;
+}
+
+export function clearSupabaseSession(): void {
+  supabaseAccessToken = null;
+  tokenExpiresAt = 0;
+}
+
+export function hasSupabaseSession(): boolean {
+  return Boolean(supabaseAccessToken);
 }

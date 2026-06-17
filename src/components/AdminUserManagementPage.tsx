@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { USER_MANAGEMENT_RECORDS, type UserManagementRecord } from "@/lib/user-management";
+import { type UserManagementRecord } from "@/lib/user-management";
+import { useAuth } from "@/lib/auth";
+import { createCompanyUser, getCompanyUsers, deleteCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 
 type ViewMode = "list" | "hierarchy";
 
@@ -22,6 +24,26 @@ interface NewUserFormData {
 
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+// Map a Supabase profile row to the table's UserManagementRecord shape.
+// Row shape for the table: UserManagementRecord plus the Supabase profile id
+// (needed for the delete action).
+type UserRow = UserManagementRecord & { profileId: string };
+
+function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
+  return profiles.map((p, index) => ({
+    profileId: p.id,
+    id: String(index + 1), // sequential display id: 1, 2, 3...
+    loginName: p.username || p.email.split("@")[0],
+    userName: p.display_name || p.email,
+    type: p.role,
+    email: p.email,
+    manager: "",       // TODO: add manager link to profiles/employees schema
+    technicianId: "",  // separate from employeeId
+    office: "",        // TODO: add branch when employees domain is wired
+    locations: "",     // TODO: add locations when employees domain is wired
+  }));
+}
+
 function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug: string; submoduleSlug: string; userId: string; children: React.ReactNode }) {
   return (
     <Link
@@ -37,9 +59,12 @@ function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug:
 }
 
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const auth = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [newUserForm, setNewUserForm] = useState<NewUserFormData>({
     loginName: "",
     userName: "",
@@ -55,16 +80,38 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     selectedOffDays: [5, 6], // Saturday and Sunday by default
   });
 
+  // Load users from Supabase on mount (RLS scopes to the caller's company).
+  // Supabase is now the source of truth — we read only from it.
+  useEffect(() => {
+    const loadUsers = async () => {
+      if (!auth.companyId) {
+        setLoading(false);
+        return;
+      }
+      try {
+        setLoading(true);
+        const profiles = await getCompanyUsers();
+        setUsers(mapProfilesToRecords(profiles));
+      } catch (error) {
+        console.error("❌ Error loading users:", error);
+        alert(`Error loading users: ${error instanceof Error ? error.message : "Unknown error"}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadUsers();
+  }, [auth.companyId]);
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return USER_MANAGEMENT_RECORDS;
-    return USER_MANAGEMENT_RECORDS.filter((record) =>
+    if (!query) return users;
+    return users.filter((record) =>
       [record.id, record.loginName, record.userName, record.type, record.email, record.manager, record.technicianId, record.office, record.locations]
         .join(" ")
         .toLowerCase()
         .includes(query),
     );
-  }, [search]);
+  }, [search, users]);
 
   const managerGroups = useMemo(() => {
     const groups = new Map<string, UserManagementRecord[]>();
@@ -88,59 +135,80 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }));
   };
 
-  const handleCreateUser = () => {
+  const handleDeleteUser = async (row: UserRow) => {
+    if (!confirm(`Delete ${row.userName} (${row.email})? This removes their profile from the system.`)) {
+      return;
+    }
+    try {
+      await deleteCompanyUser(row.profileId);
+      const profiles = await getCompanyUsers();
+      setUsers(mapProfilesToRecords(profiles));
+    } catch (error) {
+      console.error("Delete error:", error);
+      alert(`Error deleting user: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
+  const handleCreateUser = async () => {
     // Validate required fields
     if (!newUserForm.loginName || !newUserForm.userName || !newUserForm.email || !newUserForm.userType || !newUserForm.manager || !newUserForm.assignedBranch || !newUserForm.branchAccess) {
       alert("Please fill in all required fields.");
       return;
     }
 
-    // Create new user record (in real app, would save to database)
-    const newRecord: UserManagementRecord = {
-      id: String(300 + USER_MANAGEMENT_RECORDS.length),
-      loginName: newUserForm.loginName,
-      userName: newUserForm.userName,
-      email: newUserForm.email,
-      type: newUserForm.userType,
-      manager: newUserForm.manager,
-      technicianId: newUserForm.technicianId,
-      office: newUserForm.assignedBranch,
-      locations: newUserForm.branchAccess,
-    };
-
-    // Save schedule to localStorage
-    localStorage.setItem(`requiredSchedule_${newRecord.id}`, JSON.stringify({
-      requiredCheckIn: newUserForm.requiredCheckIn,
-      requiredCheckOut: newUserForm.requiredCheckOut,
-    }));
-
-    // Save off days to localStorage
-    localStorage.setItem(`offDays_${newRecord.id}`, JSON.stringify(newUserForm.selectedOffDays));
-
-    // Save PO initials to localStorage
-    if (newUserForm.poInitials) {
-      localStorage.setItem(`poInitials_${newRecord.id}`, newUserForm.poInitials);
+    if (!auth.companyId || !auth.uid) {
+      alert("Error: User not authenticated properly.");
+      return;
     }
 
-    // In a real app, would add to database
-    alert(`User ${newUserForm.userName} created successfully with ID: ${newRecord.id}`);
+    try {
+      // Create user: Firebase Auth credential + Supabase profile (company-scoped)
+      const newUid = await createCompanyUser({
+        email: newUserForm.email,
+        password: "Welcome2024!", // Default password
+        displayName: newUserForm.userName,
+        role: newUserForm.userType as any,
+        companyId: auth.companyId,
+        phoneNumber: "",
+        department: "",
+      });
 
-    // Reset form
-    setNewUserForm({
-      loginName: "",
-      userName: "",
-      email: "",
-      userType: "",
-      manager: "",
-      technicianId: "",
-      assignedBranch: "",
-      branchAccess: "",
-      poInitials: "",
-      requiredCheckIn: "08:00",
-      requiredCheckOut: "17:00",
-      selectedOffDays: [5, 6],
-    });
-    setShowAddUserModal(false);
+      // Save schedule / off-days / PO initials to localStorage (until employees domain is wired)
+      localStorage.setItem(`requiredSchedule_${newUid}`, JSON.stringify({
+        requiredCheckIn: newUserForm.requiredCheckIn,
+        requiredCheckOut: newUserForm.requiredCheckOut,
+      }));
+      localStorage.setItem(`offDays_${newUid}`, JSON.stringify(newUserForm.selectedOffDays));
+      if (newUserForm.poInitials) {
+        localStorage.setItem(`poInitials_${newUid}`, newUserForm.poInitials);
+      }
+
+      alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
+
+      // Reload users from Supabase
+      const profiles = await getCompanyUsers();
+      setUsers(mapProfilesToRecords(profiles));
+
+      // Reset form
+      setNewUserForm({
+        loginName: "",
+        userName: "",
+        email: "",
+        userType: "",
+        manager: "",
+        technicianId: "",
+        assignedBranch: "",
+        branchAccess: "",
+        poInitials: "",
+        requiredCheckIn: "08:00",
+        requiredCheckOut: "17:00",
+        selectedOffDays: [5, 6],
+      });
+      setShowAddUserModal(false);
+    } catch (error: any) {
+      console.error("Error creating user:", error);
+      alert(`Error creating user: ${error.message || "Unknown error"}`);
+    }
   };
 
   return (
@@ -189,8 +257,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
           <div className="mt-5 flex flex-wrap items-end gap-4">
             <div>
-              <div className="text-2xl font-bold text-white">177 records found</div>
-              <div className="text-sm text-slate-400">search in result</div>
+              <div className="text-2xl font-bold text-white">
+                {loading ? "Loading..." : `${users.length} records found`}
+              </div>
+              <div className="text-sm text-slate-400">
+                {loading ? "Fetching from database..." : "search in result"}
+                {!loading && !auth.companyId && (
+                  <span className="text-red-400 ml-2">⚠️ No company ID found</span>
+                )}
+              </div>
             </div>
             <div className="ml-auto w-full max-w-md">
               <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
@@ -199,6 +274,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by login name, user name, manager, email, office..."
                 className="glass-input mt-2 w-full"
+                disabled={loading}
               />
             </div>
           </div>
@@ -218,26 +294,45 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <th className="px-4 py-3 text-left">Technician ID</th>
                   <th className="px-4 py-3 text-left">Assigned Branch</th>
                   <th className="px-4 py-3 text-left">Branch Access</th>
+                  <th className="px-4 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
-                {filtered.map((record) => (
-                  <tr key={`${record.id}-${record.loginName}`} className="hover:bg-white/5">
-                    <td className="px-4 py-3 whitespace-nowrap">{record.id}</td>
-                    <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
-                    <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
-                    <td className="px-4 py-3 whitespace-nowrap">{record.type}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
-                    <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.office}</td>
-                    <td className="px-4 py-3 text-slate-300">{record.locations}</td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && (
+                {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-slate-400">No records match that search.</td>
+                    <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                      Loading users...
+                    </td>
                   </tr>
+                ) : filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                      {users.length === 0 ? "No users found. Create your first user above." : "No records match that search."}
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((record) => (
+                    <tr key={`${record.id}-${record.loginName}`} className="hover:bg-white/5">
+                      <td className="px-4 py-3 whitespace-nowrap">{record.id}</td>
+                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
+                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
+                      <td className="px-4 py-3 whitespace-nowrap">{record.type}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
+                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
+                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.office}</td>
+                      <td className="px-4 py-3 text-slate-300">{record.locations}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUser(record)}
+                          className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -274,7 +369,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/95 px-5 py-4 backdrop-blur-md">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight">Add New User</h2>
-                <p className="mt-1 text-sm text-slate-300">Create a new user account (ID will be auto-generated)</p>
+                <p className="mt-1 text-sm text-slate-300">Create a new user account (Default password: Welcome2024!)</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <button type="button" onClick={() => setShowAddUserModal(false)} className="btn hover:bg-slate-800">Cancel</button>
@@ -322,10 +417,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       onChange={(e) => handleAddUserFormChange("userType", e.target.value)}
                     >
                       <option value="">Select user type</option>
-                      <option value="Admin">Admin</option>
+                      <option value="ADMIN">Admin</option>
+                      <option value="MANAGER">Manager</option>
+                      <option value="CSR">CSR</option>
+                      <option value="TECHNICIAN">Technician</option>
+                      <option value="CLAIMS">Claims</option>
                       <option value="HR">HR</option>
-                      <option value="Manager">Manager</option>
-                      <option value="Technician">Technician</option>
+                      <option value="IT">IT</option>
+                      <option value="PARTS">Parts</option>
+                      <option value="FINANCE">Finance</option>
                     </select>
                   </label>
                 </div>
@@ -435,7 +535,10 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
 
               <div className="text-xs text-slate-400 pt-4 border-t border-white/10">
-                <span className="font-semibold">Note:</span> Fields marked with * are required. ID will be automatically generated upon creation.
+                <p className="mb-2"><span className="font-semibold">Note:</span> Fields marked with * are required.</p>
+                <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyId || "N/A"}</span></p>
+                <p className="mb-2">• Default password: <span className="text-blue-300 font-mono">Welcome2024!</span> (user should change on first login)</p>
+                <p>• Username will be auto-generated from display name (FirstName.LastName format)</p>
               </div>
             </div>
           </div>

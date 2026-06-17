@@ -347,12 +347,18 @@ export async function getCompanyUsers(companyId: string): Promise<UserAccount[]>
     const usersRef = collection(db, "users");
     const q = query(
       usersRef,
-      where("companyId", "==", companyId),
-      orderBy("displayName")
+      where("companyId", "==", companyId)
+      // Note: Removed orderBy to avoid composite index requirement
+      // Users will be sorted in the UI instead
     );
     const snapshot = await getDocs(q);
 
-    return snapshot.docs.map((doc) => doc.data() as UserAccount);
+    const users = snapshot.docs.map((doc) => doc.data() as UserAccount);
+    
+    // Sort in memory by display name
+    return users.sort((a, b) => 
+      (a.displayName || "").localeCompare(b.displayName || "")
+    );
   } catch (error) {
     console.error("Error fetching company users:", error);
     return [];

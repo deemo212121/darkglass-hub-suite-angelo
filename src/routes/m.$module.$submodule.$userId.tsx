@@ -6,6 +6,8 @@ import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { getUserManagementRecord } from "@/lib/user-management";
 import { LOCATIONS } from "@/lib/locations";
+import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
+import { useAuth } from "@/lib/auth";
 
 const TABS = [
   "General Information",
@@ -312,41 +314,146 @@ function saveEmployeeInfoToStorage(userId: string, email: string | undefined | n
 
 export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   ssr: false,
-  loader: ({ params }) => {
+  loader: async ({ params }) => {
     const module = getModule(params.module);
     const submodule = getSubModule(params.module, params.submodule);
-    const user = getUserManagementRecord(params.userId);
-    if (!module || !submodule || module.slug !== "admin" || submodule.slug !== "user-management" || !user) throw notFound();
-    return { module, submodule, user };
+    
+    if (!module || !submodule || module.slug !== "admin" || submodule.slug !== "user-management") {
+      throw notFound();
+    }
+
+    return { module, submodule, userId: params.userId };
   },
-  component: UserDetailsPage,
+  component: UserDetailsPageTemp,
 });
 
+// Temporary simplified component while we migrate to Firebase
+function UserDetailsPageTemp() {
+  const { module, submodule, userId } = Route.useLoaderData();
+  
+  return (
+    <>
+      <AppHeader />
+      <main className="flex-1 bg-slate-950 py-6">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+            <h1 className="text-2xl font-bold mb-4">User Details: {userId}</h1>
+            <p className="text-slate-300 mb-6">
+              User detail page is being migrated to Firebase and will be available soon.
+            </p>
+            <Link 
+              to="/m/$module/$submodule" 
+              params={{ module: module.slug, submodule: submodule.slug }} 
+              className="btn btn-primary"
+            >
+              ← Back to User Management
+            </Link>
+          </div>
+        </div>
+      </main>
+      <Footer />
+    </>
+  );
+}
+
+// Original complex component - commented out for now
+/*
 function UserDetailsPage() {
-  const { module, submodule, user } = Route.useLoaderData();
+  const { module, submodule, userId } = Route.useLoaderData();
+  const auth = useAuth();
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>("General Information");
   const [showInfoCheck, setShowInfoCheck] = useState(false);
-  const poInitial = user.userName
+  
+  // Initialize all hooks with default/empty values (these must always be called)
+  const [savedAssignedOffice, setSavedAssignedOffice] = useState("");
+  const [assignedOffice, setAssignedOffice] = useState("");
+  const [savedBranchSettings, setSavedBranchSettings] = useState<Record<string, BranchSettingRow>>({});
+  const [branchSettings, setBranchSettings] = useState<Record<string, BranchSettingRow>>({});
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [savedEmployeeInfo, setSavedEmployeeInfo] = useState<EmployeeInfoState | null>(null);
+  const [employeeInfo, setEmployeeInfo] = useState<EmployeeInfoState | null>(null);
+  const [showEmployeeSavePrompt, setShowEmployeeSavePrompt] = useState(false);
+  const [savedAccountRows, setSavedAccountRows] = useState<AccountInfoRow[]>([]);
+  const [accountRows, setAccountRows] = useState<AccountInfoRow[]>([]);
+  const [showAccountSavePrompt, setShowAccountSavePrompt] = useState(false);
+  
+  // Load user from Firebase
+  useEffect(() => {
+    const loadUser = async () => {
+      if (!auth.companyId) {
+        setLoading(false);
+        return;
+      }
+      
+      try {
+        // Get all company users and find the one matching the userId (username)
+        const companyUsers = await getCompanyUsers(auth.companyId);
+        const firebaseUser = companyUsers.find(
+          (u) => u.username === userId || u.email.split('@')[0] === userId
+        );
+        
+        if (!firebaseUser) {
+          console.error("User not found:", userId);
+          setLoading(false);
+          return;
+        }
+        
+        // Map to the format expected by the page
+        const mappedUser = {
+          id: firebaseUser.uid,
+          loginName: firebaseUser.username || firebaseUser.email.split('@')[0],
+          userName: firebaseUser.displayName,
+          type: firebaseUser.role,
+          email: firebaseUser.email,
+          manager: "", // TODO: Add when available
+          technicianId: "", // Separate from employeeId
+          office: "Memphis", // TODO: Add when available, default for now
+          locations: "", // TODO: Add when available
+        };
+        
+        setUser(mappedUser);
+        
+        // Initialize user-specific state after user is loaded
+        const office = mappedUser.office || "Memphis";
+        setSavedAssignedOffice(loadAssignedOffice(mappedUser.id, office));
+        setAssignedOffice(loadAssignedOffice(mappedUser.id, office));
+        
+        const access = getBranchAccess({ type: mappedUser.type, office, locations: mappedUser.locations });
+        setSavedBranchSettings(loadBranchSettings(mappedUser.id, access));
+        setBranchSettings(loadBranchSettings(mappedUser.id, access));
+        
+        setSavedEmployeeInfo(loadEmployeeInfo({ id: mappedUser.id, userName: mappedUser.userName, office, email: mappedUser.email }));
+        setEmployeeInfo(loadEmployeeInfo({ id: mappedUser.id, userName: mappedUser.userName, office, email: mappedUser.email }));
+        
+        setSavedAccountRows(loadAccountInfo({ id: mappedUser.id, userName: mappedUser.userName }));
+        setAccountRows(loadAccountInfo({ id: mappedUser.id, userName: mappedUser.userName }));
+      } catch (error) {
+        console.error("Error loading user:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadUser();
+  }, [userId, auth.companyId]);
+  
+  // ALL useMemo hooks must be called before any conditional returns
+  const poInitial = user ? user.userName
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-  const isTechnicianRole = /tech|technician/i.test(user.type);
-  const managerRecord = user.manager ? getUserManagementRecord(user.manager) : undefined;
-  const [savedAssignedOffice, setSavedAssignedOffice] = useState(() => loadAssignedOffice(user.id, user.office));
-  const [assignedOffice, setAssignedOffice] = useState(() => loadAssignedOffice(user.id, user.office));
-  const effectiveOffice = assignedOffice || user.office;
-  const branchAccess = useMemo(() => getBranchAccess({ type: user.type, office: effectiveOffice, locations: user.locations }), [user.type, user.locations, effectiveOffice]);
-  const [savedBranchSettings, setSavedBranchSettings] = useState<Record<string, BranchSettingRow>>(() => loadBranchSettings(user.id, branchAccess));
-  const [branchSettings, setBranchSettings] = useState<Record<string, BranchSettingRow>>(() => loadBranchSettings(user.id, branchAccess));
-  const [showSavePrompt, setShowSavePrompt] = useState(false);
-  const [savedEmployeeInfo, setSavedEmployeeInfo] = useState<EmployeeInfoState>(() => loadEmployeeInfo({ id: user.id, userName: user.userName, office: effectiveOffice, email: user.email }));
-  const [employeeInfo, setEmployeeInfo] = useState<EmployeeInfoState>(() => loadEmployeeInfo({ id: user.id, userName: user.userName, office: effectiveOffice, email: user.email }));
-  const [showEmployeeSavePrompt, setShowEmployeeSavePrompt] = useState(false);
-  const [savedAccountRows, setSavedAccountRows] = useState<AccountInfoRow[]>(() => loadAccountInfo({ id: user.id, userName: user.userName }));
-  const [accountRows, setAccountRows] = useState<AccountInfoRow[]>(() => loadAccountInfo({ id: user.id, userName: user.userName }));
-  const [showAccountSavePrompt, setShowAccountSavePrompt] = useState(false);
+    .join("") : "";
+  const isTechnicianRole = user ? /tech|technician/i.test(user.type) : false;
+  const managerRecord = user?.manager ? getUserManagementRecord(user.manager) : undefined;
+  const effectiveOffice = assignedOffice || user?.office || "";
+  const branchAccess = useMemo(() => {
+    if (!user) return [];
+    return getBranchAccess({ type: user.type, office: effectiveOffice, locations: user.locations });
+  }, [user, effectiveOffice]);
+  
   const visibleBranches = useMemo(() => {
     return LOCATIONS.filter((location) => {
       const row = branchSettings[location];
@@ -354,6 +461,7 @@ function UserDetailsPage() {
       return row.weekday || row.weekend;
     });
   }, [branchAccess, branchSettings]);
+  
   const hasUnsavedBranchChanges = useMemo(() => {
     const officeChanged = assignedOffice !== savedAssignedOffice;
     const branchChanged = LOCATIONS.some((location) => {
@@ -364,14 +472,54 @@ function UserDetailsPage() {
     });
     return officeChanged || branchChanged;
   }, [assignedOffice, branchSettings, savedAssignedOffice, savedBranchSettings]);
+  
   const hasUnsavedEmployeeChanges = useMemo(() => JSON.stringify(employeeInfo) !== JSON.stringify(savedEmployeeInfo), [employeeInfo, savedEmployeeInfo]);
   const hasUnsavedAccountChanges = useMemo(() => JSON.stringify(accountRows) !== JSON.stringify(savedAccountRows), [accountRows, savedAccountRows]);
-  const employeeDetails = useMemo(() => ({
-    dob: employeeInfo.birthDate || buildDob(user.id),
-    homeAddress: formatEmployeeAddress(employeeInfo) || buildHomeAddress(user.userName, effectiveOffice),
-    emergencyContacts: buildEmergencyContacts(user.userName),
-    quarterlyReviewDue: new Date(Date.now() + QUARTER_MS).toLocaleDateString(),
-  }), [employeeInfo, user, effectiveOffice]);
+  const employeeDetails = useMemo(() => {
+    if (!user) return { dob: "", homeAddress: "", emergencyContacts: [], quarterlyReviewDue: "" };
+    return {
+      dob: employeeInfo?.birthDate || buildDob(user.id),
+      homeAddress: employeeInfo ? formatEmployeeAddress(employeeInfo) : buildHomeAddress(user.userName, effectiveOffice),
+      emergencyContacts: buildEmergencyContacts(user.userName),
+      quarterlyReviewDue: new Date(Date.now() + QUARTER_MS).toLocaleDateString(),
+    };
+  }, [employeeInfo, user, effectiveOffice]);
+  
+  // NOW we can have conditional rendering (but not returns, use JSX conditionals)
+  if (loading) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-6xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-10 text-center text-white backdrop-blur-md">
+              <div className="text-xl">Loading user details...</div>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+  
+  if (!user) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-6xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-10 text-center text-white backdrop-blur-md">
+              <div className="text-xl mb-4">User not found</div>
+              <Link to="/m/$module/$submodule" params={{ module: module.slug, submodule: submodule.slug }} className="btn btn-primary">
+                Back to User Management
+              </Link>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   const handleSaveBranchAccess = () => {
     if (typeof window !== "undefined") {
@@ -1020,3 +1168,5 @@ function InfoCard({ label, value, note, secondaryValue }: { label: string; value
     </div>
   );
 }
+
+*/

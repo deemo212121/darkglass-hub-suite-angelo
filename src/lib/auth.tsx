@@ -6,6 +6,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
+import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
+import "./supabase/test"; // exposes window.testSupabase() for dev verification
 
 type AuthState = {
   email: string | null;
@@ -52,6 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (firebaseUser) {
             console.log("✅ Firebase user authenticated:", firebaseUser.email);
             
+            // Establish Supabase session (exchange Firebase token -> Supabase JWT)
+            // so all Supabase queries are scoped to this user's company via RLS.
+            await refreshSupabaseSession(firebaseUser);
+            
             try {
               // Get user profile from Firestore
               const userProfile = await getUserAccount(firebaseUser.uid);
@@ -90,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           } else {
             console.log("🔓 No Firebase user authenticated");
+            // Clear Supabase session
+            clearSupabaseSession();
             // Clear auth state
             setUid(null);
             setEmail(null);
