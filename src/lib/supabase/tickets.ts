@@ -256,6 +256,86 @@ export async function deleteTicket(ticketNo: string): Promise<void> {
   }
 }
 
+/**
+ * Update the customer details linked to a ticket. Customer info lives in the
+ * `customers` table (linked via tickets.customer_id). If the ticket has no
+ * linked customer yet, one is created and linked. Accepts the flat UI fields.
+ */
+export async function updateTicketCustomer(
+  ticketNo: string,
+  fields: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    phone?: string;
+    secondPhone?: string;
+    email?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  }
+): Promise<void> {
+  // Find the ticket + its current customer link.
+  const { data: ticketRow, error: tErr } = await supabase
+    .from("tickets")
+    .select("id, customer_id")
+    .eq("ticket_no", ticketNo)
+    .maybeSingle();
+  if (tErr) {
+    console.error("updateTicketCustomer ticket lookup error:", tErr.message);
+    throw new Error(tErr.message);
+  }
+  if (!ticketRow) throw new Error(`Ticket ${ticketNo} not found`);
+
+  // Build the column payload (only defined fields).
+  const payload: Record<string, unknown> = {};
+  if (fields.firstName !== undefined) payload.first_name = fields.firstName;
+  if (fields.lastName !== undefined) payload.last_name = fields.lastName;
+  if (fields.phone !== undefined) payload.phone = fields.phone;
+  if (fields.secondPhone !== undefined) payload.second_phone = fields.secondPhone;
+  if (fields.email !== undefined) payload.email = fields.email;
+  if (fields.address !== undefined) payload.address = fields.address;
+  if (fields.city !== undefined) payload.city = fields.city;
+  if (fields.state !== undefined) payload.state = fields.state;
+  if (fields.zip !== undefined) payload.zip = fields.zip;
+  // Keep full_name in sync when name parts change.
+  const fullName =
+    fields.fullName ??
+    [fields.firstName, fields.lastName].filter(Boolean).join(" ").trim();
+  if (fullName) payload.full_name = fullName;
+
+  if (ticketRow.customer_id) {
+    const { error } = await supabase
+      .from("customers")
+      .update(payload)
+      .eq("id", ticketRow.customer_id);
+    if (error) {
+      console.error("updateTicketCustomer update error:", error.message);
+      throw new Error(error.message);
+    }
+  } else {
+    // No customer yet — create one and link it. company_id auto-stamped.
+    const { data: cust, error: insErr } = await supabase
+      .from("customers")
+      .insert(payload)
+      .select("id")
+      .single();
+    if (insErr) {
+      console.error("updateTicketCustomer insert error:", insErr.message);
+      throw new Error(insErr.message);
+    }
+    const { error: linkErr } = await supabase
+      .from("tickets")
+      .update({ customer_id: cust.id })
+      .eq("id", ticketRow.id);
+    if (linkErr) {
+      console.error("updateTicketCustomer link error:", linkErr.message);
+      throw new Error(linkErr.message);
+    }
+  }
+}
+
 // ---- visits ----------------------------------------------------------------
 
 type UIVisit = NonNullable<Ticket["visits"]>[number];

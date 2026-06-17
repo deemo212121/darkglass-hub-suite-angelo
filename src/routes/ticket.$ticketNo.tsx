@@ -21,6 +21,7 @@ import {
   updateTicketVisit as sbUpdateTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
   updateTicketAssignment as sbUpdateTicketAssignment,
+  updateTicketCustomer as sbUpdateTicketCustomer,
   getTicketParts as sbGetTicketParts,
   addTicketPart as sbAddTicketPart,
   updateTicketPart as sbUpdateTicketPart,
@@ -1121,6 +1122,23 @@ function TicketDetailsPage() {
       zip: editedCustomerInfo.zip || ticket.zip,
       phone: editedCustomerInfo.homePhone || ticket.homePhone,
       email: editedCustomerInfo.email || ticket.email,
+    });
+
+    // Persist to Supabase (source of truth). Customer details live in the
+    // linked `customers` row.
+    sbUpdateTicketCustomer(ticketNo, {
+      firstName: editedCustomerInfo.firstName ?? ticket.firstName,
+      lastName: editedCustomerInfo.lastName ?? ticket.lastName,
+      address: editedCustomerInfo.address ?? ticket.address,
+      city: editedCustomerInfo.city ?? ticket.city,
+      state: editedCustomerInfo.state ?? ticket.state,
+      zip: editedCustomerInfo.zip ?? ticket.zip,
+      phone: editedCustomerInfo.homePhone ?? ticket.homePhone,
+      secondPhone: editedCustomerInfo.cellPhone ?? ticket.cellPhone,
+      email: editedCustomerInfo.email ?? ticket.email,
+    }).catch((err) => {
+      console.error("Failed to save customer info to Supabase:", err);
+      alert(`Failed to save customer info: ${err instanceof Error ? err.message : "Unknown error"}`);
     });
 
     setIsEditingCustomerInfo(false);

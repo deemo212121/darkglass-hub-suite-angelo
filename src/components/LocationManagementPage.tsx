@@ -2,6 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { normalizeLocationName } from "@/lib/locations";
+import { useAuth } from "@/lib/auth";
+import {
+  getLocations as sbGetLocations,
+  upsertLocation as sbUpsertLocation,
+  deleteLocation as sbDeleteLocation,
+  getPartAddresses as sbGetPartAddresses,
+  upsertPartAddress as sbUpsertPartAddress,
+  deletePartAddress as sbDeletePartAddress,
+  getCoverage as sbGetCoverage,
+  upsertCoverage as sbUpsertCoverage,
+  insertCoverageBulk as sbInsertCoverageBulk,
+  deleteCoverage as sbDeleteCoverage,
+} from "@/lib/supabase/locationManagement";
 
 const coverageCsvModules = import.meta.glob("../../grid_coverage/*.csv", {
   eager: true,
@@ -709,6 +722,72 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   });
   const [partRows, setPartRows] = useState<PartAddressRow[]>(() => loadRows(PART_ADDRESS_STORAGE_KEY, DEFAULT_PART_ADDRESS_ROWS));
   const [coverageRows, setCoverageRows] = useState<CoverageRow[]>(() => loadRows(COVERAGE_STORAGE_KEY, DEFAULT_COVERAGE_ROWS));
+
+  const { companyId, ready: authReady } = useAuth();
+
+  // Load location-management data from Supabase (company-scoped). On the very
+  // first load for a company (empty tables), seed the DEFAULT rows so existing
+  // setups aren't lost, then everything persists to Supabase going forward.
+  useEffect(() => {
+    if (!authReady || !companyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let [locs, parts, cov] = await Promise.all([
+          sbGetLocations(),
+          sbGetPartAddresses(),
+          sbGetCoverage(),
+        ]);
+
+        console.log("📍 Location mgmt loaded from Supabase:", {
+          locations: locs.length,
+          partAddresses: parts.length,
+          coverage: cov.length,
+          defaultCoverageAvailable: DEFAULT_COVERAGE_ROWS.length,
+        });
+
+        // Seed defaults once if empty.
+        if (locs.length === 0) {
+          for (const row of deduplicateLocations(DEFAULT_LOCATION_ROWS)) {
+            try { await sbUpsertLocation(row); } catch (e) { console.error("seed location failed:", e); }
+          }
+          locs = await sbGetLocations();
+        }
+        if (parts.length === 0) {
+          for (const row of DEFAULT_PART_ADDRESS_ROWS) {
+            try { await sbUpsertPartAddress(row); } catch (e) { console.error("seed part addr failed:", e); }
+          }
+          parts = await sbGetPartAddresses();
+        }
+        if (cov.length === 0 && DEFAULT_COVERAGE_ROWS.length > 0) {
+          console.log(`📍 Seeding ${DEFAULT_COVERAGE_ROWS.length} coverage rows into Supabase...`);
+          // Coverage can be large; bulk insert in chunks.
+          const chunkSize = 500;
+          let inserted = 0;
+          for (let i = 0; i < DEFAULT_COVERAGE_ROWS.length; i += chunkSize) {
+            try {
+              const saved = await sbInsertCoverageBulk(DEFAULT_COVERAGE_ROWS.slice(i, i + chunkSize));
+              inserted += saved.length;
+            } catch (e) {
+              console.error("seed coverage chunk failed:", e);
+            }
+          }
+          console.log(`📍 Coverage seed complete: ${inserted} rows inserted.`);
+          cov = await sbGetCoverage();
+        }
+
+        if (!cancelled) {
+          if (locs.length) setLocationRows(deduplicateLocations(locs));
+          if (parts.length) setPartRows(parts);
+          if (cov.length) setCoverageRows(cov);
+        }
+      } catch (err) {
+        console.error("Location management load failed:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, companyId]);
+
   const [locationSearch, setLocationSearch] = useState("");
   const [partSearch, setPartSearch] = useState("");
   const [coverageSearch, setCoverageSearch] = useState("");
@@ -1089,15 +1168,25 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       coveredTechnicians: newLocationRow.coveredTechnicians ?? [],
     };
 
-    setLocationRows((current) => {
-      if (editingLocationId) {
-        return current.map((row) => (row.id === editingLocationId ? nextRow : row));
+    // Persist to Supabase, then reflect the saved row (with its real id) in UI.
+    (async () => {
+      try {
+        const saved = await sbUpsertLocation(nextRow);
+        setLocationRows((current) => {
+          if (editingLocationId) {
+            return current.map((row) => (row.id === editingLocationId ? saved : row));
+          }
+          return [saved, ...current];
+        });
+      } catch (err) {
+        console.error("Save location failed:", err);
+        alert(`Failed to save location: ${err instanceof Error ? err.message : "Unknown error"}`);
+        return;
       }
-      return [nextRow, ...current];
-    });
-    setNewLocationRow(buildEmptyLocationRow());
-    setEditingLocationId(null);
-    setLocationModalOpen(false);
+      setNewLocationRow(buildEmptyLocationRow());
+      setEditingLocationId(null);
+      setLocationModalOpen(false);
+    })();
   };
 
   const editLocationRow = (row: LocationRow) => {
@@ -1144,20 +1233,49 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
   const addPartRow = () => {
     if (!newPartRow.name.trim()) return;
-    setPartRows((current) => [...current, { ...newPartRow, id: nextPartAddressId }]);
-    setNewPartRow({ id: "", name: "", address1: "", address2: "", city: "", state: "", zipCode: "", location: "" });
+    const draft = { ...newPartRow, id: nextPartAddressId };
+    (async () => {
+      try {
+        const saved = await sbUpsertPartAddress(draft);
+        setPartRows((current) => [...current, saved]);
+        setNewPartRow({ id: "", name: "", address1: "", address2: "", city: "", state: "", zipCode: "", location: "" });
+      } catch (err) {
+        console.error("Save part address failed:", err);
+        alert(`Failed to save part address: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    })();
   };
 
   const addCoverageRow = () => {
     if (!newCoverageRow.zipCode.trim()) return;
-    setCoverageRows((current) => [...current, { ...newCoverageRow, id: nextCoverageId, location: selectedCoverageLocation || newCoverageRow.location }]);
-    setNewCoverageRow(buildEmptyCoverageRow(selectedCoverageLocation));
+    const draft = { ...newCoverageRow, id: nextCoverageId, location: selectedCoverageLocation || newCoverageRow.location };
+    (async () => {
+      try {
+        const saved = await sbUpsertCoverage(draft);
+        setCoverageRows((current) => [...current, saved]);
+        setNewCoverageRow(buildEmptyCoverageRow(selectedCoverageLocation));
+      } catch (err) {
+        console.error("Save coverage failed:", err);
+        alert(`Failed to save coverage: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    })();
   };
 
-  const removeLocationRow = (rowId: string) => setLocationRows((current) => current.filter((row) => row.id !== rowId));
-  const removePartRow = (rowId: string) => setPartRows((current) => current.filter((row) => row.id !== rowId));
-  const removeCoverageRow = (rowId: string) => setCoverageRows((current) => current.filter((row) => row.id !== rowId));
+  const removeLocationRow = (rowId: string) => {
+    setLocationRows((current) => current.filter((row) => row.id !== rowId));
+    sbDeleteLocation(rowId).catch((err) => console.error("Delete location failed:", err));
+  };
+  const removePartRow = (rowId: string) => {
+    setPartRows((current) => current.filter((row) => row.id !== rowId));
+    sbDeletePartAddress(rowId).catch((err) => console.error("Delete part address failed:", err));
+  };
+  const removeCoverageRow = (rowId: string) => {
+    setCoverageRows((current) => current.filter((row) => row.id !== rowId));
+    sbDeleteCoverage(rowId).catch((err) => console.error("Delete coverage failed:", err));
+  };
 
+  // Persisting is now immediate (per-row) to Supabase. These remain as no-op
+  // "Save" buttons for UX parity (and keep a localStorage cache as a fallback).
   const saveLocationRows = () => saveRows(LOCATION_STORAGE_KEY, locationRows);
   const savePartRows = () => saveRows(PART_ADDRESS_STORAGE_KEY, partRows);
   const saveCoverageRows = () => saveRows(COVERAGE_STORAGE_KEY, coverageRows);
@@ -1701,7 +1819,22 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                           } as CoverageRow;
                         }).filter((row) => row.zipCode);
                         if (imported.length) {
-                          setCoverageRows((current) => [...current, ...imported]);
+                          // Persist the imported coverage to Supabase, then
+                          // reflect the saved rows (with real ids) in the UI.
+                          (async () => {
+                            try {
+                              const chunkSize = 500;
+                              const savedAll: CoverageRow[] = [];
+                              for (let i = 0; i < imported.length; i += chunkSize) {
+                                const saved = await sbInsertCoverageBulk(imported.slice(i, i + chunkSize));
+                                savedAll.push(...saved);
+                              }
+                              setCoverageRows((current) => [...current, ...savedAll]);
+                            } catch (err) {
+                              console.error("Coverage import failed:", err);
+                              alert(`Coverage import failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+                            }
+                          })();
                         }
                       };
                       reader.readAsText(file);

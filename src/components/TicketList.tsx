@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Clock, History, X, User } from "lucide-react";
+import { ChevronLeft, Clock, History, X, User, Columns3 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import { 
@@ -15,10 +15,66 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
 
+// All toggleable columns in the ticket list table. `key` is used for the
+// visibility map + localStorage; `label` is the header text.
+const TICKET_COLUMNS = [
+  { key: "ticketNo", label: "Ticket No" },
+  { key: "warranty", label: "Wty" },
+  { key: "ticketSource", label: "Ticket Source" },
+  { key: "customer", label: "Cx Name" },
+  { key: "city", label: "City" },
+  { key: "location", label: "Loc" },
+  { key: "model", label: "Model" },
+  { key: "internalNote", label: "Internal Note" },
+  { key: "repair", label: "Repair" },
+  { key: "technician", label: "Technician" },
+  { key: "customerPref", label: "Cx Prefer" },
+  { key: "schedule", label: "Schedule" },
+  { key: "status", label: "Status" },
+  { key: "phone", label: "Phone" },
+  { key: "redo", label: "Redo" },
+  { key: "aging", label: "Aging" },
+  { key: "calls", label: "Calls" },
+  { key: "partOrder", label: "Part Order" },
+  { key: "posting", label: "Posting" },
+] as const;
+
+type TicketColumnKey = (typeof TICKET_COLUMNS)[number]["key"];
+
+const COLUMN_VISIBILITY_KEY = "ahs:ticket-list:visible-columns";
+
+function loadVisibleColumns(): Record<string, boolean> {
+  const allVisible = Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true]));
+  try {
+    const raw = localStorage.getItem(COLUMN_VISIBILITY_KEY);
+    if (!raw) return allVisible;
+    const saved = JSON.parse(raw) as Record<string, boolean>;
+    // Merge so newly added columns default to visible.
+    return { ...allVisible, ...saved };
+  } catch {
+    return allVisible;
+  }
+}
+
 // Use centralized TICKET_SOURCES and REPAIR_STATUS_OPTIONS from ticketData.ts
 const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
 const STATUS_LOG_KEY = "ahs:ticket:status-log";
 const TICKET_VISITS_KEY = "ahs:ticket:visits"; // Track who visited which tickets
+
+// Per-status color for the Status cell in the ticket list. Falls back to the
+// default blue for any status not listed here. Matching is case-insensitive
+// and trims whitespace so minor formatting differences still color correctly.
+function statusColorClass(status: string): string {
+  const key = (status || "").trim().toLowerCase();
+  const map: Record<string, string> = {
+    "op-waiting for part": "text-yellow-400",
+    "op-ready for service": "text-blue-400",
+    "csr-left message for cx": "text-green-400",
+    "cl-ready to complete": "text-red-400",
+    "cl-parts back ordered": "text-slate-100", // "black" — use near-white on dark UI for legibility
+  };
+  return map[key] ?? "text-blue-300";
+}
 
 interface StatusLogEntry {
   ticketNo: string;
@@ -141,6 +197,26 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [statusLog, setStatusLog] = useState<StatusLogEntry[]>([]);
+  // Column visibility (persisted). `visibleColumns[key] === false` hides a column.
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() =>
+    typeof window !== "undefined"
+      ? loadVisibleColumns()
+      : Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true]))
+  );
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const isColVisible = (key: TicketColumnKey) => visibleColumns[key] !== false;
+  const toggleColumn = (key: TicketColumnKey) => {
+    setVisibleColumns((prev) => {
+      const next = { ...prev, [key]: prev[key] === false };
+      try { localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const showAllColumns = () => {
+    const all = Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true]));
+    setVisibleColumns(all);
+    try { localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+  };
   const [agingModal, setAgingModal] = useState<{ ticketNo: string; status: string } | null>(null);
   const [changeNoteInput, setChangeNoteInput] = useState("");
   const [changeByInput, setChangeByInput] = useState("");
@@ -273,6 +349,46 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 {ticketSourceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
             </div>
+
+            {/* Column visibility filter */}
+            <div className="relative flex justify-end">
+              <button
+                type="button"
+                onClick={() => setColumnsMenuOpen((open) => !open)}
+                className="btn hover:bg-white/15 inline-flex items-center gap-2"
+                aria-haspopup="true"
+                aria-expanded={columnsMenuOpen}
+              >
+                <Columns3 className="h-4 w-4" /> Columns
+                <span className="text-xs text-muted-foreground">
+                  ({TICKET_COLUMNS.filter((c) => isColVisible(c.key)).length}/{TICKET_COLUMNS.length})
+                </span>
+              </button>
+              {columnsMenuOpen && (
+                <>
+                  {/* click-away overlay */}
+                  <div className="fixed inset-0 z-40" onClick={() => setColumnsMenuOpen(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl">
+                    <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/10 mb-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show columns</span>
+                      <button type="button" onClick={showAllColumns} className="text-xs text-blue-400 hover:text-blue-300">Show all</button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {TICKET_COLUMNS.map((col) => (
+                        <label key={col.key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            checked={isColVisible(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                          />
+                          <span className="text-slate-200">{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Ticket Table */}
@@ -281,25 +397,25 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   <th className="px-4 py-3 text-center font-semibold text-blue-300 w-12">✓</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket No</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Wty</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket Source</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">City</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Loc</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Model</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Internal Note</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Repair</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Technician</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Prefer</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Schedule</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Phone</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Redo</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Aging</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Calls</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Order</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Posting</th>
+                  {isColVisible("ticketNo") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket No</th>}
+                  {isColVisible("warranty") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Wty</th>}
+                  {isColVisible("ticketSource") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Ticket Source</th>}
+                  {isColVisible("customer") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Name</th>}
+                  {isColVisible("city") && <th className="px-4 py-3 text-left font-semibold text-blue-300">City</th>}
+                  {isColVisible("location") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Loc</th>}
+                  {isColVisible("model") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Model</th>}
+                  {isColVisible("internalNote") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Internal Note</th>}
+                  {isColVisible("repair") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Repair</th>}
+                  {isColVisible("technician") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Technician</th>}
+                  {isColVisible("customerPref") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Prefer</th>}
+                  {isColVisible("schedule") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Schedule</th>}
+                  {isColVisible("status") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>}
+                  {isColVisible("phone") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Phone</th>}
+                  {isColVisible("redo") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Redo</th>}
+                  {isColVisible("aging") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Aging</th>}
+                  {isColVisible("calls") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Calls</th>}
+                  {isColVisible("partOrder") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Order</th>}
+                  {isColVisible("posting") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Posting</th>}
                 </tr>
               </thead>
               <tbody>
@@ -308,6 +424,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     <td className="px-4 py-3 text-center font-bold text-green-400 w-12" title={visitedTickets.has(ticket.ticketNo) ? `Visited by: ${getTicketVisitors(ticket.ticketNo).join(", ")}` : "Not visited"}>
                       {visitedTickets.has(ticket.ticketNo) ? "✓" : ""}
                     </td>
+                    {isColVisible("ticketNo") && (
                     <td className="px-4 py-3 font-mono text-blue-400 font-semibold">
                       <a
                         href={`/ticket/${ticket.ticketNo}`}
@@ -332,22 +449,26 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                         {ticket.ticketNo}
                       </a>
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.warranty}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.ticketSource || ticket.manufacturer}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.customer}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.city}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.location}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-300">{ticket.model}</td>
+                    )}
+                    {isColVisible("warranty") && <td className="px-4 py-3 text-slate-300">{ticket.warranty}</td>}
+                    {isColVisible("ticketSource") && <td className="px-4 py-3 text-slate-300">{ticket.ticketSource || ticket.manufacturer}</td>}
+                    {isColVisible("customer") && <td className="px-4 py-3 text-slate-300">{ticket.customer}</td>}
+                    {isColVisible("city") && <td className="px-4 py-3 text-slate-300">{ticket.city}</td>}
+                    {isColVisible("location") && <td className="px-4 py-3 text-slate-300">{ticket.location}</td>}
+                    {isColVisible("model") && <td className="px-4 py-3 font-mono text-xs text-slate-300">{ticket.model}</td>}
+                    {isColVisible("internalNote") && (
                     <td className="px-4 py-3 text-slate-400 text-xs max-w-xs truncate" title={ticket.internalNote}>
                       {ticket.internalNote || "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.diagnosed}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.technician || "—"}</td>
-                    <td className="px-4 py-3 text-center text-slate-300">{ticket.customerPref}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.schedule}</td>
-                    <td className="px-4 py-3 text-blue-300 font-semibold text-sm">{ticket.status}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.phone}</td>
-                    <td className="px-4 py-3 text-center text-slate-300">{ticket.redo}</td>
+                    )}
+                    {isColVisible("repair") && <td className="px-4 py-3 text-slate-300">{ticket.diagnosed}</td>}
+                    {isColVisible("technician") && <td className="px-4 py-3 text-slate-300">{ticket.technician || "—"}</td>}
+                    {isColVisible("customerPref") && <td className="px-4 py-3 text-center text-slate-300">{ticket.customerPref}</td>}
+                    {isColVisible("schedule") && <td className="px-4 py-3 text-slate-300">{ticket.schedule}</td>}
+                    {isColVisible("status") && <td className={`px-4 py-3 font-semibold text-sm ${statusColorClass(ticket.status)}`}>{ticket.status}</td>}
+                    {isColVisible("phone") && <td className="px-4 py-3 text-slate-300">{ticket.phone}</td>}
+                    {isColVisible("redo") && <td className="px-4 py-3 text-center text-slate-300">{ticket.redo}</td>}
+                    {isColVisible("aging") && (
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => setAgingModal({ ticketNo: ticket.ticketNo, status: ticket.status })}
@@ -366,9 +487,10 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                         })()}
                       </button>
                     </td>
-                    <td className="px-4 py-3 text-center text-slate-300">{ticket.calls}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.partOrder}</td>
-                    <td className="px-4 py-3 text-slate-300">{ticket.created}</td>
+                    )}
+                    {isColVisible("calls") && <td className="px-4 py-3 text-center text-slate-300">{ticket.calls}</td>}
+                    {isColVisible("partOrder") && <td className="px-4 py-3 text-slate-300">{ticket.partOrder}</td>}
+                    {isColVisible("posting") && <td className="px-4 py-3 text-slate-300">{ticket.created}</td>}
                   </tr>
                 ))}
               </tbody>
