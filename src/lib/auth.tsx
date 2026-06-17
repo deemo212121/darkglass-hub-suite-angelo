@@ -7,7 +7,6 @@ import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
-import "./supabase/test"; // exposes window.testSupabase() for dev verification
 
 type AuthState = {
   email: string | null;

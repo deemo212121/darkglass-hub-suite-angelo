@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
-import { getAllPartOrders, getFilteredPartOrders } from "@/lib/poDataStore";
-import type { StoredPartOrder } from "@/lib/poDataStore";
+import { getFilteredPartOrders } from "@/lib/supabase/partOrders";
+import type { StoredPartOrder } from "@/lib/supabase/partOrders";
 
 export function PoStatusPage() {
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
@@ -17,33 +17,40 @@ export function PoStatusPage() {
   const [ticketNo, setTicketNo] = useState("");
 
   useEffect(() => {
-    try {
-      // Load all part orders and apply filters
-      const orders = getAllPartOrders();
-      
-      // Apply filters
-      const filtered = getFilteredPartOrders({
-        dateRange: {
-          start: startDate,
-          end: endDate,
-        },
-        partDist: location || undefined,
-      });
-      
-      const filteredArray = Array.isArray(filtered) ? filtered : [];
-      
-      // Additional client-side filtering
-      const finalFiltered = filteredArray.filter(order => {
-        if (poNo && !order.poNo.includes(poNo)) return false;
-        if (ticketNo && !order.ticketNo.includes(ticketNo)) return false;
-        return true;
-      });
-      
-      setFilteredOrders(finalFiltered);
-    } catch (error) {
-      console.error('Error loading part orders:', error);
-      setFilteredOrders([]);
-    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        // Apply filters (Supabase-backed, company-scoped)
+        const filtered = await getFilteredPartOrders({
+          dateRange: {
+            start: startDate,
+            end: endDate,
+          },
+          partDist: location || undefined,
+        });
+
+        const filteredArray = Array.isArray(filtered) ? filtered : [];
+
+        // PO Status shows orders that have actually been MADE (not still "Need PO").
+        const madeOnly = filteredArray.filter(
+          (order) => order.status !== "Need PO" && order.status !== "Cancelled"
+        );
+
+        // Additional client-side filtering
+        const finalFiltered = madeOnly.filter(order => {
+          if (poNo && !order.poNo.includes(poNo)) return false;
+          if (ticketNo && !order.ticketNo.includes(ticketNo)) return false;
+          return true;
+        });
+
+        if (!cancelled) setFilteredOrders(finalFiltered);
+      } catch (error) {
+        console.error('Error loading part orders:', error);
+        if (!cancelled) setFilteredOrders([]);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
   }, [startDate, endDate, location, poNo, ticketNo]);
 
   useEffect(() => {

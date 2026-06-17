@@ -396,5 +396,169 @@ export async function deleteTicketVisit(visitId: string): Promise<void> {
   }
 }
 
+// ---- parts ------------------------------------------------------------------
+
+// Flat UI part-row shape used by the ticket detail page.
+export interface UIPartRow {
+  id: string;
+  partNo: string;
+  partDist: string;
+  partDesc: string;
+  poNo: string;
+  poDate: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  quantity: string;
+  partPrice: string;
+  coreValue: string;
+  shipCost: string;
+  markup: string;
+  totalMarkup: string;
+  claimTo: string;
+  status: string;
+  note: string;
+  visitId: string;
+  orderNo: string;
+  eta: string;
+  inTracking: string;
+  raDate: string;
+  raNo: string;
+  outTracking: string;
+  creditNo: string;
+  hold: string;
+  cxPaid: string;
+  createdBy: string;
+  lastModifiedBy: string;
+}
+
+const numOrNull = (v: unknown) => {
+  const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+const dateOrNull = (v: unknown) => {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+};
+
+/** Map a Supabase parts row to the flat UI part-row shape. */
+function rowToPart(row: any): UIPartRow {
+  return {
+    id: row.id,
+    partNo: row.part_no ?? "",
+    partDist: row.part_dist ?? "",
+    partDesc: row.part_desc ?? "",
+    poNo: row.po_no ?? "",
+    poDate: row.po_date ?? "",
+    invoiceNo: row.invoice_no ?? "",
+    invoiceDate: row.invoice_date ?? "",
+    quantity: row.quantity != null ? String(row.quantity) : "",
+    partPrice: row.part_price != null ? String(row.part_price) : "",
+    coreValue: row.core_value != null ? String(row.core_value) : "",
+    shipCost: row.ship_cost != null ? String(row.ship_cost) : "",
+    markup: row.markup != null ? String(row.markup) : "",
+    totalMarkup: row.total_markup != null ? String(row.total_markup) : "",
+    claimTo: row.claim_to ?? "",
+    status: row.status ?? "",
+    note: row.note ?? "",
+    visitId: row.visit_id ?? "",
+    orderNo: row.order_no ?? "",
+    eta: row.eta ?? "",
+    inTracking: row.in_tracking ?? "",
+    raDate: row.ra_date ?? "",
+    raNo: row.ra_no ?? "",
+    outTracking: row.out_tracking ?? "",
+    creditNo: row.credit_no ?? "",
+    hold: row.hold ? "Y" : "",
+    cxPaid: row.cx_paid ? "Y" : "",
+    createdBy: row.created_by ?? "",
+    lastModifiedBy: row.last_modified_by ?? "",
+  };
+}
+
+// Build the DB column payload from a flat UI part row.
+function partToColumns(part: Partial<UIPartRow>) {
+  return {
+    part_no: part.partNo ?? null,
+    part_dist: part.partDist ?? null,
+    part_desc: part.partDesc ?? null,
+    po_no: part.poNo ?? null,
+    po_date: dateOrNull(part.poDate),
+    invoice_no: part.invoiceNo ?? null,
+    invoice_date: dateOrNull(part.invoiceDate),
+    quantity: numOrNull(part.quantity) ?? 1,
+    part_price: numOrNull(part.partPrice) ?? 0,
+    core_value: numOrNull(part.coreValue) ?? 0,
+    ship_cost: numOrNull(part.shipCost) ?? 0,
+    markup: numOrNull(part.markup) ?? 0,
+    total_markup: numOrNull(part.totalMarkup) ?? 0,
+    claim_to: part.claimTo ?? null,
+    status: part.status ?? null,
+    note: part.note ?? null,
+    order_no: part.orderNo ?? null,
+    eta: dateOrNull(part.eta),
+    in_tracking: part.inTracking ?? null,
+    ra_date: dateOrNull(part.raDate),
+    ra_no: part.raNo ?? null,
+    out_tracking: part.outTracking ?? null,
+    credit_no: part.creditNo ?? null,
+    hold: part.hold === "Y" || part.hold === "Yes",
+    cx_paid: part.cxPaid === "Y" || part.cxPaid === "Yes",
+  };
+}
+
+/** Get all parts for a ticket. */
+export async function getTicketParts(ticketNo: string): Promise<UIPartRow[]> {
+  const ticketId = await getTicketId(ticketNo);
+  if (!ticketId) return [];
+  const { data, error } = await supabase
+    .from("parts")
+    .select("*")
+    .eq("ticket_id", ticketId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("getTicketParts error:", error.message);
+    throw new Error(error.message);
+  }
+  return (data ?? []).map(rowToPart);
+}
+
+/** Add a part to a ticket. company_id auto-stamped server-side. */
+export async function addTicketPart(ticketNo: string, part: Partial<UIPartRow>): Promise<UIPartRow> {
+  const ticketId = await getTicketId(ticketNo);
+  if (!ticketId) throw new Error(`Ticket ${ticketNo} not found`);
+
+  const { data, error } = await supabase
+    .from("parts")
+    .insert({ ticket_id: ticketId, ...partToColumns(part) })
+    .select("*")
+    .single();
+  if (error) {
+    console.error("addTicketPart error:", error.message);
+    throw new Error(error.message);
+  }
+  return rowToPart(data);
+}
+
+/** Update an existing part by id. */
+export async function updateTicketPart(partId: string, part: Partial<UIPartRow>): Promise<void> {
+  const { error } = await supabase
+    .from("parts")
+    .update(partToColumns(part))
+    .eq("id", partId);
+  if (error) {
+    console.error("updateTicketPart error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Delete a part by id. */
+export async function deleteTicketPart(partId: string): Promise<void> {
+  const { error } = await supabase.from("parts").delete().eq("id", partId);
+  if (error) {
+    console.error("deleteTicketPart error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 // suppress unused warning for yn helper (kept for future field mapping)
 void yn;

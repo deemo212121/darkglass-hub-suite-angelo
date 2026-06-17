@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
-import { savePartOrder, createPartOrderFromTicket } from "@/lib/poDataStore";
+import { savePartOrder, createPartOrderFromTicket } from "@/lib/supabase/partOrders";
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { 
@@ -21,6 +21,10 @@ import {
   updateTicketVisit as sbUpdateTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
   updateTicketAssignment as sbUpdateTicketAssignment,
+  getTicketParts as sbGetTicketParts,
+  addTicketPart as sbAddTicketPart,
+  updateTicketPart as sbUpdateTicketPart,
+  deleteTicketPart as sbDeleteTicketPart,
 } from "@/lib/supabase/tickets";
 
 interface TicketData {
@@ -850,10 +854,17 @@ function TicketDetailsPage() {
         setVisitsLoaded(true);
       });
     
-    // Load parts from centralized ticket (parts domain not yet on Supabase)
-    const ticket = getTicketByNumber(ticketNo);
-    setPartRows(ticket?.parts || []);
-    setPartRowsLoaded(true);
+    // Load parts from Supabase
+    sbGetTicketParts(ticketNo)
+      .then((parts) => {
+        setPartRows(parts as any);
+        setPartRowsLoaded(true);
+      })
+      .catch((err) => {
+        console.error("Failed to load parts:", err);
+        setPartRows([]);
+        setPartRowsLoaded(true);
+      });
     
     // Load alert messages from localStorage
     setAlertMessages(loadAlertMessages(ticketNo));
@@ -880,19 +891,9 @@ function TicketDetailsPage() {
   }, [ticketNo, visitLogEntries, visitsLoaded]);
 
   useEffect(() => {
-    // Only save parts after they've been loaded from the ticket
+    // Parts are persisted directly to Supabase in savePartRow/deletePart now.
+    // This effect intentionally does nothing (kept to preserve hook order).
     if (!partRowsLoaded) return;
-
-    // Check if parts actually changed from what's in centralized storage
-    const currentTicket = getTicketByNumber(ticketNo);
-    const currentPartsJson = JSON.stringify(currentTicket?.parts || []);
-    const newPartsJson = JSON.stringify(partRows);
-    
-    // Only save if data actually changed
-    if (currentPartsJson !== newPartsJson) {
-      // Save parts to centralized ticket whenever they change
-      updateTicketParts(ticketNo, partRows);
-    }
   }, [partRows, partRowsLoaded, ticketNo]);
 
   useEffect(() => {
@@ -1437,7 +1438,7 @@ function TicketDetailsPage() {
   };
 
   // Submit PO for a part
-  const submitPartPO = (part: PartTransactionRow) => {
+  const submitPartPO = async (part: PartTransactionRow) => {
     // Check if part already has a PO
     if (part.poNo) {
       alert(`This part already has PO #${part.poNo}. Cannot create duplicate PO.`);
@@ -1454,20 +1455,25 @@ function TicketDetailsPage() {
 
     // Create PO from part
     const partOrder = createPartOrderFromTicket(ticketNo, part);
-    savePartOrder(partOrder);
+    await savePartOrder(partOrder);
 
-    // Update part status to "PO Made" and add PO number
-    const updatedParts = partRows.map(p => {
-      if (p.id === part.id) {
-        return {
-          ...p,
-          status: 'PO Made',
-          poNo: partOrder.poNo,
-          poDate: partOrder.poDate,
-        };
-      }
-      return p;
-    });
+    // Persist the part's status/PO change to Supabase
+    const updatedPart = {
+      ...part,
+      status: 'PO Made',
+      poNo: partOrder.poNo,
+      poDate: partOrder.poDate,
+    };
+    try {
+      await sbUpdateTicketPart(part.id, updatedPart as any);
+    } catch (err) {
+      console.error("Failed to update part PO:", err);
+      alert(`Failed to save PO on part: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+
+    // Update part status to "PO Made" and add PO number (local state)
+    const updatedParts = partRows.map(p => (p.id === part.id ? updatedPart : p));
     setPartRows(updatedParts);
 
     // Add audit entry
@@ -1483,7 +1489,7 @@ function TicketDetailsPage() {
   };
 
   // Submit POs for all parts that need them
-  const submitAllPOs = () => {
+  const submitAllPOs = async () => {
     // First, fix any parts that have PO numbers but incorrect status
     const partsToFix = partRows.filter(part => part.poNo && part.status !== 'PO Made');
     if (partsToFix.length > 0) {
@@ -1501,44 +1507,43 @@ function TicketDetailsPage() {
         return part;
       });
       setPartRows(fixedParts);
-      
-      // Give a moment for state to update
-      setTimeout(() => {
-        alert(`Fixed ${partsToFix.length} part(s) with inconsistent status.\nParts with PO numbers have been updated to "PO Made" status.`);
-      }, 100);
+      // Persist the status fixes
+      await Promise.all(
+        partsToFix.map((part) =>
+          sbUpdateTicketPart(part.id, { ...part, status: 'PO Made' } as any).catch((e) =>
+            console.warn("status fix persist skipped:", e)
+          )
+        )
+      );
     }
 
-    // Filter parts that need PO:
-    // - Must NOT already have a PO number (most important check)
-    // - Status must NOT be "PO Made" or "Cancelled"
-    // - Status should be "Need PO" or empty/other status indicating parts need ordering
+    // Filter parts that need PO
     const partsNeedingPO = partRows.filter(part => 
-      // Primary check: no existing PO number
       !part.poNo &&
-      // Secondary check: status is not already "PO Made" or "Cancelled"
       part.status !== 'PO Made' && 
       part.status !== 'Cancelled' &&
-      // Optional: explicitly include "Need PO" status or allow other statuses that need ordering
       (part.status === 'Need PO' || part.status === 'Tech Pickup' || part.status === 'Part Ready' || !part.status)
     );
 
     if (partsNeedingPO.length === 0) {
-      alert('No parts need PO submission. All parts either already have POs or are cancelled.');
+      if (partsToFix.length === 0) {
+        alert('No parts need PO submission. All parts either already have POs or are cancelled.');
+      }
       return;
     }
 
     if (!confirm(`Submit ${partsNeedingPO.length} PO(s) for parts without existing orders?`)) return;
 
     const poNumbers: string[] = [];
+    const updatedRows: PartTransactionRow[] = [];
+    const ordersToSave: ReturnType<typeof createPartOrderFromTicket>[] = [];
     const updatedParts = partRows.map(part => {
       const needsPO = partsNeedingPO.some(p => p.id === part.id);
       if (needsPO) {
-        // Create PO from part
         const partOrder = createPartOrderFromTicket(ticketNo, part);
-        savePartOrder(partOrder);
+        ordersToSave.push(partOrder);
         poNumbers.push(partOrder.poNo);
 
-        // Add audit entry
         appendAuditEntry({
           by: currentEditor,
           action: "Submitted PO (Batch)",
@@ -1547,15 +1552,32 @@ function TicketDetailsPage() {
           after: `${part.partNo} - Status: PO Made - PO #: ${partOrder.poNo}`,
         });
 
-        return {
+        const updated = {
           ...part,
           status: 'PO Made',
           poNo: partOrder.poNo,
           poDate: partOrder.poDate,
         };
+        updatedRows.push(updated);
+        return updated;
       }
       return part;
     });
+
+    // Save all the new POs to Supabase
+    try {
+      await Promise.all(ordersToSave.map((o) => savePartOrder(o)));
+    } catch (err) {
+      console.error("Failed to save some POs:", err);
+    }
+
+    // Persist each updated part to Supabase
+    try {
+      await Promise.all(updatedRows.map((p) => sbUpdateTicketPart(p.id, p as any)));
+    } catch (err) {
+      console.error("Failed to persist batch POs:", err);
+      alert(`Some PO updates failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
 
     setPartRows(updatedParts);
     alert(`${poNumbers.length} PO(s) created successfully:\n${poNumbers.join('\n')}\n\nView them in Part Order page.`);
@@ -1640,7 +1662,7 @@ function TicketDetailsPage() {
     });
   };
 
-  const savePartRow = () => {
+  const savePartRow = async () => {
     if (!partDraft.partNo.trim() || !partDraft.partDist.trim() || !partDraft.quantity.trim() || !partDraft.status.trim() || !partDraft.visitId.trim()) return;
 
     const rowId = editingPartId ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -1689,6 +1711,20 @@ function TicketDetailsPage() {
       lastModifiedBy: currentEditor,
     };
 
+    // Persist to Supabase
+    try {
+      if (editingPartId) {
+        await sbUpdateTicketPart(editingPartId, nextRow as any);
+      } else {
+        const saved = await sbAddTicketPart(ticketNo, nextRow as any);
+        nextRow.id = saved.id; // adopt DB-generated id
+      }
+    } catch (err) {
+      console.error("Failed to save part:", err);
+      alert(`Failed to save part: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+
     setPartRows((rows) => {
       if (editingPartId) {
         const existingRow = rows.find((row) => row.id === editingPartId) ?? null;
@@ -1715,16 +1751,23 @@ function TicketDetailsPage() {
     // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered
     if (nextRow.status === "Need PO" || nextRow.status === "PO Made" || nextRow.poNo.trim()) {
       const partOrder = createPartOrderFromTicket(ticketNo, nextRow);
-      savePartOrder(partOrder);
+      await savePartOrder(partOrder);
     }
 
     clearPartForm();
   };
 
-  const deletePartRow = (rowId: string) => {
+  const deletePartRow = async (rowId: string) => {
     if (!confirm("Remove this part transaction?")) return;
 
     const rowToDelete = partRows.find((row) => row.id === rowId) ?? null;
+    try {
+      await sbDeleteTicketPart(rowId);
+    } catch (err) {
+      console.error("Failed to delete part:", err);
+      alert(`Failed to delete part: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
     setPartRows((rows) => rows.filter((row) => row.id !== rowId));
     appendAuditEntry({
       by: currentEditor,

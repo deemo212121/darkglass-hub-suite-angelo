@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { loadTickets } from "@/lib/ticketData";
+import { getCompanyTickets, getTicketParts } from "@/lib/supabase/tickets";
+import { useAuth } from "@/lib/auth";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 interface OrderItem {
@@ -25,40 +26,53 @@ const WARRANTY_TYPES = [
 ];
 
 export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { ready: authReady } = useAuth();
   const [location, setLocation] = useState("");
   const [partDist, setPartDist] = useState("");
   const [scheduleDate, setScheduleDate] = useState("2026-05-15");
   const [warrantyType, setWarrantyType] = useState("");
+  const [ordersFromTickets, setOrdersFromTickets] = useState<OrderItem[]>([]);
 
-  // Load all tickets with "Need PO" status parts from centralized data
-  const ordersFromTickets = useMemo(() => {
-    const allTickets = loadTickets();
-    const orders: OrderItem[] = [];
-
-    allTickets.forEach(ticket => {
-      // Get parts with "Need PO" status
-      const needPOParts = ticket.parts?.filter(part => 
-        part.status === 'Need PO' || 
-        (!part.poNo && part.status !== 'PO Made' && part.status !== 'Cancelled')
-      ) || [];
-
-      needPOParts.forEach(part => {
-        orders.push({
-          ticketNo: ticket.ticketNo,
-          status: part.status || 'Need PO',
-          partDist: part.partDist || '—',
-          partNo: part.partNo || '—',
-          description: part.partDesc || '—',
-          requestQty: parseInt(part.quantity) || 1,
-          availQty: 0, // This would come from inventory system
-          eta: part.eta || '',
-          location: ticket.location || '—',
-        });
-      });
-    });
-
-    return orders;
-  }, []);
+  // Load all "Need PO" parts across the company's tickets from Supabase.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const tickets = await getCompanyTickets();
+        const orders: OrderItem[] = [];
+        // Fetch parts per ticket in parallel.
+        await Promise.all(
+          tickets.map(async (ticket) => {
+            const parts = await getTicketParts(ticket.ticketNo);
+            parts
+              .filter((part) =>
+                part.status === "Need PO" ||
+                (!part.poNo && part.status !== "PO Made" && part.status !== "Cancelled")
+              )
+              .forEach((part) => {
+                orders.push({
+                  ticketNo: ticket.ticketNo,
+                  status: part.status || "Need PO",
+                  partDist: part.partDist || "—",
+                  partNo: part.partNo || "—",
+                  description: part.partDesc || "—",
+                  requestQty: parseInt(part.quantity) || 1,
+                  availQty: 0,
+                  eta: part.eta || "",
+                  location: ticket.location || "—",
+                });
+              });
+          })
+        );
+        if (!cancelled) setOrdersFromTickets(orders);
+      } catch (err) {
+        console.error("PartOrder: failed to load orders:", err);
+        if (!cancelled) setOrdersFromTickets([]);
+      }
+    };
+    if (authReady) load();
+    return () => { cancelled = true; };
+  }, [authReady]);
 
   // Filter orders based on selected criteria
   const filteredOrders = useMemo(() => {

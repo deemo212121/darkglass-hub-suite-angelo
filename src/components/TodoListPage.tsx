@@ -3,25 +3,15 @@ import { ChevronDown, ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { useAuth } from "@/lib/auth";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 type TodoRow = Record<string, any> & { __id: string };
 
-function storageKey(mod: string, sub: string) {
-  return `ahs:data:${mod}:${sub}`;
-}
-
 function normalizeBranch(branch: string) {
   return normalizeLocationName(String(branch || "")) || "Unassigned";
-}
-
-function seedRows(sub: SubModuleDef): TodoRow[] {
-  const count = sub.count ?? 20;
-  return Array.from({ length: count }, (_, index) => ({
-    __id: `${sub.slug}-${index}`,
-    ...sub.seed(index),
-  }));
 }
 
 function formatDate(value: unknown) {
@@ -36,23 +26,61 @@ function formatDate(value: unknown) {
 }
 
 export function TodoListPage({ mod, sub }: Props) {
+  const { ready: authReady } = useAuth();
   const [rows, setRows] = useState<TodoRow[]>([]);
   const [branch, setBranch] = useState("All Branches");
   const [branchOpen, setBranchOpen] = useState(false);
 
+  // The To-Do list = follow-up tickets: status needs action (e.g. CSR-Assigned
+  // to ASC and similar open statuses) OR tickets aging more than 1 day.
   useEffect(() => {
-    const raw = localStorage.getItem(storageKey(mod.slug, sub.slug));
-    if (raw) {
+    let cancelled = false;
+    const FOLLOWUP_STATUSES = new Set([
+      "CSR-Assigned to ASC",
+      "CSR-Acknowledged",
+      "CSR-Left Message for Cx",
+      "CSR-Needs Scheduling",
+      "OP-Ready for Service",
+      "OP-Reschedule Follow up",
+      "OP-UPDATE HOLD",
+      "OP-Waiting for Part",
+      "TR-Need Triage",
+      "TR-Need PO",
+      "PT-Need PreAuthorization",
+      "CL-Need",
+      "CL-Parts Back Ordered",
+    ]);
+    const load = async () => {
       try {
-        const parsed = JSON.parse(raw) as TodoRow[];
-        setRows(parsed);
-        return;
-      } catch {
-        // fall back to seeded rows
+        const tickets = await getCompanyTickets();
+        const todo: TodoRow[] = tickets
+          .filter((ticket) => {
+            const aging = Number(ticket.aging ?? 0);
+            return FOLLOWUP_STATUSES.has(ticket.status) || aging > 1;
+          })
+          .map((ticket) => ({
+            __id: ticket.ticketNo,
+            ticketNo: ticket.ticketNo,
+            warranty: ticket.warranty,
+            customer: ticket.customer,
+            city: ticket.city,
+            location: ticket.location,
+            model: ticket.model,
+            status: ticket.status,
+            schedule: ticket.schedule,
+            created: ticket.created,
+            phone: ticket.phone,
+            aging: ticket.aging,
+          }));
+        if (!cancelled) setRows(todo);
+      } catch (err) {
+        console.error("TodoList: failed to load tickets:", err);
+        if (!cancelled) setRows([]);
       }
-    }
-    setRows(seedRows(sub));
-  }, [mod.slug, sub.slug, sub]);
+    };
+    if (authReady) load();
+    return () => { cancelled = true; };
+  }, [authReady]);
 
   const branches = useMemo(() => {
     return ["All Branches", ...LOCATIONS];
