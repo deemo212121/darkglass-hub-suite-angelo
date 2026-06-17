@@ -30,7 +30,10 @@ export async function signIn(
   }
 
   try {
-    // 1. Authenticate with Firebase
+    // 1. Authenticate with Firebase only. Profile loading (from Supabase, with
+    //    Firestore fallback) is handled by the auth state listener in auth.tsx.
+    //    We intentionally do NOT require a Firestore profile here, since new
+    //    users live in Supabase only.
     const userCredential: UserCredential = await signInWithEmailAndPassword(
       auth,
       email,
@@ -38,30 +41,29 @@ export async function signIn(
     );
     const user: User = userCredential.user;
 
-    // 2. Fetch user profile from Firestore
-    const profile = await getUserProfile(user.uid);
-
-    if (!profile) {
-      throw new Error("User profile not found in Firestore");
+    // Best-effort: if a legacy Firestore profile exists, return its details.
+    // Otherwise return minimal info — the listener fills the real profile.
+    let profile = null;
+    try {
+      profile = await getUserProfile(user.uid);
+    } catch {
+      profile = null;
     }
 
-    if (!profile.isActive) {
+    if (profile && profile.isActive === false) {
       throw new Error("Account is inactive. Contact administrator.");
     }
+    if (profile) {
+      await updateUserProfile(user.uid, { lastLogin: new Date() }).catch(() => {});
+    }
 
-    // 3. Update last login
-    await updateUserProfile(user.uid, {
-      lastLogin: new Date(),
-    });
-
-    // 4. Return user data
     return {
       uid: user.uid,
       email: user.email || email,
-      companyId: profile.companyId,
-      role: profile.role,
-      displayName: profile.displayName || email,
-      isActive: profile.isActive,
+      companyId: profile?.companyId ?? "",
+      role: profile?.role ?? "",
+      displayName: profile?.displayName || email,
+      isActive: profile?.isActive ?? true,
     };
   } catch (error: any) {
     console.error("Firebase sign-in error:", error);

@@ -7,6 +7,7 @@ import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
+import { getProfileForLogin, touchLastLogin } from "./supabase/users";
 
 type AuthState = {
   email: string | null;
@@ -58,36 +59,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await refreshSupabaseSession(firebaseUser);
             
             try {
-              // Get user profile from Firestore
-              const userProfile = await getUserAccount(firebaseUser.uid);
-              
-              if (userProfile) {
-                console.log("✅ User profile loaded:", {
-                  email: userProfile.email,
-                  role: userProfile.role,
-                  companyId: userProfile.companyId,
-                  isActive: userProfile.isActive
+              // Get user profile from Supabase (source of truth). Fall back to
+              // Firestore for legacy users not yet migrated.
+              const sbProfile = await getProfileForLogin(firebaseUser.uid);
+
+              if (sbProfile) {
+                console.log("✅ User profile loaded (Supabase):", {
+                  email: sbProfile.email,
+                  role: sbProfile.role,
+                  companyId: sbProfile.companyId,
+                  isActive: sbProfile.isActive,
                 });
 
-                // Update last login
-                await updateLastLogin(firebaseUser.uid);
-
-                // Set auth state
-                setUid(firebaseUser.uid);
-                setEmail(userProfile.email);
-                setCompanyId(userProfile.companyId);
-                setRole(userProfile.role);
-                setDisplayName(userProfile.displayName);
-                setIsActive(userProfile.isActive);
-
-                // Initialize user-specific data
-                if (userProfile.email) {
-                  initializeUserData(userProfile.email);
+                if (!sbProfile.isActive) {
+                  console.error("❌ Account is inactive");
+                  await firebaseSignOut();
+                } else {
+                  await touchLastLogin(firebaseUser.uid);
+                  setUid(firebaseUser.uid);
+                  setEmail(sbProfile.email);
+                  setCompanyId(sbProfile.companyId);
+                  setRole(sbProfile.role);
+                  setDisplayName(sbProfile.displayName);
+                  setIsActive(sbProfile.isActive);
+                  if (sbProfile.email) initializeUserData(sbProfile.email);
                 }
               } else {
-                console.error("❌ User profile not found in Firestore for UID:", firebaseUser.uid);
-                // Sign out if no profile exists
-                await firebaseSignOut();
+                // Legacy fallback: Firestore profile
+                const userProfile = await getUserAccount(firebaseUser.uid);
+                if (userProfile) {
+                  console.log("✅ User profile loaded (Firestore fallback):", {
+                    email: userProfile.email,
+                    role: userProfile.role,
+                    companyId: userProfile.companyId,
+                  });
+                  await updateLastLogin(firebaseUser.uid);
+                  setUid(firebaseUser.uid);
+                  setEmail(userProfile.email);
+                  setCompanyId(userProfile.companyId);
+                  setRole(userProfile.role);
+                  setDisplayName(userProfile.displayName);
+                  setIsActive(userProfile.isActive);
+                  if (userProfile.email) initializeUserData(userProfile.email);
+                } else {
+                  console.error("❌ User profile not found in Supabase or Firestore for UID:", firebaseUser.uid);
+                  await firebaseSignOut();
+                }
               }
             } catch (error) {
               console.error("❌ Error loading user profile:", error);

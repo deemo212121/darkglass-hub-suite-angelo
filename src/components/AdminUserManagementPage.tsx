@@ -37,10 +37,10 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     userName: p.display_name || p.email,
     type: p.role,
     email: p.email,
-    manager: "",       // TODO: add manager link to profiles/employees schema
-    technicianId: "",  // separate from employeeId
-    office: "",        // TODO: add branch when employees domain is wired
-    locations: "",     // TODO: add locations when employees domain is wired
+    manager: p.manager_name || "",
+    technicianId: p.technician_id || "",
+    office: p.assigned_branch || "",
+    locations: p.branch_access || "",
   }));
 }
 
@@ -168,9 +168,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
         role: newUserForm.userType as any,
-        companyId: auth.companyId,
         phoneNumber: "",
         department: "",
+        managerName: newUserForm.manager,
+        assignedBranch: newUserForm.assignedBranch,
+        branchAccess: newUserForm.branchAccess,
+        technicianId: newUserForm.technicianId,
+        poInitials: newUserForm.poInitials,
+        requiredCheckIn: newUserForm.requiredCheckIn,
+        requiredCheckOut: newUserForm.requiredCheckOut,
       });
 
       // Save schedule / off-days / PO initials to localStorage (until employees domain is wired)

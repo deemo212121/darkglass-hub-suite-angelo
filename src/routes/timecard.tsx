@@ -3,6 +3,13 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { useAuth } from "@/lib/auth";
+import {
+  getMonthEntries,
+  saveEntry as sbSaveEntry,
+  deleteEntry as sbDeleteEntry,
+  getMyProfileSchedule,
+} from "@/lib/supabase/timecards";
 
 interface TimeEntry {
   checkIn: string;
@@ -21,33 +28,45 @@ export const Route = createFileRoute("/timecard")({
 });
 
 function TimecardPage() {
+  const { uid, ready } = useAuth();
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [entries, setEntries] = useState<Entries>({});
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
 
-  const STORAGE_KEY = "tc_entries";
-
+  // Resolve the caller's profile id + scheduled shift once auth is ready.
   useEffect(() => {
-    loadEntries();
-  }, []);
+    if (!ready || !uid) return;
+    let cancelled = false;
+    getMyProfileSchedule(uid)
+      .then((s) => {
+        if (cancelled) return;
+        setProfileId(s.profileId);
+        setRequiredCheckIn(s.requiredCheckIn);
+        setRequiredCheckOut(s.requiredCheckOut);
+      })
+      .catch((err) => console.error("Failed to resolve profile:", err));
+    return () => { cancelled = true; };
+  }, [ready, uid]);
 
-  const loadEntries = () => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setEntries(JSON.parse(stored));
-    } catch (e) {
-      setEntries({});
-    }
-  };
-
-  const saveEntries = (newEntries: Entries) => {
-    setEntries(newEntries);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newEntries));
-  };
+  // Load the visible month's entries from Supabase.
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getMonthEntries(profileId, currentYear, currentMonth)
+      .then((map) => { if (!cancelled) setEntries(map); })
+      .catch((err) => {
+        console.error("Failed to load timecard:", err);
+        if (!cancelled) setEntries({});
+      });
+    return () => { cancelled = true; };
+  }, [profileId, currentYear, currentMonth]);
 
   const changeMonth = (dir: number) => {
     let newMonth = currentMonth + dir;
@@ -152,11 +171,21 @@ function TimecardPage() {
     setModalEntry(null);
   };
 
-  const saveEntry = () => {
+  const saveEntry = async () => {
     if (!editingDate || !modalEntry) return;
-    // Auto-save when time is logged
+    // Optimistic local update
     const newEntries = { ...entries, [editingDate]: modalEntry };
-    saveEntries(newEntries);
+    setEntries(newEntries);
+    if (!profileId) {
+      alert("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    try {
+      await sbSaveEntry(profileId, editingDate, modalEntry);
+    } catch (err) {
+      console.error("Failed to save entry:", err);
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   };
 
   const handleTimeToggle = () => {
@@ -175,10 +204,16 @@ function TimecardPage() {
       return;
     }
 
-    // Check if duty hours is 6 or more
-    const dutyHours = calcHours(modalEntry);
-    if (dutyHours < 6) {
-      alert(`Meal break only available after 6 hours of work. Current: ${dutyHours.toFixed(1)} hours`);
+    // Lunch eligibility is based on the SCHEDULED shift length (set at account
+    // creation), not actual hours worked. Lunch is allowed only if the scheduled
+    // shift is 8 hours or more.
+    const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
+    if (!requiredCheckIn || !requiredCheckOut) {
+      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
+      return;
+    }
+    if (scheduledShift < 8) {
+      alert(`Lunch break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;
     }
 
@@ -189,12 +224,19 @@ function TimecardPage() {
     }
   };
 
-  const deleteEntry = () => {
+  const deleteEntry = async () => {
     if (!editingDate || !entries[editingDate]) return;
     if (!confirm("Delete time entry for this day?")) return;
     const newEntries = { ...entries };
     delete newEntries[editingDate];
-    saveEntries(newEntries);
+    setEntries(newEntries);
+    if (profileId) {
+      try {
+        await sbDeleteEntry(profileId, editingDate);
+      } catch (err) {
+        console.error("Failed to delete entry:", err);
+      }
+    }
     closeEntryModal();
   };
 

@@ -31,6 +31,11 @@ export interface ProfileRow {
   role: UserRole;
   phone_number: string | null;
   department: string | null;
+  manager_name: string | null;
+  assigned_branch: string | null;
+  branch_access: string | null;
+  technician_id: string | null;
+  po_initials: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -46,13 +51,74 @@ export function generateUsername(displayName: string): string {
 }
 
 /**
- * Get all users in the caller's company (RLS scopes automatically).
- * SUPERADMINs are excluded from the management list.
+ * Get the profile for a Firebase uid (for login). Returns the auth-relevant fields.
+ * Uses the company legacy_code as the companyId the rest of the app expects.
  */
+export async function getProfileForLogin(firebaseUid: string): Promise<{
+  email: string;
+  companyId: string;
+  role: string;
+  displayName: string;
+  isActive: boolean;
+} | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("email, role, display_name, is_active, companies:company_id (legacy_code)")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getProfileForLogin error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+
+  const legacyCode = (data as any).companies?.legacy_code ?? "";
+  return {
+    email: data.email,
+    companyId: legacyCode,
+    role: data.role,
+    displayName: data.display_name ?? data.email,
+    isActive: data.is_active,
+  };
+}
+
+/** Update a profile's last login timestamp (best-effort). */
+export async function touchLastLogin(firebaseUid: string): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ last_login: new Date().toISOString() })
+    .eq("firebase_uid", firebaseUid);
+  if (error) console.warn("touchLastLogin skipped:", error.message);
+}
+
+/**
+ * Look up a user's email by username within a company (by legacy company code).
+ * Used for username login BEFORE authentication — so there is no Supabase
+ * session yet and RLS would block a direct table read. We call a SECURITY
+ * DEFINER RPC (`login_email_for_username`) that safely resolves the username
+ * to a single email without leaking any other company data.
+ */
+export async function getUserByUsername(
+  username: string,
+  companyLegacyCode: string
+): Promise<{ email: string; isActive: boolean } | null> {
+  const { data, error } = await supabase.rpc("login_email_for_username", {
+    p_username: username,
+    p_company_code: companyLegacyCode,
+  });
+  if (error) {
+    console.error("getUserByUsername error:", error.message);
+    return null;
+  }
+  // RPC returns the email string (or null) for an active matching profile.
+  if (!data) return null;
+  return { email: data as string, isActive: true };
+}
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 
@@ -74,9 +140,16 @@ export async function createCompanyUser(input: {
   password: string;
   displayName: string;
   role: UserRole;
-  companyId: string;
+  companyId?: string;
   phoneNumber?: string;
   department?: string;
+  managerName?: string;
+  assignedBranch?: string;
+  branchAccess?: string;
+  technicianId?: string;
+  poInitials?: string;
+  requiredCheckIn?: string;
+  requiredCheckOut?: string;
 }): Promise<string> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
@@ -123,6 +196,13 @@ export async function createCompanyUser(input: {
     role: input.role,
     phone_number: input.phoneNumber ?? "",
     department: input.department ?? "",
+    manager_name: input.managerName ?? "",
+    assigned_branch: input.assignedBranch ?? "",
+    branch_access: input.branchAccess ?? "",
+    technician_id: input.technicianId ?? "",
+    po_initials: input.poInitials ?? "",
+    required_check_in: input.requiredCheckIn ?? "",
+    required_check_out: input.requiredCheckOut ?? "",
     is_active: true,
   });
 

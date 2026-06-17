@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Navigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -23,6 +23,10 @@ function Landing() {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // The company ID the user typed at login, validated reactively once the auth
+  // context finishes loading the profile (avoids the race of re-querying with a
+  // fixed delay). Cleared after a successful validation.
+  const [pendingCompany, setPendingCompany] = useState<string | null>(null);
 
   useEffect(() => {
     if (form.remember) {
@@ -35,6 +39,8 @@ function Landing() {
 
   // Redirect based on role after login
   useEffect(() => {
+    // Don't redirect while a company validation is still pending.
+    if (pendingCompany) return;
     if (ready && email && role) {
       // Don't redirect if we're not on the landing page anymore
       if (typeof window !== 'undefined' && window.location.pathname !== '/landing') {
@@ -49,7 +55,28 @@ function Landing() {
         navigate({ to: "/home", replace: true });
       }
     }
-  }, [ready, email, role, navigate]);
+  }, [ready, email, role, navigate, pendingCompany]);
+
+  // Validate the typed company ID against the profile's company once the auth
+  // context has finished loading it. This is event-driven (no fixed delay), so
+  // it can't misfire from a session that isn't ready yet.
+  useEffect(() => {
+    if (!pendingCompany) return;
+    // Wait until the auth listener has loaded a profile (email + companyId set).
+    if (!ready || !email) return;
+    // companyId may be "" if the company join returned nothing — treat empty as
+    // "can't verify" and allow through (don't log a valid user out).
+    if (companyId && companyId.toUpperCase() !== pendingCompany.toUpperCase()) {
+      setErr("Invalid company ID for this account.");
+      setPendingCompany(null);
+      setSubmitting(false);
+      void logout();
+      return;
+    }
+    // Validated (or unverifiable) — let the redirect effect proceed.
+    setPendingCompany(null);
+    setSubmitting(false);
+  }, [pendingCompany, ready, email, companyId, logout]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,8 +101,8 @@ function Landing() {
       let userEmail = form.emailOrUsername;
       
       if (!isEmail) {
-        // It's a username - need to look up email first
-        const { getUserByUsername } = await import("@/lib/firebase/users");
+        // It's a username - look up the email from Supabase first.
+        const { getUserByUsername } = await import("@/lib/supabase/users");
         const user = await getUserByUsername(form.emailOrUsername, form.company);
         
         if (!user) {
@@ -87,37 +114,23 @@ function Landing() {
         userEmail = user.email;
       }
       
-      // Login with email
+      // Login with email. The auth listener (auth.tsx) loads the profile from
+      // Supabase and populates the auth context (email, role, companyId). We
+      // then validate the typed company ID reactively via the effect above —
+      // no fragile fixed delay, no redundant re-query.
       await login(userEmail, form.password);
-      
-      // After successful login, validate company ID matches
-      // We need to get the user's actual company ID from the auth context
-      // Wait a moment for the auth state to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Get the updated auth state
-      const { getUserProfile } = await import("@/lib/firebase/firestore");
-      const { getCurrentUser } = await import("@/lib/firebase/auth");
-      const currentUser = getCurrentUser();
-      
-      if (currentUser) {
-        const profile = await getUserProfile(currentUser.uid);
-        
-        if (profile && profile.companyId.toUpperCase() !== form.company.toUpperCase()) {
-          setErr("Invalid company ID for this account.");
-          await logout();
-          setSubmitting(false);
-          return;
-        }
-      }
-      
+
       // Save credentials if remember is checked
       if (form.remember) {
         localStorage.setItem("ahs:lastEmailOrUsername", form.emailOrUsername);
         localStorage.setItem("ahs:lastCompany", form.company);
       }
-      
-      // Navigation will happen automatically via useEffect
+
+      // Hand off to the validation effect; keep the button in "submitting"
+      // state until it resolves (it clears submitting + pendingCompany).
+      setPendingCompany(form.company);
+
+      // Navigation will happen automatically via useEffect once validated.
     } catch (error: any) {
       console.error("Login error:", error);
       setErr(error.message || "Login failed. Please check your credentials.");
