@@ -1,0 +1,17 @@
+[
+  {
+    "origin": [
+      "https://tanstack-start-app.jdage7.workers.dev",
+      "http://localhost:8080",
+      "http://localhost:3000"
+    ],
+    "method": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "Content-Range",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

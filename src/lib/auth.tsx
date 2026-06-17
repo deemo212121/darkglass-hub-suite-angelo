@@ -30,6 +30,36 @@ const AuthContext = createContext<AuthState | null>(null);
 const MIGRATION_ROLES = new Set(["SUPERADMIN", "ADMIN", "MANAGER", "HR"]);
 const migrationAttempted = new Set<string>();
 
+// Load this company's Supabase coverage zips into the runtime zip lookup so
+// newly added coverage areas are recognized (the static map is build-time only).
+let zipCoverageLoaded = false;
+function loadCompanyZipCoverage() {
+  if (zipCoverageLoaded) return;
+  zipCoverageLoaded = true;
+  (async () => {
+    try {
+      const { getCoverage } = await import("./supabase/locationManagement");
+      const { registerZipCoverage } = await import("./zipCoverage");
+      const rows = await getCoverage();
+      if (rows.length) {
+        registerZipCoverage(
+          rows.map((r) => ({
+            zipCode: r.zipCode,
+            location: r.location,
+            city: r.city,
+            selfSchedule: r.selfSchedule,
+            tierCode: r.tierCode,
+          }))
+        );
+        console.log(`📍 Registered ${rows.length} coverage zips from Supabase.`);
+      }
+    } catch (error) {
+      console.warn("Loading company zip coverage skipped:", error);
+      zipCoverageLoaded = false; // allow retry next login
+    }
+  })();
+}
+
 function maybeAutoMigrateLegacyUsers(role: string, companyId: string) {
   if (!role || !companyId) return;
   if (!MIGRATION_ROLES.has(role.toUpperCase())) return;
@@ -151,6 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   // company into Supabase so they can use username login too.
                   // Idempotent (skips existing) and runs once per session.
                   maybeAutoMigrateLegacyUsers(sbProfile.role, sbProfile.companyId);
+                  // Background: load this company's coverage zips from Supabase
+                  // into the runtime zip lookup so newly added areas are
+                  // recognized on the create-ticket form.
+                  loadCompanyZipCoverage();
                 }
               } else {
                 // Legacy fallback: Firestore profile

@@ -34781,9 +34781,37 @@ export const ZIP_COVERAGE: Record<string, ZipCoverageEntry> = {
   }
 };
 
+// Runtime overrides: zips added via Location Management (stored in Supabase).
+// These are merged on top of the static ZIP_COVERAGE map so newly added
+// coverage areas are recognized without rebuilding this generated file.
+const ZIP_COVERAGE_OVERRIDES: Record<string, ZipCoverageEntry> = {};
+
+function cleanZip(zip: string): string {
+  return zip.trim().replace(/\D/g, '').padStart(5, '0').slice(0, 5);
+}
+
+/**
+ * Merge additional coverage entries (e.g. loaded from Supabase) into the
+ * runtime lookup. Called at app startup after coverage loads.
+ */
+export function registerZipCoverage(
+  entries: Array<{ zipCode: string; location: string; city?: string; selfSchedule?: string; tierCode?: string }>
+): void {
+  for (const e of entries) {
+    if (!e.zipCode) continue;
+    ZIP_COVERAGE_OVERRIDES[cleanZip(e.zipCode)] = {
+      location: e.location || "",
+      city: e.city || "",
+      selfSchedule: e.selfSchedule || "",
+      tierCode: e.tierCode || "",
+    };
+  }
+}
+
 export function lookupZip(zip: string): ZipCoverageEntry | null {
-  const clean = zip.trim().replace(/\D/g, '').padStart(5, '0').slice(0, 5);
-  return ZIP_COVERAGE[clean] || null;
+  const clean = cleanZip(zip);
+  // Runtime (Supabase) overrides take precedence, then the static map.
+  return ZIP_COVERAGE_OVERRIDES[clean] || ZIP_COVERAGE[clean] || null;
 }
 
 // Get all unique location names (for dropdowns etc)
