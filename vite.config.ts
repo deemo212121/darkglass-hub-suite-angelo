@@ -5,6 +5,39 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Read .env directly (avoid importing from "vite" here — it creates a module
+// require-cycle with the lovable config wrapper). We inject SERVER-ONLY secrets
+// into the server bundle as compile-time constants. These end up only in
+// dist/server (the Worker), never the client bundle, so they aren't exposed.
+function readDotEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const raw = readFileSync(resolve(process.cwd(), ".env"), "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+      if (!m) continue;
+      let v = m[2].trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      out[m[1]] = v;
+    }
+  } catch {
+    // .env not present (e.g. CI) — fall back to process.env below.
+  }
+  return out;
+}
+
+const rootEnv = { ...readDotEnv(), ...process.env } as Record<string, string | undefined>;
+const SERVER_DEFINE = {
+  "globalThis.__SUPABASE_JWT_SECRET__": JSON.stringify(rootEnv.SUPABASE_JWT_SECRET ?? ""),
+  "globalThis.__FIREBASE_PROJECT_ID__": JSON.stringify(
+    rootEnv.VITE_FIREBASE_PROJECT_ID ?? ""
+  ),
+};
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
 // the serverless api/ folder). Uses the SAME runtime-agnostic bridge as the
@@ -50,6 +83,7 @@ export default defineConfig({
     server: { entry: "server" },
   },
   vite: {
+    define: SERVER_DEFINE,
     plugins: [supabaseTokenDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,

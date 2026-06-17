@@ -180,13 +180,34 @@ export async function handleSupabaseTokenRequest(
     const { idToken } = (await request.json()) as { idToken?: string };
     if (!idToken) return json({ error: "Missing idToken" }, 400);
 
+    // Build-time injected constants (see vite.config.ts `define`). These are
+    // baked into the SERVER bundle only (dist/server), never the client. This
+    // is the most reliable source on Cloudflare Workers, where runtime env
+    // plumbing varies. Falls back to passed-in env / process.env.
+    const injectedSecret =
+      typeof (globalThis as any).__SUPABASE_JWT_SECRET__ === "string"
+        ? ((globalThis as any).__SUPABASE_JWT_SECRET__ as string)
+        : "";
+    const injectedProject =
+      typeof (globalThis as any).__FIREBASE_PROJECT_ID__ === "string"
+        ? ((globalThis as any).__FIREBASE_PROJECT_ID__ as string)
+        : "";
+
     const getEnv = (k: string): string | undefined =>
       env?.[k] ?? (typeof process !== "undefined" ? process.env?.[k] : undefined);
 
-    const projectId = getEnv("VITE_FIREBASE_PROJECT_ID");
-    const jwtSecret = getEnv("SUPABASE_JWT_SECRET");
-    if (!projectId) return json({ error: "Server missing VITE_FIREBASE_PROJECT_ID" }, 500);
-    if (!jwtSecret) return json({ error: "Server missing SUPABASE_JWT_SECRET" }, 500);
+    const projectId = injectedProject || getEnv("VITE_FIREBASE_PROJECT_ID");
+    const jwtSecret = injectedSecret || getEnv("SUPABASE_JWT_SECRET");
+    if (!projectId || !jwtSecret) {
+      return json(
+        {
+          error: !projectId
+            ? "Server missing VITE_FIREBASE_PROJECT_ID"
+            : "Server missing SUPABASE_JWT_SECRET",
+        },
+        500
+      );
+    }
 
     const claims = await verifyFirebaseToken(idToken, projectId);
     const { token, expiresAt } = await mintSupabaseToken({

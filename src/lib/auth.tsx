@@ -24,6 +24,38 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+// Roles allowed to trigger the legacy-user import. Only privileged company
+// roles (they can read the company's Firestore users). Runs once per browser
+// session per company to avoid repeating on every auth state change.
+const MIGRATION_ROLES = new Set(["SUPERADMIN", "ADMIN", "MANAGER", "HR"]);
+const migrationAttempted = new Set<string>();
+
+function maybeAutoMigrateLegacyUsers(role: string, companyId: string) {
+  if (!role || !companyId) return;
+  if (!MIGRATION_ROLES.has(role.toUpperCase())) return;
+  if (migrationAttempted.has(companyId)) return;
+  migrationAttempted.add(companyId);
+
+  // Fire-and-forget: never block login on this.
+  (async () => {
+    try {
+      const { migrateFirestoreUsersToSupabase } = await import("./supabase/users");
+      const result = await migrateFirestoreUsersToSupabase(companyId);
+      if (result.migrated > 0) {
+        console.log(
+          `🔄 Auto-migrated ${result.migrated} legacy user(s) to Supabase ` +
+            `(skipped ${result.skipped}, failed ${result.failed}).`
+        );
+      }
+    } catch (error) {
+      // Don't surface to the user — migration is best-effort background work.
+      console.warn("Auto-migration of legacy users skipped:", error);
+      // Allow a retry on a later login.
+      migrationAttempted.delete(companyId);
+    }
+  })();
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -83,6 +115,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   if (sbProfile.email) initializeUserData(sbProfile.email);
+                  // Background: import any legacy Firebase-only users for this
+                  // company into Supabase so they can use username login too.
+                  // Idempotent (skips existing) and runs once per session.
+                  maybeAutoMigrateLegacyUsers(sbProfile.role, sbProfile.companyId);
                 }
               } else {
                 // Legacy fallback: Firestore profile

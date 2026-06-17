@@ -108,8 +108,11 @@ export async function getUserByUsername(
     p_company_code: companyLegacyCode,
   });
   if (error) {
-    console.error("getUserByUsername error:", error.message);
-    return null;
+    // Surface the real reason. A missing function (migration not run) reports
+    // a 404/"function ... does not exist" here — very different from a genuine
+    // "no matching user".
+    console.error("getUserByUsername RPC error:", error);
+    throw new Error(`Username lookup failed: ${error.message}`);
   }
   // RPC returns the email string (or null) for an active matching profile.
   if (!data) return null;

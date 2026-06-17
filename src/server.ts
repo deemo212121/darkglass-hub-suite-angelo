@@ -69,18 +69,39 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    try {
-      // Serve the Firebase -> Supabase token bridge from the Worker itself.
-      // On Cloudflare, secrets arrive via the `env` binding; on other runtimes
-      // the bridge falls back to process.env.
-      const url = new URL(request.url);
-      if (url.pathname === "/api/supabase-token") {
-        return await handleSupabaseTokenRequest(
-          request,
-          (env as Record<string, string | undefined>) ?? undefined
-        );
+    // Serve the Firebase -> Supabase token bridge from the Worker itself.
+    // Handled OUTSIDE the try/catch below so its JSON error responses are
+    // returned verbatim instead of being swallowed into the 500 HTML page.
+    const url = new URL(request.url);
+    if (url.pathname === "/api/supabase-token") {
+      // The adapter-provided `env` enumerates secret KEYS but returns undefined
+      // VALUES on Cloudflare. The canonical source is `env` from the
+      // "cloudflare:workers" module. Merge all sources, keeping only the first
+      // defined, non-empty value per key so undefined can never clobber a real one.
+      let cfEnv: Record<string, unknown> = {};
+      try {
+        const mod = await import("cloudflare:workers");
+        cfEnv = ((mod as any).env as Record<string, unknown>) ?? {};
+      } catch {
+        // not on Cloudflare (dev/Node) — ignore
       }
+      const procEnv: Record<string, unknown> =
+        typeof process !== "undefined" && process.env ? (process.env as any) : {};
+      const adapterEnv = (env as Record<string, unknown>) ?? {};
 
+      const merged: Record<string, string> = {};
+      for (const src of [cfEnv, adapterEnv, procEnv]) {
+        for (const k of Object.keys(src)) {
+          const v = (src as any)[k];
+          if (merged[k] === undefined && typeof v === "string" && v !== "") {
+            merged[k] = v;
+          }
+        }
+      }
+      return await handleSupabaseTokenRequest(request, merged);
+    }
+
+    try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);
