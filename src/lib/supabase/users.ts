@@ -232,6 +232,65 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 
 
 /**
+ * Get a single company profile by username (RLS-scoped to the caller's company).
+ * Returns the full ProfileRow for the user detail page.
+ */
+export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
+    .ilike("username", username)
+    .maybeSingle();
+  if (error) {
+    console.error("getProfileByUsername error:", error.message);
+    return null;
+  }
+  return (data as ProfileRow) ?? null;
+}
+
+/**
+ * Update an existing user's profile fields (company-scoped via RLS).
+ */
+export async function updateCompanyUser(
+  profileId: string,
+  fields: Partial<{
+    displayName: string;
+    role: UserRole;
+    phoneNumber: string;
+    department: string;
+    managerName: string;
+    assignedBranch: string;
+    branchAccess: string;
+    technicianId: string;
+    poInitials: string;
+    requiredCheckIn: string;
+    requiredCheckOut: string;
+    isActive: boolean;
+  }>
+): Promise<void> {
+  const payload: Record<string, unknown> = {};
+  if (fields.displayName !== undefined) payload.display_name = fields.displayName;
+  if (fields.role !== undefined) payload.role = fields.role;
+  if (fields.phoneNumber !== undefined) payload.phone_number = fields.phoneNumber;
+  if (fields.department !== undefined) payload.department = fields.department;
+  if (fields.managerName !== undefined) payload.manager_name = fields.managerName;
+  if (fields.assignedBranch !== undefined) payload.assigned_branch = fields.assignedBranch;
+  if (fields.branchAccess !== undefined) payload.branch_access = fields.branchAccess;
+  if (fields.technicianId !== undefined) payload.technician_id = fields.technicianId;
+  if (fields.poInitials !== undefined) payload.po_initials = fields.poInitials;
+  if (fields.requiredCheckIn !== undefined) payload.required_check_in = fields.requiredCheckIn;
+  if (fields.requiredCheckOut !== undefined) payload.required_check_out = fields.requiredCheckOut;
+  if (fields.isActive !== undefined) payload.is_active = fields.isActive;
+
+  const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
+  if (error) {
+    console.error("updateCompanyUser error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+
+/**
  * One-time migration: copy existing Firestore users for a company into
  * Supabase `profiles`. Skips users already present (by firebase_uid).
  *

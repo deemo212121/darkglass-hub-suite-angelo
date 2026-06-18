@@ -324,30 +324,203 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
 
     return { module, submodule, userId: params.userId };
   },
-  component: UserDetailsPageTemp,
+  component: UserDetailsPage,
 });
 
-// Temporary simplified component while we migrate to Firebase
-function UserDetailsPageTemp() {
+const ROLE_OPTIONS = [
+  "ADMIN", "MANAGER", "CSR", "TECHNICIAN", "CLAIMS", "HR", "IT", "PARTS", "FINANCE",
+];
+
+function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
-  
+  const { ready } = useAuth();
+
+  const [loading, setLoading] = useState(true);
+  const [notFoundUser, setNotFoundUser] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string>("");
+  const [form, setForm] = useState({
+    email: "",
+    username: "",
+    displayName: "",
+    role: "",
+    phoneNumber: "",
+    department: "",
+    managerName: "",
+    assignedBranch: "",
+    branchAccess: "",
+    technicianId: "",
+    poInitials: "",
+    isActive: true,
+  });
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { getProfileByUsername } = await import("@/lib/supabase/users");
+        const p = await getProfileByUsername(userId);
+        if (cancelled) return;
+        if (!p) {
+          setNotFoundUser(true);
+          return;
+        }
+        setProfileId(p.id);
+        setForm({
+          email: p.email || "",
+          username: p.username || "",
+          displayName: p.display_name || "",
+          role: p.role || "",
+          phoneNumber: p.phone_number || "",
+          department: p.department || "",
+          managerName: p.manager_name || "",
+          assignedBranch: p.assigned_branch || "",
+          branchAccess: p.branch_access || "",
+          technicianId: p.technician_id || "",
+          poInitials: p.po_initials || "",
+          isActive: p.is_active,
+        });
+      } catch (err) {
+        console.error("Failed to load user:", err);
+        if (!cancelled) setNotFoundUser(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ready, userId]);
+
+  const update = (field: keyof typeof form, value: any) =>
+    setForm((prev) => ({ ...prev, [field]: value }));
+
+  const handleSave = async () => {
+    if (!profileId) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const { updateCompanyUser } = await import("@/lib/supabase/users");
+      await updateCompanyUser(profileId, {
+        displayName: form.displayName,
+        role: form.role as any,
+        phoneNumber: form.phoneNumber,
+        department: form.department,
+        managerName: form.managerName,
+        assignedBranch: form.assignedBranch,
+        branchAccess: form.branchAccess,
+        technicianId: form.technicianId,
+        poInitials: form.poInitials,
+        isActive: form.isActive,
+      });
+      setStatus("Saved.");
+    } catch (err) {
+      setStatus(`Error: ${err instanceof Error ? err.message : "Save failed"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const field = (label: string, key: keyof typeof form, opts?: { type?: string }) => (
+    <label className="space-y-1.5 text-sm">
+      <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">{label}</span>
+      <input
+        type={opts?.type ?? "text"}
+        value={String(form[key] ?? "")}
+        onChange={(e) => update(key, e.target.value)}
+        className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+      />
+    </label>
+  );
+
   return (
     <>
       <AppHeader />
       <main className="flex-1 bg-slate-950 py-6">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-5xl mx-auto px-6">
+          <Link
+            to="/m/$module/$submodule"
+            params={{ module: module.slug, submodule: submodule.slug }}
+            className="inline-flex items-center gap-2 text-slate-300 hover:text-white mb-4 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to User Management
+          </Link>
+
           <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
-            <h1 className="text-2xl font-bold mb-4">User Details: {userId}</h1>
-            <p className="text-slate-300 mb-6">
-              User detail page is being migrated to Firebase and will be available soon.
-            </p>
-            <Link 
-              to="/m/$module/$submodule" 
-              params={{ module: module.slug, submodule: submodule.slug }} 
-              className="btn btn-primary"
-            >
-              ← Back to User Management
-            </Link>
+            {loading ? (
+              <p className="text-slate-300">Loading user…</p>
+            ) : notFoundUser ? (
+              <div>
+                <h1 className="text-2xl font-bold mb-2">User not found</h1>
+                <p className="text-slate-300">No user matches "{userId}" in your company.</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+                  <div>
+                    <h1 className="text-3xl font-bold tracking-tight">{form.displayName || form.username}</h1>
+                    <p className="mt-1 text-sm text-slate-400">{form.email}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.isActive}
+                        onChange={(e) => update("isActive", e.target.checked)}
+                      />
+                      Active
+                    </label>
+                    <button
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="btn btn-primary disabled:opacity-50"
+                    >
+                      {saving ? "Saving…" : "Save Changes"}
+                    </button>
+                  </div>
+                </div>
+
+                {status && (
+                  <div className={`mb-4 text-sm rounded p-3 ${status.startsWith("Error") ? "text-red-400 bg-red-500/10 border border-red-500/30" : "text-green-400 bg-green-500/10 border border-green-500/30"}`}>
+                    {status}
+                  </div>
+                )}
+
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <label className="space-y-1.5 text-sm">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Username</span>
+                    <input value={form.username} disabled className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400" />
+                  </label>
+                  <label className="space-y-1.5 text-sm">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
+                    <input value={form.email} disabled className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400" />
+                  </label>
+                  {field("Display Name", "displayName")}
+                  <label className="space-y-1.5 text-sm">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Role</span>
+                    <select
+                      value={form.role}
+                      onChange={(e) => update("role", e.target.value)}
+                      className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                    >
+                      {!ROLE_OPTIONS.includes(form.role) && form.role && <option value={form.role}>{form.role}</option>}
+                      {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </label>
+                  {field("Phone Number", "phoneNumber")}
+                  {field("Department", "department")}
+                  {field("Manager", "managerName")}
+                  {field("Assigned Branch", "assignedBranch")}
+                  {field("Branch Access", "branchAccess")}
+                  {field("Technician ID", "technicianId")}
+                  {field("PO Initials", "poInitials")}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </main>
