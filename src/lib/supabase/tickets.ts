@@ -52,6 +52,7 @@ function rowToTicket(row: any): Ticket {
     firstName: c.first_name ?? "",
     lastName: c.last_name ?? "",
     address: c.address ?? "",
+    address2: c.address2 ?? "",
     zip: c.zip ?? "",
     state: c.state ?? "",
     email: c.email ?? "",
@@ -80,7 +81,7 @@ function rowToTicket(row: any): Ticket {
 
 const SELECT = `
   *,
-  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, email, address, city, state, zip, address_note )
+  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, email, address, address2, city, state, zip, address_note )
 `;
 
 // ---- reads -----------------------------------------------------------------
@@ -149,6 +150,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
         second_phone: input.secondPhone ?? "",
         email: input.email ?? "",
         address: input.address ?? "",
+        address2: input.address2 ?? "",
         city: input.city ?? "",
         state: input.state ?? "",
         zip: input.zip ?? "",
@@ -271,6 +273,7 @@ export async function updateTicketCustomer(
     secondPhone?: string;
     email?: string;
     address?: string;
+    address2?: string;
     city?: string;
     state?: string;
     zip?: string;
@@ -296,6 +299,7 @@ export async function updateTicketCustomer(
   if (fields.secondPhone !== undefined) payload.second_phone = fields.secondPhone;
   if (fields.email !== undefined) payload.email = fields.email;
   if (fields.address !== undefined) payload.address = fields.address;
+  if (fields.address2 !== undefined) payload.address2 = fields.address2;
   if (fields.city !== undefined) payload.city = fields.city;
   if (fields.state !== undefined) payload.state = fields.state;
   if (fields.zip !== undefined) payload.zip = fields.zip;

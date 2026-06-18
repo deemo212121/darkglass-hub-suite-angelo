@@ -9,9 +9,10 @@ import {
 
 /**
  * Ticket photo gallery + uploader. Photos live in Firebase Storage under
- * companies/{companyId}/tickets/{ticketNo}/ so they're namespaced per company.
+ * companies/{companyId}/tickets/{ticketNo}/{category}/ so they're namespaced
+ * per company and (optionally) per category (e.g. "general", "service").
  */
-export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
+export function TicketPhotos({ ticketNo, category, title }: { ticketNo: string; category?: string; title?: string }) {
   const { companyId, ready } = useAuth();
   const [photos, setPhotos] = useState<TicketPhoto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +22,8 @@ export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const cid = companyId || "COMP001";
+  // Storage sub-path. Keep backward compatible: no category => the ticket root.
+  const ticketPath = category ? `${ticketNo}/${category}` : ticketNo;
 
   useEffect(() => {
     if (!ready) return;
@@ -28,7 +31,7 @@ export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
     (async () => {
       try {
         setLoading(true);
-        const list = await listTicketPhotos(cid, ticketNo);
+        const list = await listTicketPhotos(cid, ticketPath);
         if (!cancelled) setPhotos(list);
       } catch (err) {
         console.error("Failed to load ticket photos:", err);
@@ -38,7 +41,7 @@ export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [ready, cid, ticketNo]);
+  }, [ready, cid, ticketPath]);
 
   const isImage = (name: string) => /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name);
 
@@ -54,7 +57,7 @@ export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
           setError(`"${file.name}" is larger than 25MB and was skipped.`);
           continue;
         }
-        const photo = await uploadTicketPhoto(cid, ticketNo, file);
+        const photo = await uploadTicketPhoto(cid, ticketPath, file);
         uploaded.push(photo);
       }
       if (uploaded.length) setPhotos((prev) => [...uploaded, ...prev]);
@@ -81,7 +84,7 @@ export function TicketPhotos({ ticketNo }: { ticketNo: string }) {
   return (
     <div className="space-y-4 pb-8">
       <div className="flex items-center justify-between">
-        <h4 className="font-semibold text-slate-300">Photos</h4>
+        <h4 className="font-semibold text-slate-300">{title ?? "Photos"}</h4>
         <div>
           <input
             ref={fileInputRef}

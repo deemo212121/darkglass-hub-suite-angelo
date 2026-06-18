@@ -56,6 +56,7 @@ const DEFAULT_FORM = {
   secondaryPhone: "",
   email1: "",
   address: "",
+  address2: "",
   city: "",
   zipCode: "",
   state: "",
@@ -113,6 +114,7 @@ export function NewTicketPage({ mod, sub }: Props) {
           secondaryPhone: payload.secondaryPhone || "",
           email1: payload.email || "",
           address: payload.address || "",
+          address2: payload.address2 || "",
           city: payload.city || "",
           zipCode: payload.zip || "",
           state: payload.state || "",
@@ -216,6 +218,7 @@ export function NewTicketPage({ mod, sub }: Props) {
       secondPhone: form.secondaryPhone || "",
       email: form.email1 || "",
       address: form.address,
+      address2: form.address2,
       city: form.city,
       zip: form.zipCode,
       state: form.state,
@@ -333,9 +336,13 @@ export function NewTicketPage({ mod, sub }: Props) {
             </div>
 
             <div className="ticket-form-grid">
-              <div className="form-group full-width">
+              <div className="form-group">
                 <label className="form-label required" htmlFor="address">Address</label>
                 <input id="address" className="form-input" value={form.address} onChange={(event) => update("address", event.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="address2">Address 2</label>
+                <input id="address2" className="form-input" value={form.address2} onChange={(event) => update("address2", event.target.value)} />
               </div>
             </div>
 

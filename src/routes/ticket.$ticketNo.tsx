@@ -42,6 +42,7 @@ interface TicketData {
   firstName: string;
   lastName: string;
   address: string;
+  address2: string;
   city: string;
   state: string;
   zip: string;
@@ -520,6 +521,7 @@ const DEFAULT_TICKET: TicketData = {
   firstName: "ROBERT",
   lastName: "CHANCE",
   address: "119 COUNTY RD. 4156",
+  address2: "",
   city: "DEWEYVILLE",
   state: "Texas",
   zip: "77614",
@@ -1010,6 +1012,7 @@ function TicketDetailsPage() {
           firstName: centralTicket.firstName || "",
           lastName: centralTicket.lastName || "",
           address: centralTicket.address || "",
+          address2: (centralTicket as any).address2 || "",
           city: centralTicket.city,
           state: centralTicket.state || "",
           zip: centralTicket.zip || "",
@@ -1081,6 +1084,7 @@ function TicketDetailsPage() {
         firstName: ticket.firstName,
         lastName: ticket.lastName,
         address: ticket.address,
+        address2: ticket.address2,
         city: ticket.city,
         state: ticket.state,
         zip: ticket.zip,
@@ -1131,6 +1135,7 @@ function TicketDetailsPage() {
       firstName: editedCustomerInfo.firstName ?? ticket.firstName,
       lastName: editedCustomerInfo.lastName ?? ticket.lastName,
       address: editedCustomerInfo.address ?? ticket.address,
+      address2: editedCustomerInfo.address2 ?? ticket.address2,
       city: editedCustomerInfo.city ?? ticket.city,
       state: editedCustomerInfo.state ?? ticket.state,
       zip: editedCustomerInfo.zip ?? ticket.zip,
@@ -2071,6 +2076,10 @@ function TicketDetailsPage() {
                       <div className="text-white mt-1">{ticket.address}</div>
                     </div>
                     <div>
+                      <label className="text-slate-500 font-semibold">Address 2</label>
+                      <div className="text-white mt-1">{ticket.address2 || "—"}</div>
+                    </div>
+                    <div>
                       <label className="text-slate-500 font-semibold">State/Zip</label>
                       <div className="text-white mt-1">{ticket.state} {ticket.zip}</div>
                     </div>
@@ -2095,6 +2104,15 @@ function TicketDetailsPage() {
                         type="text"
                         value={editedCustomerInfo.address || ""}
                         onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, address: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Address 2</label>
+                      <input
+                        type="text"
+                        value={editedCustomerInfo.address2 || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, address2: e.target.value })}
                         className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
                       />
                     </div>
@@ -3463,6 +3481,11 @@ function TicketDetailsPage() {
                   Add
                 </button>
               </div>
+            </div>
+
+            {/* Service Photos */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+              <TicketPhotos ticketNo={ticketNo} category="service" title="Service Photos" />
             </div>
           </div>
         )}
