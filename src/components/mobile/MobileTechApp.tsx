@@ -58,6 +58,14 @@ function fmtAddress(t: Ticket): string {
   return parts.join(", ");
 }
 
+// Initials for the map badge, matching the Work Planner web style (e.g. "JR").
+function getInitials(value: string | null | undefined): string {
+  if (!value) return "U";
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  return value.slice(0, 2).toUpperCase();
+}
+
 export function MobileTechApp() {
   const { email, displayName, role, companyId, allowedLocations, logout } = useAuth();
   const navigate = useNavigate();
@@ -432,6 +440,7 @@ function RouteMapView({
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const dirRendererRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [stops, setStops] = useState<Array<{ ticket: Ticket; pos: { lat: number; lng: number } }>>([]);
@@ -469,7 +478,7 @@ function RouteMapView({
         });
         dirRendererRef.current = new g.maps.DirectionsRenderer({
           map: mapRef.current,
-          suppressMarkers: false,
+          suppressMarkers: true,
           polylineOptions: { strokeColor: "#5b7eff", strokeWeight: 5 },
         });
       }
@@ -500,6 +509,38 @@ function RouteMapView({
         if (pos) resolved.push({ ticket: t, pos });
       }
       setStops(resolved);
+
+      // Place Work-Planner-style badge markers (rounded box + pointer, white
+      // border, technician initials + stop number) for each stop.
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+      const badgeColors = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899"];
+      resolved.forEach((s, i) => {
+        const initials = getInitials(s.ticket.technician);
+        const svgMarker = {
+          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+          fillColor: badgeColors[i % badgeColors.length],
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+          scale: 1.8,
+          anchor: new g.maps.Point(20, 22),
+          labelOrigin: new g.maps.Point(20, 10),
+        };
+        const marker = new g.maps.Marker({
+          map: mapRef.current,
+          position: s.pos,
+          title: `${s.ticket.ticketNo} - ${s.ticket.customer}`,
+          icon: svgMarker,
+          label: {
+            text: `${initials}${i + 1}`,
+            color: "#ffffff",
+            fontSize: "13px",
+            fontWeight: "bold",
+          },
+        });
+        markersRef.current.push(marker);
+      });
 
       if (resolved.length === 0) {
         setRouting(false);
@@ -559,15 +600,9 @@ function RouteMapView({
             setLegs(legInfo);
           } else {
             setError("Could not build a driving route. Showing stops only.");
+            // Badge markers are already placed; just fit the map to them.
             const bounds = new g.maps.LatLngBounds();
-            resolved.forEach((s, i) => {
-              new g.maps.Marker({
-                position: s.pos,
-                map: mapRef.current,
-                label: { text: String(i + 1), color: "#fff", fontWeight: "700" },
-              });
-              bounds.extend(s.pos);
-            });
+            resolved.forEach((s) => bounds.extend(s.pos));
             mapRef.current.fitBounds(bounds);
           }
           setRouting(false);
@@ -594,6 +629,8 @@ function RouteMapView({
 
     return () => {
       cancelled = true;
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickets, origin]);
