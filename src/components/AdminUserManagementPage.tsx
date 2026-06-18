@@ -17,6 +17,7 @@ interface NewUserFormData {
   assignedBranch: string;
   branchAccess: string;
   poInitials: string;
+  phoneNumber: string;
   requiredCheckIn: string;
   requiredCheckOut: string;
   selectedOffDays: number[];
@@ -75,6 +76,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     assignedBranch: "",
     branchAccess: "",
     poInitials: "",
+    phoneNumber: "",
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
     selectedOffDays: [5, 6], // Saturday and Sunday by default
@@ -168,7 +170,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
         role: newUserForm.userType as any,
-        phoneNumber: "",
+        phoneNumber: newUserForm.phoneNumber,
         department: "",
         managerName: newUserForm.manager,
         assignedBranch: newUserForm.assignedBranch,
@@ -206,6 +208,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         assignedBranch: "",
         branchAccess: "",
         poInitials: "",
+        phoneNumber: "",
         requiredCheckIn: "08:00",
         requiredCheckOut: "17:00",
         selectedOffDays: [5, 6],
@@ -494,6 +497,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       value={newUserForm.poInitials}
                       onChange={(e) => handleAddUserFormChange("poInitials", e.target.value.toUpperCase())}
                       maxLength={5}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Phone Number</span>
+                    <input 
+                      type="tel"
+                      placeholder="Enter phone number" 
+                      className="glass-input w-full text-[11px] px-2 py-1"
+                      value={newUserForm.phoneNumber}
+                      onChange={(e) => handleAddUserFormChange("phoneNumber", e.target.value)}
                     />
                   </label>
                 </div>
