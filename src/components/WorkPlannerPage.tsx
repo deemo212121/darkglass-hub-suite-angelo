@@ -161,7 +161,10 @@ function getSelectedTechRoster(location: string) {
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
-  const { email, ready } = useAuth();
+  const { email, ready, allowedLocations } = useAuth();
+  const locationChoices = allowedLocations === null
+    ? (LOCATION_OPTIONS as unknown as string[])
+    : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
   const [location, setLocation] = useState("");
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
@@ -576,7 +579,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
               <div className="control-select-wrap">
                 <select id="locationSelect" className="control-select" value={location} onChange={(event) => setLocation(event.target.value)}>
                   <option value="" disabled>Select location</option>
-                  {LOCATION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                  {locationChoices.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
                 <ChevronDown className="control-select-chevron h-3.5 w-3.5" />
               </div>

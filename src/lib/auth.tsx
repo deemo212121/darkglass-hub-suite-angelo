@@ -16,6 +16,9 @@ type AuthState = {
   uid: string | null;
   displayName: string | null;
   isActive: boolean;
+  // Locations this user may access (from Work Plan). null = no restriction
+  // (unrestricted role or no plan set). Empty array = restricted to nothing.
+  allowedLocations: string[] | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   ready: boolean;
@@ -93,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
+  const [allowedLocations, setAllowedLocations] = useState<string[] | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -176,6 +180,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setRole(sbProfile.role);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
+                  // Compute location access from the work plan (restricted roles only).
+                  try {
+                    const { accessibleLocations, isLocationRestrictedRole } = await import("./workPlan");
+                    if (isLocationRestrictedRole(sbProfile.role)) {
+                      setAllowedLocations(accessibleLocations(sbProfile.workPlan as any));
+                    } else {
+                      setAllowedLocations(null); // unrestricted
+                    }
+                  } catch {
+                    setAllowedLocations(null);
+                  }
                   if (sbProfile.email) initializeUserData(sbProfile.email);
                   // Background: import any legacy Firebase-only users for this
                   // company into Supabase so they can use username login too.
@@ -224,6 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setRole(null);
             setDisplayName(null);
             setIsActive(false);
+            setAllowedLocations(null);
           }
           
           setReady(true);
@@ -295,6 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       uid,
       displayName,
       isActive,
+      allowedLocations,
       login, 
       logout, 
       ready,

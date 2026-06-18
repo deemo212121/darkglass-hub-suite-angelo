@@ -6,6 +6,7 @@ import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { getUserManagementRecord } from "@/lib/user-management";
 import { LOCATIONS, ALL_TECHNICIANS } from "@/lib/locations";
+import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { useAuth } from "@/lib/auth";
 
@@ -371,6 +372,8 @@ function UserDetailsPage() {
     offDays: [] as number[],
     isActive: true,
   });
+  // Work plan grid state (per-location weekday/weekend + per-day slot).
+  const [workPlan, setWorkPlan] = useState<WorkPlan>({});
 
   useEffect(() => {
     if (!ready) return;
@@ -406,6 +409,8 @@ function UserDetailsPage() {
           offDays: Array.isArray(p.off_days) ? p.off_days : [],
           isActive: p.is_active,
         });
+        const { normalizeWorkPlan } = await import("@/lib/workPlan");
+        setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
       } catch (err) {
         console.error("Failed to load user:", err);
         if (!cancelled) setNotFoundUser(true);
@@ -427,6 +432,26 @@ function UserDetailsPage() {
         : [...prev.offDays, dayIdx],
     }));
 
+  const setPlanFlag = (loc: string, flag: "weekday" | "weekend", value: boolean) =>
+    setWorkPlan((prev) => ({
+      ...prev,
+      [loc]: { ...prev[loc], [flag]: value },
+    }));
+
+  const setPlanDay = (loc: string, day: string, value: string) =>
+    setWorkPlan((prev) => ({
+      ...prev,
+      [loc]: { ...prev[loc], days: { ...prev[loc].days, [day]: value as any } },
+    }));
+
+  // Bulk toggle a column (Weekday/Weekend) across all locations.
+  const setAllPlanFlag = (flag: "weekday" | "weekend", value: boolean) =>
+    setWorkPlan((prev) => {
+      const next = { ...prev };
+      for (const loc of Object.keys(next)) next[loc] = { ...next[loc], [flag]: value };
+      return next;
+    });
+
   const handleSave = async () => {
     if (!profileId) return;
     setSaving(true);
@@ -444,6 +469,7 @@ function UserDetailsPage() {
         poInitials: form.poInitials,
         smsStatus: form.smsStatus,
         offDays: form.offDays,
+        workPlan: workPlan,
         isActive: form.isActive,
       });
       setStatus("Saved.");
@@ -615,6 +641,71 @@ function UserDetailsPage() {
                     <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4 text-xs text-slate-400">
                       <p className="font-semibold text-slate-300 mb-1">Password requirements (for new passwords)</p>
                       minimum of 8 characters · lowercase letters · at least one uppercase letter · at least one number · must not include name, phone #, or ID.
+                    </div>
+                  </div>
+                ) : activeTab === "Work Plan" ? (
+                  <div className="space-y-4">
+                    <p className="text-sm text-slate-400">
+                      Check Weekday/Weekend per location to grant this user access to that
+                      location's tickets and work map. Unchecked locations are hidden from them.
+                    </p>
+                    <div className="overflow-x-auto border border-white/10 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-blue-900/40 border-b border-blue-500/30">
+                            <th className="px-3 py-2 text-left font-semibold text-blue-300">Location</th>
+                            <th className="px-3 py-2 text-center font-semibold text-blue-300">
+                              <div>Weekday</div>
+                              <div className="flex justify-center gap-1 mt-1 text-[10px] font-normal">
+                                <button type="button" onClick={() => setAllPlanFlag("weekday", true)} className="text-green-400 hover:underline">all</button>
+                                <span className="text-slate-600">/</span>
+                                <button type="button" onClick={() => setAllPlanFlag("weekday", false)} className="text-red-400 hover:underline">none</button>
+                              </div>
+                            </th>
+                            <th className="px-3 py-2 text-center font-semibold text-blue-300">
+                              <div>Weekend</div>
+                              <div className="flex justify-center gap-1 mt-1 text-[10px] font-normal">
+                                <button type="button" onClick={() => setAllPlanFlag("weekend", true)} className="text-green-400 hover:underline">all</button>
+                                <span className="text-slate-600">/</span>
+                                <button type="button" onClick={() => setAllPlanFlag("weekend", false)} className="text-red-400 hover:underline">none</button>
+                              </div>
+                            </th>
+                            {WORK_PLAN_DAYS.map((d) => (
+                              <th key={d} className="px-2 py-2 text-center font-semibold text-blue-300">{d}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(LOCATIONS as unknown as string[]).map((loc) => {
+                            const plan = workPlan[loc];
+                            if (!plan) return null;
+                            const enabled = plan.weekday || plan.weekend;
+                            return (
+                              <tr key={loc} className={`border-b border-white/5 ${enabled ? "" : "opacity-60"}`}>
+                                <td className="px-3 py-2 font-medium text-slate-200 whitespace-nowrap">{loc}</td>
+                                <td className="px-3 py-2 text-center">
+                                  <input type="checkbox" checked={plan.weekday} onChange={(e) => setPlanFlag(loc, "weekday", e.target.checked)} />
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <input type="checkbox" checked={plan.weekend} onChange={(e) => setPlanFlag(loc, "weekend", e.target.checked)} />
+                                </td>
+                                {WORK_PLAN_DAYS.map((day) => (
+                                  <td key={day} className="px-2 py-2">
+                                    <select
+                                      value={plan.days[day] ?? "AM + PM"}
+                                      onChange={(e) => setPlanDay(loc, day, e.target.value)}
+                                      disabled={!enabled}
+                                      className="rounded-md border border-white/15 bg-slate-950/90 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-40"
+                                    >
+                                      {SLOT_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 ) : (

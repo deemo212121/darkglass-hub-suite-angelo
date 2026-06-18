@@ -42,6 +42,7 @@ export interface ProfileRow {
   email_report_location: string | null;
   sms_status: string | null;
   off_days: number[] | null;
+  work_plan: Record<string, any> | null;
   is_active: boolean;
   created_at: string;
 }
@@ -66,10 +67,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   role: string;
   displayName: string;
   isActive: boolean;
+  workPlan: Record<string, any> | null;
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, companies:company_id (legacy_code)")
+    .select("email, role, display_name, is_active, work_plan, companies:company_id (legacy_code)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -86,6 +88,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     role: data.role,
     displayName: data.display_name ?? data.email,
     isActive: data.is_active,
+    workPlan: (data as any).work_plan ?? null,
   };
 }
 
@@ -244,7 +247,7 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, is_active, created_at")
     .ilike("username", username)
     .maybeSingle();
   if (error) {
@@ -274,6 +277,7 @@ export async function updateCompanyUser(
     emailReportLocation: string;
     smsStatus: string;
     offDays: number[];
+    workPlan: Record<string, any>;
     isActive: boolean;
   }>
 ): Promise<void> {
@@ -292,6 +296,7 @@ export async function updateCompanyUser(
   if (fields.emailReportLocation !== undefined) payload.email_report_location = fields.emailReportLocation;
   if (fields.smsStatus !== undefined) payload.sms_status = fields.smsStatus;
   if (fields.offDays !== undefined) payload.off_days = fields.offDays;
+  if (fields.workPlan !== undefined) payload.work_plan = fields.workPlan;
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
 
   const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);

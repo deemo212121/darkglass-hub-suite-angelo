@@ -188,7 +188,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   }, []);
 
   const SAMPLE_TICKETS: TicketItem[] = tickets;
-  const { email } = useAuth();
+  const { email, allowedLocations } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
@@ -281,14 +281,17 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const filteredItems = useMemo(() => {
     const query = searchQuery.toLowerCase();
     return SAMPLE_TICKETS.filter((ticket) => {
+      // Work-plan location restriction: if allowedLocations is set (non-null),
+      // only show tickets whose location is in the allowed set.
+      const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
       const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((value) => value.toLowerCase().includes(query));
       const matchesRepairStatus = !repairStatusFilter || ticket.status === repairStatusFilter;
       const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.schedule, startDateFilter, endDateFilter);
       const matchesLocation = !locationFilter || ticket.location === locationFilter;
       const matchesSource = !ticketSourceFilter || (ticket.ticketSource || "") === ticketSourceFilter;
-      return matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource;
+      return matchesAccess && matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource;
     });
-  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, tickets]);
+  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, tickets, allowedLocations]);
 
   const toggleItemSelection = (ticketNo: string) => {
     const newSelected = new Set(selectedItems);

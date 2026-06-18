@@ -95,7 +95,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
-  const { ready: authReady } = useAuth();
+  const { ready: authReady, allowedLocations } = useAuth();
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
 
   // Load tickets from Supabase (company-scoped via RLS), gated on auth ready.
@@ -105,7 +105,11 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       try {
         const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
         if (!cancelled) {
-          setTickets(rows);
+          // Work-plan location restriction: hide tickets outside allowed locations.
+          const scoped = allowedLocations === null
+            ? rows
+            : rows.filter((t: any) => allowedLocations.includes(normalizeLocationName(t.location || t.customer_city || t.city || "")));
+          setTickets(scoped);
           setReady(true);
         }
       } catch (err) {
@@ -118,7 +122,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     };
     if (authReady) load();
     return () => { cancelled = true; };
-  }, [authReady]);
+  }, [authReady, allowedLocations]);
 
   useEffect(() => {
     let cancelled = false;
