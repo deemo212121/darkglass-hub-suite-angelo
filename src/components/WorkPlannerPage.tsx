@@ -625,6 +625,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 <div className="tech-header">
                   {tech} <span className="tech-header-count">({slots.flat().length})</span>
                 </div>
+                <div className="time-slot-grid">
                 {TIME_SLOTS.map((slot, slotIndex) => {
                   const tickets = slots[slotIndex] || [];
                   return (
@@ -674,6 +675,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                     </div>
                   );
                 })}
+                </div>
               </div>
             ))
           )}

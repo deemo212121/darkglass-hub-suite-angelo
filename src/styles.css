@@ -1059,10 +1059,20 @@
     font-weight: 700;
   }
 
+  .time-slot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .time-slot {
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
     padding: 0.75rem;
     min-height: 92px;
+  }
+  /* Right column: no trailing right border */
+  .time-slot-grid .time-slot:nth-child(even) {
+    border-right: none;
   }
 
   .time-slot-label {
