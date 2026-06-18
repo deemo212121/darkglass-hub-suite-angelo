@@ -33,6 +33,7 @@ function rowToTicket(row: any): Ticket {
     location: row.location ?? "",
     model: row.model ?? "",
     internalNote: row.internal_note ?? "",
+    problemDescription: row.problem_description ?? "",
     diagnosed: row.diagnosed ? "Y" : "N",
     technician: row.technician ?? "",
     customerPref: row.customer_pref ? "Y" : "N",
@@ -195,6 +196,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
       calls: Number(input.calls ?? 0),
       delay: Number(input.delay ?? 0),
       internal_note: input.internalNote ?? null,
+      problem_description: input.problemDescription ?? null,
       fake_ticket: input.fakeTicket ?? false,
       original_ticket_no: input.originalTicketNo ?? null,
     })
@@ -337,6 +339,23 @@ export async function updateTicketCustomer(
       console.error("updateTicketCustomer link error:", linkErr.message);
       throw new Error(linkErr.message);
     }
+  }
+}
+
+/**
+ * Update editable ticket-level fields (e.g. problem description, internal note).
+ */
+export async function updateTicketFields(
+  ticketNo: string,
+  fields: { problemDescription?: string; internalNote?: string }
+): Promise<void> {
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (fields.problemDescription !== undefined) payload.problem_description = fields.problemDescription;
+  if (fields.internalNote !== undefined) payload.internal_note = fields.internalNote;
+  const { error } = await supabase.from("tickets").update(payload).eq("ticket_no", ticketNo);
+  if (error) {
+    console.error("updateTicketFields error:", error.message);
+    throw new Error(error.message);
   }
 }
 

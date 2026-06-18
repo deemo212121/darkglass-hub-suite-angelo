@@ -17,12 +17,14 @@ import {
 } from "@/lib/ticketData";
 import {
   getTicketByNumber as sbGetTicketByNumber,
+  getCompanyTickets as sbGetCompanyTickets,
   getTicketVisits as sbGetTicketVisits,
   addTicketVisit as sbAddTicketVisit,
   updateTicketVisit as sbUpdateTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
   updateTicketAssignment as sbUpdateTicketAssignment,
   updateTicketCustomer as sbUpdateTicketCustomer,
+  updateTicketFields as sbUpdateTicketFields,
   getTicketParts as sbGetTicketParts,
   addTicketPart as sbAddTicketPart,
   updateTicketPart as sbUpdateTicketPart,
@@ -807,6 +809,18 @@ function TicketDetailsPage() {
   const [visitsLoaded, setVisitsLoaded] = useState(false);
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
   const [partRowsLoaded, setPartRowsLoaded] = useState(false);
+  // All company tickets (for the Related Tickets matcher on the tracking tab).
+  const [allCompanyTickets, setAllCompanyTickets] = useState<any[]>([]);
+
+  // Load all company tickets once so we can find related ones.
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    sbGetCompanyTickets()
+      .then((rows) => { if (!cancelled) setAllCompanyTickets(rows as any[]); })
+      .catch((err) => { console.error("Failed to load company tickets:", err); });
+    return () => { cancelled = true; };
+  }, [authReady]);
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [partDraft, setPartDraft] = useState<PartTransactionDraft>(createEmptyPartDraft());
   const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
@@ -827,6 +841,9 @@ function TicketDetailsPage() {
   // Edit mode state for customer information
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
+  // Edit mode state for problem description
+  const [isEditingProblem, setIsEditingProblem] = useState(false);
+  const [editedProblem, setEditedProblem] = useState("");
 
   // Edit mode state for product information
   const [isEditingProductInfo, setIsEditingProductInfo] = useState(false);
@@ -1031,7 +1048,7 @@ function TicketDetailsPage() {
           callType: centralTicket.type || "",
           callStatus: centralTicket.status,
           postingDate: centralTicket.created,
-          problemDescription: centralTicket.diagnosed || centralTicket.internalNote,
+          problemDescription: centralTicket.problemDescription || centralTicket.internalNote || "",
           scheduleDate: centralTicket.schedule,
           schedulePeriod: "",
           technician: centralTicket.technician,
@@ -1059,6 +1076,42 @@ function TicketDetailsPage() {
   }, [ticketNo, authReady]);
 
   const ticket = ticketData;
+
+  // Compute related tickets: any OTHER company ticket sharing a key field with
+  // this one (email, phone, zip, customer name, address, model, or serial).
+  // The "Matched" column lists which fields matched.
+  const relatedTickets = useMemo(() => {
+    if (!ticket) return [] as Array<any & { _matched: string[] }>;
+    const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+    const cur = {
+      email: norm(ticket.email),
+      phone: norm(ticket.homePhone || (ticket as any).phone),
+      cell: norm(ticket.cellPhone),
+      zip: norm(ticket.zip),
+      name: norm([ticket.firstName, ticket.lastName].filter(Boolean).join(" ") || (ticket as any).customer),
+      address: norm(ticket.address),
+      model: norm(ticket.model),
+      serial: norm((ticket as any).serial),
+    };
+    const out: Array<any> = [];
+    for (const t of allCompanyTickets) {
+      if (!t || t.ticketNo === ticket.ticketNo) continue;
+      const matched: string[] = [];
+      const tName = norm([t.firstName, t.lastName].filter(Boolean).join(" ") || t.customer);
+      const tPhone = norm(t.phone || t.homePhone);
+      const tCell = norm(t.secondPhone || t.cellPhone);
+      if (cur.email && norm(t.email) === cur.email) matched.push("Same Email");
+      if (cur.phone && (tPhone === cur.phone || tCell === cur.phone)) matched.push("Same Phone");
+      if (cur.cell && cur.cell !== cur.phone && (tPhone === cur.cell || tCell === cur.cell)) matched.push("Same Phone");
+      if (cur.name && tName === cur.name) matched.push("Same Name");
+      if (cur.address && norm(t.address) === cur.address) matched.push("Same Address");
+      if (cur.zip && norm(t.zip) === cur.zip && cur.name && tName === cur.name) matched.push("Same Zip+Name");
+      if (cur.model && norm(t.model) === cur.model && cur.name && tName === cur.name) matched.push("Same Model");
+      if (cur.serial && norm(t.serial) === cur.serial) matched.push("Same Serial");
+      if (matched.length) out.push({ ...t, _matched: Array.from(new Set(matched)) });
+    }
+    return out;
+  }, [ticket, allCompanyTickets]);
 
   const addServicerNote = () => {
     if (!ticket) return;
@@ -1154,6 +1207,40 @@ function TicketDetailsPage() {
   const cancelEditingCustomerInfo = () => {
     setIsEditingCustomerInfo(false);
     setEditedCustomerInfo({});
+  };
+
+  const startEditingProblem = () => {
+    if (ticket) {
+      setEditedProblem(ticket.problemDescription || "");
+      setIsEditingProblem(true);
+    }
+  };
+
+  const saveProblemDescription = () => {
+    if (!ticket) return;
+    const newValue = editedProblem.trim();
+    const oldValue = ticket.problemDescription || "";
+    if (newValue !== oldValue) {
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Updated problem description",
+        field: "Problem Description",
+        before: oldValue,
+        after: newValue,
+      });
+      (ticket as any).problemDescription = newValue;
+      updateTicket(ticketNo, { problemDescription: newValue } as any);
+      sbUpdateTicketFields(ticketNo, { problemDescription: newValue }).catch((err) => {
+        console.error("Failed to save problem description:", err);
+        alert(`Failed to save problem description: ${err instanceof Error ? err.message : "Unknown error"}`);
+      });
+    }
+    setIsEditingProblem(false);
+  };
+
+  const cancelEditingProblem = () => {
+    setIsEditingProblem(false);
+    setEditedProblem("");
   };
 
   const startEditingProductInfo = () => {
@@ -2400,10 +2487,45 @@ function TicketDetailsPage() {
 
               {/* Problem Description */}
               <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Problem Description</h4>
-                <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm text-slate-300">
-                  {ticket.problemDescription}
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-slate-300">Problem Description</h4>
+                  {!isEditingProblem ? (
+                    <button
+                      onClick={startEditingProblem}
+                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors"
+                    >
+                      Edit
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveProblemDescription}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEditingProblem}
+                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
+                {!isEditingProblem ? (
+                  <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm text-slate-300">
+                    {ticket.problemDescription || "—"}
+                  </div>
+                ) : (
+                  <textarea
+                    value={editedProblem}
+                    onChange={(e) => setEditedProblem(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                    placeholder="Describe the problem..."
+                  />
+                )}
               </div>
 
               {/* Customer Notes */}
@@ -2449,9 +2571,6 @@ function TicketDetailsPage() {
                   </button>
                 </div>
               </div>
-
-              {/* Photos */}
-              <TicketPhotos ticketNo={ticketNo} />
             </div>
           </div>
         )}
@@ -2462,7 +2581,7 @@ function TicketDetailsPage() {
             <div>
               <h4 className="font-semibold text-slate-300 mb-4">Related Tickets</h4>
               <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3 mb-3 text-sm text-slate-400">
-                1 distinct record found
+                {relatedTickets.length} distinct record{relatedTickets.length === 1 ? "" : "s"} found
               </div>
               <div className="overflow-x-auto border border-white/10 rounded-lg">
                 <table className="w-full text-sm">
@@ -2484,21 +2603,41 @@ function TicketDetailsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="border-b border-white/5 hover:bg-white/5">
-                      <td className="px-4 py-3 font-mono text-blue-400">039873174136</td>
-                      <td className="px-4 py-3 text-slate-300">Same Email</td>
-                      <td className="px-4 py-3 text-slate-300">SQUARE TRADE</td>
-                      <td className="px-4 py-3 text-slate-300">Robert Chance</td>
-                      <td className="px-4 py-3 text-slate-300">77614</td>
-                      <td className="px-4 py-3 text-slate-300">409.221.5089</td>
-                      <td className="px-4 py-3 text-slate-300">IH</td>
-                      <td className="px-4 py-3 text-slate-300">2026-05-28 09:30 AM</td>
-                      <td className="px-4 py-3 text-slate-300">CL-Claimed</td>
-                      <td className="px-4 py-3 text-slate-300">GENERAL ELECTRIC</td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-300">GTX33EASK1WW</td>
-                      <td className="px-4 py-3 text-slate-300">Danny Thornton</td>
-                      <td className="px-4 py-3 text-slate-300">05/20/26</td>
-                    </tr>
+                    {relatedTickets.length === 0 ? (
+                      <tr>
+                        <td colSpan={13} className="px-4 py-6 text-center text-slate-500">
+                          No related tickets found.
+                        </td>
+                      </tr>
+                    ) : (
+                      relatedTickets.map((t) => (
+                        <tr key={t.ticketNo} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-4 py-3 font-mono text-blue-400">
+                            <a href={`/ticket/${t.ticketNo}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                              {t.ticketNo}
+                            </a>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(t._matched as string[]).map((m) => (
+                                <span key={m} className="rounded-full bg-green-500/15 text-green-300 text-xs px-2 py-0.5 whitespace-nowrap">{m}</span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-slate-300">{t.ticketSource || t.manufacturer || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.customer || [t.firstName, t.lastName].filter(Boolean).join(" ") || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.zip || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.phone || t.homePhone || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.warranty || t.type || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.schedule || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.status || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.manufacturer || "—"}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-slate-300">{t.model || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.technician || "—"}</td>
+                          <td className="px-4 py-3 text-slate-300">{t.created || "—"}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

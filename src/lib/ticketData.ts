@@ -21,6 +21,7 @@ export interface Ticket {
   location: string;
   model: string;
   internalNote: string;
+  problemDescription?: string;
   diagnosed: string;
   technician: string;
   customerPref: string;
