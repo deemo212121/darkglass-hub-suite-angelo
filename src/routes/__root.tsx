@@ -85,14 +85,16 @@ function RootComponent() {
   const location = useLocation();
   const isLandingPage = location.pathname === "/landing" || location.pathname === "/announcements";
   const isSuperAdminPage = location.pathname === "/superadmin";
+  const isMobilePage = location.pathname === "/mobile";
+  const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage;
   
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SystemDataInitializer />
-        {!isLandingPage && !isSuperAdminPage && <AnnouncementBanner />}
+        {!hideChrome && <AnnouncementBanner />}
         <Outlet />
-        {!isLandingPage && !isSuperAdminPage && <TicketSearchFab />}
+        {!hideChrome && <TicketSearchFab />}
       </AuthProvider>
     </QueryClientProvider>
   );

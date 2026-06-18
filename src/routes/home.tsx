@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
+import { shouldUseMobile } from "@/lib/device";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -27,6 +28,12 @@ function Home() {
     // Redirect SuperAdmin to their dashboard (case-insensitive check)
     if (role && role.toUpperCase() === "SUPERADMIN") {
       navigate({ to: "/superadmin", replace: true });
+      return;
+    }
+
+    // Phone users (no desktop override) get the mobile ticket experience.
+    if (shouldUseMobile()) {
+      navigate({ to: "/mobile", replace: true });
       return;
     }
   }, [ready, email, role, navigate]);

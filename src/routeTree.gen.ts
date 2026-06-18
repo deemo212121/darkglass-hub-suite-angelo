@@ -15,6 +15,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicepowerTestRouteImport } from './routes/servicepower-test'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as MobileRouteImport } from './routes/mobile'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as FirebaseSetupRouteImport } from './routes/firebase-setup'
@@ -56,6 +57,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MobileRoute = MobileRouteImport.update({
+  id: '/mobile',
+  path: '/mobile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LandingRoute = LandingRouteImport.update({
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -145,6 +152,7 @@ export interface FileRoutesByTo {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -166,6 +174,7 @@ export interface FileRoutesById {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/landing': typeof LandingRoute
+  '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
@@ -188,6 +197,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/landing'
+    | '/mobile'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -208,6 +218,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/landing'
+    | '/mobile'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -228,6 +239,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/landing'
+    | '/mobile'
     | '/privacy'
     | '/profile'
     | '/servicepower-test'
@@ -249,6 +261,7 @@ export interface RootRouteChildren {
   FirebaseSetupRoute: typeof FirebaseSetupRoute
   HomeRoute: typeof HomeRoute
   LandingRoute: typeof LandingRoute
+  MobileRoute: typeof MobileRoute
   PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
   ServicepowerTestRoute: typeof ServicepowerTestRoute
@@ -304,6 +317,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mobile': {
+      id: '/mobile'
+      path: '/mobile'
+      fullPath: '/mobile'
+      preLoaderRoute: typeof MobileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/landing': {
@@ -421,6 +441,7 @@ const rootRouteChildren: RootRouteChildren = {
   FirebaseSetupRoute: FirebaseSetupRoute,
   HomeRoute: HomeRoute,
   LandingRoute: LandingRoute,
+  MobileRoute: MobileRoute,
   PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
   ServicepowerTestRoute: ServicepowerTestRoute,
