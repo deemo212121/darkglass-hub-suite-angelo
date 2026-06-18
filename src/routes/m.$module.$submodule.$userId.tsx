@@ -5,7 +5,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { getUserManagementRecord } from "@/lib/user-management";
-import { LOCATIONS } from "@/lib/locations";
+import { LOCATIONS, ALL_TECHNICIANS } from "@/lib/locations";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { useAuth } from "@/lib/auth";
 
@@ -333,6 +333,18 @@ const ROLE_OPTIONS = [
   "Claims Manager", "Parts Manager", "BizOps Manager", "BizOps Senior Manager",
 ];
 
+const USER_TABS = [
+  "General Information",
+  "Work Plan",
+  "Billing Information",
+  "Account Information",
+  "Vehicle Information",
+  "Employee Information",
+] as const;
+
+const SMS_OPTIONS = ["SMS Available", "Chat available", "View available", "Not available"];
+const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready } = useAuth();
@@ -342,18 +354,21 @@ function UserDetailsPage() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
+  const [seqId, setSeqId] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<(typeof USER_TABS)[number]>("General Information");
   const [form, setForm] = useState({
     email: "",
     username: "",
     displayName: "",
     role: "",
     phoneNumber: "",
-    department: "",
     managerName: "",
     assignedBranch: "",
-    branchAccess: "",
+    emailReportLocation: "",
     technicianId: "",
     poInitials: "",
+    smsStatus: "Not available",
+    offDays: [] as number[],
     isActive: true,
   });
 
@@ -363,7 +378,7 @@ function UserDetailsPage() {
     (async () => {
       try {
         setLoading(true);
-        const { getProfileByUsername } = await import("@/lib/supabase/users");
+        const { getProfileByUsername, getCompanyUsers } = await import("@/lib/supabase/users");
         const p = await getProfileByUsername(userId);
         if (cancelled) return;
         if (!p) {
@@ -371,18 +386,24 @@ function UserDetailsPage() {
           return;
         }
         setProfileId(p.id);
+        try {
+          const all = await getCompanyUsers();
+          const idx = all.findIndex((u) => u.id === p.id);
+          setSeqId(idx >= 0 ? String(idx + 1) : "");
+        } catch { /* ignore */ }
         setForm({
           email: p.email || "",
           username: p.username || "",
           displayName: p.display_name || "",
           role: p.role || "",
           phoneNumber: p.phone_number || "",
-          department: p.department || "",
           managerName: p.manager_name || "",
           assignedBranch: p.assigned_branch || "",
-          branchAccess: p.branch_access || "",
+          emailReportLocation: p.email_report_location || "",
           technicianId: p.technician_id || "",
           poInitials: p.po_initials || "",
+          smsStatus: p.sms_status || "Not available",
+          offDays: Array.isArray(p.off_days) ? p.off_days : [],
           isActive: p.is_active,
         });
       } catch (err) {
@@ -398,6 +419,14 @@ function UserDetailsPage() {
   const update = (field: keyof typeof form, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
+  const toggleOffDay = (dayIdx: number) =>
+    setForm((prev) => ({
+      ...prev,
+      offDays: prev.offDays.includes(dayIdx)
+        ? prev.offDays.filter((d) => d !== dayIdx)
+        : [...prev.offDays, dayIdx],
+    }));
+
   const handleSave = async () => {
     if (!profileId) return;
     setSaving(true);
@@ -408,12 +437,13 @@ function UserDetailsPage() {
         displayName: form.displayName,
         role: form.role as any,
         phoneNumber: form.phoneNumber,
-        department: form.department,
         managerName: form.managerName,
         assignedBranch: form.assignedBranch,
-        branchAccess: form.branchAccess,
+        emailReportLocation: form.emailReportLocation,
         technicianId: form.technicianId,
         poInitials: form.poInitials,
+        smsStatus: form.smsStatus,
+        offDays: form.offDays,
         isActive: form.isActive,
       });
       setStatus("Saved.");
@@ -424,14 +454,18 @@ function UserDetailsPage() {
     }
   };
 
-  const field = (label: string, key: keyof typeof form, opts?: { type?: string }) => (
+  const labelCls = "block text-xs uppercase tracking-[0.08em] text-slate-400";
+  const inputCls = "w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500";
+  const readonlyCls = "w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400";
+
+  const textField = (label: string, key: keyof typeof form, opts?: { type?: string; note?: string }) => (
     <label className="space-y-1.5 text-sm">
-      <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">{label}</span>
+      <span className={labelCls}>{label}{opts?.note ? <span className="ml-1 normal-case text-[10px] text-slate-500">{opts.note}</span> : null}</span>
       <input
         type={opts?.type ?? "text"}
         value={String(form[key] ?? "")}
         onChange={(e) => update(key, e.target.value)}
-        className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+        className={inputCls}
       />
     </label>
   );
@@ -462,28 +496,28 @@ function UserDetailsPage() {
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                   <div>
                     <h1 className="text-3xl font-bold tracking-tight">{form.displayName || form.username}</h1>
                     <p className="mt-1 text-sm text-slate-400">{form.email}</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={form.isActive}
-                        onChange={(e) => update("isActive", e.target.checked)}
-                      />
-                      Active
-                    </label>
+                  <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-50">
+                    {saving ? "Saving…" : "Save Changes"}
+                  </button>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex flex-wrap gap-1 border-b border-white/10 mb-6">
+                  {USER_TABS.map((tab) => (
                     <button
-                      onClick={handleSave}
-                      disabled={saving}
-                      className="btn btn-primary disabled:opacity-50"
+                      key={tab}
+                      type="button"
+                      onClick={() => setActiveTab(tab)}
+                      className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition ${activeTab === tab ? "bg-blue-500/20 text-white border-b-2 border-blue-400" : "text-slate-400 hover:text-white"}`}
                     >
-                      {saving ? "Saving…" : "Save Changes"}
+                      {tab}
                     </button>
-                  </div>
+                  ))}
                 </div>
 
                 {status && (
@@ -492,35 +526,103 @@ function UserDetailsPage() {
                   </div>
                 )}
 
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <label className="space-y-1.5 text-sm">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Username</span>
-                    <input value={form.username} disabled className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400" />
-                  </label>
-                  <label className="space-y-1.5 text-sm">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
-                    <input value={form.email} disabled className="w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400" />
-                  </label>
-                  {field("Display Name", "displayName")}
-                  <label className="space-y-1.5 text-sm">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Role</span>
-                    <select
-                      value={form.role}
-                      onChange={(e) => update("role", e.target.value)}
-                      className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                    >
-                      {!ROLE_OPTIONS.includes(form.role) && form.role && <option value={form.role}>{form.role}</option>}
-                      {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </label>
-                  {field("Phone Number", "phoneNumber")}
-                  {field("Department", "department")}
-                  {field("Manager", "managerName")}
-                  {field("Assigned Branch", "assignedBranch")}
-                  {field("Branch Access", "branchAccess")}
-                  {field("Technician ID", "technicianId")}
-                  {field("PO Initials", "poInitials")}
-                </div>
+                {activeTab === "General Information" ? (
+                  <div className="space-y-6">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>User ID</span>
+                        <input value={seqId} disabled className={readonlyCls} />
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Status</span>
+                        <select value={form.isActive ? "Active" : "Inactive"} onChange={(e) => update("isActive", e.target.value === "Active")} className={inputCls}>
+                          <option>Active</option>
+                          <option>Inactive</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Login ID</span>
+                        <input value={form.username} disabled className={readonlyCls} />
+                      </label>
+
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>User Type</span>
+                        <select value={form.role} onChange={(e) => update("role", e.target.value)} className={inputCls}>
+                          {!ROLE_OPTIONS.includes(form.role) && form.role && <option value={form.role}>{form.role}</option>}
+                          {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </label>
+                      {textField("User Name", "displayName")}
+                      {textField("PO # Initial", "poInitials", { note: "(used as part of PO #)" })}
+
+                      {textField("Work Phone #", "phoneNumber", { type: "tel" })}
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Direct Manager <span className="normal-case text-[10px] text-slate-500">(mandatory for Tech)</span></span>
+                        <select value={form.managerName} onChange={(e) => update("managerName", e.target.value)} className={inputCls}>
+                          <option value="">— select —</option>
+                          {!ALL_TECHNICIANS.includes(form.managerName) && form.managerName && <option value={form.managerName}>{form.managerName}</option>}
+                          {ALL_TECHNICIANS.map((t) => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Email</span>
+                        <input value={form.email} disabled className={readonlyCls} />
+                      </label>
+
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Office Location *</span>
+                        <select value={form.assignedBranch} onChange={(e) => update("assignedBranch", e.target.value)} className={inputCls}>
+                          <option value="">— select —</option>
+                          {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>Location for Email Report</span>
+                        <select value={form.emailReportLocation} onChange={(e) => update("emailReportLocation", e.target.value)} className={inputCls}>
+                          <option value="">— select —</option>
+                          {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm">
+                        <span className={labelCls}>SMS</span>
+                        <select value={form.smsStatus} onChange={(e) => update("smsStatus", e.target.value)} className={inputCls}>
+                          {SMS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </label>
+                    </div>
+
+                    {/* Time Off Schedule */}
+                    <div>
+                      <span className={labelCls}>Time Off Schedule</span>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {WEEK_DAYS.map((d, idx) => {
+                          const off = form.offDays.includes(idx);
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => toggleOffDay(idx)}
+                              className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${off ? "bg-red-500/20 text-red-300 border border-red-500/40" : "bg-slate-800 text-slate-300 border border-white/10"}`}
+                            >
+                              {d}
+                              <span className="block text-[10px] font-normal">{off ? "OFF" : "WORK"}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4 text-xs text-slate-400">
+                      <p className="font-semibold text-slate-300 mb-1">Password requirements (for new passwords)</p>
+                      minimum of 8 characters · lowercase letters · at least one uppercase letter · at least one number · must not include name, phone #, or ID.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-white/10 bg-slate-900/40 p-8 text-center text-slate-400">
+                    <p className="text-lg font-semibold text-slate-300 mb-1">{activeTab}</p>
+                    <p className="text-sm">This section is coming soon.</p>
+                  </div>
+                )}
               </>
             )}
           </div>

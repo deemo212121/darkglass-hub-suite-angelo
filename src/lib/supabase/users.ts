@@ -39,6 +39,9 @@ export interface ProfileRow {
   branch_access: string | null;
   technician_id: string | null;
   po_initials: string | null;
+  email_report_location: string | null;
+  sms_status: string | null;
+  off_days: number[] | null;
   is_active: boolean;
   created_at: string;
 }
@@ -241,7 +244,7 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, is_active, created_at")
     .ilike("username", username)
     .maybeSingle();
   if (error) {
@@ -268,6 +271,9 @@ export async function updateCompanyUser(
     poInitials: string;
     requiredCheckIn: string;
     requiredCheckOut: string;
+    emailReportLocation: string;
+    smsStatus: string;
+    offDays: number[];
     isActive: boolean;
   }>
 ): Promise<void> {
@@ -283,6 +289,9 @@ export async function updateCompanyUser(
   if (fields.poInitials !== undefined) payload.po_initials = fields.poInitials;
   if (fields.requiredCheckIn !== undefined) payload.required_check_in = fields.requiredCheckIn;
   if (fields.requiredCheckOut !== undefined) payload.required_check_out = fields.requiredCheckOut;
+  if (fields.emailReportLocation !== undefined) payload.email_report_location = fields.emailReportLocation;
+  if (fields.smsStatus !== undefined) payload.sms_status = fields.smsStatus;
+  if (fields.offDays !== undefined) payload.off_days = fields.offDays;
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
 
   const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
