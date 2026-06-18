@@ -99,3 +99,30 @@ export async function deleteTicketPhoto(fullPath: string): Promise<void> {
   }
   await deleteObject(ref(storage, fullPath));
 }
+
+
+/**
+ * Upload a customer signature PNG (from a canvas data URL) for a ticket.
+ * Stored under companies/{companyId}/tickets/{ticketNo}/signatures/.
+ * Returns the public download URL (store this in the billing record).
+ */
+export async function uploadTicketSignature(
+  companyId: string,
+  ticketNo: string,
+  dataUrl: string
+): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  // Convert the data URL to a Blob.
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const folder = `companies/${companyId}/tickets/${ticketNo}/signatures`;
+  const objectName = `${Date.now()}-signature.png`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, blob, {
+    contentType: "image/png",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  return getDownloadURL(snapshot.ref);
+}

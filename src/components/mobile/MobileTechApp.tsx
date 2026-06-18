@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
-import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCompanyTickets, updateTicketStatus } from "@/lib/supabase/tickets";
+import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { uploadTicketSignature } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -188,6 +190,13 @@ export function MobileTechApp() {
     setView("detail");
   };
 
+  // Update a ticket's repair status (e.g. quick action Completed / Not Completed)
+  // and reflect it locally so the UI updates immediately.
+  const handleStatusChange = async (ticketNo: string, status: string) => {
+    await updateTicketStatus(ticketNo, status);
+    setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)));
+  };
+
   const headerName = displayName || email || "User";
   const companyLabel = companyId || "AH";
 
@@ -260,7 +269,13 @@ export function MobileTechApp() {
       )}
 
       {view === "detail" && activeTicket && (
-        <DetailView ticket={activeTicket} tab={detailTab} setTab={setDetailTab} />
+        <DetailView
+          ticket={activeTicket}
+          tab={detailTab}
+          setTab={setDetailTab}
+          onStatusChange={handleStatusChange}
+          companyId={companyId}
+        />
       )}
 
       {/* Footer escape to desktop */}
@@ -702,10 +717,14 @@ function DetailView({
   ticket,
   tab,
   setTab,
+  onStatusChange,
+  companyId,
 }: {
   ticket: Ticket;
   tab: DetailTab;
   setTab: (t: DetailTab) => void;
+  onStatusChange: (ticketNo: string, status: string) => Promise<void>;
+  companyId: string | null;
 }) {
   return (
     <div className="mtech-scroll">
@@ -742,9 +761,9 @@ function DetailView({
         </button>
       </div>
 
-      {tab === "details" && <DetailsTab ticket={ticket} />}
+      {tab === "details" && <DetailsTab ticket={ticket} onStatusChange={onStatusChange} />}
       {tab === "repair" && <RepairTab ticket={ticket} />}
-      {tab === "billing" && <BillingTab ticket={ticket} />}
+      {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
     </div>
   );
 }
@@ -758,9 +777,52 @@ function InfoRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function DetailsTab({ ticket }: { ticket: Ticket }) {
+function DetailsTab({
+  ticket,
+  onStatusChange,
+}: {
+  ticket: Ticket;
+  onStatusChange: (ticketNo: string, status: string) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState<"completed" | "not" | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const setStatus = async (status: string, which: "completed" | "not") => {
+    setSaving(which);
+    setMsg(null);
+    try {
+      await onStatusChange(ticket.ticketNo, status);
+      setMsg("Status updated.");
+    } catch (e: any) {
+      setMsg(e?.message || "Failed to update status.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
   return (
     <div className="mtech-panel">
+      <div className="mtech-section-title">Quick Action</div>
+      <div className="mtech-quick-actions">
+        <button
+          type="button"
+          className="mtech-qa-notcompleted"
+          disabled={saving !== null}
+          onClick={() => setStatus("OP-Reschedule Follow up", "not")}
+        >
+          {saving === "not" ? "Saving…" : "Not Completed"}
+        </button>
+        <button
+          type="button"
+          className="mtech-qa-completed"
+          disabled={saving !== null}
+          onClick={() => setStatus("CL-Completed", "completed")}
+        >
+          {saving === "completed" ? "Saving…" : "Completed"}
+        </button>
+      </div>
+      {msg && <div className="mtech-save-msg">{msg}</div>}
+
       <div className="mtech-actions">
         <button type="button" disabled title="Coming soon">On my way</button>
         <button type="button" disabled title="Coming soon">Check In</button>
@@ -772,21 +834,21 @@ function DetailsTab({ ticket }: { ticket: Ticket }) {
       <InfoRow label="Address" value={fmtAddress(ticket)} />
       <InfoRow label="Home Phone" value={ticket.phone} />
       <InfoRow label="Cell Phone" value={ticket.secondPhone} />
-      <InfoRow label="Email" value={ticket.email} />
+      <InfoRow label="Cx Email" value={ticket.email} />
 
       <div className="mtech-section-title">Product Information</div>
       <InfoRow label="Brand" value={ticket.manufacturer} />
-      <InfoRow label="Product" value={productLabel(ticket)} />
-      <InfoRow label="Model" value={ticket.model} />
-      <InfoRow label="Serial" value={ticket.serial} />
-      <InfoRow label="Warranty" value={ticket.warranty} />
+      <InfoRow label="Product Category" value={productLabel(ticket)} />
+      <InfoRow label="Model Code" value={ticket.model} />
+      <InfoRow label="Model Version" value={ticket.modelVersion} />
+      <InfoRow label="Serial No" value={ticket.serial} />
+      <InfoRow label="Cx Preferred Date" value={(ticket as any).customerPrefDate || ticket.schedule} />
+      <InfoRow label="Warranty Type" value={ticket.warranty} />
+      <InfoRow label="Redo" value={ticket.redo === "Y" ? "Yes" : "No"} />
+      {ticket.purchaseDate && <InfoRow label="Purchase Date" value={ticket.purchaseDate} />}
 
-      {ticket.problemDescription && (
-        <>
-          <div className="mtech-section-title">Problem</div>
-          <p className="mtech-problem">{ticket.problemDescription}</p>
-        </>
-      )}
+      <div className="mtech-section-title">Problem Description</div>
+      <p className="mtech-problem">{ticket.problemDescription || "—"}</p>
     </div>
   );
 }
@@ -807,44 +869,348 @@ function RepairTab({ ticket }: { ticket: Ticket }) {
   );
 }
 
-function BillingTab({ ticket }: { ticket: Ticket }) {
+const PAYMENT_METHODS = ["Cash", "Check", "Credit Card", "Ext Warranty"];
+
+const EMPTY_BILLING: TicketBilling = {
+  labor: 0,
+  laborTaxable: true,
+  parts: 0,
+  partsTaxable: true,
+  partsUsed: "",
+  diagnose: 0,
+  diagnoseTaxable: true,
+  others: 0,
+  othersTaxable: true,
+  taxRate: 0,
+  tax: 0,
+  deduction: 0,
+  total: 0,
+  customerName: "",
+  paymentMethod: "",
+  comment: "",
+  signature: "",
+};
+
+function BillingTab({ ticket, companyId }: { ticket: Ticket; companyId: string | null }) {
+  const [form, setForm] = useState<TicketBilling>(EMPTY_BILLING);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
+  const hasDrawnRef = useRef(false);
+
+  // Load existing billing for this ticket.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const existing = await getTicketBilling(ticket.ticketNo);
+        if (cancelled) return;
+        setForm(existing ?? { ...EMPTY_BILLING, customerName: ticket.customer || "" });
+      } catch (e) {
+        console.error("load billing failed", e);
+        if (!cancelled) setForm({ ...EMPTY_BILLING, customerName: ticket.customer || "" });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.ticketNo, ticket.customer]);
+
+  // Compute tax + total whenever taxable inputs change.
+  const taxableBase =
+    (form.laborTaxable ? form.labor : 0) +
+    (form.partsTaxable ? form.parts : 0) +
+    (form.diagnoseTaxable ? form.diagnose : 0) +
+    (form.othersTaxable ? form.others : 0);
+  const tax = +(taxableBase * (form.taxRate / 100)).toFixed(2);
+  const total = +(
+    form.labor + form.parts + form.diagnose + form.others + tax - form.deduction
+  ).toFixed(2);
+
+  const num = (v: string) => {
+    const n = parseFloat(v.replace(/[^0-9.\-]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // ---- Signature canvas drawing ----
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Restore existing signature if present (display only — don't mark as a
+    // freshly drawn signature, so we don't re-upload an unchanged one).
+    if (form.signature) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = form.signature;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = canvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    drawingRef.current = true;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    const { x, y } = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    const { x, y } = pos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    hasDrawnRef.current = true;
+  };
+  const endDraw = () => {
+    drawingRef.current = false;
+  };
+  const clearSignature = () => {
+    const c = canvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    hasDrawnRef.current = false;
+    setForm((f) => ({ ...f, signature: "" }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      // If the tech drew a new signature, upload it to Firebase Storage as a
+      // PNG and store the resulting URL (not the raw base64) in the DB.
+      let signatureUrl = form.signature;
+      if (hasDrawnRef.current && canvasRef.current) {
+        const dataUrl = canvasRef.current.toDataURL("image/png");
+        // Only re-upload when it's a freshly drawn signature (data URL), not an
+        // already-saved https URL.
+        if (dataUrl.startsWith("data:image")) {
+          if (companyId) {
+            signatureUrl = await uploadTicketSignature(companyId, ticket.ticketNo, dataUrl);
+          } else {
+            // No company context — fall back to storing the data URL inline.
+            signatureUrl = dataUrl;
+          }
+        }
+      }
+      const payload: TicketBilling = { ...form, tax, total, signature: signatureUrl };
+      await saveTicketBilling(ticket.ticketNo, payload);
+      setForm(payload);
+      setMsg("Billing saved.");
+    } catch (e: any) {
+      setMsg(e?.message || "Failed to save billing.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="mtech-panel mtech-muted">Loading billing…</div>;
+
+  const money = (n: number) => `$${n.toFixed(2)}`;
+
   return (
     <div className="mtech-panel">
       <div className="mtech-section-title">Billing Info</div>
+
       <table className="mtech-bill">
         <thead>
           <tr>
             <th>Cost</th>
             <th>Fee</th>
+            <th className="mtech-bill-tax">Tax</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>Labor</td>
-            <td>$0.00</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.labor || ""}
+                onChange={(e) => setForm((f) => ({ ...f, labor: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.laborTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, laborTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Parts Used</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                value={form.partsUsed}
+                placeholder="0.00 / 0.00"
+                onChange={(e) => setForm((f) => ({ ...f, partsUsed: e.target.value }))}
+              />
+            </td>
           </tr>
           <tr>
             <td>Parts</td>
-            <td>$0.00</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.parts || ""}
+                onChange={(e) => setForm((f) => ({ ...f, parts: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.partsTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, partsTaxable: e.target.checked }))}
+              />
+            </td>
           </tr>
           <tr>
             <td>Diagnose (Trip)</td>
-            <td>$0.00</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.diagnose || ""}
+                onChange={(e) => setForm((f) => ({ ...f, diagnose: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.diagnoseTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, diagnoseTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Others</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.others || ""}
+                onChange={(e) => setForm((f) => ({ ...f, others: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.othersTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, othersTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Tax Rate (%)</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.taxRate || ""}
+                onChange={(e) => setForm((f) => ({ ...f, taxRate: num(e.target.value) }))}
+              />
+            </td>
           </tr>
           <tr>
             <td>Tax</td>
-            <td>$0.00</td>
+            <td colSpan={2}>{money(tax)}</td>
+          </tr>
+          <tr>
+            <td>Deduction</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.deduction || ""}
+                onChange={(e) => setForm((f) => ({ ...f, deduction: num(e.target.value) }))}
+              />
+            </td>
           </tr>
           <tr className="mtech-bill-total">
             <td>Total</td>
-            <td>$0.00</td>
+            <td colSpan={2}>{money(total)}</td>
           </tr>
         </tbody>
       </table>
-      <div className="mtech-muted">
-        Service has a limited warranty of 90 days for parts and 30 days for labor. Billing entry coming soon.
+
+      <p className="mtech-muted">
+        Service has a limited warranty of 90 days for parts and 30 days for labor. Labor is covered for 30 days from
+        the first service date; parts only if the same part is defective within 90 days. Only company-supplied parts
+        are covered under the limited warranty.
+      </p>
+
+      <div className="mtech-section-title">Customer Name</div>
+      <input
+        className="mtech-bill-input full"
+        value={form.customerName}
+        onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
+      />
+
+      <div className="mtech-section-title">Payment Method</div>
+      <select
+        className="mtech-bill-input full"
+        value={form.paymentMethod}
+        onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
+      >
+        <option value="">Select payment method</option>
+        {PAYMENT_METHODS.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+
+      <div className="mtech-section-title">Billing (Repair) Comment</div>
+      <textarea
+        className="mtech-bill-input full"
+        rows={3}
+        value={form.comment}
+        onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
+      />
+
+      <div className="mtech-sig-head">
+        <span className="mtech-section-title" style={{ margin: 0, border: "none" }}>
+          Signature
+        </span>
+        <button type="button" className="mtech-sig-clear" onClick={clearSignature}>
+          Clear
+        </button>
       </div>
-      <InfoRow label="Customer Name" value={ticket.customer} />
+      <canvas
+        ref={canvasRef}
+        width={600}
+        height={200}
+        className="mtech-sig-canvas"
+        onPointerDown={startDraw}
+        onPointerMove={moveDraw}
+        onPointerUp={endDraw}
+        onPointerLeave={endDraw}
+      />
+
+      <button type="button" className="mtech-save-btn" onClick={save} disabled={saving}>
+        {saving ? "Saving…" : "Save"}
+      </button>
+      {msg && <div className="mtech-save-msg">{msg}</div>}
     </div>
   );
 }
