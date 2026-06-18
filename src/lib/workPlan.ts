@@ -60,19 +60,15 @@ export function accessibleLocations(plan: WorkPlan | null | undefined): string[]
 }
 
 /** Roles that bypass the work-plan location restriction (see everything). */
-const UNRESTRICTED_ROLES = new Set([
-  "SUPERADMIN", "ADMIN", "MANAGER", "CSR", "HR", "IT", "FINANCE", "CLAIMS",
-  "CSR Agent", "CSR Team Leader", "CSR Manager",
-  "Branch Manager", "Senior Branch Manager", "Claims Manager",
-  "Parts Manager", "BizOps Manager", "BizOps Senior Manager",
-]);
+// Only TECHNICIAN is restricted by the work plan for now. Everyone else sees
+// all locations (you can still untick their boxes later to restrict them).
+const RESTRICTED_ROLES = new Set(["TECHNICIAN"]);
 
 /**
- * Whether `role` is restricted by the work plan. Currently only field roles
- * (TECHNICIAN, PARTS) are restricted to their planned locations; office/admin
- * roles see all locations. Adjust as policy evolves.
+ * Whether `role` is restricted by the work plan. Currently only TECHNICIAN is
+ * limited to their planned locations; all other roles see every location.
  */
 export function isLocationRestrictedRole(role: string | null | undefined): boolean {
   if (!role) return false;
-  return !UNRESTRICTED_ROLES.has(role);
+  return RESTRICTED_ROLES.has(role);
 }
