@@ -36,6 +36,40 @@ type PlannerTicket = TicketRecord & {
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
+const US_STATE_ABBR: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
+  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
+  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO",
+  montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ",
+  "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH",
+  oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT",
+  virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+  "district of columbia": "DC",
+};
+
+// Returns the 2-letter abbreviation for a full state name, or the input as-is
+// (uppercased) if it's already an abbreviation / unknown.
+function abbreviateState(state: string): string {
+  const s = (state || "").trim();
+  if (!s) return "";
+  if (s.length === 2) return s.toUpperCase();
+  return US_STATE_ABBR[s.toLowerCase()] ?? s;
+}
+
+// Short display address for the daily schedule card, e.g. "Memphis, TN 38118".
+function shortAddress(t: { city?: string; state?: string; zip?: string; location?: string }): string {
+  const city = (t.city || "").trim();
+  const st = abbreviateState(t.state || "");
+  const zip = (t.zip || "").trim();
+  const tail = [st, zip].filter(Boolean).join(" ");
+  const parts = [city, tail].filter(Boolean);
+  if (parts.length) return parts.join(", ");
+  return (t.location || "").trim() || "Unknown address";
+}
+
 const LOCATION_OPTIONS = LOCATIONS;
 const STATUS_LEGEND = [
   { label: "Pending", className: "color-pending" },
@@ -663,7 +697,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                                 {ticket.ticketNo}
                               </a>
                               <div className="work-order-customer">{ticket.customer}</div>
-                              <div className="work-order-address">{ticket.address || ticket.city || ticket.location || "Unknown address"}</div>
+                              <div className="work-order-address">{shortAddress(ticket)}</div>
                               <div className="work-order-status">
                                 <span className={`work-order-status-dot ${getToneClass(ticket, index)}`} />
                                 {displayStatus}
