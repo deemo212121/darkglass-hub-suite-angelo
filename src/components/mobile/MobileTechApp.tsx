@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
-import { getCompanyTickets, updateTicketStatus } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getTicketVisits } from "@/lib/supabase/tickets";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
@@ -14,7 +14,7 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 type View = "roster" | "tickets" | "map" | "detail";
-type DetailTab = "details" | "repair" | "billing" | "comment";
+type DetailTab = "general" | "tracking" | "billing";
 
 // Roles that see their OWN tickets directly (skip the technician roster).
 const SELF_ROLES = new Set(["TECHNICIAN"]);
@@ -99,7 +99,7 @@ export function MobileTechApp() {
   const [tab, setTab] = useState<"todo" | "done" | "search">("todo");
   const [search, setSearch] = useState("");
   const [activeTicketNo, setActiveTicketNo] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("details");
+  const [detailTab, setDetailTab] = useState<DetailTab>("general");
 
   useEffect(() => {
     let cancelled = false;
@@ -202,15 +202,8 @@ export function MobileTechApp() {
 
   const openTicket = (t: Ticket) => {
     setActiveTicketNo(t.ticketNo);
-    setDetailTab("details");
+    setDetailTab("general");
     setView("detail");
-  };
-
-  // Update a ticket's repair status (e.g. quick action Completed / Not Completed)
-  // and reflect it locally so the UI updates immediately.
-  const handleStatusChange = async (ticketNo: string, status: string) => {
-    await updateTicketStatus(ticketNo, status);
-    setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)));
   };
 
   const headerName = displayName || email || "User";
@@ -289,7 +282,6 @@ export function MobileTechApp() {
           ticket={activeTicket}
           tab={detailTab}
           setTab={setDetailTab}
-          onStatusChange={handleStatusChange}
           companyId={companyId}
           authorName={displayName || email || "User"}
           authorRole={role || ""}
@@ -735,7 +727,6 @@ function DetailView({
   ticket,
   tab,
   setTab,
-  onStatusChange,
   companyId,
   authorName,
   authorRole,
@@ -743,7 +734,6 @@ function DetailView({
   ticket: Ticket;
   tab: DetailTab;
   setTab: (t: DetailTab) => void;
-  onStatusChange: (ticketNo: string, status: string) => Promise<void>;
   companyId: string | null;
   authorName: string;
   authorRole: string;
@@ -772,23 +762,21 @@ function DetailView({
 
       {/* Tabs only exist inside an open ticket */}
       <div className="mtech-detail-tabs">
-        <button className={tab === "details" ? "active" : ""} onClick={() => setTab("details")} type="button">
-          Details
+        <button className={tab === "general" ? "active" : ""} onClick={() => setTab("general")} type="button">
+          General
         </button>
-        <button className={tab === "repair" ? "active" : ""} onClick={() => setTab("repair")} type="button">
-          Repair
-        </button>
-        <button className={tab === "comment" ? "active" : ""} onClick={() => setTab("comment")} type="button">
-          Comment
+        <button className={tab === "tracking" ? "active" : ""} onClick={() => setTab("tracking")} type="button">
+          Service Tracking
         </button>
         <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} type="button">
           Billing
         </button>
       </div>
 
-      {tab === "details" && <DetailsTab ticket={ticket} onStatusChange={onStatusChange} />}
-      {tab === "repair" && <RepairTab ticket={ticket} />}
-      {tab === "comment" && <CommentTab ticket={ticket} authorName={authorName} authorRole={authorRole} />}
+      {tab === "general" && (
+        <DetailsTab ticket={ticket} authorName={authorName} authorRole={authorRole} />
+      )}
+      {tab === "tracking" && <RepairTab ticket={ticket} />}
       {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
     </div>
   );
@@ -805,62 +793,33 @@ function InfoRow({ label, value }: { label: string; value?: string }) {
 
 function DetailsTab({
   ticket,
-  onStatusChange,
+  authorName,
+  authorRole,
 }: {
   ticket: Ticket;
-  onStatusChange: (ticketNo: string, status: string) => Promise<void>;
+  authorName: string;
+  authorRole: string;
 }) {
-  const [saving, setSaving] = useState<"completed" | "not" | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const setStatus = async (status: string, which: "completed" | "not") => {
-    setSaving(which);
-    setMsg(null);
-    try {
-      await onStatusChange(ticket.ticketNo, status);
-      setMsg("Status updated.");
-    } catch (e: any) {
-      setMsg(e?.message || "Failed to update status.");
-    } finally {
-      setSaving(null);
-    }
-  };
-
   return (
     <div className="mtech-panel">
-      <div className="mtech-section-title">Quick Action</div>
-      <div className="mtech-quick-actions">
-        <button
-          type="button"
-          className="mtech-qa-notcompleted"
-          disabled={saving !== null}
-          onClick={() => setStatus("OP-Reschedule Follow up", "not")}
-        >
-          {saving === "not" ? "Saving…" : "Not Completed"}
-        </button>
-        <button
-          type="button"
-          className="mtech-qa-completed"
-          disabled={saving !== null}
-          onClick={() => setStatus("CL-Completed", "completed")}
-        >
-          {saving === "completed" ? "Saving…" : "Completed"}
-        </button>
-      </div>
-      {msg && <div className="mtech-save-msg">{msg}</div>}
-
       <div className="mtech-actions">
         <button type="button" disabled title="Coming soon">On my way</button>
         <button type="button" disabled title="Coming soon">Check In</button>
         <button type="button" disabled title="Coming soon">Check Out</button>
       </div>
 
-      <div className="mtech-section-title">Customer Information</div>
-      <InfoRow label="Name" value={ticket.customer} />
-      <InfoRow label="Address" value={fmtAddress(ticket)} />
+      <div className="mtech-section-title">Customer</div>
+      <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
+      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} />
+      <InfoRow label="Location" value={resolveLocation(ticket)} />
+
+      <div className="mtech-section-title">Contact Details</div>
+      <InfoRow label="Address" value={ticket.address} />
+      <InfoRow label="Address 2" value={ticket.address2} />
+      <InfoRow label="State/Zip" value={[ticket.state, ticket.zip].filter(Boolean).join(" ")} />
       <InfoRow label="Home Phone" value={ticket.phone} />
       <InfoRow label="Cell Phone" value={ticket.secondPhone} />
-      <InfoRow label="Cx Email" value={ticket.email} />
+      <InfoRow label="Email" value={ticket.email} />
 
       <div className="mtech-section-title">Product Information</div>
       <InfoRow label="Brand" value={ticket.manufacturer} />
@@ -875,13 +834,72 @@ function DetailsTab({
 
       <div className="mtech-section-title">Problem Description</div>
       <p className="mtech-problem">{ticket.problemDescription || "—"}</p>
+
+      {/* Servicer Notes thread lives at the bottom of General Information */}
+      <CommentThread ticket={ticket} authorName={authorName} authorRole={authorRole} />
     </div>
   );
 }
 
 function RepairTab({ ticket }: { ticket: Ticket }) {
+  const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const rows = await getTicketVisits(ticket.ticketNo);
+        if (!cancelled) setVisits(rows as any);
+      } catch (e) {
+        console.error("load visits failed", e);
+        if (!cancelled) setVisits([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.ticketNo]);
+
+  const fmtDate = (v: string) => {
+    if (!v) return "";
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? v : d.toLocaleDateString("en-US");
+  };
+
   return (
     <div className="mtech-panel">
+      <div className="mtech-section-title">Service Tracking</div>
+      {loading && <div className="mtech-muted">Loading visits…</div>}
+      {!loading && visits.length === 0 && <div className="mtech-muted">No visits recorded yet.</div>}
+
+      <div className="mtech-visit-list">
+        {visits.map((v) => (
+          <div key={v.id} className="mtech-visit">
+            <div className="mtech-visit-head">
+              <span className="mtech-visit-no">{v.visitNo || "Visit"}</span>
+              <span className="mtech-visit-status">{v.repairStatus || v.status || "—"}</span>
+            </div>
+            <div className="mtech-visit-meta">
+              <span>📅 {fmtDate(v.scheduleDate)}{v.timeSlot ? ` · ${v.timeSlot}` : ""}</span>
+              <span>👤 {v.technician || "—"}</span>
+            </div>
+            {v.activity && <InfoRow label="Activity" value={v.activity} />}
+            {v.actionType && <InfoRow label="Action" value={v.actionType} />}
+            {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
+            {v.symptomCx && <InfoRow label="Symptom (Cx)" value={v.symptomCx} />}
+            {v.diagnosis && <InfoRow label="Diagnosis" value={v.diagnosis} />}
+            {v.resolution && <InfoRow label="Resolution" value={v.resolution} />}
+            {v.nonCompletionReason && <InfoRow label="Non-Completion" value={v.nonCompletionReason} />}
+            {v.schedNotes && <InfoRow label="Sched Notes" value={v.schedNotes} />}
+            {v.note && <InfoRow label="Internal Note" value={v.note} />}
+          </div>
+        ))}
+      </div>
+
       <div className="mtech-section-title">Repair Information</div>
       <InfoRow label="Model Code" value={ticket.model} />
       <InfoRow label="Model Version" value={ticket.modelVersion} />
@@ -895,7 +913,7 @@ function RepairTab({ ticket }: { ticket: Ticket }) {
   );
 }
 
-function CommentTab({
+function CommentThread({
   ticket,
   authorName,
   authorRole,
@@ -955,7 +973,7 @@ function CommentTab({
   };
 
   return (
-    <div className="mtech-panel">
+    <div className="mtech-comment-section">
       <div className="mtech-section-title">Servicer Notes</div>
       <p className="mtech-muted" style={{ marginTop: 0 }}>
         Shared with the office — CSRs see these on the ticket's Servicer Notes.
