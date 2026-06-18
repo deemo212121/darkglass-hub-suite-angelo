@@ -31,6 +31,7 @@ import {
   updateTicketPart as sbUpdateTicketPart,
   deleteTicketPart as sbDeleteTicketPart,
 } from "@/lib/supabase/tickets";
+import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 
 interface TicketData {
   ticketNo: string;
@@ -791,9 +792,10 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole } = useAuth();
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
+  const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
   const [newVisitNote, setNewVisitNote] = useState("");
   const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
@@ -1137,23 +1139,45 @@ function TicketDetailsPage() {
     return out;
   }, [ticket, allCompanyTickets]);
 
-  const addServicerNote = () => {
-    if (!ticket) return;
-    if (newServicerNote.trim()) {
-      ticket.servicerNotes.push({
-        notes: newServicerNote,
-        by: "Current User",
-      });
+  const addServicerNote = async () => {
+    const body = newServicerNote.trim();
+    if (!body) return;
+    try {
+      const added = await addTicketComment(
+        ticketNo,
+        body,
+        currentUserName || currentUserEmail || "User",
+        currentUserRole || ""
+      );
+      setServicerComments((prev) => [...prev, added]);
       appendAuditEntry({
         by: currentEditor,
         action: "Added servicer note",
         field: "Servicer Notes",
         before: "—",
-        after: newServicerNote.trim(),
+        after: body,
       });
       setNewServicerNote("");
+    } catch (e) {
+      console.error("addServicerNote failed", e);
     }
   };
+
+  // Load the shared servicer-notes thread (same table the mobile app writes to).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getTicketComments(ticketNo);
+        if (!cancelled) setServicerComments(rows);
+      } catch (e) {
+        console.error("load servicer comments failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketNo]);
 
   const startEditingCustomerInfo = () => {
     if (ticket) {
@@ -2572,10 +2596,17 @@ function TicketDetailsPage() {
               <div className="space-y-4 pb-12">
                 <h4 className="font-semibold text-slate-300">Servicer Notes</h4>
                 <div className="space-y-3 mb-4">
-                  {ticket.servicerNotes.map((note, idx) => (
-                    <div key={idx} className="bg-slate-900/50 border border-blue-500/30 rounded p-4 text-sm">
-                      <div className="text-blue-400 text-xs mb-1">By: {note.by}</div>
-                      <p className="text-slate-300">{note.notes}</p>
+                  {servicerComments.length === 0 && (
+                    <p className="text-slate-500 text-sm">No servicer notes yet.</p>
+                  )}
+                  {servicerComments.map((note) => (
+                    <div key={note.id} className="bg-slate-900/50 border border-blue-500/30 rounded p-4 text-sm">
+                      <div className="text-blue-400 text-xs mb-1">
+                        By: {note.authorName || "User"}
+                        {note.authorRole ? ` · ${note.authorRole}` : ""}
+                        {note.createdAt ? ` · ${new Date(note.createdAt).toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}
+                      </div>
+                      <p className="text-slate-300">{note.body}</p>
                     </div>
                   ))}
                 </div>

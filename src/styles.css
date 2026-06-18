@@ -2211,3 +2211,53 @@
   cursor: pointer;
 }
 .mtech-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+
+/* Mobile — comment thread (Servicer Notes) */
+.mtech-comment-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.8rem;
+}
+.mtech-comment {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+}
+.mtech-comment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.mtech-comment-author { font-size: 0.75rem; font-weight: 700; color: #2563eb; }
+.mtech-comment-time { font-size: 0.72rem; color: #94a3b8; }
+.mtech-comment-body { font-size: 0.85rem; color: #0f172a; white-space: pre-wrap; }
+.mtech-comment-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mtech-comment-compose textarea {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: #0f172a;
+  resize: vertical;
+}
+.mtech-comment-compose button {
+  align-self: flex-end;
+  padding: 0.55rem 1.4rem;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mtech-comment-compose button:disabled { opacity: 0.5; cursor: not-allowed; }

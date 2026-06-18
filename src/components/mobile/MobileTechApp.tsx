@@ -4,15 +4,17 @@ import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
 import { getCompanyTickets, updateTicketStatus } from "@/lib/supabase/tickets";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { lookupZip } from "@/lib/zipCoverage";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 type View = "roster" | "tickets" | "map" | "detail";
-type DetailTab = "details" | "repair" | "billing";
+type DetailTab = "details" | "repair" | "billing" | "comment";
 
 // Roles that see their OWN tickets directly (skip the technician roster).
 const SELF_ROLES = new Set(["TECHNICIAN"]);
@@ -58,6 +60,20 @@ function productLabel(t: Ticket): string {
 function fmtAddress(t: Ticket): string {
   const parts = [t.address, t.city, [t.state, t.zip].filter(Boolean).join(" ")].filter(Boolean);
   return parts.join(", ");
+}
+
+// Resolve a ticket's branch/location. If the stored location is missing or
+// "Unknown", fall back to the zip-coverage map (e.g. a Salem zip resolves to
+// the Asheville branch).
+function resolveLocation(t: Ticket): string {
+  const loc = (t.location || "").trim();
+  if (loc && loc.toLowerCase() !== "unknown") return loc;
+  const zip = (t.zip || "").trim();
+  if (zip) {
+    const cov = lookupZip(zip);
+    if (cov?.location) return cov.location;
+  }
+  return loc || "Unknown";
 }
 
 // Initials for the map badge, matching the Work Planner web style (e.g. "JR").
@@ -275,6 +291,8 @@ export function MobileTechApp() {
           setTab={setDetailTab}
           onStatusChange={handleStatusChange}
           companyId={companyId}
+          authorName={displayName || email || "User"}
+          authorRole={role || ""}
         />
       )}
 
@@ -421,7 +439,7 @@ function TicketsView({
             <button key={t.ticketNo} className="mtech-ticket-card" onClick={() => onOpen(t)} type="button">
               <div className={`mtech-ticket-rail ${statusTone(t.status)}`}>
                 <span className="mtech-rail-num">{i + 1}</span>
-                <span className="mtech-rail-loc">{t.location || "—"}</span>
+                <span className="mtech-rail-loc">{resolveLocation(t)}</span>
                 <span className="mtech-rail-days">{openDays(t)} days</span>
                 {t.warranty && <span className="mtech-rail-wty">{t.warranty}</span>}
                 {t.claimCompany && <span className="mtech-rail-claim">{t.claimCompany}</span>}
@@ -719,12 +737,16 @@ function DetailView({
   setTab,
   onStatusChange,
   companyId,
+  authorName,
+  authorRole,
 }: {
   ticket: Ticket;
   tab: DetailTab;
   setTab: (t: DetailTab) => void;
   onStatusChange: (ticketNo: string, status: string) => Promise<void>;
   companyId: string | null;
+  authorName: string;
+  authorRole: string;
 }) {
   return (
     <div className="mtech-scroll">
@@ -742,7 +764,7 @@ function DetailView({
           </div>
         </div>
         <div className={`mtech-detail-railbadge ${statusTone(ticket.status)}`}>
-          <span>{ticket.location}</span>
+          <span>{resolveLocation(ticket)}</span>
           <span>{openDays(ticket)}d</span>
           {ticket.warranty && <span>{ticket.warranty}</span>}
         </div>
@@ -756,6 +778,9 @@ function DetailView({
         <button className={tab === "repair" ? "active" : ""} onClick={() => setTab("repair")} type="button">
           Repair
         </button>
+        <button className={tab === "comment" ? "active" : ""} onClick={() => setTab("comment")} type="button">
+          Comment
+        </button>
         <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} type="button">
           Billing
         </button>
@@ -763,6 +788,7 @@ function DetailView({
 
       {tab === "details" && <DetailsTab ticket={ticket} onStatusChange={onStatusChange} />}
       {tab === "repair" && <RepairTab ticket={ticket} />}
+      {tab === "comment" && <CommentTab ticket={ticket} authorName={authorName} authorRole={authorRole} />}
       {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
     </div>
   );
@@ -865,6 +891,104 @@ function RepairTab({ ticket }: { ticket: Ticket }) {
 
       <div className="mtech-section-title">Attachments</div>
       <div className="mtech-muted">Photo upload coming soon.</div>
+    </div>
+  );
+}
+
+function CommentTab({
+  ticket,
+  authorName,
+  authorRole,
+}: {
+  ticket: Ticket;
+  authorName: string;
+  authorRole: string;
+}) {
+  const [comments, setComments] = useState<TicketComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      const rows = await getTicketComments(ticket.ticketNo);
+      setComments(rows);
+    } catch (e) {
+      console.error("load comments failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await load();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket.ticketNo]);
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body) return;
+    setSending(true);
+    try {
+      const added = await addTicketComment(ticket.ticketNo, body, authorName, authorRole);
+      setComments((prev) => [...prev, added]);
+      setText("");
+    } catch (e: any) {
+      console.error("send comment failed", e);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const fmt = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-section-title">Servicer Notes</div>
+      <p className="mtech-muted" style={{ marginTop: 0 }}>
+        Shared with the office — CSRs see these on the ticket's Servicer Notes.
+      </p>
+
+      <div className="mtech-comment-thread">
+        {loading && <div className="mtech-muted">Loading…</div>}
+        {!loading && comments.length === 0 && <div className="mtech-muted">No comments yet.</div>}
+        {comments.map((c) => (
+          <div key={c.id} className="mtech-comment">
+            <div className="mtech-comment-head">
+              <span className="mtech-comment-author">
+                {c.authorName || "User"}
+                {c.authorRole ? ` · ${c.authorRole}` : ""}
+              </span>
+              <span className="mtech-comment-time">{fmt(c.createdAt)}</span>
+            </div>
+            <div className="mtech-comment-body">{c.body}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mtech-comment-compose">
+        <textarea
+          rows={2}
+          value={text}
+          placeholder="Write a message to the office…"
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button type="button" onClick={send} disabled={sending || !text.trim()}>
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
     </div>
   );
 }
