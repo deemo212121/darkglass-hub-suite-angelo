@@ -3,40 +3,52 @@ import { useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { normalizeTicketSearchValue } from "@/lib/ticket-search";
-import { loadTickets } from "@/lib/ticketData";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
+import type { Ticket } from "@/lib/ticketData";
 
 export function TicketSearchFab() {
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
-  const [tickets, setTickets] = useState(() => loadTickets());
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // Listen for changes
+  // Load real company tickets from Supabase when the search dialog opens.
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "ahs:tickets:data" || e.key === null) {
-        setTickets(loadTickets());
+    if (!searchOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const rows = await getCompanyTickets();
+        if (!cancelled) setTickets(rows);
+      } catch (err) {
+        console.error("Ticket search: failed to load tickets", err);
+        if (!cancelled) setTickets([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
-  }, []);
-
-  // Reload tickets when search opens to ensure fresh data
-  useEffect(() => {
-    if (searchOpen) {
-      setTickets(loadTickets());
-    }
   }, [searchOpen]);
 
   const searchResults = useMemo(() => {
     const query = normalizeTicketSearchValue(searchText);
     if (!query) return tickets.slice(0, 8);
     return tickets.filter((ticket) =>
-      [ticket.ticketNo, ticket.customer, ticket.city, ticket.zip || "", ticket.status].some((value) =>
-        normalizeTicketSearchValue(value).includes(query),
-      ),
+      [
+        ticket.ticketNo,
+        ticket.customer,
+        ticket.city,
+        ticket.zip || "",
+        ticket.phone || "",
+        ticket.model || "",
+        ticket.location || "",
+        ticket.technician || "",
+        ticket.status,
+      ].some((value) => normalizeTicketSearchValue(value).includes(query)),
     ).slice(0, 8);
   }, [searchText, tickets]);
 
@@ -85,6 +97,12 @@ export function TicketSearchFab() {
                 autoFocus
               />
             </label>
+            {loading && (
+              <div className="text-xs text-muted-foreground px-1 py-2">Loading tickets…</div>
+            )}
+            {!loading && searchText && searchResults.length === 0 && (
+              <div className="text-xs text-muted-foreground px-1 py-2">No matching tickets found.</div>
+            )}
             {searchResults.length > 0 && searchText && (
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {searchResults.map((ticket) => (
