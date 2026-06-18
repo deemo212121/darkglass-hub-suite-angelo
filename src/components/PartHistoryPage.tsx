@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getPartInventoryRows, type PartInventoryRow } from "@/components/PartInventoryPage";
 
 type HistoryRow = {
   eventDate: string;
@@ -52,6 +53,75 @@ const SAMPLE_INVENTORY_ROWS: InventoryRow[] = [
   { index: 1, location: "Birmingham", partNo: "140137975102", uniqueId: "BM_TS 140137975102-140137975102", lotNo: "", invoiceDate: "03/18/2026", qty: 1, status: "Stocked", aging: 58, ticketNo: "", technician: "", retail: "$0.00", core: "", poNo: "" },
 ];
 
+// Derive an aging date (MM/DD/YYYY) from an aging-in-days value.
+function agingToDate(agingDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - Math.max(0, Number(agingDays) || 0));
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}/${dd}/${d.getFullYear()}`;
+}
+
+// Build a synthetic I/O history for an inventory record. We don't store a true
+// event log yet, so we reconstruct the meaningful events from the row's
+// quantity counters (invoice → goods received → reserved → used, etc.).
+function buildHistoryFromInventory(row: PartInventoryRow): HistoryRow[] {
+  const date = agingToDate(row.aging);
+  const ref = row.ticketNo ? row.ticketNo : "";
+  const comment = [row.partDist, row.description].filter(Boolean).join(" ");
+  const events: HistoryRow[] = [];
+  let current = 0;
+
+  events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "Invoice Created", qty: row.qty, qtyChange: "", currentQty: current, ticketNo: "", scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: row.invoiceNo || "", comment });
+
+  if (row.received) {
+    current += row.received;
+    events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "G/R (In stock)", qty: row.qty, qtyChange: row.received, currentQty: current, ticketNo: "", scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: row.poNo || "", comment: "" });
+  }
+  if (row.reserved) {
+    events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "Reserved", qty: row.qty, qtyChange: "", currentQty: current, ticketNo: row.ticketNo, scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: ref, comment: "" });
+  }
+  if (row.used) {
+    current -= row.used;
+    events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "Collect: Used", qty: 0, qtyChange: -row.used, currentQty: current, ticketNo: row.ticketNo, scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: ref, comment });
+  }
+  if (row.returned) {
+    current -= row.returned;
+    events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "Returned", qty: 0, qtyChange: -row.returned, currentQty: current, ticketNo: row.ticketNo, scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: ref, comment: "" });
+  }
+  if (row.defect) {
+    events.push({ eventDate: date, partNo: row.partNo, uniqueId: row.uniqueId, event: "Defect", qty: 0, qtyChange: "", currentQty: current, ticketNo: row.ticketNo, scheduledPast: "", repairStatusPast: "", scheduledCurrent: "", repairStatusCurrent: "", branch: row.branch, reference: ref, comment: row.adjustReason || "" });
+  }
+  return events;
+}
+
+function inventoryStatusLabel(row: PartInventoryRow): string {
+  if (row.used) return "Used";
+  if (row.returned) return "Returned";
+  if (row.reserved) return "Reserved";
+  if (row.inStock) return "Stocked";
+  return "—";
+}
+
+function buildInventoryInfo(rows: PartInventoryRow[]): InventoryRow[] {
+  return rows.map((row, idx) => ({
+    index: idx + 1,
+    location: row.location,
+    partNo: row.partNo,
+    uniqueId: row.uniqueId,
+    lotNo: row.lotNo ? String(row.lotNo) : "",
+    invoiceDate: agingToDate(row.aging),
+    qty: row.qty,
+    status: inventoryStatusLabel(row),
+    aging: row.aging,
+    ticketNo: row.ticketNo,
+    technician: "",
+    retail: row.retailPrice != null ? `$${Number(row.retailPrice).toFixed(2)}` : `$${Number(row.price || 0).toFixed(2)}`,
+    core: "",
+    poNo: row.poNo,
+  }));
+}
+
 function escapeHtml(value: string | number) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch] as string));
 }
@@ -70,51 +140,27 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
   }, []);
 
   useEffect(() => {
-    const refresh = () => {
-      const hasDatabase = Boolean((window as any).AdminHubData);
-      const uniqueId = uniqueIdFilter.trim();
-      
-      // If no unique ID provided, show nothing
-      if (!uniqueId) {
-        setHistoryRows([]);
-        setInventoryRows([]);
-        setHistoryDataSource("seed");
-        return;
-      }
-      
-      if (!hasDatabase) {
-        setHistoryRows(SAMPLE_HISTORY_ROWS.filter((row) => row.uniqueId.toLowerCase().includes(uniqueId.toLowerCase())));
-        setInventoryRows(SAMPLE_INVENTORY_ROWS.filter((row) => row.uniqueId.toLowerCase().includes(uniqueId.toLowerCase())));
-        setHistoryDataSource("seed");
-        return;
-      }
+    const uniqueId = uniqueIdFilter.trim().toLowerCase();
 
-      const adminHubData = (window as any).AdminHubData;
-      Promise.resolve()
-        .then(() => adminHubData.fetchPartHistory({ companyCode: localStorage.getItem("userCompanyId"), uniqueId }))
-        .then((history: HistoryRow[]) => {
-          if (Array.isArray(history) && history.length) {
-            setHistoryRows(history);
-            setHistoryDataSource("database");
-          } else {
-            setHistoryRows([]);
-            setHistoryDataSource("database");
-          }
-        })
-        .then(() => adminHubData.fetchPartInventoryInfo({ companyCode: localStorage.getItem("userCompanyId"), uniqueId }))
-        .then((inventory: InventoryRow[]) => {
-          setInventoryRows(Array.isArray(inventory) && inventory.length ? inventory : []);
-        })
-        .catch(() => {
-          setHistoryRows([]);
-          setInventoryRows([]);
-          setHistoryDataSource("seed");
-        });
-    };
+    // No Unique ID entered → show nothing.
+    if (!uniqueId) {
+      setHistoryRows([]);
+      setInventoryRows([]);
+      setHistoryDataSource("seed");
+      return;
+    }
 
-    refresh();
-    const interval = window.setInterval(refresh, 5000);
-    return () => window.clearInterval(interval);
+    // Match against the shared part inventory data. Partial (substring) matches
+    // are allowed so users can search by part number or invoice fragment too.
+    const matches = getPartInventoryRows().filter((row) =>
+      [row.uniqueId, row.partNo, row.invoiceNo, row.poNo]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(uniqueId))
+    );
+
+    setHistoryRows(matches.flatMap(buildHistoryFromInventory));
+    setInventoryRows(buildInventoryInfo(matches));
+    setHistoryDataSource("database");
   }, [uniqueIdFilter]);
 
   const filteredHistoryRows = useMemo(() => {

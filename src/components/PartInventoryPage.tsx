@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
-type InventoryRow = {
+export type PartInventoryRow = {
   location: string;
   partDist: string;
   poNo: string;
@@ -32,6 +32,8 @@ type InventoryRow = {
   avail: number;
   inStock: number;
 };
+
+type InventoryRow = PartInventoryRow;
 
 type PartInfoRecord = {
   description: string;
@@ -143,6 +145,12 @@ const SAMPLE_ROWS: InventoryRow[] = [
   { location: "Asheville", partDist: "GE", poNo: "SA-3702828-AV", invoiceNo: "1068038744", uniqueId: "1068038744-WR87X46051", partNo: "WR87X46051", ticketNo: "SA-3702828", ticketDate: "06/24", aging: 0, description: "COMPRESSOR", branch: "", price: 123.45, qty: 1, lotNo: 1, adjustReason: "", ordered: 1, received: 1, reserved: 1, used: 0, inReview: 0, defect: 0, pnn: 0, returned: 0, adjust: 0, avail: 0, inStock: 1 },
   { location: "Asheville", partDist: "GE", poNo: "075675965-GVL", invoiceNo: "182368216", uniqueId: "182368216-WR87X47505", partNo: "WR87X47505", ticketNo: "", aging: 137, description: "EVAP AND TUBE ASM", branch: "", price: 73.81, qty: 1, lotNo: 1, adjustReason: "", ordered: 1, received: 1, reserved: 1, used: 0, inReview: 0, defect: 0, pnn: 0, returned: 0, adjust: 0, avail: 0, inStock: 1 },
 ];
+
+// Shared accessor so other pages (e.g. Part In/Out History) can search the
+// same inventory records. Returns a shallow copy of the seed inventory rows.
+export function getPartInventoryRows(): PartInventoryRow[] {
+  return SAMPLE_ROWS.map((row) => ({ ...row }));
+}
 
 const LOCATION_OPTIONS = ["Asheville", "Birmingham", "Atlanta", "Dallas", "Nashville", "St. Louis"];
 
