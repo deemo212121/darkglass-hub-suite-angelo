@@ -57,10 +57,10 @@ function escapeHtml(value: string | number) {
 }
 
 export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [uniqueIdFilter, setUniqueIdFilter] = useState("BM_TS 140137975102-140137975102");
+  const [uniqueIdFilter, setUniqueIdFilter] = useState("");
   const [historySearch, setHistorySearch] = useState("");
-  const [historyRows, setHistoryRows] = useState<HistoryRow[]>(SAMPLE_HISTORY_ROWS);
-  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>(SAMPLE_INVENTORY_ROWS);
+  const [historyRows, setHistoryRows] = useState<HistoryRow[]>([]);
+  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
   const [historyDataSource, setHistoryDataSource] = useState<"seed" | "database">("seed");
 
   useEffect(() => {
@@ -73,32 +73,41 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
     const refresh = () => {
       const hasDatabase = Boolean((window as any).AdminHubData);
       const uniqueId = uniqueIdFilter.trim();
+      
+      // If no unique ID provided, show nothing
+      if (!uniqueId) {
+        setHistoryRows([]);
+        setInventoryRows([]);
+        setHistoryDataSource("seed");
+        return;
+      }
+      
       if (!hasDatabase) {
-        setHistoryRows(SAMPLE_HISTORY_ROWS);
-        setInventoryRows(SAMPLE_INVENTORY_ROWS.filter((row) => !uniqueId || row.uniqueId.toLowerCase().includes(uniqueId.toLowerCase())));
+        setHistoryRows(SAMPLE_HISTORY_ROWS.filter((row) => row.uniqueId.toLowerCase().includes(uniqueId.toLowerCase())));
+        setInventoryRows(SAMPLE_INVENTORY_ROWS.filter((row) => row.uniqueId.toLowerCase().includes(uniqueId.toLowerCase())));
         setHistoryDataSource("seed");
         return;
       }
 
       const adminHubData = (window as any).AdminHubData;
       Promise.resolve()
-        .then(() => adminHubData.fetchPartHistory({ companyCode: localStorage.getItem("userCompanyId"), uniqueId: uniqueId || undefined }))
+        .then(() => adminHubData.fetchPartHistory({ companyCode: localStorage.getItem("userCompanyId"), uniqueId }))
         .then((history: HistoryRow[]) => {
           if (Array.isArray(history) && history.length) {
             setHistoryRows(history);
             setHistoryDataSource("database");
           } else {
-            setHistoryRows(SAMPLE_HISTORY_ROWS);
-            setHistoryDataSource("seed");
+            setHistoryRows([]);
+            setHistoryDataSource("database");
           }
         })
-        .then(() => adminHubData.fetchPartInventoryInfo({ companyCode: localStorage.getItem("userCompanyId"), uniqueId: uniqueId || undefined }))
+        .then(() => adminHubData.fetchPartInventoryInfo({ companyCode: localStorage.getItem("userCompanyId"), uniqueId }))
         .then((inventory: InventoryRow[]) => {
-          setInventoryRows(Array.isArray(inventory) && inventory.length ? inventory : SAMPLE_INVENTORY_ROWS);
+          setInventoryRows(Array.isArray(inventory) && inventory.length ? inventory : []);
         })
         .catch(() => {
-          setHistoryRows(SAMPLE_HISTORY_ROWS);
-          setInventoryRows(SAMPLE_INVENTORY_ROWS);
+          setHistoryRows([]);
+          setInventoryRows([]);
           setHistoryDataSource("seed");
         });
     };

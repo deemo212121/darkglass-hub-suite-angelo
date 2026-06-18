@@ -24,6 +24,7 @@ const TICKET_COLUMNS = [
   { key: "customer", label: "Cx Name" },
   { key: "city", label: "City" },
   { key: "location", label: "Loc" },
+  { key: "product", label: "Product" },
   { key: "model", label: "Model" },
   { key: "internalNote", label: "Internal Note" },
   { key: "repair", label: "Repair" },
@@ -34,6 +35,7 @@ const TICKET_COLUMNS = [
   { key: "phone", label: "Phone" },
   { key: "redo", label: "Redo" },
   { key: "aging", label: "Aging" },
+  { key: "statusSpend", label: "Status Spend" },
   { key: "calls", label: "Calls" },
   { key: "partOrder", label: "Part Order" },
   { key: "posting", label: "Posting" },
@@ -91,6 +93,31 @@ interface TicketVisit {
   visitedAt: string; // ISO string
 }
 
+// Best-effort product/appliance label for a ticket. Uses an explicit
+// productType when present, otherwise infers a common appliance from the
+// model string (e.g. "dryer", "washer", "refrigerator").
+function productLabel(ticket: { productType?: string; model?: string }): string {
+  const explicit = (ticket.productType || "").trim();
+  if (explicit) return explicit;
+  const model = (ticket.model || "").toLowerCase();
+  const guesses: Array<[RegExp, string]> = [
+    [/dryer/, "Dryer"],
+    [/washer|washing/, "Washer"],
+    [/refrig|fridge/, "Refrigerator"],
+    [/freezer/, "Freezer"],
+    [/dishwash/, "Dishwasher"],
+    [/range|stove|oven|cooktop/, "Range/Oven"],
+    [/microwave/, "Microwave"],
+    [/ice\s*maker/, "Ice Maker"],
+    [/disposal/, "Disposal"],
+    [/water\s*heater/, "Water Heater"],
+  ];
+  for (const [re, label] of guesses) {
+    if (re.test(model)) return label;
+  }
+  return "—";
+}
+
 function loadStatusLog(): StatusLogEntry[] {
   try { return JSON.parse(localStorage.getItem(STATUS_LOG_KEY) || "[]"); }
   catch { return []; }
@@ -128,6 +155,28 @@ function daysAgo(isoString: string): number {
   const d = new Date(isoString);
   const now = new Date();
   return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// Days since a ticket was created (total time the ticket has been open).
+// Accepts ISO, MM/DD/YY and MM/DD/YYYY formats.
+function daysSinceCreated(created: string | undefined): number {
+  if (!created) return 0;
+  const raw = String(created).trim();
+  let createdDate: Date | null = null;
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    const mm = parseInt(slash[1], 10) - 1;
+    const dd = parseInt(slash[2], 10);
+    let yy = parseInt(slash[3], 10);
+    if (yy < 100) yy += 2000;
+    createdDate = new Date(yy, mm, dd);
+  } else {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) createdDate = parsed;
+  }
+  if (!createdDate || isNaN(createdDate.getTime())) return 0;
+  const ms = Date.now() - createdDate.getTime();
+  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
 }
 
 function fmtTimestamp(iso: string): string {
@@ -406,6 +455,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   {isColVisible("customer") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Cx Name</th>}
                   {isColVisible("city") && <th className="px-4 py-3 text-left font-semibold text-blue-300">City</th>}
                   {isColVisible("location") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Loc</th>}
+                  {isColVisible("product") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Product</th>}
                   {isColVisible("model") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Model</th>}
                   {isColVisible("internalNote") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Internal Note</th>}
                   {isColVisible("repair") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Repair</th>}
@@ -416,6 +466,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   {isColVisible("phone") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Phone</th>}
                   {isColVisible("redo") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Redo</th>}
                   {isColVisible("aging") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Aging</th>}
+                  {isColVisible("statusSpend") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Status Spend</th>}
                   {isColVisible("calls") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Calls</th>}
                   {isColVisible("partOrder") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Order</th>}
                   {isColVisible("posting") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Posting</th>}
@@ -458,6 +509,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     {isColVisible("customer") && <td className="px-4 py-3 text-slate-300">{ticket.customer}</td>}
                     {isColVisible("city") && <td className="px-4 py-3 text-slate-300">{ticket.city}</td>}
                     {isColVisible("location") && <td className="px-4 py-3 text-slate-300">{ticket.location}</td>}
+                    {isColVisible("product") && <td className="px-4 py-3 text-slate-300">{productLabel(ticket)}</td>}
                     {isColVisible("model") && <td className="px-4 py-3 font-mono text-xs text-slate-300">{ticket.model}</td>}
                     {isColVisible("internalNote") && (
                     <td className="px-4 py-3 text-slate-400 text-xs max-w-xs truncate" title={ticket.internalNote}>
@@ -472,6 +524,15 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     {isColVisible("phone") && <td className="px-4 py-3 text-slate-300">{ticket.phone}</td>}
                     {isColVisible("redo") && <td className="px-4 py-3 text-center text-slate-300">{ticket.redo}</td>}
                     {isColVisible("aging") && (
+                    <td className="px-4 py-3 text-center">
+                      {(() => {
+                        const days = daysSinceCreated(ticket.created);
+                        const color = days <= 3 ? "text-green-400" : days <= 7 ? "text-yellow-400" : days <= 14 ? "text-orange-400" : "text-red-400";
+                        return <span className={`font-bold text-sm ${color}`}>{days}d</span>;
+                      })()}
+                    </td>
+                    )}
+                    {isColVisible("statusSpend") && (
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => setAgingModal({ ticketNo: ticket.ticketNo, status: ticket.status })}
