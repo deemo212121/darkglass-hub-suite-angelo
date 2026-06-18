@@ -2855,6 +2855,9 @@ function TicketDetailsPage() {
                           <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Status *</label>
                           <select id="visit-repair-status-modal" value={newVisitRepairStatus} onChange={(event) => setNewVisitRepairStatus(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
+                            <option>CL-Cancelled</option>
+                            <option>CL-Claimed</option>
+                            <option>CL-Data-Closed</option>
                             <option>CL-Need Cancel</option>
                             <option>CL-Parts Back Ordered</option>
                             <option>CL-Ready to Complete</option>
