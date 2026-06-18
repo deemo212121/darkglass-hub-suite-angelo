@@ -432,6 +432,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <option value="IT">IT</option>
                       <option value="PARTS">Parts</option>
                       <option value="FINANCE">Finance</option>
+                      <option value="CSR Agent">CSR Agent</option>
+                      <option value="CSR Team Leader">CSR Team Leader</option>
+                      <option value="CSR Manager">CSR Manager</option>
+                      <option value="Branch Manager">Branch Manager</option>
+                      <option value="Senior Branch Manager">Senior Branch Manager</option>
+                      <option value="Claims Manager">Claims Manager</option>
+                      <option value="Parts Manager">Parts Manager</option>
+                      <option value="BizOps Manager">BizOps Manager</option>
+                      <option value="BizOps Senior Manager">BizOps Senior Manager</option>
                     </select>
                   </label>
                 </div>

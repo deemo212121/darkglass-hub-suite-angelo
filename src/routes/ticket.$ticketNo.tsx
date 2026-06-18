@@ -510,6 +510,29 @@ const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy
   cxPaid: "Cx Paid",
 };
 
+// Compute Turnaround Time (TAT): days elapsed since the ticket was created.
+// Accepts common date formats (ISO, MM/DD/YY, MM/DD/YYYY). Returns e.g. "3d".
+function computeTAT(created: string | undefined): string {
+  if (!created) return "0d";
+  let createdDate: Date | null = null;
+  const raw = String(created).trim();
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    const mm = parseInt(slash[1], 10) - 1;
+    const dd = parseInt(slash[2], 10);
+    let yy = parseInt(slash[3], 10);
+    if (yy < 100) yy += 2000;
+    createdDate = new Date(yy, mm, dd);
+  } else {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) createdDate = parsed;
+  }
+  if (!createdDate || isNaN(createdDate.getTime())) return "0d";
+  const ms = Date.now() - createdDate.getTime();
+  const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+  return `${days}d`;
+}
+
 const DEFAULT_TICKET: TicketData = {
   ticketNo: "017151274136",
   account: "SQUARE TRADE",
@@ -1021,7 +1044,7 @@ function TicketDetailsPage() {
           account: centralTicket.account || "",
           warranty: centralTicket.warranty,
           product: centralTicket.model,
-          tat: "",
+          tat: computeTAT(centralTicket.created),
           status: centralTicket.status,
           schedule: centralTicket.schedule,
           contact: centralTicket.contact || "",

@@ -19,7 +19,10 @@ import { getCompanyUsers as getFirestoreCompanyUsers } from "@/lib/firebase/user
 
 export type UserRole =
   | "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR"
-  | "TECHNICIAN" | "CLAIMS" | "HR" | "IT" | "PARTS" | "FINANCE";
+  | "TECHNICIAN" | "CLAIMS" | "HR" | "IT" | "PARTS" | "FINANCE"
+  | "CSR Agent" | "CSR Team Leader" | "CSR Manager" | "Branch Manager"
+  | "Senior Branch Manager" | "Claims Manager" | "Parts Manager"
+  | "BizOps Manager" | "BizOps Senior Manager";
 
 export interface ProfileRow {
   id: string;
