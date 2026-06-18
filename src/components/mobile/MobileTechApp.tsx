@@ -3,8 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import type { Ticket } from "@/lib/ticketData";
-import { ALL_TECHNICIANS, getTechniciansForLocation } from "@/lib/locations";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -64,6 +64,7 @@ export function MobileTechApp() {
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<ProfileRow[]>([]);
   const isSelfRole = role ? SELF_ROLES.has(role.toUpperCase()) : false;
 
   // Manager flow: which technician's tickets are we viewing.
@@ -93,6 +94,25 @@ export function MobileTechApp() {
     };
   }, []);
 
+  // Load real company users (for the manager technician roster). Techs don't
+  // need this list, so only fetch for non-self roles.
+  useEffect(() => {
+    if (isSelfRole) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getCompanyUsers();
+        if (!cancelled) setUsers(rows);
+      } catch (e) {
+        console.error("Mobile: failed to load users", e);
+        if (!cancelled) setUsers([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfRole]);
+
   // Location-restricted set (techs/restricted roles). null = unrestricted.
   const locScoped = useMemo(() => {
     if (allowedLocations === null) return tickets;
@@ -108,18 +128,26 @@ export function MobileTechApp() {
     return locScoped.filter((t) => (t.technician || "").toLowerCase() === name);
   }, [locScoped, scopeTech]);
 
-  // Technician roster for managers (within allowed locations).
+  // Technician roster for managers — real TECHNICIAN-role users from Supabase,
+  // scoped to the manager's allowed locations (assigned_branch / branch_access).
   const roster = useMemo(() => {
-    let techs: string[] = [];
-    if (allowedLocations === null) {
-      techs = ALL_TECHNICIANS;
-    } else {
-      const set = new Set<string>();
-      for (const loc of allowedLocations) getTechniciansForLocation(loc).forEach((t) => set.add(t));
-      techs = Array.from(set).sort((a, b) => a.localeCompare(b));
-    }
-    return techs;
-  }, [allowedLocations]);
+    const techUsers = users.filter((u) => (u.role || "").toUpperCase() === "TECHNICIAN");
+    const inScope = techUsers.filter((u) => {
+      if (allowedLocations === null) return true;
+      const branches = [u.assigned_branch, ...(u.branch_access || "").split(/[,;]/)]
+        .map((b) => (b || "").trim())
+        .filter(Boolean);
+      // If the tech has no branch info, keep them visible (don't hide silently).
+      if (branches.length === 0) return true;
+      return branches.some((b) => allowedLocations.includes(b));
+    });
+    return inScope
+      .map((u) => ({
+        name: u.display_name || u.username || u.email,
+        branch: u.assigned_branch || "",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [users, allowedLocations]);
 
   const visibleTickets = useMemo(() => {
     let list = myTickets;
@@ -285,17 +313,22 @@ function RosterView({
   roster,
   onSelect,
 }: {
-  roster: string[];
+  roster: Array<{ name: string; branch: string }>;
   onSelect: (tech: string) => void;
 }) {
   return (
     <div className="mtech-scroll">
       {roster.length === 0 && <div className="mtech-empty">No technicians in your locations.</div>}
       {roster.map((tech) => (
-        <button key={tech} className="mtech-roster-card" onClick={() => onSelect(tech)} type="button">
+        <button
+          key={tech.name}
+          className="mtech-roster-card"
+          onClick={() => onSelect(tech.name)}
+          type="button"
+        >
           <div className="mtech-roster-info">
-            <span className="mtech-roster-role">Technician</span>
-            <span className="mtech-roster-name">{tech}</span>
+            <span className="mtech-roster-role">Technician{tech.branch ? ` · ${tech.branch}` : ""}</span>
+            <span className="mtech-roster-name">{tech.name}</span>
           </div>
           <span className="mtech-roster-chev">›</span>
         </button>
@@ -398,24 +431,55 @@ function RouteMapView({
 }) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
+  const dirRendererRef = useRef<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
+  const [stops, setStops] = useState<Array<{ ticket: Ticket; pos: { lat: number; lng: number } }>>([]);
+  const [legs, setLegs] = useState<
+    Array<{ ticketNo: string; customer: string; address: string; distance: string; duration: string; pos: { lat: number; lng: number } }>
+  >([]);
+  const [routing, setRouting] = useState(true);
 
+  // Try to get the technician's current location for the route origin.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (p) => setOrigin({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => {
+        /* permission denied — we'll route between stops only */
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }, []);
+
+  // Load Google Maps script + init map, then build a driving route.
   useEffect(() => {
     let cancelled = false;
 
     const init = () => {
       const g = (window as any).google;
       if (!g?.maps || !mapEl.current) return;
-      const map = new g.maps.Map(mapEl.current, {
-        zoom: 9,
-        center: { lat: 39.5, lng: -98.35 },
-        disableDefaultUI: true,
-        zoomControl: true,
-      });
-      mapRef.current = map;
+      if (!mapRef.current) {
+        mapRef.current = new g.maps.Map(mapEl.current, {
+          zoom: 9,
+          center: { lat: 39.5, lng: -98.35 },
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: "greedy",
+        });
+        dirRendererRef.current = new g.maps.DirectionsRenderer({
+          map: mapRef.current,
+          suppressMarkers: false,
+          polylineOptions: { strokeColor: "#5b7eff", strokeWeight: 5 },
+        });
+      }
+      void buildRoute(g);
+    };
 
+    const buildRoute = async (g: any) => {
+      setRouting(true);
+      setError(null);
       const geocoder = new g.maps.Geocoder();
-      const bounds = new g.maps.LatLngBounds();
       const geocode = (address: string) =>
         new Promise<{ lat: number; lng: number } | null>((resolve) => {
           geocoder.geocode({ address }, (results: any, status: string) => {
@@ -426,24 +490,89 @@ function RouteMapView({
           });
         });
 
-      (async () => {
-        let placed = 0;
-        for (let i = 0; i < tickets.length; i++) {
-          const t = tickets[i];
-          const addr = fmtAddress(t) || t.city || t.location;
-          if (!addr) continue;
-          const pos = await geocode(addr);
-          if (cancelled || !pos) continue;
-          new g.maps.Marker({
-            position: pos,
-            map,
-            label: { text: String(i + 1), color: "#fff", fontWeight: "700" },
-          });
-          bounds.extend(pos);
-          placed++;
+      // Geocode each ticket stop in ticket order.
+      const resolved: Array<{ ticket: Ticket; pos: { lat: number; lng: number } }> = [];
+      for (const t of tickets) {
+        const addr = fmtAddress(t) || t.city || t.location;
+        if (!addr) continue;
+        const pos = await geocode(addr);
+        if (cancelled) return;
+        if (pos) resolved.push({ ticket: t, pos });
+      }
+      setStops(resolved);
+
+      if (resolved.length === 0) {
+        setRouting(false);
+        setError("No mappable stops for these tickets.");
+        return;
+      }
+
+      // origin = device location (or first stop); destination = last stop;
+      // the middle stops become ordered waypoints.
+      const start = origin || resolved[0].pos;
+      const points = origin ? resolved : resolved.slice(1);
+      if (points.length === 0) {
+        mapRef.current.setCenter(resolved[0].pos);
+        mapRef.current.setZoom(13);
+        setLegs([
+          {
+            ticketNo: resolved[0].ticket.ticketNo,
+            customer: resolved[0].ticket.customer || "",
+            address: fmtAddress(resolved[0].ticket),
+            distance: "",
+            duration: "",
+            pos: resolved[0].pos,
+          },
+        ]);
+        setRouting(false);
+        return;
+      }
+
+      const destination = points[points.length - 1].pos;
+      const waypoints = points.slice(0, -1).map((p) => ({ location: p.pos, stopover: true }));
+
+      const ds = new g.maps.DirectionsService();
+      ds.route(
+        {
+          origin: start,
+          destination,
+          waypoints,
+          optimizeWaypoints: false,
+          travelMode: g.maps.TravelMode.DRIVING,
+        },
+        (result: any, status: string) => {
+          if (cancelled) return;
+          if (status === "OK" && result) {
+            dirRendererRef.current.setDirections(result);
+            const route = result.routes[0];
+            const legInfo = route.legs.map((leg: any, i: number) => {
+              const t = points[i]?.ticket;
+              return {
+                ticketNo: t?.ticketNo || "",
+                customer: t?.customer || "",
+                address: leg.end_address || "",
+                distance: leg.distance?.text || "",
+                duration: leg.duration?.text || "",
+                pos: points[i]?.pos,
+              };
+            });
+            setLegs(legInfo);
+          } else {
+            setError("Could not build a driving route. Showing stops only.");
+            const bounds = new g.maps.LatLngBounds();
+            resolved.forEach((s, i) => {
+              new g.maps.Marker({
+                position: s.pos,
+                map: mapRef.current,
+                label: { text: String(i + 1), color: "#fff", fontWeight: "700" },
+              });
+              bounds.extend(s.pos);
+            });
+            mapRef.current.fitBounds(bounds);
+          }
+          setRouting(false);
         }
-        if (!cancelled && placed > 0) map.fitBounds(bounds);
-      })();
+      );
     };
 
     const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="mobile"]');
@@ -466,7 +595,27 @@ function RouteMapView({
     return () => {
       cancelled = true;
     };
-  }, [tickets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickets, origin]);
+
+  // Open the full multi-stop route in the device's Google Maps (turn-by-turn).
+  const openInGoogleMaps = () => {
+    if (stops.length === 0) return;
+    const pts = stops.map((s) => `${s.pos.lat},${s.pos.lng}`);
+    const destination = pts[pts.length - 1];
+    const waypoints = pts.slice(0, -1);
+    const params = new URLSearchParams({ api: "1", destination, travelmode: "driving" });
+    if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
+    if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+    window.open(`https://www.google.com/maps/dir/?${params.toString()}`, "_blank", "noopener,noreferrer");
+  };
+
+  // Navigate to a single stop from the directions list.
+  const navigateToStop = (lat: number, lng: number) => {
+    const params = new URLSearchParams({ api: "1", destination: `${lat},${lng}`, travelmode: "driving" });
+    if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
+    window.open(`https://www.google.com/maps/dir/?${params.toString()}`, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <>
@@ -476,8 +625,37 @@ function RouteMapView({
           Tickets
         </button>
       </div>
+
       <div className="mtech-map" ref={mapEl}>
         {error && <div className="mtech-empty">{error}</div>}
+      </div>
+
+      <button className="mtech-nav-btn" onClick={openInGoogleMaps} type="button" disabled={stops.length === 0}>
+        🧭 Start Navigation
+      </button>
+
+      <div className="mtech-directions">
+        <div className="mtech-directions-title">
+          {routing ? "Building route…" : `Route · ${legs.length} stop${legs.length === 1 ? "" : "s"}`}
+        </div>
+        {legs.map((leg, i) => (
+          <button
+            key={`${leg.ticketNo}-${i}`}
+            className="mtech-direction-row"
+            onClick={() => leg.pos && navigateToStop(leg.pos.lat, leg.pos.lng)}
+            type="button"
+          >
+            <span className="mtech-direction-num">{i + 1}</span>
+            <span className="mtech-direction-info">
+              <span className="mtech-direction-cust">{leg.customer || leg.ticketNo}</span>
+              <span className="mtech-direction-addr">{leg.address}</span>
+            </span>
+            <span className="mtech-direction-meta">
+              {leg.duration && <span>{leg.duration}</span>}
+              {leg.distance && <span className="mtech-direction-dist">{leg.distance}</span>}
+            </span>
+          </button>
+        ))}
       </div>
     </>
   );
