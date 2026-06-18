@@ -7,6 +7,7 @@ import { savePartOrder, createPartOrderFromTicket } from "@/lib/supabase/partOrd
 import { Copy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { TicketPhotos } from "@/components/TicketPhotos";
+import { TIME_FRAMES } from "@/lib/timeframes";
 import { 
   loadTickets, 
   updateTicket, 
@@ -2851,9 +2852,8 @@ function TicketDetailsPage() {
                           <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot *</label>
                           <select id="visit-time-slot-modal" value={newVisitTimeSlot} onChange={(event) => setNewVisitTimeSlot(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
-                            <option>AM</option>
-                            <option>PM</option>
-                            <option>ANYTIME</option>
+                            {TIME_FRAMES.map((f) => <option key={f} value={f}>{f}</option>)}
+                            <option value="ANYTIME">ANYTIME</option>
                           </select>
                         </div>
                         <div className="space-y-1.5">

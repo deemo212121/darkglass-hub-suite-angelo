@@ -5,6 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
 import { useAuth } from "@/lib/auth";
 
@@ -27,7 +28,7 @@ type TicketRecord = Record<string, any> & {
 };
 
 type PlannerTicket = TicketRecord & {
-  slot: "AM" | "PM" | "ANYTIME";
+  slot: TimeFrame;
   scheduleTime: string;
   lat?: number;
   lng?: number;
@@ -42,12 +43,9 @@ const STATUS_LEGEND = [
   { label: "Completed", className: "color-completed" },
   { label: "Claimed", className: "color-claimed" },
 ];
-const TIME_SLOTS: Array<PlannerTicket["slot"]> = ["AM", "PM", "ANYTIME"];
-const SLOT_TIMES: Record<PlannerTicket["slot"], string> = {
-  AM: "08:30",
-  PM: "14:30",
-  ANYTIME: "17:30",
-};
+// Daily schedule columns: each time frame, plus an ANYTIME catch-all.
+const TIME_SLOTS: Array<PlannerTicket["slot"]> = [...TIME_FRAMES, "ANYTIME"];
+const SLOT_TIMES: Record<string, string> = FRAME_START_TIME;
 function getLocalDateStr(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -102,8 +100,11 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
     // Time slot is persisted on the ticket. If a ticket has never been
     // scheduled into a slot, default it to ANYTIME (stable across reloads,
     // not a rotating value).
-    const visitTimeSlot = (row.slot || row.timeSlot) as "AM" | "PM" | "ANYTIME" | undefined;
-    const slot = visitTimeSlot || "ANYTIME";
+    const visitTimeSlot = (row.slot || row.timeSlot) as TimeFrame | undefined;
+    // Migrate legacy AM/PM values to a frame so old tickets still slot in.
+    const legacyMap: Record<string, TimeFrame> = { AM: "8-12", PM: "1-5" };
+    const rawSlot = visitTimeSlot || "ANYTIME";
+    const slot: TimeFrame = (legacyMap[rawSlot as string] ?? rawSlot) as TimeFrame;
     
     const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
     const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
@@ -136,7 +137,7 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
       branch: normalizeBranch(row.branch || row.location || row.city),
       technician,
       slot,
-      scheduleTime: row.scheduleTime || SLOT_TIMES[slot],
+      scheduleTime: row.scheduleTime || SLOT_TIMES[slot] || "17:30",
       status: row.status || "Pending",
       created: String(row.created || row.created_at || getLocalDateStr()),
       customer: String(row.customer || row.customer_name || "Unknown"),
