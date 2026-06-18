@@ -21,8 +21,10 @@ service firebase.storage {
       return request.resource.size < 25 * 1024 * 1024; // 25MB
     }
 
-    // Ticket photos: companies/{companyId}/tickets/{ticketNo}/{imageFile}
-    match /companies/{companyId}/tickets/{ticketNo}/{imageFile} {
+    // Ticket photos: companies/{companyId}/tickets/{ticketNo}/{path...}
+    // Covers both the General tab (.../tickets/{ticketNo}/file) and category
+    // subfolders like .../tickets/{ticketNo}/service/file.
+    match /companies/{companyId}/tickets/{ticketNo}/{allPaths=**} {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated() && isValidImageType() && isValidUploadSize();
       allow delete: if isAuthenticated();

@@ -2504,12 +2504,10 @@ function TicketDetailsPage() {
               </div>
             </div>
 
-            {/* Attachments */}
+            {/* Attachments / Photos */}
             <div>
-              <h4 className="font-semibold text-slate-300 mb-4">Attachments</h4>
-              <div className="bg-slate-900/50 border border-white/10 rounded p-4 space-y-4">
-                <div className="text-sm text-slate-400">No file chosen</div>
-                <button className="text-blue-400 hover:text-blue-300 text-sm font-semibold">+ Add</button>
+              <div className="bg-slate-900/50 border border-white/10 rounded p-4">
+                <TicketPhotos ticketNo={ticketNo} category="service" title="Attachments" />
               </div>
             </div>
 
@@ -3481,11 +3479,6 @@ function TicketDetailsPage() {
                   Add
                 </button>
               </div>
-            </div>
-
-            {/* Service Photos */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-              <TicketPhotos ticketNo={ticketNo} category="service" title="Service Photos" />
             </div>
           </div>
         )}
