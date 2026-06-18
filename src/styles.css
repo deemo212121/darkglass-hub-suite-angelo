@@ -1666,11 +1666,14 @@
    Uses Admin Hub Solutions brand: blue gradient + gold coin.
    ============================================================ */
 .mtech {
-  --mt-blue: #2f6fd6;
-  --mt-blue-dark: #1f4f9c;
-  --mt-gold: #f4c01a;
+  --mt-blue: #5b7eff;
+  --mt-blue-dark: #4c5ac0;
   min-height: 100vh;
-  background: linear-gradient(160deg, #3a78dd 0%, #2f6fd6 45%, #2257b0 100%);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, oklch(0.35 0.15 260 / 0.5), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, oklch(0.42 0.18 230 / 0.35), transparent 60%),
+    linear-gradient(180deg, oklch(0.16 0.04 260) 0%, oklch(0.12 0.03 265) 100%);
+  background-attachment: fixed;
   color: #0f172a;
   display: flex;
   flex-direction: column;
@@ -1683,28 +1686,42 @@
   z-index: 20;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
   padding: 0.85rem 1rem;
-  background: linear-gradient(180deg, #2f6fd6, #2257b0);
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
   color: #fff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
 }
+.mtech-topbar-back {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  font-size: 1.3rem;
+  font-weight: 800;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+.mtech-topbar-back:disabled { opacity: 0; pointer-events: none; }
 .mtech-company { font-weight: 800; font-size: 1.05rem; letter-spacing: 0.02em; }
 .mtech-title {
+  flex: 1;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
   font-weight: 700;
   font-size: 1.05rem;
 }
 .mtech-coin {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
-  background: var(--mt-gold);
-  border-radius: 50%;
-  padding: 2px;
 }
 .mtech-user {
   background: #fff;
@@ -1715,6 +1732,7 @@
   font-weight: 700;
   font-size: 0.85rem;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .mtech-menu-overlay { position: fixed; inset: 0; z-index: 30; }
 .mtech-user-menu {
@@ -1743,7 +1761,7 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
 }
 .mtech-back, .mtech-detail-back {
   background: #fff;
@@ -1837,7 +1855,7 @@
 .mtech-roster-chev {
   font-size: 1.8rem;
   color: #fff;
-  background: var(--mt-blue);
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
   border-radius: 50%;
   width: 40px;
   height: 40px;
@@ -1868,7 +1886,7 @@
   padding: 0.5rem 0.3rem;
   color: #fff;
 }
-.mtech-ticket-rail.tone-blue { background: #2f6fd6; }
+.mtech-ticket-rail.tone-blue { background: linear-gradient(135deg, #5b7eff, #4c5ac0); }
 .mtech-ticket-rail.tone-green { background: #16a34a; }
 .mtech-ticket-rail.tone-amber { background: #d97706; }
 .mtech-ticket-rail.tone-red { background: #dc2626; }
@@ -1957,7 +1975,7 @@
   font-weight: 700;
   text-align: center;
 }
-.mtech-detail-railbadge.tone-blue { background: #2f6fd6; }
+.mtech-detail-railbadge.tone-blue { background: linear-gradient(135deg, #5b7eff, #4c5ac0); }
 .mtech-detail-railbadge.tone-green { background: #16a34a; }
 .mtech-detail-railbadge.tone-amber { background: #d97706; }
 .mtech-detail-railbadge.tone-red { background: #dc2626; }
@@ -1992,7 +2010,7 @@
   padding: 0.55rem 0.3rem;
   border: none;
   border-radius: 8px;
-  background: #2f6fd6;
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
   color: #fff;
   font-weight: 700;
   font-size: 0.82rem;

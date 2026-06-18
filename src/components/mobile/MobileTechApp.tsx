@@ -155,6 +155,23 @@ export function MobileTechApp() {
   const headerName = displayName || email || "User";
   const companyLabel = companyId || "AH";
 
+  // Unified back navigation for the top-bar back button.
+  const handleTopBack = () => {
+    if (view === "detail") {
+      setView("tickets");
+    } else if (view === "map") {
+      setView("tickets");
+    } else if (view === "tickets") {
+      if (!isSelfRole) {
+        setSelectedTech(null);
+        setView("roster");
+      }
+    }
+  };
+  // Hide the back button when there's nowhere to go (tech's own ticket list, or roster root).
+  const showTopBack =
+    view === "detail" || view === "map" || (view === "tickets" && !isSelfRole);
+
   return (
     <div className="mtech">
       <TopBar
@@ -170,6 +187,8 @@ export function MobileTechApp() {
         company={companyLabel}
         userName={headerName}
         onLogout={logout}
+        onBack={handleTopBack}
+        showBack={showTopBack}
       />
 
       {view === "roster" && (
@@ -193,11 +212,6 @@ export function MobileTechApp() {
           setSearch={setSearch}
           onRoute={() => setView("map")}
           onOpen={openTicket}
-          showBack={!isSelfRole}
-          onBack={() => {
-            setSelectedTech(null);
-            setView("roster");
-          }}
           techLabel={scopeTech || ""}
         />
       )}
@@ -210,12 +224,7 @@ export function MobileTechApp() {
       )}
 
       {view === "detail" && activeTicket && (
-        <DetailView
-          ticket={activeTicket}
-          tab={detailTab}
-          setTab={setDetailTab}
-          onBack={() => setView("tickets")}
-        />
+        <DetailView ticket={activeTicket} tab={detailTab} setTab={setDetailTab} />
       )}
 
       {/* Footer escape to desktop */}
@@ -231,16 +240,26 @@ function TopBar({
   company,
   userName,
   onLogout,
+  onBack,
+  showBack,
 }: {
   title: string;
   company: string;
   userName: string;
   onLogout: () => void;
+  onBack: () => void;
+  showBack: boolean;
 }) {
   const [menu, setMenu] = useState(false);
   return (
     <div className="mtech-topbar">
-      <span className="mtech-company">{company}</span>
+      {showBack ? (
+        <button className="mtech-topbar-back" onClick={onBack} type="button" aria-label="Back">
+          ‹
+        </button>
+      ) : (
+        <span className="mtech-company">{company}</span>
+      )}
       <span className="mtech-title">
         <img src={logo} alt="" className="mtech-coin" />
         {title}
@@ -294,8 +313,6 @@ function TicketsView({
   setSearch,
   onRoute,
   onOpen,
-  showBack,
-  onBack,
   techLabel,
 }: {
   loading: boolean;
@@ -306,19 +323,12 @@ function TicketsView({
   setSearch: (s: string) => void;
   onRoute: () => void;
   onOpen: (t: Ticket) => void;
-  showBack: boolean;
-  onBack: () => void;
   techLabel: string;
 }) {
   const today = new Date().toLocaleDateString("en-US");
   return (
     <>
       <div className="mtech-subbar">
-        {showBack && (
-          <button className="mtech-back" onClick={onBack} type="button">
-            ‹
-          </button>
-        )}
         <span className="mtech-date">{techLabel ? techLabel : today}</span>
         <button className="mtech-route-btn" onClick={onRoute} type="button">
           Route
@@ -477,20 +487,15 @@ function DetailView({
   ticket,
   tab,
   setTab,
-  onBack,
 }: {
   ticket: Ticket;
   tab: DetailTab;
   setTab: (t: DetailTab) => void;
-  onBack: () => void;
 }) {
   return (
     <div className="mtech-scroll">
       {/* Always-on ticket info header */}
       <div className="mtech-detail-head">
-        <button className="mtech-detail-back" onClick={onBack} type="button">
-          ‹
-        </button>
         <div className="mtech-detail-headinfo">
           <div className="mtech-detail-no">{ticket.ticketNo}</div>
           <div className="mtech-detail-status">🔖 {ticket.status}</div>
