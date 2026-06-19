@@ -3212,12 +3212,23 @@ function TicketDetailsPage() {
                       <td className="px-1 py-1.5">
                         <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
                           <option value="">Dist.*</option>
+                          <option>AIG</option>
+                          <option>Electrolux</option>
                           <option>Encompass</option>
-                          <option>RepairClinic</option>
-                          <option>PartSelect</option>
-                          <option>Marcone</option>
-                          <option>Johnstone</option>
-                          <option>Other</option>
+                          <option>Encompass-Birmingham / Montgomery</option>
+                          <option>GE</option>
+                          <option>LG</option>
+                          <option>Marcone- Birmingham / Montgomery</option>
+                          <option>Marcone-162468</option>
+                          <option>Midea</option>
+                          <option>Miele</option>
+                          <option>NSA</option>
+                          <option>OW</option>
+                          <option>SB</option>
+                          <option>Sharp</option>
+                          <option>SP</option>
+                          <option>Squaretrade</option>
+                          <option>SS</option>
                         </select>
                       </td>
                       <td className="px-1 py-1.5">
