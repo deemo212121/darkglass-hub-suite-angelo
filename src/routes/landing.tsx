@@ -186,14 +186,14 @@ function Landing() {
           </DialogHeader>
           <form onSubmit={submit} className="space-y-4">
             <label className="block text-sm">
-              <span className="text-muted-foreground text-xs font-semibold uppercase">Email or Username</span>
+              <span className="text-muted-foreground text-xs font-semibold uppercase">Username</span>
               <input 
                 className="glass-input mt-1 w-full" 
                 type="text" 
                 autoComplete="username"
                 value={form.emailOrUsername} 
                 onChange={(e) => setForm({ ...form, emailOrUsername: e.target.value })}
-                placeholder="your.email@company.com or FirstName.LastName"
+                placeholder="Username"
                 disabled={submitting}
               />
             </label>
