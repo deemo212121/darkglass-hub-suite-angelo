@@ -8,6 +8,7 @@ import { getUserManagementRecord } from "@/lib/user-management";
 import { LOCATIONS, ALL_TECHNICIANS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
+import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
 import { useAuth } from "@/lib/auth";
 
 const TABS = [
@@ -742,6 +743,7 @@ function UserDetailsPage() {
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [savedEmployeeInfo, setSavedEmployeeInfo] = useState<EmployeeInfoState | null>(null);
   const [employeeInfo, setEmployeeInfo] = useState<EmployeeInfoState | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [showEmployeeSavePrompt, setShowEmployeeSavePrompt] = useState(false);
   const [savedAccountRows, setSavedAccountRows] = useState<AccountInfoRow[]>([]);
   const [accountRows, setAccountRows] = useState<AccountInfoRow[]>([]);
@@ -794,6 +796,25 @@ function UserDetailsPage() {
         
         setSavedEmployeeInfo(loadEmployeeInfo({ id: mappedUser.id, userName: mappedUser.userName, office, email: mappedUser.email }));
         setEmployeeInfo(loadEmployeeInfo({ id: mappedUser.id, userName: mappedUser.userName, office, email: mappedUser.email }));
+
+        // Pull persisted employee info from Supabase (source of truth, company-
+        // wide) and merge it over the local defaults so the Work Map can read
+        // the technician's saved home address.
+        try {
+          const sbProfile = await getProfileByUsername(mappedUser.loginName);
+          if (sbProfile?.id) {
+            setProfileId(sbProfile.id);
+            const sbInfo = await getProfileEmployeeInfo(sbProfile.id);
+            if (sbInfo && Object.keys(sbInfo).length > 0) {
+              const base = loadEmployeeInfo({ id: mappedUser.id, userName: mappedUser.userName, office, email: mappedUser.email });
+              const merged = { ...base, ...sbInfo } as EmployeeInfoState;
+              setSavedEmployeeInfo(merged);
+              setEmployeeInfo(merged);
+            }
+          }
+        } catch (e) {
+          console.warn("Supabase employee info load skipped:", e);
+        }
         
         setSavedAccountRows(loadAccountInfo({ id: mappedUser.id, userName: mappedUser.userName }));
         setAccountRows(loadAccountInfo({ id: mappedUser.id, userName: mappedUser.userName }));
@@ -907,6 +928,12 @@ function UserDetailsPage() {
   const handleSaveEmployeeInfo = () => {
     saveEmployeeInfoToStorage(user.id, user.email, employeeInfo);
     setSavedEmployeeInfo(employeeInfo);
+    // Persist to Supabase too (company-wide; powers the Work Map house pins).
+    if (profileId && employeeInfo) {
+      void saveProfileEmployeeInfo(profileId, employeeInfo as any).catch((e) =>
+        console.warn("Supabase employee info save skipped:", e)
+      );
+    }
     setShowEmployeeSavePrompt(false);
   };
 

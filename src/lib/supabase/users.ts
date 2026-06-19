@@ -141,6 +141,92 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   return (data ?? []) as ProfileRow[];
 }
 
+export interface EmployeeInfo {
+  bankName?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  photoName?: string;
+  photoDataUrl?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  employeeId?: string;
+  employeeSsn?: string;
+  employeeSalary?: string;
+  birthDate?: string;
+  hireDate?: string;
+  terminateDate?: string;
+  employeeNote?: string;
+  attachments?: string[];
+}
+
+/** Load the employee_info JSON for a profile (by profile id). */
+export async function getProfileEmployeeInfo(profileId: string): Promise<EmployeeInfo | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("employee_info")
+    .eq("id", profileId)
+    .maybeSingle();
+  if (error) {
+    console.error("getProfileEmployeeInfo error:", error.message);
+    return null;
+  }
+  const info = (data as any)?.employee_info;
+  return info && typeof info === "object" ? (info as EmployeeInfo) : null;
+}
+
+/** Save the employee_info JSON for a profile (by profile id). */
+export async function saveProfileEmployeeInfo(profileId: string, info: EmployeeInfo): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ employee_info: info })
+    .eq("id", profileId);
+  if (error) {
+    console.error("saveProfileEmployeeInfo error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+export interface TechnicianHome {
+  name: string;          // display name
+  branch: string;        // assigned branch / office location
+  address: string;       // home street address
+  city: string;
+  state: string;
+  zip: string;
+}
+
+/**
+ * Return every TECHNICIAN-role user's home address + assigned branch for the
+ * Work Map, so we can pin each tech's house under their branch. Reads
+ * employee_info (home address) and assigned_branch. Company-scoped via RLS.
+ */
+export async function getCompanyTechnicianHomes(): Promise<TechnicianHome[]> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("display_name, username, email, role, assigned_branch, employee_info")
+    .eq("role", "TECHNICIAN");
+  if (error) {
+    console.error("getCompanyTechnicianHomes error:", error.message);
+    return [];
+  }
+  return (data ?? []).map((row: any) => {
+    const info = (row.employee_info && typeof row.employee_info === "object" ? row.employee_info : {}) as EmployeeInfo;
+    const addr1 = info.address1 || "";
+    const addr2 = info.address2 || "";
+    return {
+      name: row.display_name || row.username || row.email || "",
+      branch: row.assigned_branch || info.city || "",
+      address: [addr1, addr2].filter(Boolean).join(" "),
+      city: info.city || "",
+      state: info.state || "",
+      zip: info.zipCode || "",
+    } as TechnicianHome;
+  });
+}
+
 /**
  * Create a new user: Firebase Auth credential (via secondary app so the admin
  * stays logged in) + Supabase profile row.

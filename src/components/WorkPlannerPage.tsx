@@ -7,6 +7,7 @@ import { getLocationManagementZoomAddress } from "@/components/LocationManagemen
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
+import { getCompanyTechnicianHomes, type TechnicianHome } from "@/lib/supabase/users";
 import { useAuth } from "@/lib/auth";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -129,6 +130,14 @@ function getInitials(value: string | null | undefined) {
   return value.slice(0, 2).toUpperCase();
 }
 
+// Stable per-technician color so a tech's ticket badges, house pin, and route
+// line all share one color on the map.
+const TECH_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899"];
+function techColor(roster: string[], techName: string): string {
+  const idx = roster.indexOf(techName);
+  return idx >= 0 ? TECH_COLORS[idx % TECH_COLORS.length] : "#3B82F6";
+}
+
 function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
   return rows.map((row, index) => {
     // Time slot is persisted on the ticket. If a ticket has never been
@@ -213,6 +222,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+  const polylinesRef = useRef<any[]>([]);
+  const [techHomes, setTechHomes] = useState<TechnicianHome[]>([]);
   const geocodeCacheRef = useRef<Map<string, { lat: number; lng: number } | null>>(new Map());
   const dragSourceRef = useRef<{ ticketNo: string; slot: PlannerTicket["slot"]; technician: string } | null>(null);
 
@@ -230,6 +241,22 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     };
     if (ready) load();
     return () => { cancelled = true; };
+  }, [ready]);
+
+  // Load technician home addresses (for Work Map house pins). Company-scoped.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const homes = await getCompanyTechnicianHomes();
+        if (!cancelled) setTechHomes(homes);
+      } catch (err) {
+        console.warn("Work Planner: failed to load technician homes:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [ready]);
 
   useEffect(() => {
@@ -326,6 +353,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
+    polylinesRef.current.forEach((line) => line.setMap(null));
+    polylinesRef.current = [];
+
+    // Ordered geocoded stops per technician, for drawing route lines.
+    const routePointsByTech = new Map<string, Array<{ order: number; position: { lat: number; lng: number } }>>();
 
     const geocoder = new maps.Geocoder();
     
@@ -414,22 +446,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         // Create label text: initials + number (e.g., "JR1", "AM2")
         const labelText = `${initials}${hierarchyNumber}`;
         
-        // Determine color based on technician
-        const techIndex = selectedTechRoster.indexOf(techName);
-        let markerColor = "#3B82F6"; // Default blue
-        
-        if (techIndex >= 0) {
-          // Use technician-specific colors
-          const techColors = [
-            "#3B82F6", // Blue
-            "#10B981", // Green
-            "#F59E0B", // Amber
-            "#EF4444", // Red
-            "#8B5CF6", // Purple
-            "#EC4899", // Pink
-          ];
-          markerColor = techColors[techIndex % techColors.length];
-        }
+        // Determine color based on technician (shared with house pin + route).
+        const markerColor = techColor(selectedTechRoster, techName);
+
+        // Collect ordered route points per technician (JK1 -> JK2 -> JK3 ...).
+        if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
+        routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
 
         // Create custom marker with badge/text box icon with pointer at bottom
         const svgMarker = {
@@ -466,6 +488,89 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         bounds.extend(position);
       });
 
+      // Draw a route line per technician connecting their stops in order
+      // (JK1 -> JK2 -> JK3), colored to match the tech's badges.
+      routePointsByTech.forEach((points, techName) => {
+        if (points.length < 2) return;
+        const ordered = [...points].sort((a, b) => a.order - b.order);
+        const line = new maps.Polyline({
+          path: ordered.map((p) => p.position),
+          geodesic: true,
+          strokeColor: techColor(selectedTechRoster, techName),
+          strokeOpacity: 0.9,
+          strokeWeight: 3,
+          map: mapRef.current,
+          icons: [
+            {
+              icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 },
+              offset: "60%",
+            },
+          ],
+        });
+        polylinesRef.current.push(line);
+      });
+
+      // Pin the OFFICE for the selected branch (house icon, dark).
+      if (location) {
+        geocode(getLocationManagementZoomAddress(location)).then((officePos) => {
+          if (cancelled || !officePos || !mapRef.current) return;
+          const officeMarker = new maps.Marker({
+            map: mapRef.current,
+            position: officePos,
+            title: `${location} Office`,
+            icon: {
+              path: "M12 3 L2 12 L5 12 L5 21 L19 21 L19 12 L22 12 Z",
+              fillColor: "#0f172a",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+              scale: 1.3,
+              anchor: new maps.Point(12, 21),
+              labelOrigin: new maps.Point(12, 11),
+            },
+            label: { text: "🏢", fontSize: "11px" },
+            zIndex: 9999,
+          });
+          markersRef.current.push(officeMarker);
+        });
+      }
+
+      // Pin each technician's HOUSE. When a branch is selected, only techs
+      // assigned to that branch are shown.
+      const homesToShow = techHomes.filter((h) => {
+        if (!location) return false; // only show houses when a branch is picked
+        return normalizeBranch(h.branch) === location;
+      });
+      homesToShow.forEach((home) => {
+        const homeAddr = [home.address, home.city, [home.state, home.zip].filter(Boolean).join(" ")]
+          .filter(Boolean)
+          .join(", ")
+          .trim();
+        if (!homeAddr) return;
+        const color = techColor(selectedTechRoster, home.name);
+        geocode(homeAddr).then((pos) => {
+          if (cancelled || !pos || !mapRef.current) return;
+          const houseMarker = new maps.Marker({
+            map: mapRef.current,
+            position: pos,
+            title: `${home.name} (home)`,
+            icon: {
+              path: "M12 3 L2 12 L5 12 L5 21 L19 21 L19 12 L22 12 Z",
+              fillColor: color,
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+              scale: 1.1,
+              anchor: new maps.Point(12, 21),
+              labelOrigin: new maps.Point(12, 11),
+            },
+            label: { text: "🏠", fontSize: "10px" },
+            zIndex: 9998,
+          });
+          markersRef.current.push(houseMarker);
+        });
+      });
+
       if (location) {
         geocode(getLocationManagementZoomAddress(location)).then((position) => {
           if (position && mapRef.current) {
@@ -495,7 +600,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     });
 
     return () => { cancelled = true; };
-  }, [mapReady, visibleTickets]);
+  }, [mapReady, visibleTickets, techHomes]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
