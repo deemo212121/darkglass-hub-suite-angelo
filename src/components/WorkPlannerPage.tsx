@@ -8,6 +8,7 @@ import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
 import { getCompanyTechnicianHomes, type TechnicianHome } from "@/lib/supabase/users";
+import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -133,7 +134,7 @@ function getInitials(value: string | null | undefined) {
 // Stable per-technician color so a tech's ticket badges, house pin, and route
 // line all share one color on the map.
 const TECH_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899"];
-function techColor(roster: string[], techName: string): string {
+function techColor(roster: readonly string[], techName: string): string {
   const idx = roster.indexOf(techName);
   return idx >= 0 ? TECH_COLORS[idx % TECH_COLORS.length] : "#3B82F6";
 }
@@ -510,7 +511,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         polylinesRef.current.push(line);
       });
 
-      // Pin the OFFICE for the selected branch (house icon, dark).
+      // Pin the OFFICE for the selected branch — large dark pin with 🏢 label.
       if (location) {
         geocode(getLocationManagementZoomAddress(location)).then((officePos) => {
           if (cancelled || !officePos || !mapRef.current) return;
@@ -519,27 +520,35 @@ export function WorkPlannerPage({ mod, sub }: Props) {
             position: officePos,
             title: `${location} Office`,
             icon: {
-              path: "M12 3 L2 12 L5 12 L5 21 L19 21 L19 12 L22 12 Z",
+              // Classic teardrop map pin.
+              path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
               fillColor: "#0f172a",
               fillOpacity: 1,
               strokeColor: "#ffffff",
-              strokeWeight: 2,
+              strokeWeight: 2.5,
               scale: 1.3,
-              anchor: new maps.Point(12, 21),
-              labelOrigin: new maps.Point(12, 11),
+              anchor: new maps.Point(12, 34),
+              labelOrigin: new maps.Point(12, 12),
             },
-            label: { text: "🏢", fontSize: "11px" },
-            zIndex: 9999,
+            label: { text: "🏢", fontSize: "14px" },
+            zIndex: 99999,
           });
           markersRef.current.push(officeMarker);
         });
       }
 
-      // Pin each technician's HOUSE. When a branch is selected, only techs
-      // assigned to that branch are shown.
+      // Pin each technician's HOUSE. Match the tech to the selected branch
+      // leniently: their assigned_branch, their home city, or the branch their
+      // home ZIP belongs to (zip coverage) — so minor naming/branch gaps still
+      // resolve to the right location.
       const homesToShow = techHomes.filter((h) => {
         if (!location) return false; // only show houses when a branch is picked
-        return normalizeBranch(h.branch) === location;
+        const candidates = [h.branch, h.city];
+        if (h.zip) {
+          const cov = lookupZip(h.zip);
+          if (cov?.location) candidates.push(cov.location);
+        }
+        return candidates.some((c) => c && normalizeBranch(c) === location);
       });
       homesToShow.forEach((home) => {
         const homeAddr = [home.address, home.city, [home.state, home.zip].filter(Boolean).join(" ")]
@@ -548,24 +557,27 @@ export function WorkPlannerPage({ mod, sub }: Props) {
           .trim();
         if (!homeAddr) return;
         const color = techColor(selectedTechRoster, home.name);
+        const initials = getInitials(home.name);
         geocode(homeAddr).then((pos) => {
           if (cancelled || !pos || !mapRef.current) return;
           const houseMarker = new maps.Marker({
             map: mapRef.current,
             position: pos,
-            title: `${home.name} (home)`,
+            title: `${home.name} — home`,
             icon: {
-              path: "M12 3 L2 12 L5 12 L5 21 L19 21 L19 12 L22 12 Z",
+              // House silhouette (roof + body), clearly different from the
+              // ticket badge markers.
+              path: "M12 2 L1 11 L4 11 L4 21 L9 21 L9 15 L15 15 L15 21 L20 21 L20 11 L23 11 Z",
               fillColor: color,
               fillOpacity: 1,
               strokeColor: "#ffffff",
               strokeWeight: 2,
-              scale: 1.1,
+              scale: 1.6,
               anchor: new maps.Point(12, 21),
-              labelOrigin: new maps.Point(12, 11),
+              labelOrigin: new maps.Point(12, 26),
             },
-            label: { text: "🏠", fontSize: "10px" },
-            zIndex: 9998,
+            label: { text: `🏠 ${initials}`, color: "#ffffff", fontSize: "11px", fontWeight: "bold", className: "wp-house-label" },
+            zIndex: 99998,
           });
           markersRef.current.push(houseMarker);
         });
