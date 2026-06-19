@@ -7,7 +7,7 @@ import { getLocationManagementZoomAddress } from "@/components/LocationManagemen
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
-import { getCompanyTechnicianHomes, type TechnicianHome } from "@/lib/supabase/users";
+import type { TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 
@@ -249,6 +249,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     let cancelled = false;
     (async () => {
       try {
+        const { getCompanyTechnicianHomes } = await import("@/lib/supabase/users");
         const homes = await getCompanyTechnicianHomes();
         if (!cancelled) setTechHomes(homes);
       } catch (err) {
