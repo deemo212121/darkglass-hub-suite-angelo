@@ -375,6 +375,9 @@ function UserDetailsPage() {
   });
   // Work plan grid state (per-location weekday/weekend + per-day slot).
   const [workPlan, setWorkPlan] = useState<WorkPlan>({});
+  // Employee Information tab (bank, personal, home address). Stored in Supabase
+  // profiles.employee_info; powers the Work Map technician house pins.
+  const [employeeInfo, setEmployeeInfo] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!ready) return;
@@ -412,6 +415,12 @@ function UserDetailsPage() {
         });
         const { normalizeWorkPlan } = await import("@/lib/workPlan");
         setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
+        // Load saved employee info (bank/personal/home address) from Supabase.
+        try {
+          const { getProfileEmployeeInfo } = await import("@/lib/supabase/users");
+          const info = await getProfileEmployeeInfo(p.id);
+          if (!cancelled && info) setEmployeeInfo(info as Record<string, string>);
+        } catch { /* ignore */ }
       } catch (err) {
         console.error("Failed to load user:", err);
         if (!cancelled) setNotFoundUser(true);
@@ -473,6 +482,13 @@ function UserDetailsPage() {
         workPlan: workPlan,
         isActive: form.isActive,
       });
+      // Persist Employee Information (powers Work Map house pins).
+      try {
+        const { saveProfileEmployeeInfo } = await import("@/lib/supabase/users");
+        await saveProfileEmployeeInfo(profileId, employeeInfo as any);
+      } catch (e) {
+        console.warn("Employee info save skipped:", e);
+      }
       setStatus("Saved.");
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : "Save failed"}`);
@@ -484,6 +500,19 @@ function UserDetailsPage() {
   const labelCls = "block text-xs uppercase tracking-[0.08em] text-slate-400";
   const inputCls = "w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500";
   const readonlyCls = "w-full rounded-md border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-slate-400";
+
+  // Employee Information field (bound to the employeeInfo object).
+  const empField = (label: string, key: string, type: string = "text") => (
+    <label className="space-y-1.5 text-sm">
+      <span className={labelCls}>{label}</span>
+      <input
+        type={type}
+        value={String(employeeInfo[key] ?? "")}
+        onChange={(e) => setEmployeeInfo((p) => ({ ...p, [key]: e.target.value }))}
+        className={inputCls}
+      />
+    </label>
+  );
 
   const textField = (label: string, key: keyof typeof form, opts?: { type?: string; note?: string }) => (
     <label className="space-y-1.5 text-sm">
@@ -707,6 +736,46 @@ function UserDetailsPage() {
                           })}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                ) : activeTab === "Employee Information" ? (
+                  <div className="space-y-6">
+                    <p className="text-sm text-slate-400">
+                      Bank, personal, and home-address details. The home address is used to pin the technician's house on the Work Map.
+                    </p>
+
+                    <div>
+                      <h3 className="text-sm font-semibold text-blue-300 mb-3">Bank Information</h3>
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {empField("Bank Name", "bankName")}
+                        {empField("Routing Number", "routingNumber")}
+                        {empField("Account Number", "accountNumber")}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-semibold text-blue-300 mb-3">Personal Information</h3>
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {empField("Address 1", "address1")}
+                        {empField("Address 2", "address2")}
+                        {empField("City", "city")}
+                        {empField("State", "state")}
+                        {empField("Zip Code", "zipCode")}
+                        {empField("Employee ID", "employeeId")}
+                        {empField("Employee SSN", "employeeSsn")}
+                        {empField("Employee Salary", "employeeSalary")}
+                        {empField("Birth Date", "birthDate", "date")}
+                        {empField("Hire Date", "hireDate", "date")}
+                        {empField("Terminate Date", "terminateDate", "date")}
+                      </div>
+                      <label className="mt-4 block space-y-1.5 text-sm">
+                        <span className={labelCls}>Employee Note</span>
+                        <textarea
+                          value={employeeInfo.employeeNote || ""}
+                          onChange={(e) => setEmployeeInfo((p) => ({ ...p, employeeNote: e.target.value }))}
+                          className={`${inputCls} min-h-24`}
+                        />
+                      </label>
                     </div>
                   </div>
                 ) : (
