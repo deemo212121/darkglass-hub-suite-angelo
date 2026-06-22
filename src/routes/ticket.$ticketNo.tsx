@@ -35,6 +35,85 @@ import {
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 
+// Product category options for the ticket Product Information dropdown.
+const PRODUCT_CATEGORY_OPTIONS = [
+  "Air Conditioner", "Bed", "Coffee Machines", "Compactor", "Cooktop", "Dehumidifier",
+  "Dishwasher", "Disposer", "Drawer", "Dresser", "Dryer", "Duct", "Electric Cooktop",
+  "Electric Oven range", "Electrical System", "Evaporator", "Fan", "Food Center", "Furnace",
+  "Heater", "Home Theather", "Hood", "Ice Maker", "Laundry", "LCD TV", "LED TV", "Matress",
+  "Microwave", "Mobile", "Monitor", "OLED TV", "Oven", "PDP TV", "Plasma TV", "Projection TV",
+  "Range", "Refrigerator", "Trash Compactor", "TV", "Vacuum Cleaner", "Vent", "Washer",
+  "Washer Dryer", "Window", "Wine Cellar",
+];
+
+// Warranty type options.
+const WARRANTY_TYPE_OPTIONS = [
+  "Concession L", "Concession LP", "Concession P", "Ext Labor Wty", "Ext Part Wty", "Ext Wty",
+  "In warranty", "Labor only Wty", "Out-of-warranty", "Part only Wty", "Special Part 5 year",
+  "Unknown", "SERVICE CONTRACT",
+];
+
+// Claim company options.
+const CLAIM_COMPANY_OPTIONS = [
+  "AIG WARRANTY", "ASSURANT SOLUTIONS", "assurion", "Centricity", "Fidelity Home Insurance",
+  "Frigidaire", "GE CUSTOMER CARE", "Hisense", "LG", "Midea", "MIELE", "NEW", "Nsa",
+  "ONPOINT WARRANTY", "SAFEWARE", "SERVICE POWER", "Speed Queen", "SQUARE TRADE", "SS",
+  "SS 4930403", "SS 6488757",
+];
+
+// Map a ServicePower "Warranty Info" value to our AHS Warranty Type dropdown.
+//  - Sales fulfillment  -> In warranty
+//  - Concessions        -> Concession LP
+//  - Service Contract   -> In warranty
+//  - Out of warranty    -> Out-of-warranty
+//  - In warranty        -> In warranty
+function mapServicePowerWarranty(spWarranty: string | undefined | null): string {
+  const v = (spWarranty || "").trim().toLowerCase();
+  if (!v) return "";
+  if (v.includes("sales fulfillment")) return "In warranty";
+  if (v.includes("concession")) return "Concession LP";
+  if (v.includes("service contract")) return "In warranty";
+  if (v.includes("out of warranty") || v.includes("out-of-warranty")) return "Out-of-warranty";
+  if (v.includes("in warranty")) return "In warranty";
+  return spWarranty || "";
+}
+
+// Short acronym for the header ribbon based on the warranty type.
+function warrantyAcronym(warrantyType: string | undefined | null): string {
+  const v = (warrantyType || "").trim().toLowerCase();
+  if (!v) return "—";
+  if (v === "in warranty") return "IW";
+  if (v.includes("out-of-warranty") || v.includes("out of warranty")) return "OOW";
+  if (v === "concession l") return "CL";
+  if (v === "concession lp") return "CLP";
+  if (v === "concession p") return "CP";
+  if (v.includes("ext labor")) return "ELW";
+  if (v.includes("ext part")) return "EPW";
+  if (v.includes("ext wty")) return "EW";
+  if (v.includes("labor only")) return "LOW";
+  if (v.includes("part only")) return "POW";
+  if (v.includes("special part")) return "SP5";
+  if (v.includes("service contract")) return "SC";
+  if (v === "unknown") return "UNK";
+  return (warrantyType || "").toUpperCase();
+}
+
+// Format a ServicePower date string to YYYY-MM-DD for display in call info.
+function formatSpDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  try {
+    const clean = String(dateStr).replace(/[-+]\d{2}:\d{2}$/, "");
+    const d = new Date(clean);
+    if (isNaN(d.getTime())) return String(dateStr);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  } catch {
+    return String(dateStr);
+  }
+}
+
+
 interface TicketData {
   ticketNo: string;
   account: string;
@@ -58,15 +137,29 @@ interface TicketData {
   brand: string;
   model: string;
   serialNo: string;
+  modelVersion: string;
+  redoTicketNo: string;
   productCategory: string;
   purchaseDate: string;
   warrantyType: string;
   claimCompany: string;
+  serviceContract: string;
   accountNo: string;
+  manufactureId: string;
   callNo: string;
+  ticketSource: string;
   callType: string;
+  serviceType: string;
   callStatus: string;
   postingDate: string;
+  repeatCall: string;
+  contractNo: string;
+  copay: string;
+  poNumber: string;
+  poAmount: string;
+  emergency: string;
+  authNo: string;
+  observationNotes: string;
   problemDescription: string;
   scheduleDate: string;
   schedulePeriod: string;
@@ -594,15 +687,29 @@ const DEFAULT_TICKET: TicketData = {
   brand: "GENERAL ELECTRIC",
   model: "GTX33EASKWW",
   serialNo: "",
+  modelVersion: "",
+  redoTicketNo: "",
   productCategory: "Dryer",
   purchaseDate: "04/11/2025",
   warrantyType: "In warranty",
   claimCompany: "SQUARE TRADE",
+  serviceContract: "SQUARE TRADE",
   accountNo: "GSL00002",
+  manufactureId: "",
   callNo: "017151274136",
+  ticketSource: "",
   callType: "In warranty",
+  serviceType: "",
   callStatus: "ACCEPTED / ACCEPTED",
   postingDate: "2026-05-29",
+  repeatCall: "",
+  contractNo: "",
+  copay: "",
+  poNumber: "",
+  poAmount: "",
+  emergency: "",
+  authNo: "",
+  observationNotes: "",
   problemDescription: "THE START BUTTON IS NOT WORKING IT GETS STUCK WHEN IT S PUSHED DOWN.",
   scheduleDate: "2026-06-05",
   schedulePeriod: "12:00 - 17:00 AFTERNOON",
@@ -904,6 +1011,11 @@ function TicketDetailsPage() {
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
 
+  // ServicePower call-info sync (pull Call Service Information by call/ticket number)
+  const [spCallSyncing, setSpCallSyncing] = useState(false);
+  const [spCallSyncMsg, setSpCallSyncMsg] = useState<string | null>(null);
+  const autoSyncedRef = React.useRef<string | null>(null);
+
   // Distance (miles) from the office location to this ticket's address.
   const [officeDistanceMiles, setOfficeDistanceMiles] = useState<number | null>(null);
 
@@ -1068,6 +1180,72 @@ function TicketDetailsPage() {
     }
   };
 
+  // Pull Call Service Information from ServicePower using the ticket number as
+  // the call number. Maps the returned CallInfo block into the displayed fields.
+  const handleSyncCallInfo = async (silent = false) => {
+    setSpCallSyncing(true);
+    if (!silent) setSpCallSyncMsg(null);
+    try {
+      const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
+      const result = await fetchServicePowerCalls({ callNo: ticketNo });
+      if (!result.success) {
+        const msg = typeof result.error === "string"
+          ? result.error
+          : result.error?.description || result.error?.message || "Lookup failed";
+        if (!silent) setSpCallSyncMsg(`ServicePower lookup failed: ${msg}`);
+        return;
+      }
+      const call = (result.calls || []).find(
+        (c: any) => String(c?.callNumber ?? "").trim() === ticketNo.trim()
+      ) || (result.calls || [])[0];
+      if (!call) {
+        if (!silent) setSpCallSyncMsg("No matching call found in ServicePower for this ticket number.");
+        return;
+      }
+
+      const product = call.product || {};
+      const mfgSourceMap: Record<string, string> = {
+        I565: "SQUARE TRADE", I455: "ASSURANT SOLUTIONS", B100: "CENTRICITY",
+      };
+      const mfgCode = String(call.mfgId ?? "").trim().toUpperCase();
+      const source = mfgSourceMap[mfgCode] || mfgCode || "";
+      const wtypeMap: Record<string, string> = {
+        SC: "Service Contract", IW: "In warranty", OW: "Out of warranty", OOW: "Out of warranty",
+      };
+      const rawWarranty = wtypeMap[String(call.warrantyType ?? "").trim().toUpperCase()] || call.warrantyType || "";
+
+      setTicketData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          accountNo: call.servicerAccount || prev.accountNo,
+          manufactureId: mfgCode || prev.manufactureId,
+          callNo: call.callNumber || ticketNo,
+          ticketSource: source || prev.ticketSource,
+          callType: rawWarranty || prev.callType,
+          serviceType: call.serviceType || prev.serviceType,
+          callStatus: call.callStatus || prev.callStatus,
+          postingDate: formatSpDate(call.callCreatedOn) || prev.postingDate,
+          repeatCall: /^y/i.test(String(call.repeatCall || "")) ? "YES" : "NO",
+          contractNo: product.serviceContractNumber || prev.contractNo,
+          copay: product.copayAmount ?? prev.copay,
+          poNumber: product.poNumber || prev.poNumber,
+          poAmount: product.poAmount ?? prev.poAmount,
+          authNo: call.authNo || prev.authNo,
+          observationNotes: call.problemDesc || prev.observationNotes,
+          serviceContract: rawWarranty || prev.serviceContract,
+        };
+      });
+      setSpCallSyncMsg("Call Service Information synced from ServicePower.");
+    } catch (err) {
+      if (!silent) setSpCallSyncMsg(
+        `Failed to sync: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setSpCallSyncing(false);
+    }
+  };
+
   const auditCountLabel = useMemo(() => `${auditEntries.length} change${auditEntries.length === 1 ? "" : "s"} logged`, [auditEntries.length]);
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
@@ -1120,7 +1298,7 @@ function TicketDetailsPage() {
         const mapped: TicketData = {
           ticketNo: centralTicket.ticketNo,
           account: centralTicket.account || "",
-          warranty: centralTicket.warranty,
+          warranty: warrantyAcronym(mapServicePowerWarranty(centralTicket.warranty)),
           product: centralTicket.model,
           tat: computeTAT(centralTicket.created),
           status: centralTicket.status,
@@ -1140,15 +1318,29 @@ function TicketDetailsPage() {
           brand: centralTicket.manufacturer,
           model: centralTicket.model,
           serialNo: centralTicket.serial || "",
+          modelVersion: (centralTicket as any).modelVersion || "",
+          redoTicketNo: (centralTicket as any).originalTicketNo || "",
           productCategory: centralTicket.productType || "",
           purchaseDate: centralTicket.purchaseDate || "",
-          warrantyType: centralTicket.warranty,
-          claimCompany: "",
+          warrantyType: mapServicePowerWarranty(centralTicket.warranty) || centralTicket.warranty,
+          claimCompany: (centralTicket as any).claimCompany || "",
+          serviceContract: centralTicket.warranty || "",
           accountNo: centralTicket.account || "",
-          callNo: "",
+          manufactureId: (centralTicket as any).manufactureId || "",
+          callNo: centralTicket.ticketNo || "",
+          ticketSource: centralTicket.ticketSource || centralTicket.account || "",
           callType: centralTicket.type || "",
+          serviceType: (centralTicket as any).serviceType || "",
           callStatus: centralTicket.status,
           postingDate: centralTicket.created,
+          repeatCall: centralTicket.redo ? "YES" : "NO",
+          contractNo: (centralTicket as any).contractNo || "",
+          copay: (centralTicket as any).copay || "",
+          poNumber: (centralTicket as any).poNumber || "",
+          poAmount: (centralTicket as any).poAmount || "",
+          emergency: (centralTicket as any).emergency || "",
+          authNo: (centralTicket as any).authNo || "",
+          observationNotes: (centralTicket as any).observationNotes || "",
           problemDescription: centralTicket.problemDescription || centralTicket.internalNote || "",
           scheduleDate: centralTicket.schedule,
           schedulePeriod: "",
@@ -1462,6 +1654,8 @@ function TicketDetailsPage() {
         brand: ticket.brand,
         model: ticket.model,
         serialNo: ticket.serialNo,
+        modelVersion: ticket.modelVersion,
+        redoTicketNo: ticket.redoTicketNo,
         productCategory: ticket.productCategory,
         purchaseDate: ticket.purchaseDate,
         warrantyType: ticket.warrantyType,
@@ -1474,7 +1668,7 @@ function TicketDetailsPage() {
   const saveProductInfo = () => {
     if (!ticket) return;
 
-    const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
+    const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "modelVersion", "redoTicketNo", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
     fieldsToCheck.forEach((field) => {
       const oldValue = formatAuditValue(ticket[field]);
       const newValue = formatAuditValue(editedProductInfo[field]);
@@ -1497,6 +1691,8 @@ function TicketDetailsPage() {
       manufacturer: editedProductInfo.brand || ticket.brand,
       model: editedProductInfo.model || ticket.model,
       serial: editedProductInfo.serialNo || ticket.serialNo,
+      modelVersion: editedProductInfo.modelVersion ?? ticket.modelVersion,
+      originalTicketNo: editedProductInfo.redoTicketNo ?? ticket.redoTicketNo,
       productType: editedProductInfo.productCategory || ticket.productCategory,
       purchaseDate: editedProductInfo.purchaseDate || ticket.purchaseDate,
       warranty: editedProductInfo.warrantyType || ticket.warrantyType,
@@ -2236,7 +2432,7 @@ function TicketDetailsPage() {
                   <div className="text-sm text-slate-300 leading-relaxed">
                     <span className="text-slate-400">Account</span> <span className="font-semibold text-white">{ticket.account}</span>
                     <span className="mx-3 text-slate-600">•</span>
-                    <span className="text-slate-400">Warranty</span> <span className="font-semibold text-white">{ticket.warranty}</span>
+                    <span className="text-slate-400">Warranty</span> <span className="font-semibold text-white">{warrantyAcronym(ticket.warrantyType) }</span>
                     <span className="mx-3 text-slate-600">•</span>
                     <span className="text-slate-400">Status</span> <span className="font-semibold text-blue-300">{ticket.status}</span>
                     <span className="mx-3 text-slate-600">•</span>
@@ -2540,6 +2736,14 @@ function TicketDetailsPage() {
                       <div className="text-white mt-1">{ticket.serialNo || "—"}</div>
                     </div>
                     <div>
+                      <label className="text-slate-500 font-semibold">Model Version</label>
+                      <div className="text-white mt-1">{ticket.modelVersion || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Redo Ticket #</label>
+                      <div className="text-white mt-1">{ticket.redoTicketNo || "NONE"}</div>
+                    </div>
+                    <div>
                       <label className="text-slate-500 font-semibold">Product Category</label>
                       <div className="text-white mt-1">{ticket.productCategory || "—"}</div>
                     </div>
@@ -2549,7 +2753,14 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Warranty Type</label>
-                      <div className="text-white mt-1">{ticket.warrantyType || "—"}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-white">{ticket.warrantyType || "—"}</span>
+                        {ticket.serviceContract ? (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30" title="Synced from ServicePower">
+                            {ticket.serviceContract}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="col-span-2">
                       <label className="text-slate-500 font-semibold">Claim Company</label>
@@ -2586,13 +2797,33 @@ function TicketDetailsPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Product Category</label>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Model Version</label>
                       <input
                         type="text"
+                        value={editedProductInfo.modelVersion ?? ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, modelVersion: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Redo Ticket #</label>
+                      <input
+                        type="text"
+                        value={editedProductInfo.redoTicketNo ?? ""}
+                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, redoTicketNo: e.target.value })}
+                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Product Category</label>
+                      <select
                         value={editedProductInfo.productCategory || ""}
                         onChange={(e) => setEditedProductInfo({ ...editedProductInfo, productCategory: e.target.value })}
                         className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
+                      >
+                        <option value="">(product category)</option>
+                        {PRODUCT_CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </div>
                     <div>
                       <label className="text-slate-400 font-semibold text-xs mb-1 block">Purchase Date</label>
@@ -2605,21 +2836,32 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <label className="text-slate-400 font-semibold text-xs mb-1 block">Warranty Type</label>
-                      <input
-                        type="text"
-                        value={editedProductInfo.warrantyType || ""}
-                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, warrantyType: e.target.value })}
-                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={editedProductInfo.warrantyType || ""}
+                          onChange={(e) => setEditedProductInfo({ ...editedProductInfo, warrantyType: e.target.value })}
+                          className="flex-1 px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
+                        >
+                          <option value="">(warranty type)</option>
+                          {WARRANTY_TYPE_OPTIONS.map((w) => <option key={w} value={w}>{w}</option>)}
+                        </select>
+                        {ticket.serviceContract ? (
+                          <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30" title="Service Contract — synced from ServicePower (read-only)">
+                            {ticket.serviceContract}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="col-span-2">
                       <label className="text-slate-400 font-semibold text-xs mb-1 block">Claim Company</label>
-                      <input
-                        type="text"
+                      <select
                         value={editedProductInfo.claimCompany || ""}
                         onChange={(e) => setEditedProductInfo({ ...editedProductInfo, claimCompany: e.target.value })}
                         className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
+                      >
+                        <option value="">(claim company)</option>
+                        {CLAIM_COMPANY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </div>
                   </div>
                 )}
@@ -2662,26 +2904,75 @@ function TicketDetailsPage() {
                     </select>
                   </div>
                 </div>
+                {spCallSyncMsg && (
+                  <div className="text-xs px-3 py-2 rounded-lg bg-slate-800/70 border border-slate-600 text-slate-300">
+                    {spCallSyncMsg}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <label className="text-slate-500 font-semibold">Account No</label>
-                    <div className="text-white mt-1">{ticket.accountNo}</div>
+                    <div className="text-white mt-1">{ticket.accountNo || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Manufacture ID</label>
+                    <div className="text-white mt-1">{ticket.manufactureId || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Call No</label>
-                    <div className="text-white mt-1">{ticket.callNo}</div>
+                    <div className="text-white mt-1">{ticket.callNo || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Ticket Source</label>
+                    <div className="text-white mt-1">{ticket.ticketSource || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Call Type</label>
-                    <div className="text-white mt-1">{ticket.callType}</div>
+                    <div className="text-white mt-1">{ticket.callType || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Service Type</label>
+                    <div className="text-white mt-1">{ticket.serviceType || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Call Status</label>
-                    <div className="text-blue-300 mt-1 font-semibold">{ticket.callStatus}</div>
+                    <div className="text-blue-300 mt-1 font-semibold">{ticket.callStatus || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Posting Date</label>
+                    <div className="text-white mt-1">{ticket.postingDate || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Repeat Call</label>
+                    <div className="text-white mt-1">{ticket.repeatCall || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Contract #</label>
+                    <div className="text-white mt-1">{ticket.contractNo || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Co-Pay</label>
+                    <div className="text-white mt-1">{ticket.copay || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">PO #</label>
+                    <div className="text-white mt-1">{ticket.poNumber || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">PO Amount</label>
+                    <div className="text-white mt-1">{ticket.poAmount || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Emergency</label>
+                    <div className="text-white mt-1">{ticket.emergency || "—"}</div>
+                  </div>
+                  <div>
+                    <label className="text-slate-500 font-semibold">Auth No</label>
+                    <div className="text-white mt-1">{ticket.authNo || "—"}</div>
                   </div>
                   <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">Posting Date</label>
-                    <div className="text-white mt-1">{ticket.postingDate}</div>
+                    <label className="text-slate-500 font-semibold">Observation Notes</label>
+                    <div className="text-white mt-1 whitespace-pre-wrap">{ticket.observationNotes || "—"}</div>
                   </div>
                 </div>
               </div>
