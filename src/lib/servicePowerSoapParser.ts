@@ -6,10 +6,11 @@
  */
 
 /**
- * Parse a single XML element
+ * Parse a single XML element. Matches an optional namespace prefix
+ * (e.g. `ns:Tag`) but never matches across tag boundaries.
  */
 function parseElement(xml: string, tagName: string): string | null {
-  const regex = new RegExp(`<[^:]*:?${tagName}[^>]*>([\\s\\S]*?)<\/[^:]*:?${tagName}>`, 'i');
+  const regex = new RegExp(`<(?:[A-Za-z][\\w.-]*:)?${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\/(?:[A-Za-z][\\w.-]*:)?${tagName}>`, 'i');
   const match = xml.match(regex);
   if (!match) return null;
   
@@ -22,7 +23,7 @@ function parseElement(xml: string, tagName: string): string | null {
  * Parse all instances of an XML element
  */
 function parseElements(xml: string, tagName: string): string[] {
-  const regex = new RegExp(`<[^:]*:?${tagName}[^>]*>([\\s\\S]*?)<\/[^:]*:?${tagName}>`, 'gi');
+  const regex = new RegExp(`<(?:[A-Za-z][\\w.-]*:)?${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\/(?:[A-Za-z][\\w.-]*:)?${tagName}>`, 'gi');
   const matches = xml.matchAll(regex);
   return Array.from(matches, m => m[1].trim());
 }

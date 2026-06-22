@@ -76,6 +76,46 @@ function supabaseTokenDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/servicepower locally (vite dev does not run
+// the serverless api/ folder). Uses the SAME runtime-agnostic bridge as the
+// production Worker so dev and prod behave identically.
+function servicePowerDevPlugin() {
+  return {
+    name: "servicepower-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/servicepower", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks).toString("utf8");
+
+          const { handleServicePowerRequest } = await server.ssrLoadModule(
+            "/src/lib/server/servicePowerBridge.ts"
+          );
+          const webReq = new Request("http://localhost/api/servicepower", {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          // Vite loads .env into import.meta.env (not process.env), so pass the
+          // parsed .env values explicitly. .env wins over any stale process.env
+          // value so the server-only SP creds are always the configured ones.
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleServicePowerRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "ServicePower request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -84,7 +124,7 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
-    plugins: [supabaseTokenDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       rollupOptions: {

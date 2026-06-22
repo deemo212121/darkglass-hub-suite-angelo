@@ -4,10 +4,12 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket } from "@/lib/supabase/partOrders";
-import { Copy } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { TIME_FRAMES } from "@/lib/timeframes";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { 
   loadTickets, 
   updateTicket, 
@@ -352,10 +354,15 @@ function normalizePartRow(row: Partial<PartTransactionRow> & { id: string }): Pa
 }
 
 function getNextVisitNumber(entries: VisitLogEntry[]) {
-  const nextIndex = entries.reduce((max, entry) => {
-    const numeric = Number.parseInt(entry.visitNo.replace(/\D/g, ""), 10);
+  const maxStored = entries.reduce((max, entry) => {
+    const numeric = Number.parseInt((entry.visitNo ?? "").replace(/\D/g, ""), 10);
     return Number.isFinite(numeric) ? Math.max(max, numeric) : max;
-  }, 0) + 1;
+  }, 0);
+
+  // Use whichever is larger: the highest stored number, or the total count.
+  // This guarantees a unique, sequential label even when stored visit_no
+  // values are missing or duplicated in the database.
+  const nextIndex = Math.max(maxStored, entries.length) + 1;
 
   return `V${nextIndex}`;
 }
@@ -533,6 +540,35 @@ function computeTAT(created: string | undefined): string {
   const ms = Date.now() - createdDate.getTime();
   const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
   return `${days}d`;
+}
+
+// Haversine straight-line distance in miles between two lat/lng points.
+function milesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Resolve the office coordinates for a location: prefer Location Management
+// coordinates, fall back to the static LOCATIONS_DATA lat/lng.
+function getOfficeCoordinates(location: string): { lat: number; lng: number } | null {
+  const fromMgmt = getLocationManagementCoordinates(location);
+  if (fromMgmt) return fromMgmt;
+  const normalized = String(location || "").trim().toLowerCase();
+  const match = LOCATIONS_DATA.find((l) => l.location.trim().toLowerCase() === normalized);
+  if (match && match.lat && match.lng) {
+    const lat = parseFloat(match.lat);
+    const lng = parseFloat(match.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
 }
 
 const DEFAULT_TICKET: TicketData = {
@@ -864,6 +900,13 @@ function TicketDetailsPage() {
     },
   ]);
 
+  // ServicePower status sending
+  const [spStatus, setSpStatus] = useState("");
+  const [spStatusSending, setSpStatusSending] = useState(false);
+
+  // Distance (miles) from the office location to this ticket's address.
+  const [officeDistanceMiles, setOfficeDistanceMiles] = useState<number | null>(null);
+
   // Edit mode state for customer information
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
@@ -993,6 +1036,38 @@ function TicketDetailsPage() {
     setAuditEntries((entries) => [createAuditEntry(entry), ...entries]);
   };
 
+  const handleSendSpStatus = async () => {
+    if (!spStatus) {
+      alert("Please select a status to send to ServicePower.");
+      return;
+    }
+
+    setSpStatusSending(true);
+    try {
+      // Record the status change to the ticket's audit trail.
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Sent SP Status",
+        field: "ServicePower Status",
+        before: ticket?.callStatus || "—",
+        after: spStatus,
+      });
+
+      // Reflect the sent status on the ticket's call status locally / in Supabase.
+      await sbUpdateTicketStatus(ticketNo, spStatus).catch((e) =>
+        console.warn("SP status sync skipped:", e)
+      );
+
+      alert(`ServicePower status "${spStatus}" sent.`);
+      setSpStatus("");
+    } catch (err) {
+      console.error("Failed to send SP status:", err);
+      alert(`Failed to send SP status: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSpStatusSending(false);
+    }
+  };
+
   const auditCountLabel = useMemo(() => `${auditEntries.length} change${auditEntries.length === 1 ? "" : "s"} logged`, [auditEntries.length]);
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
@@ -1102,6 +1177,96 @@ function TicketDetailsPage() {
   }, [ticketNo, authReady]);
 
   const ticket = ticketData;
+
+  // Compute DRIVING miles from the office to this ticket's address using the
+  // Google Distance Matrix API (matches what Google Maps shows). Falls back
+  // through progressively looser destination strings so a slightly-off address
+  // still resolves instead of showing "— mi".
+  useEffect(() => {
+    if (!ticket) { setOfficeDistanceMiles(null); return; }
+    const office = getOfficeCoordinates(ticket.location || ticket.city || "");
+    if (!office) { setOfficeDistanceMiles(null); return; }
+
+    // Candidate destination strings, most specific first.
+    const destinationCandidates = [
+      [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
+    ]
+      .map((s) => s.trim())
+      .filter((s) => s && s !== "USA");
+
+    if (destinationCandidates.length === 0) { setOfficeDistanceMiles(null); return; }
+
+    let cancelled = false;
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+
+    const computeDistance = () => {
+      const maps = (window as Window & { google?: any }).google?.maps;
+      if (!maps) return;
+      const service = new maps.DistanceMatrixService();
+      const originLatLng = new maps.LatLng(office.lat, office.lng);
+
+      const tryCandidate = (idx: number) => {
+        if (cancelled) return;
+        if (idx >= destinationCandidates.length) {
+          // Last resort: straight-line distance via geocoding the best string.
+          const geocoder = new maps.Geocoder();
+          geocoder.geocode({ address: destinationCandidates[0] }, (results: any, status: string) => {
+            if (cancelled) return;
+            if (status === "OK" && results?.[0]) {
+              const pos = results[0].geometry.location;
+              setOfficeDistanceMiles(milesBetween(office, { lat: pos.lat(), lng: pos.lng() }));
+            } else {
+              setOfficeDistanceMiles(null);
+            }
+          });
+          return;
+        }
+
+        service.getDistanceMatrix(
+          {
+            origins: [originLatLng],
+            destinations: [destinationCandidates[idx]],
+            travelMode: maps.TravelMode.DRIVING,
+            unitSystem: maps.UnitSystem.IMPERIAL,
+          },
+          (response: any, status: string) => {
+            if (cancelled) return;
+            const element = response?.rows?.[0]?.elements?.[0];
+            if (status === "OK" && element?.status === "OK" && element.distance?.value != null) {
+              // distance.value is in meters; convert to miles.
+              setOfficeDistanceMiles(element.distance.value / 1609.344);
+            } else {
+              tryCandidate(idx + 1);
+            }
+          },
+        );
+      };
+
+      tryCandidate(0);
+    };
+
+    if ((window as Window & { google?: any }).google?.maps) {
+      computeDistance();
+    } else if (apiKey) {
+      const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="ticket-distance"]');
+      if (existing) {
+        existing.addEventListener("load", computeDistance, { once: true });
+      } else {
+        const script = document.createElement("script");
+        script.dataset.googleMaps = "ticket-distance";
+        script.async = true;
+        script.defer = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&v=3.52`;
+        script.onload = computeDistance;
+        document.head.appendChild(script);
+      }
+    }
+
+    return () => { cancelled = true; };
+  }, [ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip]);
 
   // Compute related tickets: any OTHER company ticket sharing a key field with
   // this one (email, phone, zip, customer name, address, model, or serial).
@@ -1400,7 +1565,11 @@ function TicketDetailsPage() {
     }
 
     const trimmedNote = newVisitNote.trim();
-    if (!newVisitScheduleDate || !newVisitTechnician || !newVisitTimeSlot) return;
+    // Only Action Type is required now.
+    if (!newVisitActionType) {
+      alert("Please select an Action Type.");
+      return;
+    }
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
 
@@ -2122,7 +2291,35 @@ function TicketDetailsPage() {
             {/* General Information */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-blue-400">General Information</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-blue-400">General Information</h3>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href="/m/tickets/work-map"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open Work Map"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-slate-800 text-slate-200 transition hover:border-blue-400/50 hover:text-blue-300"
+                    >
+                      <MapIcon className="h-4 w-4" />
+                    </a>
+                    <a
+                      href="/m/tickets/work-planner"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open Daily Schedule"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/15 bg-slate-800 text-slate-200 transition hover:border-blue-400/50 hover:text-blue-300"
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                    </a>
+                    <span
+                      className="text-xs font-semibold text-slate-300"
+                      title="Driving distance from office to customer"
+                    >
+                      {officeDistanceMiles != null ? `${officeDistanceMiles.toFixed(1)} mi from office` : "— mi"}
+                    </span>
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   {!isEditingCustomerInfo ? (
                     <button
@@ -2430,7 +2627,41 @@ function TicketDetailsPage() {
 
               {/* Call Service Information */}
               <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Call Service Information</h4>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h4 className="font-semibold text-slate-300">Call Service Information</h4>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSendSpStatus}
+                      disabled={spStatusSending || !spStatus}
+                      className="px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed text-blue-300 text-xs font-semibold transition-colors border border-blue-500/30 whitespace-nowrap"
+                    >
+                      {spStatusSending ? "Sending…" : "Update Status"}
+                    </button>
+                    <select
+                      value={spStatus}
+                      onChange={(e) => setSpStatus(e.target.value)}
+                      className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-xs focus:outline-none focus:border-blue-400"
+                    >
+                      <option value="">Send SP status…</option>
+                      <option value="ACCEPTED">ACCEPTED</option>
+                      <option value="APPOINTMENT SCHEDULED">APPOINTMENT SCHEDULED</option>
+                      <option value="COMPLETED">COMPLETED</option>
+                      <option value="CONTACTED">CONTACTED</option>
+                      <option value="DIAGNOSED">DIAGNOSED</option>
+                      <option value="JOB COMPLETED">JOB COMPLETED</option>
+                      <option value="RECEIVED">RECEIVED</option>
+                      <option value="REJECT">REJECT</option>
+                      <option value="SECOND TRUCK ROLL">SECOND TRUCK ROLL</option>
+                      <option value="SHIPPED">SHIPPED</option>
+                      <option value="WAITING ON APPROVAL">WAITING ON APPROVAL</option>
+                      <option value="WAITING ON CUSTOMER">WAITING ON CUSTOMER</option>
+                      <option value="WAITING ON PARTS">WAITING ON PARTS</option>
+                      <option value="WAITING ON TECH ASSISTANCE">WAITING ON TECH ASSISTANCE</option>
+                      <option value="WORK IN PROCESS">WORK IN PROCESS</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <label className="text-slate-500 font-semibold">Account No</label>
@@ -2750,12 +2981,28 @@ function TicketDetailsPage() {
                         No visit logs yet.
                       </div>
                     ) : (
-                      [...visitLogEntries].reverse().map((entry) => (
+                      (() => {
+                        // Assign sequential, unique visit numbers by chronological order
+                        // (oldest = V1). This avoids duplicate labels when the stored
+                        // visit_no field is missing or repeated in the database.
+                        const orderedIds = [...visitLogEntries]
+                          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+                          .map((e) => e.id);
+                        const visitLabelById = new Map(
+                          orderedIds.map((id, i) => [id, `V${i + 1}`])
+                        );
+
+                        return [...visitLogEntries].reverse().map((entry) => (
                         <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
                           <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <div className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</div>
-                              <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-8 w-12 items-center justify-center rounded-md bg-blue-500/20 text-xs font-bold text-blue-300 border border-blue-400/30">
+                                {visitLabelById.get(entry.id) ?? entry.visitNo}
+                              </div>
+                              <div>
+                                <div className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</div>
+                                <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
+                              </div>
                             </div>
                             <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
                           </div>
@@ -2833,7 +3080,8 @@ function TicketDetailsPage() {
                             </button>
                           </div>
                         </div>
-                      ))
+                      ));
+                      })()
                     )}
                   </div>
                 </div>
@@ -2867,11 +3115,11 @@ function TicketDetailsPage() {
                       ) : null}
                       <fieldset disabled={visitFormMode === "view"} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-schedule-date-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule Date *</label>
+                          <label htmlFor="visit-schedule-date-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule Date</label>
                           <input id="visit-schedule-date-modal" type="date" value={newVisitScheduleDate} onChange={(event) => setNewVisitScheduleDate(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Technician *</label>
+                          <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Technician</label>
                           <select id="visit-technician-modal" value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
                             {ALL_TECHNICIANS.map((technician) => (
@@ -2880,7 +3128,7 @@ function TicketDetailsPage() {
                           </select>
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot *</label>
+                          <label htmlFor="visit-time-slot-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Time Slot</label>
                           <select id="visit-time-slot-modal" value={newVisitTimeSlot} onChange={(event) => setNewVisitTimeSlot(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
                             {TIME_FRAMES.map((f) => <option key={f} value={f}>{f}</option>)}
@@ -2906,7 +3154,7 @@ function TicketDetailsPage() {
                           </select>
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Status *</label>
+                          <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Status</label>
                           <select id="visit-repair-status-modal" value={newVisitRepairStatus} onChange={(event) => setNewVisitRepairStatus(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
                             <option>CL-Cancelled</option>
@@ -2930,7 +3178,20 @@ function TicketDetailsPage() {
                         </div>
                         <div className="space-y-1.5">
                           <label htmlFor="visit-repair-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Type (2nd Tech)</label>
-                          <input id="visit-repair-type-modal" type="text" value={newVisitRepairType} onChange={(event) => setNewVisitRepairType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                          <select id="visit-repair-type-modal" value={newVisitRepairType} onChange={(event) => setNewVisitRepairType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">— select —</option>
+                            <option>2 Man Job</option>
+                            <option>Back Tub</option>
+                            <option>Major Repair</option>
+                            <option>Panel 60 Over</option>
+                            <option>Panel 80 Over</option>
+                            <option>Seal with Trainee</option>
+                            <option>Sealed System</option>
+                            <option>Sealed System Follow Up</option>
+                            <option>Sealed System(R600)</option>
+                            <option>Stacked Unit(Washer Only)</option>
+                            <option>Wall Oven</option>
+                          </select>
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-sched-notes-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Sched Notes (CSR)</label>

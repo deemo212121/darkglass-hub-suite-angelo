@@ -8,49 +8,48 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Download, Check, AlertCircle, Calendar } from 'lucide-react';
-import { syncServicePowerCalls } from '@/lib/servicePowerSync';
+import { syncServicePowerToSupabase } from '@/lib/servicePowerSync';
 
 interface SyncResult {
   success: boolean;
   added: number;
   updated: number;
+  skipped?: number;
+  total?: number;
   errors?: string[];
 }
 
-export function ServicePowerSyncButton() {
+export function ServicePowerSyncButton({ onSynced }: { onSynced?: () => void } = {}) {
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [days, setDays] = useState('7'); // Default to last 7 days
 
-  const handleSync = async () => {
+  const handleSync = async (limit?: number) => {
     setSyncing(true);
     setResult(null);
 
     try {
-      // Calculate date range
-      const toDate = new Date();
-      const fromDate = new Date();
-      fromDate.setDate(toDate.getDate() - parseInt(days || '7', 10));
-
-      // Format as YYYYMMDD
-      const formatDate = (date: Date) => {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}${month}${day}`;
-      };
-
-      const fromDateStr = formatDate(fromDate);
-      const toDateStr = formatDate(toDate);
-
-      const syncResult = await syncServicePowerCalls(fromDateStr, toDateStr, 'merge');
+      // Pull Accepted work orders (last N days) and sync them into Supabase.
+      // ServicePower caps each query at 2 days, so the sync chunks internally.
+      // When `limit` is set we only upsert that many (used for a quick test).
+      const syncResult = await syncServicePowerToSupabase(
+        parseInt(days || '7', 10),
+        limit != null ? { limit } : {}
+      );
 
       setResult({
         success: syncResult.success,
         added: syncResult.added,
         updated: syncResult.updated,
+        skipped: syncResult.skipped,
+        total: syncResult.total,
         errors: syncResult.errors,
       });
+
+      // Refresh the ticket list if anything changed.
+      if (onSynced && (syncResult.added > 0 || syncResult.updated > 0)) {
+        onSynced();
+      }
     } catch (error) {
       setResult({
         success: false,
@@ -86,7 +85,7 @@ export function ServicePowerSyncButton() {
         
         <div className="flex flex-col gap-2">
           <Button
-            onClick={handleSync}
+            onClick={() => handleSync()}
             disabled={syncing}
             className="gap-2"
           >
@@ -101,6 +100,15 @@ export function ServicePowerSyncButton() {
                 Sync Work Orders
               </>
             )}
+          </Button>
+          <Button
+            onClick={() => handleSync(1)}
+            disabled={syncing}
+            variant="outline"
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            Test Pull 1 Ticket
           </Button>
         </div>
       </div>
@@ -127,8 +135,11 @@ export function ServicePowerSyncButton() {
                   <div className="text-slate-300">
                     <div>• Added: {result.added} new work orders</div>
                     <div>• Updated: {result.updated} existing work orders</div>
+                    {typeof result.skipped === 'number' && (
+                      <div>• Skipped: {result.skipped} not Accepted</div>
+                    )}
                     <div className="mt-2 text-xs text-slate-400">
-                      Work orders synced from ServicePower appear in your ticket list
+                      Accepted work orders synced from ServicePower into Supabase
                     </div>
                     {result.errors && result.errors.length > 0 && (
                       <div className="mt-2 text-xs text-amber-300 break-all whitespace-pre-wrap">
@@ -164,7 +175,8 @@ export function ServicePowerSyncButton() {
           ServicePower work orders are synced by date range
         </p>
         <p className="mt-1">• Select a time period and click "Sync Work Orders"</p>
-        <p className="mt-1">• Synced work orders will be merged with your existing ticket list</p>
+        <p className="mt-1">• Only work orders with an Accepted status are synced</p>
+        <p className="mt-1">• Synced work orders are saved to Supabase (source, customer, address, product, work order details)</p>
         <p className="mt-1">• Work orders are identified by Call Number</p>
       </div>
     </Card>

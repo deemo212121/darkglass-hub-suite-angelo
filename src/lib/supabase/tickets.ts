@@ -663,5 +663,129 @@ export async function deleteTicketPart(partId: string): Promise<void> {
   }
 }
 
+/**
+ * Upsert a ticket pulled from ServicePower (by ticket_no).
+ *
+ * Creates or updates the linked customer record and the ticket row, syncing
+ * only the fields ServicePower owns: source, customer details, address,
+ * product details, and work order details. Local-only fields (visits, parts,
+ * internal notes, billing) are left untouched on updates.
+ *
+ * Returns 'added' | 'updated' so callers can tally sync results.
+ */
+export async function upsertTicketFromServicePower(
+  input: Partial<Ticket>
+): Promise<"added" | "updated"> {
+  if (!input.ticketNo) throw new Error("upsertTicketFromServicePower requires a ticketNo");
+
+  // Customer payload (ServicePower-owned fields).
+  const customerPayload = {
+    first_name: input.firstName ?? "",
+    last_name: input.lastName ?? "",
+    full_name:
+      input.customer || [input.firstName, input.lastName].filter(Boolean).join(" "),
+    phone: input.phone ?? "",
+    second_phone: input.secondPhone ?? "",
+    email: input.email ?? "",
+    address: input.address ?? "",
+    address2: input.address2 ?? "",
+    city: input.city ?? "",
+    state: input.state ?? "",
+    zip: input.zip ?? "",
+  };
+
+  // Ticket payload (source, product, work order details).
+  const ticketPayload: Record<string, unknown> = {
+    ticket_source: input.ticketSource ?? "ServicePower",
+    warranty: input.warranty ?? null,
+    manufacturer: input.manufacturer ?? null,
+    account: input.account ?? null,
+    claim_company: input.claimCompany ?? null,
+    location: input.location ?? null,
+    model: input.model ?? null,
+    model_version: input.modelVersion ?? null,
+    serial: input.serial ?? null,
+    product_type: input.productType ?? null,
+    purchase_date: input.purchaseDate || null,
+    status: input.status ?? null,
+    type: input.type ?? null,
+    technician: input.technician ?? null,
+    schedule_date: input.schedule || null,
+    call_received_date: input.callReceivedDate || null,
+    customer_pref: bool(input.customerPref),
+    redo: bool(input.redo),
+    problem_description: input.problemDescription ?? input.internalNote ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Does the ticket already exist (company-scoped)?
+  const { data: existing, error: findErr } = await supabase
+    .from("tickets")
+    .select("id, customer_id")
+    .eq("ticket_no", input.ticketNo)
+    .maybeSingle();
+  if (findErr) {
+    console.error("upsertTicketFromServicePower lookup error:", findErr.message);
+    throw new Error(findErr.message);
+  }
+
+  if (existing) {
+    // Update the linked customer (or create one if missing).
+    if (existing.customer_id) {
+      const { error: cErr } = await supabase
+        .from("customers")
+        .update(customerPayload)
+        .eq("id", existing.customer_id);
+      if (cErr) {
+        console.error("upsertTicketFromServicePower customer update error:", cErr.message);
+        throw new Error(cErr.message);
+      }
+    } else {
+      const { data: cust, error: cErr } = await supabase
+        .from("customers")
+        .insert(customerPayload)
+        .select("id")
+        .single();
+      if (cErr) {
+        console.error("upsertTicketFromServicePower customer insert error:", cErr.message);
+        throw new Error(cErr.message);
+      }
+      ticketPayload.customer_id = cust.id;
+    }
+
+    const { error: tErr } = await supabase
+      .from("tickets")
+      .update(ticketPayload)
+      .eq("id", existing.id);
+    if (tErr) {
+      console.error("upsertTicketFromServicePower ticket update error:", tErr.message);
+      throw new Error(tErr.message);
+    }
+    return "updated";
+  }
+
+  // New ticket: create the customer first, then the ticket.
+  const { data: cust, error: cErr } = await supabase
+    .from("customers")
+    .insert(customerPayload)
+    .select("id")
+    .single();
+  if (cErr) {
+    console.error("upsertTicketFromServicePower customer create error:", cErr.message);
+    throw new Error(cErr.message);
+  }
+
+  const { error: tErr } = await supabase.from("tickets").insert({
+    ticket_no: input.ticketNo,
+    customer_id: cust.id,
+    ...ticketPayload,
+  });
+  if (tErr) {
+    console.error("upsertTicketFromServicePower ticket create error:", tErr.message);
+    throw new Error(tErr.message);
+  }
+  return "added";
+}
+
 // suppress unused warning for yn helper (kept for future field mapping)
 void yn;

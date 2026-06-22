@@ -11,6 +11,8 @@ import {
   type Ticket 
 } from "@/lib/ticketData";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
+import { ServicePowerSyncButton } from "@/components/ServicePowerSyncButton";
 
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
@@ -218,11 +220,34 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 
+  const reloadTickets = useCallback(async () => {
+    try {
+      setTicketsLoading(true);
+      const rows = await getCompanyTickets();
+      setTickets(rows as TicketItem[]);
+    } catch (err) {
+      console.error("Failed to load tickets:", err);
+      setTickets([]);
+    } finally {
+      setTicketsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         setTicketsLoading(true);
+        // First, pull any approved customer-portal requests into our tickets so
+        // they appear in the list (best-effort; never blocks the load).
+        try {
+          const result = await syncApprovedPortalRequests();
+          if (result.pulled > 0) {
+            console.log(`📥 Pulled ${result.pulled} approved portal request(s) into tickets.`);
+          }
+        } catch (e) {
+          console.warn("Portal request sync skipped:", e);
+        }
         const rows = await getCompanyTickets();
         if (!cancelled) setTickets(rows as TicketItem[]);
       } catch (err) {
@@ -371,6 +396,10 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           </div>
           <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
           <p className="text-lg text-muted-foreground">{sub.description}</p>
+        </div>
+
+        <div className="mb-6">
+          <ServicePowerSyncButton onSynced={reloadTickets} />
         </div>
 
         <div className="panel">

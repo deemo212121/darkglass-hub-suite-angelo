@@ -9,11 +9,13 @@ import type { Ticket } from './ticketData';
 import { parseGetCallInfoResponse, formatServicePowerDate } from './servicePowerSoapParser';
 
 /**
- * Fetch calls from ServicePower SOAP API by date range
+ * Fetch calls from ServicePower SOAP API by date range.
+ * Dates must be in ServicePower format: "mm/dd/yyyy HH:mm:ss".
+ * Note: ServicePower limits each request to a 2-day range (error SP007).
  */
 export async function fetchServicePowerCalls(params: {
-  fromDate?: string; // Format: YYYYMMDD
-  toDate?: string;   // Format: YYYYMMDD
+  fromDate?: string; // Format: mm/dd/yyyy HH:mm:ss
+  toDate?: string;   // Format: mm/dd/yyyy HH:mm:ss
   callNo?: string;
 }): Promise<{ success: boolean; calls: any[]; error?: any; rawXml?: string }> {
   try {
@@ -58,52 +60,97 @@ export async function fetchServicePowerCalls(params: {
 }
 
 /**
+ * Map a ServicePower MfgId code to a readable work-order Source name.
+ * (e.g. I565 = SQUARE TRADE, I455 = ASSURANT SOLUTIONS). Falls back to the
+ * raw code when unknown.
+ */
+const MFG_ID_SOURCE: Record<string, string> = {
+  I565: 'SQUARE TRADE',
+  I455: 'ASSURANT SOLUTIONS',
+  B100: 'CENTRICITY',
+};
+function mapSource(mfgId: string | null | undefined): string {
+  const code = String(mfgId ?? '').trim().toUpperCase();
+  return MFG_ID_SOURCE[code] || code || '';
+}
+
+/**
+ * Map a ServicePower WarrantyType code to readable text.
+ * SC = Service Contract, IW = In Warranty, OW/OOW = Out of Warranty.
+ */
+const WARRANTY_TYPE_LABEL: Record<string, string> = {
+  SC: 'Service Contract',
+  IW: 'In Warranty',
+  OW: 'Out of Warranty',
+  OOW: 'Out of Warranty',
+};
+function mapWarrantyType(code: string | null | undefined): string {
+  const c = String(code ?? '').trim().toUpperCase();
+  return WARRANTY_TYPE_LABEL[c] || c || '';
+}
+
+/**
  * Convert a ServicePower call to local Ticket format
  */
 export function convertCallToTicket(call: any): Ticket {
   const consumer = call.consumer || {};
   const product = call.product || {};
 
+  // ServicePower sends "0" or blank for missing phones; treat as empty.
+  const cleanPhone = (v: any) => {
+    const s = String(v ?? '').trim();
+    return s === '0' || s === '' ? '' : s;
+  };
+  const fullName = `${consumer.firstName || ''} ${consumer.lastName || ''}`.trim();
+  // City lives in PostcodeLevel3 (Level2 is usually blank); fall back to Level2.
+  const city = consumer.postcodeLevel3 || consumer.postcodeLevel2 || '';
+  // Work-order Source (SQUARE TRADE / ASSURANT ...) is encoded in MfgId.
+  const source = mapSource(call.mfgId);
+  // Warranty is the warranty TYPE (Service Contract / In Warranty), not brand.
+  const warrantyType = mapWarrantyType(call.warrantyType);
+
   return {
     // Core ticket fields
     ticketNo: call.callNumber || '',
     ticketSource: 'ServicePower',
-    warranty: product.brandDesc || '',
+    warranty: warrantyType,
     manufacturer: product.brandDesc || '',
-    customer: call.serviceCenter || '',
-    city: consumer.postcodeLevel2 || '',
+    customer: fullName,
+    city,
     location: call.serviceLocation || '',
     model: product.modelNo || '',
     internalNote: call.problemDesc || '',
+    problemDescription: call.problemDesc || '',
     diagnosed: call.problemDesc || '',
     technician: call.techKey || '',
     customerPref: call.scheduleTimePeriod || '',
     schedule: formatServicePowerDate(call.scheduleDate),
     status: call.callStatus || '',
-    phone: consumer.phone1 || '',
-    redo: call.repeatCall === 'Y' ? 'Yes' : '',
+    phone: cleanPhone(consumer.phone1),
+    redo: /^y/i.test(String(call.repeatCall || '')) ? 'Yes' : '',
     aging: 0,
     calls: 0,
     partOrder: '',
     created: formatServicePowerDate(call.callCreatedOn),
     
     // Additional detail fields
-    account: call.fssCallId || call.callNumber,
+    account: source,
     type: product.productDesc || '',
     branch: '',
-    contact: `${consumer.firstName || ''} ${consumer.lastName || ''}`.trim(),
+    contact: fullName,
     firstName: consumer.firstName || '',
     lastName: consumer.lastName || '',
     address: consumer.address1 || '',
+    address2: consumer.address2 || '',
     zip: consumer.postcode || '',
     state: consumer.postcodeLevel1 || '',
     email: consumer.email || '',
-    secondPhone: consumer.phone2 || consumer.cellPhone || '',
-    serial: product.serialNo || '',
+    secondPhone: cleanPhone(consumer.phone2) || cleanPhone(consumer.cellPhone),
+    serial: (product.serialNo || '').trim(),
     modelVersion: product.modelNo || '',
     productType: product.productDesc || '',
     purchaseDate: formatServicePowerDate(product.installDate),
-    claimCompany: product.brandDesc || '',
+    claimCompany: source,
     callReceivedDate: formatServicePowerDate(call.callCreatedOn),
     
     // Parts placeholder
@@ -225,6 +272,130 @@ export async function syncServicePowerCalls(
     tickets: servicePowerTickets,
     added,
     updated,
+  };
+}
+
+/**
+ * Determine whether a ServicePower call has an "Accepted" status.
+ * ServicePower reports status text like "ACCEPTED" or "ACCEPTED / ACCEPTED".
+ */
+export function isAcceptedCall(call: any): boolean {
+  const status = String(call?.callStatus ?? "").toLowerCase();
+  return status.includes("accept");
+}
+
+/** Format a Date as ServicePower expects: mm/dd/yyyy HH:mm:ss. */
+function formatSpDateTime(date: Date, endOfDay = false): string {
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const time = endOfDay ? "23:59:59" : "00:00:00";
+  return `${mm}/${dd}/${yyyy} ${time}`;
+}
+
+/**
+ * Sync ServicePower work orders directly into Supabase.
+ *
+ * ServicePower limits each query to a 2-day window (error SP007), so the
+ * requested range is split into <=2-day chunks and fetched sequentially.
+ * Only work orders with an "Accepted" status are synced. For each accepted
+ * call we upsert the customer + ticket (source, customer details, address,
+ * product details, work order details). Local-only data (visits, parts,
+ * billing) is preserved on updates. De-duplicates by call number across chunks.
+ *
+ * @param days Number of days back from today to sync (default 7).
+ * @param options.limit Max number of Accepted work orders to upsert (for testing).
+ */
+export async function syncServicePowerToSupabase(
+  days = 7,
+  options: { limit?: number } = {}
+): Promise<{
+  success: boolean;
+  added: number;
+  updated: number;
+  skipped: number;
+  total: number;
+  errors: string[];
+}> {
+  const { upsertTicketFromServicePower } = await import("./supabase/tickets");
+  const { limit } = options;
+
+  const errors: string[] = [];
+  const seenCallNumbers = new Set<string>();
+  const acceptedCalls: any[] = [];
+  let totalCalls = 0;
+
+  // Build 2-day windows walking backward from today.
+  const today = new Date();
+  const windows: Array<{ from: Date; to: Date }> = [];
+  let cursor = new Date(today);
+  let remaining = Math.max(1, days);
+  while (remaining > 0) {
+    const chunk = Math.min(2, remaining);
+    const to = new Date(cursor);
+    const from = new Date(cursor);
+    from.setDate(from.getDate() - (chunk - 1));
+    windows.push({ from, to });
+    cursor = new Date(from);
+    cursor.setDate(cursor.getDate() - 1);
+    remaining -= chunk;
+  }
+
+  for (const win of windows) {
+    // Stop fetching more windows once we've collected enough for the limit.
+    if (limit != null && acceptedCalls.length >= limit) break;
+
+    const fromStr = formatSpDateTime(win.from, false);
+    const toStr = formatSpDateTime(win.to, true);
+    const result = await fetchServicePowerCalls({ fromDate: fromStr, toDate: toStr });
+
+    if (!result.success) {
+      const errorMsg =
+        typeof result.error === "string"
+          ? result.error
+          : result.error?.description || result.error?.message || "Failed to fetch calls";
+      errors.push(`${fromStr} - ${toStr}: ${errorMsg}`);
+      continue;
+    }
+
+    for (const call of result.calls ?? []) {
+      totalCalls++;
+      const callNo = String(call?.callNumber ?? "");
+      if (callNo && seenCallNumbers.has(callNo)) continue;
+      if (callNo) seenCallNumbers.add(callNo);
+      if (isAcceptedCall(call)) {
+        if (limit == null || acceptedCalls.length < limit) {
+          acceptedCalls.push(call);
+        }
+      }
+    }
+  }
+
+  let added = 0;
+  let updated = 0;
+
+  for (const call of acceptedCalls) {
+    try {
+      const ticket = convertCallToTicket(call);
+      const outcome = await upsertTicketFromServicePower(ticket);
+      if (outcome === "added") added++;
+      else updated++;
+    } catch (err) {
+      errors.push(
+        `Call ${call?.callNumber ?? "(unknown)"}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  const skipped = totalCalls - acceptedCalls.length;
+
+  return {
+    success: errors.length === 0,
+    added,
+    updated,
+    skipped,
+    total: totalCalls,
+    errors,
   };
 }
 

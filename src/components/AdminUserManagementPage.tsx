@@ -428,7 +428,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <option value="">Select user type</option>
                       <option value="ADMIN">Admin</option>
                       <option value="MANAGER">Manager</option>
-                      <option value="CSR">CSR</option>
                       <option value="TECHNICIAN">Technician</option>
                       <option value="CLAIMS">Claims</option>
                       <option value="HR">HR</option>

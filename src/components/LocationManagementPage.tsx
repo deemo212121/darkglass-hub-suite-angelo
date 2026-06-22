@@ -26,6 +26,7 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 type LocationRow = {
   id: string;
+  legacyId?: string;
   location: string;
   address1: string;
   address2: string;
@@ -39,6 +40,7 @@ type LocationRow = {
   defaultPartDist: string;
   repTech: string;
   officeLocation?: string;
+  deliveryRecipientName?: string;
   checkProcessing?: "Y" | "N";
   creditCardProcessing?: "Y" | "N";
   permission?: "Y" | "N";
@@ -49,6 +51,11 @@ type LocationRow = {
   availableDays?: string[];
   availableTimeSlot?: string;
   coveredTechnicians?: string[];
+  laborFee?: string;
+  partFee?: string;
+  tripFee?: string;
+  othersFee?: string;
+  oowPartActual?: boolean;
 };
 
 type PartAddressRow = {
@@ -477,6 +484,7 @@ function normalizeLocationKey(value: string) {
 function buildEmptyLocationRow(): LocationRow {
   return {
     id: "",
+    legacyId: "",
     location: "",
     address1: "",
     address2: "",
@@ -500,6 +508,12 @@ function buildEmptyLocationRow(): LocationRow {
     availableDays: [],
     availableTimeSlot: "ANY",
     coveredTechnicians: [],
+    deliveryRecipientName: "",
+    laborFee: "",
+    partFee: "",
+    tripFee: "",
+    othersFee: "",
+    oowPartActual: false,
   };
 }
 
@@ -610,6 +624,47 @@ export function getLocationManagementZoomAddress(location: string) {
   return normalizedLocation;
 }
 
+/**
+ * Parse a "lat, lng" coordinates string into a point. Returns null if the
+ * string is blank or not a valid pair of numbers.
+ */
+export function parseCoordinates(coordinates?: string): { lat: number; lng: number } | null {
+  if (!coordinates) return null;
+  const parts = String(coordinates).split(",").map((p) => parseFloat(p.trim()));
+  if (parts.length !== 2) return null;
+  const [lat, lng] = parts;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+/**
+ * Return the explicit map coordinates for a location, if the user entered any
+ * in Location Management. Returns null when none are set (callers should then
+ * fall back to geocoding the address via getLocationManagementZoomAddress).
+ */
+export function getLocationManagementCoordinates(location: string): { lat: number; lng: number } | null {
+  const normalizedLocation = normalizeLocationName(location);
+  if (!normalizedLocation) return null;
+  const normalizedLocationKey = normalizeLocationKey(normalizedLocation);
+  const matchesLocation = (candidate: string) => normalizeLocationKey(candidate) === normalizedLocationKey;
+
+  const raw = typeof window !== "undefined" ? window.localStorage.getItem(LOCATION_STORAGE_KEY) : null;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { rows?: LocationRow[] };
+      const savedRow = parsed.rows?.find((row) => matchesLocation(row.location));
+      const fromSaved = parseCoordinates(savedRow?.coordinates);
+      if (fromSaved) return fromSaved;
+    } catch {
+      // fall through to defaults
+    }
+  }
+
+  const defaultRow = DEFAULT_LOCATION_ROWS.find((row) => matchesLocation(row.location));
+  return parseCoordinates(defaultRow?.coordinates);
+}
+
 const DEFAULT_PART_ADDRESS_ROWS: PartAddressRow[] = [
   { id: "36", name: "Nashville", address1: "163 N MOUNT JULIET RD", address2: "", city: "Mount Juliet", state: "Tennessee", zipCode: "37122", location: "Nashville" },
   { id: "37", name: "Knoxville", address1: "5615 Poston Way", address2: "Apt 112", city: "Knoxville", state: "Tennessee", zipCode: "37918", location: "Tallahassee" },
@@ -672,48 +727,37 @@ function resolveCoverageLocation(query: string, locationRows: LocationRow[], cov
 export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [activeTab, setActiveTab] = useState<"locations" | "parts" | "coverage">("locations");
   
-  // Helper function to deduplicate locations, preferring DEFAULT rows
+  // Helper function to deduplicate locations by name.
+  // Prefers a real persisted DB row (uuid id) over a hardcoded default, and
+  // among DB rows prefers one that has coordinates set. This keeps the uuid so
+  // subsequent edits UPDATE the existing row instead of inserting a duplicate.
+  const isUuid = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
+
+  const pickBetterLocationRow = (a: LocationRow, b: LocationRow): LocationRow => {
+    const aUuid = isUuid(a.id);
+    const bUuid = isUuid(b.id);
+    if (aUuid !== bUuid) return aUuid ? a : b; // prefer persisted row
+    const aHasCoords = Boolean((a.coordinates || "").trim());
+    const bHasCoords = Boolean((b.coordinates || "").trim());
+    if (aHasCoords !== bHasCoords) return aHasCoords ? a : b; // prefer with coords
+    return a; // keep first seen otherwise
+  };
+
   const deduplicateLocations = (rows: LocationRow[]): LocationRow[] => {
-    // Create a map of location name -> row, preferring entries from DEFAULT_LOCATION_ROWS
-    const locationMap = new Map<string, LocationRow>();
-    
-    // First pass: add all rows to the map
-    rows.forEach(row => {
-      if (!locationMap.has(row.location)) {
-        locationMap.has(row.location);
+    const byName = new Map<string, LocationRow>();
+    const order: string[] = [];
+
+    for (const row of rows) {
+      const key = normalizeLocationKey(row.location);
+      if (!byName.has(key)) {
+        byName.set(key, row);
+        order.push(key);
+      } else {
+        byName.set(key, pickBetterLocationRow(byName.get(key)!, row));
       }
-      locationMap.set(row.location, row);
-    });
-    
-    // Second pass: override with DEFAULT rows if they exist (to prefer ID 52 for Asheville, etc)
-    DEFAULT_LOCATION_ROWS.forEach(defaultRow => {
-      locationMap.set(defaultRow.location, defaultRow);
-    });
-    
-    // Return as array, maintaining insertion order from defaults where possible
-    const result: LocationRow[] = [];
-    const seen = new Set<string>();
-    
-    // First add all rows from DEFAULT_LOCATION_ROWS that are in our map
-    DEFAULT_LOCATION_ROWS.forEach(defaultRow => {
-      if (!seen.has(defaultRow.location)) {
-        const row = locationMap.get(defaultRow.location);
-        if (row) {
-          result.push(row);
-          seen.add(defaultRow.location);
-        }
-      }
-    });
-    
-    // Then add any remaining rows not in defaults
-    rows.forEach(row => {
-      if (!seen.has(row.location)) {
-        result.push(row);
-        seen.add(row.location);
-      }
-    });
-    
-    return result;
+    }
+
+    return order.map((key) => byName.get(key)!);
   };
   
   const [locationRows, setLocationRows] = useState<LocationRow[]>(() => {
@@ -777,7 +821,34 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
         }
 
         if (!cancelled) {
-          if (locs.length) setLocationRows(deduplicateLocations(locs));
+          if (locs.length) {
+            // Clean up any duplicate DB rows (same location name) created by the
+            // old dedup logic: keep the best row per name, delete the rest.
+            const keep = new Map<string, LocationRow>();
+            const toDelete: string[] = [];
+            for (const row of locs) {
+              const key = normalizeLocationKey(row.location);
+              const existing = keep.get(key);
+              if (!existing) {
+                keep.set(key, row);
+              } else {
+                const better = pickBetterLocationRow(existing, row);
+                keep.set(key, better);
+                const loser = better === existing ? row : existing;
+                if (isUuid(loser.id)) toDelete.push(loser.id);
+              }
+            }
+            if (toDelete.length) {
+              await Promise.all(
+                toDelete.map((id) => sbDeleteLocation(id).catch((e) => console.error("dedup delete failed:", e)))
+              );
+            }
+            const cleaned = deduplicateLocations(Array.from(keep.values()));
+            setLocationRows(cleaned);
+            // Mirror to localStorage so map helpers (getLocationManagement*)
+            // and other pages that read the cache stay in sync with Supabase.
+            saveRows(LOCATION_STORAGE_KEY, cleaned);
+          }
           if (parts.length) setPartRows(parts);
           if (cov.length) setCoverageRows(cov);
         }
@@ -849,7 +920,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     [locationRows, newLocationRow.location, newLocationRow.officeLocation],
   );
 
-  const visibleLocationId = selectedLocationRow?.id || editingLocationId || nextLocationId;
+  const visibleLocationId = selectedLocationRow?.legacyId || selectedLocationRow?.id || newLocationRow.legacyId || editingLocationId || nextLocationId;
 
   const coverageLocationOptions = useMemo(() => {
     const locations = new Set<string>();
@@ -1173,10 +1244,12 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       try {
         const saved = await sbUpsertLocation(nextRow);
         setLocationRows((current) => {
-          if (editingLocationId) {
-            return current.map((row) => (row.id === editingLocationId ? saved : row));
-          }
-          return [saved, ...current];
+          const updated = editingLocationId
+            ? current.map((row) => (row.id === editingLocationId ? saved : row))
+            : [saved, ...current];
+          // Keep the localStorage cache in sync for the map helpers.
+          saveRows(LOCATION_STORAGE_KEY, updated);
+          return updated;
         });
       } catch (err) {
         console.error("Save location failed:", err);
@@ -1400,6 +1473,10 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                   </select>
                 </label>
                 <label className="space-y-2 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Delivery Recipient Name</span>
+                  <input value={newLocationRow.deliveryRecipientName || ""} onChange={(event) => setNewLocationRow((current) => ({ ...current, deliveryRecipientName: event.target.value }))} placeholder="Delivery Recipient Name" className="glass-input w-full text-[11px] px-2 py-1" />
+                </label>
+                <label className="space-y-2 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address 1</span>
                   <input value={newLocationRow.address1} onChange={(event) => setNewLocationRow((current) => ({ ...current, address1: event.target.value }))} placeholder="Address 1" className="glass-input w-full text-[11px] px-2 py-1" />
                 </label>
@@ -1499,6 +1576,32 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 </div>
 
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">OOW Default Charge</div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-200">
+                    <label className="space-y-1">
+                      <span className="block text-xs text-slate-400">Labor Fee</span>
+                      <input type="number" step="0.01" value={newLocationRow.laborFee || ""} onChange={(event) => setNewLocationRow((current) => ({ ...current, laborFee: event.target.value }))} placeholder="0" className="glass-input w-full text-[11px] px-2 py-1" />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-xs text-slate-400">Part Fee</span>
+                      <input type="number" step="0.01" value={newLocationRow.partFee || ""} disabled={newLocationRow.oowPartActual} onChange={(event) => setNewLocationRow((current) => ({ ...current, partFee: event.target.value }))} placeholder="0" className="glass-input w-full text-[11px] px-2 py-1 disabled:opacity-50" />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-xs text-slate-400">Trip Fee</span>
+                      <input type="number" step="0.01" value={newLocationRow.tripFee || ""} onChange={(event) => setNewLocationRow((current) => ({ ...current, tripFee: event.target.value }))} placeholder="0" className="glass-input w-full text-[11px] px-2 py-1" />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-xs text-slate-400">Others Fee</span>
+                      <input type="number" step="0.01" value={newLocationRow.othersFee || ""} onChange={(event) => setNewLocationRow((current) => ({ ...current, othersFee: event.target.value }))} placeholder="0" className="glass-input w-full text-[11px] px-2 py-1" />
+                    </label>
+                  </div>
+                  <label className="mt-3 flex items-center gap-2 rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-xs text-slate-200">
+                    <input type="checkbox" checked={newLocationRow.oowPartActual === true} onChange={(event) => setNewLocationRow((current) => ({ ...current, oowPartActual: event.target.checked }))} />
+                    <span>Actual Part Price will be applied</span>
+                  </label>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                   <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Covered Technicians</div>
                   <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-3">
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -1549,10 +1652,17 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 {filteredLocations.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
                     <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.id}</span>
+                      <span className="block px-2 py-1">{row.legacyId || row.id}</span>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.location}</span>
+                      <button
+                        type="button"
+                        onClick={() => editLocationRow(row)}
+                        className="block px-2 py-1 text-left font-semibold text-blue-300 underline-offset-2 hover:underline focus:outline-none"
+                        title="Open location details"
+                      >
+                        {row.location}
+                      </button>
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <span className="block px-2 py-1">{row.address1}</span>

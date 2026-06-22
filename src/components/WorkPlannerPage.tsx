@@ -3,10 +3,11 @@ import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from 
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
-import { getLocationManagementZoomAddress } from "@/components/LocationManagementPage";
+import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
+import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import type { TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
@@ -244,6 +245,29 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => { cancelled = true; };
   }, [ready]);
 
+  // Hydrate the location cache (localStorage) from Supabase so the Work Map's
+  // office pin can use saved coordinates/addresses even if the user never
+  // opened the Location Management page this session.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await sbGetLocations();
+        if (cancelled || !locs.length) return;
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(
+            "ahs:location-management:locations",
+            JSON.stringify({ rows: locs }),
+          );
+        }
+      } catch (err) {
+        console.error("Work Planner: failed to load locations:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ready]);
+
   // Load technician home addresses (for Work Map house pins). Company-scoped.
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +400,15 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       });
     });
 
+    // Resolve an office location's position: use explicit Location Management
+    // coordinates when set (more precise, no geocoding), otherwise geocode the
+    // saved address.
+    const geocodeOfficeLocation = (loc: string) => {
+      const coords = getLocationManagementCoordinates(loc);
+      if (coords) return Promise.resolve(coords);
+      return geocode(getLocationManagementZoomAddress(loc));
+    };
+
     let cancelled = false;
     const bounds = new maps.LatLngBounds();
 
@@ -427,10 +460,24 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     ).then((results) => {
       if (cancelled || !mapRef.current) return;
 
+      // Order stops by time slot so route numbering follows the daily schedule
+      // (e.g. 8-12 before 1-5 before ANYTIME). SLOT_TIMES maps a slot to a
+      // start time; unknown slots sort last.
+      const slotRank = (slot: string | undefined) => {
+        if (!slot) return 9999;
+        const t = SLOT_TIMES[slot];
+        if (!t) return slot === "ANYTIME" ? 9998 : 9997;
+        const [h, m] = t.split(":").map((n) => parseInt(n, 10));
+        return (Number.isFinite(h) ? h : 99) * 60 + (Number.isFinite(m) ? m : 0);
+      };
+      const orderedResults = [...results].sort(
+        (a, b) => slotRank((a.ticket as any).slot) - slotRank((b.ticket as any).slot),
+      );
+
       // Group tickets by technician to determine hierarchy numbers
       const ticketsByTech = new Map<string, number>();
       
-      results.forEach(({ ticket, position }, index) => {
+      orderedResults.forEach(({ ticket, position }, index) => {
         if (!position) {
           console.warn(`No position found for ticket ${ticket.ticketNo}, skipping marker`);
           return;
@@ -514,7 +561,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
       // Pin the OFFICE for the selected branch — large dark pin with 🏢 label.
       if (location) {
-        geocode(getLocationManagementZoomAddress(location)).then((officePos) => {
+        geocodeOfficeLocation(location).then((officePos) => {
           if (cancelled || !officePos || !mapRef.current) return;
           const officeMarker = new maps.Marker({
             map: mapRef.current,
@@ -585,7 +632,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       });
 
       if (location) {
-        geocode(getLocationManagementZoomAddress(location)).then((position) => {
+        geocodeOfficeLocation(location).then((position) => {
           if (position && mapRef.current) {
             mapRef.current.setCenter(position);
             mapRef.current.setZoom(10);
@@ -600,7 +647,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         mapRef.current.fitBounds(bounds);
       } else {
         const fallbackLocation = visibleTickets[0]?.location || selectedTechRoster[0] || location;
-        geocode(getLocationManagementZoomAddress(fallbackLocation)).then((position) => {
+        geocodeOfficeLocation(fallbackLocation).then((position) => {
           if (position && mapRef.current) {
             mapRef.current.setCenter(position);
             mapRef.current.setZoom(10);
@@ -628,6 +675,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     if (!maps) return;
 
     const geocoder = new maps.Geocoder();
+    const explicitCoords = getLocationManagementCoordinates(location);
+    if (explicitCoords && mapRef.current) {
+      mapRef.current.setCenter(explicitCoords);
+      mapRef.current.setZoom(10);
+      return;
+    }
     geocoder.geocode({ address: getLocationManagementZoomAddress(location) }, (results: any, status: string) => {
       if (status === "OK" && results?.[0] && mapRef.current) {
         mapRef.current.setCenter(results[0].geometry.location);

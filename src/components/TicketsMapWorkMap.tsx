@@ -5,6 +5,8 @@ import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react"
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
+import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
 
 type ColorMode = "status" | "tech";
@@ -95,6 +97,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+  const polylinesRef = useRef<any[]>([]);
   const { ready: authReady, allowedLocations } = useAuth();
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
 
@@ -123,6 +126,29 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     if (authReady) load();
     return () => { cancelled = true; };
   }, [authReady, allowedLocations]);
+
+  // Hydrate the location cache (localStorage) from Supabase so the office pin
+  // can use saved coordinates/addresses even if the Location Management page
+  // wasn't opened this session.
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await sbGetLocations();
+        if (cancelled || !locs.length) return;
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(
+            "ahs:location-management:locations",
+            JSON.stringify({ rows: locs }),
+          );
+        }
+      } catch (err) {
+        console.error("Work Map: failed to load locations:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,6 +316,8 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
+    polylinesRef.current.forEach((line) => line.setMap(null));
+    polylinesRef.current = [];
 
     const geocoder = new maps.Geocoder();
     const geocode = (address: string) => new Promise<any | null>((resolve) => {
@@ -302,7 +330,20 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       });
     });
 
+    // Resolve an office location's position: prefer explicit Location Management
+    // coordinates, otherwise geocode the saved office address.
+    const geocodeOfficeLocation = (loc: string): Promise<{ lat: number; lng: number } | null> => {
+      const coords = getLocationManagementCoordinates(loc);
+      if (coords) return Promise.resolve(coords);
+      return geocode(getLocationManagementZoomAddress(loc)).then((pos) =>
+        pos ? { lat: pos.lat(), lng: pos.lng() } : null,
+      );
+    };
+
     let cancelled = false;
+
+    // Ordered geocoded stops per technician, for drawing route lines.
+    const routePointsByTech = new Map<string, Array<{ order: number; position: any }>>();
 
     const ticketPositions = visibleTickets.map(async (ticket) => {
       const directLat = typeof ticket.lat === "number" ? ticket.lat : typeof ticket.latitude === "number" ? ticket.latitude : null;
@@ -333,11 +374,21 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       if (cancelled || !mapRef.current) return;
 
       const bounds = new maps.LatLngBounds();
-      
+
+      // Order stops by time slot so route numbering follows the daily schedule.
+      const slotRank = (t: any): number => {
+        const raw = String(t.slot || t.time_slot || t.timeSlot || "").trim();
+        if (!raw) return 9999;
+        if (/anytime/i.test(raw)) return 9998;
+        const m = raw.match(/(\d{1,2})/);
+        return m ? parseInt(m[1], 10) : 9997;
+      };
+      const orderedResults = [...results].sort((a, b) => slotRank(a.ticket) - slotRank(b.ticket));
+
       // Group tickets by technician to determine hierarchy numbers
       const ticketsByTech = new Map<string, number>();
       
-      results.forEach(({ ticket, position }, index) => {
+      orderedResults.forEach(({ ticket, position }, index) => {
         if (!position) return;
 
         // Determine hierarchy number for this technician
@@ -345,6 +396,10 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         const currentCount = ticketsByTech.get(techName) || 0;
         const hierarchyNumber = currentCount + 1;
         ticketsByTech.set(techName, hierarchyNumber);
+
+        // Collect ordered route points per technician (JK1 -> JK2 -> JK3 ...).
+        if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
+        routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
 
         // Get technician initials
         const initials = getInitials(ticket.technician_name || ticket.technician || "Unassigned");
@@ -386,10 +441,58 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         bounds.extend(position);
       });
 
+      // Draw a route line per technician connecting their stops in order
+      // (JK1 -> JK2 -> JK3), colored to match the tech's badges. When multiple
+      // techs are shown, each gets their own colored route.
+      routePointsByTech.forEach((points, techName) => {
+        if (points.length < 2) return;
+        const ordered = [...points].sort((a, b) => a.order - b.order);
+        const line = new maps.Polyline({
+          path: ordered.map((p) => p.position),
+          geodesic: true,
+          strokeColor: getTechColor(techName),
+          strokeOpacity: 0.9,
+          strokeWeight: 3,
+          map: mapRef.current,
+          icons: [
+            {
+              icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 },
+              offset: "60%",
+            },
+          ],
+        });
+        polylinesRef.current.push(line);
+      });
+
+      // Pin the OFFICE for the selected branch — dark teardrop pin with 🏢.
+      if (selectedLocation) {
+        geocodeOfficeLocation(selectedLocation).then((officePos) => {
+          if (cancelled || !officePos || !mapRef.current) return;
+          const officeMarker = new maps.Marker({
+            map: mapRef.current,
+            position: officePos,
+            title: `${selectedLocation} Office`,
+            icon: {
+              path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
+              fillColor: "#0f172a",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2.5,
+              scale: 1.3,
+              anchor: new maps.Point(12, 34),
+              labelOrigin: new maps.Point(12, 12),
+            },
+            label: { text: "🏢", fontSize: "14px" },
+            zIndex: 99999,
+          });
+          markersRef.current.push(officeMarker);
+        });
+      }
+
       if (!bounds.isEmpty()) {
         mapRef.current.fitBounds(bounds);
       } else if (selectedLocation) {
-        geocode(selectedLocation).then((position) => {
+        geocodeOfficeLocation(selectedLocation).then((position) => {
           if (position && mapRef.current) {
             mapRef.current.setCenter(position);
             mapRef.current.setZoom(10);

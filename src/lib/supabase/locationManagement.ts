@@ -11,6 +11,7 @@ import { supabase } from "./client";
 // ---- UI row shapes (mirror LocationManagementPage.tsx) ----
 export type LocationRow = {
   id: string;
+  legacyId?: string;
   location: string;
   address1: string;
   address2: string;
@@ -24,6 +25,7 @@ export type LocationRow = {
   defaultPartDist: string;
   repTech: string;
   officeLocation?: string;
+  deliveryRecipientName?: string;
   checkProcessing?: "Y" | "N";
   creditCardProcessing?: "Y" | "N";
   permission?: "Y" | "N";
@@ -34,6 +36,12 @@ export type LocationRow = {
   availableDays?: string[];
   availableTimeSlot?: string;
   coveredTechnicians?: string[];
+  // OOW Default Charge
+  laborFee?: string;
+  partFee?: string;
+  tripFee?: string;
+  othersFee?: string;
+  oowPartActual?: boolean;
 };
 
 export type PartAddressRow = {
@@ -59,10 +67,17 @@ export type CoverageRow = {
 
 const yn = (v: unknown): "Y" | "N" => (v === "Y" ? "Y" : "N");
 
+// Parse a money-ish string into a number; blank/invalid -> 0.
+const numOrZero = (v: unknown): number => {
+  const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+};
+
 // ===================== Locations =====================
 function locFromDb(r: any): LocationRow {
   return {
     id: r.id,
+    legacyId: r.legacy_id ?? "",
     location: r.location ?? "",
     address1: r.address1 ?? "",
     address2: r.address2 ?? "",
@@ -76,6 +91,7 @@ function locFromDb(r: any): LocationRow {
     defaultPartDist: r.default_part_dist ?? "",
     repTech: r.rep_tech ?? "",
     officeLocation: r.office_location ?? "",
+    deliveryRecipientName: r.delivery_recipient_name ?? "",
     checkProcessing: yn(r.check_processing),
     creditCardProcessing: yn(r.credit_card_processing),
     permission: yn(r.permission),
@@ -86,12 +102,17 @@ function locFromDb(r: any): LocationRow {
     availableDays: Array.isArray(r.available_days) ? r.available_days : [],
     availableTimeSlot: r.available_time_slot ?? "ANY",
     coveredTechnicians: Array.isArray(r.covered_technicians) ? r.covered_technicians : [],
+    laborFee: r.labor_fee != null ? String(r.labor_fee) : "",
+    partFee: r.part_fee != null ? String(r.part_fee) : "",
+    tripFee: r.trip_fee != null ? String(r.trip_fee) : "",
+    othersFee: r.others_fee != null ? String(r.others_fee) : "",
+    oowPartActual: r.oow_part_actual === true,
   };
 }
 
 function locToDb(row: LocationRow): Record<string, unknown> {
   return {
-    legacy_id: row.id && !row.id.includes("-") ? row.id : null,
+    legacy_id: row.legacyId || (row.id && !row.id.includes("-") ? row.id : null),
     location: row.location,
     address1: row.address1,
     address2: row.address2,
@@ -105,6 +126,7 @@ function locToDb(row: LocationRow): Record<string, unknown> {
     default_part_dist: row.defaultPartDist,
     rep_tech: row.repTech,
     office_location: row.officeLocation ?? "",
+    delivery_recipient_name: row.deliveryRecipientName ?? "",
     check_processing: yn(row.checkProcessing),
     credit_card_processing: yn(row.creditCardProcessing),
     permission: yn(row.permission),
@@ -115,6 +137,11 @@ function locToDb(row: LocationRow): Record<string, unknown> {
     available_days: row.availableDays ?? [],
     available_time_slot: row.availableTimeSlot ?? "ANY",
     covered_technicians: row.coveredTechnicians ?? [],
+    labor_fee: numOrZero(row.laborFee),
+    part_fee: numOrZero(row.partFee),
+    trip_fee: numOrZero(row.tripFee),
+    others_fee: numOrZero(row.othersFee),
+    oow_part_actual: row.oowPartActual === true,
     updated_at: new Date().toISOString(),
   };
 }
@@ -145,6 +172,25 @@ export async function upsertLocation(row: LocationRow): Promise<LocationRow> {
     if (error) throw new Error(error.message);
     return locFromDb(data);
   }
+  // No uuid id: this is a new row. Guard against the (company_id, location)
+  // unique constraint — if a location with this name already exists, update it
+  // instead of inserting a duplicate.
+  const { data: existing } = await supabase
+    .from("location_mgmt_locations")
+    .select("id")
+    .ilike("location", row.location)
+    .maybeSingle();
+  if (existing?.id) {
+    const { data, error } = await supabase
+      .from("location_mgmt_locations")
+      .update(payload)
+      .eq("id", existing.id)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return locFromDb(data);
+  }
+
   const { data, error } = await supabase
     .from("location_mgmt_locations")
     .insert(payload)
