@@ -3,6 +3,7 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleSupabaseTokenRequest } from "./lib/server/supabaseTokenBridge";
+import { handleServicePowerRequest } from "./lib/server/servicePowerBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -67,38 +68,48 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   return brandedErrorResponse();
 }
 
+// Merge all available secret sources (Cloudflare bindings, adapter env,
+// process.env), keeping the first defined, non-empty value per key. On
+// Cloudflare the adapter `env` enumerates secret KEYS but returns undefined
+// VALUES, so the canonical source is `env` from "cloudflare:workers".
+async function resolveServerEnv(env: unknown): Promise<Record<string, string>> {
+  let cfEnv: Record<string, unknown> = {};
+  try {
+    const mod = await import("cloudflare:workers");
+    cfEnv = ((mod as any).env as Record<string, unknown>) ?? {};
+  } catch {
+    // not on Cloudflare (dev/Node) — ignore
+  }
+  const procEnv: Record<string, unknown> =
+    typeof process !== "undefined" && process.env ? (process.env as any) : {};
+  const adapterEnv = (env as Record<string, unknown>) ?? {};
+
+  const merged: Record<string, string> = {};
+  for (const src of [cfEnv, adapterEnv, procEnv]) {
+    for (const k of Object.keys(src)) {
+      const v = (src as any)[k];
+      if (merged[k] === undefined && typeof v === "string" && v !== "") {
+        merged[k] = v;
+      }
+    }
+  }
+  return merged;
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    // Serve the Firebase -> Supabase token bridge from the Worker itself.
-    // Handled OUTSIDE the try/catch below so its JSON error responses are
-    // returned verbatim instead of being swallowed into the 500 HTML page.
+    // Serve the Firebase -> Supabase token bridge AND the ServicePower bridge
+    // from the Worker itself. Handled OUTSIDE the try/catch below so their JSON
+    // error responses are returned verbatim instead of being swallowed into the
+    // 500 HTML page.
     const url = new URL(request.url);
     if (url.pathname === "/api/supabase-token") {
-      // The adapter-provided `env` enumerates secret KEYS but returns undefined
-      // VALUES on Cloudflare. The canonical source is `env` from the
-      // "cloudflare:workers" module. Merge all sources, keeping only the first
-      // defined, non-empty value per key so undefined can never clobber a real one.
-      let cfEnv: Record<string, unknown> = {};
-      try {
-        const mod = await import("cloudflare:workers");
-        cfEnv = ((mod as any).env as Record<string, unknown>) ?? {};
-      } catch {
-        // not on Cloudflare (dev/Node) — ignore
-      }
-      const procEnv: Record<string, unknown> =
-        typeof process !== "undefined" && process.env ? (process.env as any) : {};
-      const adapterEnv = (env as Record<string, unknown>) ?? {};
-
-      const merged: Record<string, string> = {};
-      for (const src of [cfEnv, adapterEnv, procEnv]) {
-        for (const k of Object.keys(src)) {
-          const v = (src as any)[k];
-          if (merged[k] === undefined && typeof v === "string" && v !== "") {
-            merged[k] = v;
-          }
-        }
-      }
+      const merged = await resolveServerEnv(env);
       return await handleSupabaseTokenRequest(request, merged);
+    }
+    if (url.pathname === "/api/servicepower") {
+      const merged = await resolveServerEnv(env);
+      return await handleServicePowerRequest(request, merged);
     }
 
     try {
