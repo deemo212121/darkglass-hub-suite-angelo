@@ -1209,23 +1209,45 @@ function TicketDetailsPage() {
       };
       const mfgCode = String(call.mfgId ?? "").trim().toUpperCase();
       const source = mfgSourceMap[mfgCode] || mfgCode || "";
+
+      // Raw warranty as ServicePower sent it (could be a code like "SC"/"IW"
+      // or a full text label like "Service Contract").
+      const rawWarrantyValue = String(call.warrantyType ?? "").trim();
+      const rawWarrantyUpper = rawWarrantyValue.toUpperCase();
       const wtypeMap: Record<string, string> = {
         SC: "Service Contract", IW: "In warranty", OW: "Out of warranty", OOW: "Out of warranty",
       };
-      const rawWarranty = wtypeMap[String(call.warrantyType ?? "").trim().toUpperCase()] || call.warrantyType || "";
+      const rawWarranty = wtypeMap[rawWarrantyUpper] || rawWarrantyValue || "";
 
       // The badge next to "Warranty Type" mirrors ServicePower's Product
-      // Details > Warranty Info verbatim. If ServicePower flagged the call as a
-      // Service Contract (either via WarrantyType=SC or by having a service
-      // contract number on the product) we surface "SERVICE CONTRACT" so AHS
-      // staff see exactly what SP says, regardless of how we mapped it on the
-      // AHS Warranty Type dropdown side.
+      // Details > Warranty Info verbatim. Detect "Service Contract" from any
+      // of the signals SP exposes:
+      //   - WarrantyType code is "SC"
+      //   - Warranty value (raw or mapped) contains "service contract"
+      //   - Product has a ServiceContractNumber populated
+      //   - Product has a ServiceContractExpireDate populated
       const hasServiceContract =
+        rawWarrantyUpper === "SC" ||
+        /service\s*contract/i.test(rawWarrantyValue) ||
         /service\s*contract/i.test(String(rawWarranty)) ||
-        Boolean(String(product.serviceContractNumber ?? "").trim());
+        Boolean(String(product.serviceContractNumber ?? "").trim()) ||
+        Boolean(String(product.serviceContractExpireDate ?? "").trim());
       const warrantyInfoBadge = hasServiceContract
         ? "SERVICE CONTRACT"
         : (rawWarranty || "").toUpperCase();
+
+      // Diagnostic: surface the raw SP fields so we can see why the badge
+      // resolves the way it does. Safe to keep — only logs in the user's own
+      // browser console.
+      console.log("[SP auto-sync]", {
+        callNumber: call.callNumber,
+        warrantyTypeRaw: call.warrantyType,
+        warrantyTypeMapped: rawWarranty,
+        serviceContractNumber: product.serviceContractNumber,
+        serviceContractExpireDate: product.serviceContractExpireDate,
+        hasServiceContract,
+        warrantyInfoBadge,
+      });
 
       setTicketData((prev) => {
         if (!prev) return prev;
