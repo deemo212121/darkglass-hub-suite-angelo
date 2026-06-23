@@ -721,7 +721,7 @@ export async function upsertTicketFromServicePower(
   // Does the ticket already exist (company-scoped)?
   const { data: existing, error: findErr } = await supabase
     .from("tickets")
-    .select("id, customer_id")
+    .select("id, customer_id, status")
     .eq("ticket_no", input.ticketNo)
     .maybeSingle();
   if (findErr) {
@@ -730,6 +730,11 @@ export async function upsertTicketFromServicePower(
   }
 
   if (existing) {
+    // Preserve any AHS-side status change on re-sync (e.g. once a CSR clicks
+    // Acknowledge the ticket should stay CSR-Acknowledged, not get reset).
+    if (existing.status) {
+      ticketPayload.status = existing.status;
+    }
     // Update the linked customer (or create one if missing).
     if (existing.customer_id) {
       const { error: cErr } = await supabase

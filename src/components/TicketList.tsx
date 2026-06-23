@@ -65,6 +65,31 @@ const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
 const STATUS_LOG_KEY = "ahs:ticket:status-log";
 const TICKET_VISITS_KEY = "ahs:ticket:visits"; // Track who visited which tickets
 
+// Compact acronym for the Wty column (mirrors ticket detail header ribbon).
+//   In warranty -> IW, Out-of-warranty -> OOW, Service Contract -> SC, etc.
+// If the value already looks like a short acronym (<= 4 upper-case chars) we
+// pass it through unchanged.
+function warrantyAcronym(value: string | null | undefined): string {
+  const v = (value || "").trim();
+  if (!v) return "";
+  if (v.length <= 4 && v === v.toUpperCase()) return v;
+  const lower = v.toLowerCase();
+  if (lower === "in warranty") return "IW";
+  if (lower.includes("out of warranty") || lower.includes("out-of-warranty")) return "OOW";
+  if (lower === "concession l") return "CL";
+  if (lower === "concession lp") return "CLP";
+  if (lower === "concession p") return "CP";
+  if (lower.includes("ext labor")) return "ELW";
+  if (lower.includes("ext part")) return "EPW";
+  if (lower.includes("ext wty")) return "EW";
+  if (lower.includes("labor only")) return "LOW";
+  if (lower.includes("part only")) return "POW";
+  if (lower.includes("special part")) return "SP5";
+  if (lower.includes("service contract")) return "SC";
+  if (lower === "unknown") return "UNK";
+  return v.toUpperCase();
+}
+
 // Per-status color for the Status cell in the ticket list. Falls back to the
 // default blue for any status not listed here. Matching is case-insensitive
 // and trims whitespace so minor formatting differences still color correctly.
@@ -533,7 +558,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       </a>
                     </td>
                     )}
-                    {isColVisible("warranty") && <td className="px-4 py-3 text-slate-300">{ticket.warranty}</td>}
+                    {isColVisible("warranty") && <td className="px-4 py-3 text-slate-300">{warrantyAcronym(ticket.warranty)}</td>}
                     {isColVisible("ticketSource") && <td className="px-4 py-3 text-slate-300">{ticket.ticketSource || ticket.manufacturer}</td>}
                     {isColVisible("customer") && <td className="px-4 py-3 text-slate-300">{ticket.customer}</td>}
                     {isColVisible("city") && <td className="px-4 py-3 text-slate-300">{ticket.city}</td>}

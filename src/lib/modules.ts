@@ -1175,15 +1175,6 @@ const reportMod: ModuleDef = {
   accent: "#34d399",
   submodules: [
     {
-      slug: "report-hr-daily",
-      title: "HR Daily Report",
-      description: "Interview, hiring, warnings and terminations per branch.",
-      custom: "report-hr-daily" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    {
       slug: "report-csr-daily",
       title: "CSR Daily Report",
       description: "CSR agent performance — tasks, schedule, attempts, mistakes.",

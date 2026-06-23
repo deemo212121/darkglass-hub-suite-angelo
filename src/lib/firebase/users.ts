@@ -1,5 +1,6 @@
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -15,6 +16,7 @@ import {
 import { db, isFirebaseReady } from "./config";
 import { createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
 import { auth } from "./config";
+import { ROLE_LABELS } from "@/lib/roleLabels";
 
 /**
  * User roles in the system
@@ -29,7 +31,10 @@ export type UserRole =
   | "HR"            // HR and payroll access
   | "IT"            // IT support
   | "PARTS"         // Parts management
-  | "FINANCE";      // Financial reports and billing
+  | "FINANCE"       // Financial reports and billing
+  | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
+  | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
+  | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS";
 
 /**
  * User account structure in Firestore
@@ -37,6 +42,7 @@ export type UserRole =
 export interface UserAccount {
   uid: string;
   email: string;
+  loginName?: string; // Login name (may differ from username)
   username: string; // Format: FirstName.LastName (e.g., "Jhon.Rulona")
   displayName: string;
   companyId: string;
@@ -45,6 +51,15 @@ export interface UserAccount {
   phoneNumber?: string;
   employeeId?: string;
   department?: string;
+  // Extended assignment fields (from the Add New User form)
+  managerName?: string;
+  technicianId?: string;
+  assignedBranch?: string;
+  branchAccess?: string;
+  poInitials?: string;
+  requiredCheckIn?: string;
+  requiredCheckOut?: string;
+  daysOff?: number[];
   createdAt: Timestamp | Date;
   createdBy: string; // UID of creator
   updatedAt: Timestamp | Date;
@@ -60,20 +75,20 @@ export interface UserAccount {
  */
 export function generateUsername(displayName: string): string {
   const nameParts = displayName.trim().split(/\s+/);
-  
+
   if (nameParts.length === 0) {
     return "";
   }
-  
+
   if (nameParts.length === 1) {
     // If only one name, use it as username
     return nameParts[0];
   }
-  
+
   // First name + Last name (skip middle names)
   const firstName = nameParts[0];
   const lastName = nameParts[nameParts.length - 1];
-  
+
   return `${firstName}.${lastName}`;
 }
 
@@ -201,6 +216,7 @@ export async function updateCompany(
   }
 }
 
+
 /**
  * Create a new user account
  */
@@ -211,9 +227,18 @@ export async function createUserAccount(
     displayName: string;
     companyId: string;
     role: UserRole;
+    loginName?: string;
     phoneNumber?: string;
     employeeId?: string;
     department?: string;
+    managerName?: string;
+    technicianId?: string;
+    assignedBranch?: string;
+    branchAccess?: string;
+    poInitials?: string;
+    requiredCheckIn?: string;
+    requiredCheckOut?: string;
+    daysOff?: number[];
     permissions?: string[];
   },
   creatorUid: string
@@ -234,30 +259,58 @@ export async function createUserAccount(
     );
     const uid = userCredential.user.uid;
 
-    // 3. Create Firestore user profile
-    const userRef = doc(db, "users", uid);
-    await setDoc(userRef, {
-      uid,
-      email: userData.email,
+    // 3. Build the full profile record (every form field is persisted here).
+    //    Field order matters for the Firestore console: documentId goes LAST.
+    const roleLabel = ROLE_LABELS[userData.role] ?? userData.role;
+    const profile: Record<string, any> = {
+      name: userData.displayName,
+      loginName: userData.loginName || username,
       username,
-      displayName: userData.displayName,
-      companyId: userData.companyId,
+      email: userData.email,
+      userType: roleLabel,
       role: userData.role,
+      companyId: userData.companyId,
       isActive: true,
+      status: "Active",
       phoneNumber: userData.phoneNumber || "",
       employeeId: userData.employeeId || "",
       department: userData.department || "",
+      managerName: userData.managerName || "",
+      technicianId: userData.technicianId || "",
+      assignedBranch: userData.assignedBranch || "",
+      branchAccess: userData.branchAccess || "",
+      poInitials: userData.poInitials || "",
+      requiredCheckIn: userData.requiredCheckIn || "",
+      requiredCheckOut: userData.requiredCheckOut || "",
+      daysOff: userData.daysOff || [],
       permissions: userData.permissions || [],
       createdAt: serverTimestamp(),
       createdBy: creatorUid,
       updatedAt: serverTimestamp(),
-    });
+      // documentId stored LAST as a field (not used as the collection/doc key).
+      documentId: uid,
+    };
 
-    console.log(`✅ User created: ${uid} (${userData.email})`);
+    // 4. Write to a ROLE-GROUPED, NAME-KEYED path so the Firestore console is
+    //    navigable by role and shows real names instead of opaque doc IDs:
+    //      users / {Role Label} / {Active|Inactive} / {Person Name}
+    const status = profile.isActive ? "Active" : "Inactive";
+    const docName = (userData.displayName || username || userData.email)
+      .trim()
+      .replace(/[\/\\#?]/g, " ")
+      .replace(/\s+/g, " ");
+    const groupedRef = doc(db, "users", roleLabel, status, docName);
+    await setDoc(groupedRef, profile);
+
+    // 5. Keep a flat lookup index at users_index/{uid} so lookups by uid and
+    //    login stay O(1) regardless of the navigable name-keyed structure.
+    const indexRef = doc(db, "users_index", uid);
+    await setDoc(indexRef, { ...profile, path: `users/${roleLabel}/${status}/${docName}` });
+
+    console.log(`✅ User created: ${uid} (${userData.email}) under users/${roleLabel}/${status}/${docName}`);
     return uid;
   } catch (error: any) {
     console.error("Error creating user:", error);
-
     if (error.code === "auth/email-already-in-use") {
       throw new Error("Email already in use");
     } else if (error.code === "auth/weak-password") {
@@ -265,7 +318,6 @@ export async function createUserAccount(
     } else if (error.code === "auth/invalid-email") {
       throw new Error("Invalid email address");
     }
-
     throw error;
   }
 }
@@ -279,14 +331,17 @@ export async function getUserAccount(uid: string): Promise<UserAccount | null> {
   }
 
   try {
-    const userRef = doc(db, "users", uid);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists()) {
-      return null;
+    // Read from the flat lookup index (users_index/{uid}), which mirrors the
+    // role-grouped record at users/{role}/{status}/{uid}.
+    const indexRef = doc(db, "users_index", uid);
+    const indexSnap = await getDoc(indexRef);
+    if (indexSnap.exists()) {
+      return indexSnap.data() as UserAccount;
     }
-
-    return userSnap.data() as UserAccount;
+    // Back-compat: fall back to the legacy flat users/{uid} path.
+    const legacyRef = doc(db, "users", uid);
+    const legacySnap = await getDoc(legacyRef);
+    return legacySnap.exists() ? (legacySnap.data() as UserAccount) : null;
   } catch (error) {
     console.error("Error fetching user:", error);
     return null;
@@ -306,23 +361,51 @@ export async function getUserByUsername(
   }
 
   try {
-    const usersRef = collection(db, "users");
-    // Simplified query - only username and companyId (no isActive check here)
-    const q = query(
-      usersRef,
+    // 1. users_index/{uid} — fast lookup for users created via new flow.
+    const idxQ = query(
+      collection(db, "users_index"),
       where("username", "==", username),
       where("companyId", "==", companyId)
     );
-    const snapshot = await getDocs(q);
+    let snapshot = await getDocs(idxQ);
+
+    // 2. New grouped structure: users/{Role}/Active/{Name}
+    //    collectionGroup hits all sub-collections with that exact name.
+    if (snapshot.empty) {
+      const activeQ = query(
+        collectionGroup(db, "Active"),
+        where("username", "==", username),
+        where("companyId", "==", companyId)
+      );
+      snapshot = await getDocs(activeQ);
+    }
+
+    // 3. Same but Inactive (covers deactivated users getting re-activated elsewhere).
+    if (snapshot.empty) {
+      const inactiveQ = query(
+        collectionGroup(db, "Inactive"),
+        where("username", "==", username),
+        where("companyId", "==", companyId)
+      );
+      snapshot = await getDocs(inactiveQ);
+    }
+
+    // 4. Legacy flat users/{uid} collection — old users not yet migrated.
+    if (snapshot.empty) {
+      const legacyQ = query(
+        collection(db, "users"),
+        where("username", "==", username),
+        where("companyId", "==", companyId)
+      );
+      snapshot = await getDocs(legacyQ);
+    }
 
     if (snapshot.empty) {
       return null;
     }
 
-    // Get first matching user and check if active
     const user = snapshot.docs[0].data() as UserAccount;
-    
-    // Check if user is active
+
     if (!user.isActive) {
       console.warn(`User ${username} is inactive`);
       return null;
@@ -344,20 +427,32 @@ export async function getCompanyUsers(companyId: string): Promise<UserAccount[]>
   }
 
   try {
-    const usersRef = collection(db, "users");
-    const q = query(
-      usersRef,
+    // 1. New structure: flat lookup index.
+    const idxSnap = await getDocs(query(
+      collection(db, "users_index"),
       where("companyId", "==", companyId)
-      // Note: Removed orderBy to avoid composite index requirement
-      // Users will be sorted in the UI instead
-    );
-    const snapshot = await getDocs(q);
+    ));
 
-    const users = snapshot.docs.map((doc) => doc.data() as UserAccount);
-    
-    // Sort in memory by display name
-    return users.sort((a, b) => 
-      (a.displayName || "").localeCompare(b.displayName || "")
+    // 2. MIGRATION fallback: legacy flat users/{uid} collection.
+    const legacySnap = await getDocs(query(
+      collection(db, "users"),
+      where("companyId", "==", companyId)
+    ));
+
+    // Merge both sources, de-duplicating by uid/documentId (prefer the new
+    // index entry when a user exists in both — i.e. already migrated).
+    const byId = new Map<string, UserAccount>();
+    legacySnap.docs.forEach((d) => {
+      const u = d.data() as UserAccount;
+      byId.set((u as any).documentId || u.uid || d.id, u);
+    });
+    idxSnap.docs.forEach((d) => {
+      const u = d.data() as UserAccount;
+      byId.set((u as any).documentId || u.uid || d.id, u);
+    });
+
+    return Array.from(byId.values()).sort((a, b) =>
+      (a.displayName || (a as any).name || "").localeCompare(b.displayName || (b as any).name || "")
     );
   } catch (error) {
     console.error("Error fetching company users:", error);
@@ -374,11 +469,29 @@ export async function getAllUsers(): Promise<UserAccount[]> {
   }
 
   try {
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, orderBy("createdAt", "desc"));
-    const snapshot = await getDocs(q);
+    // New structure + MIGRATION fallback to legacy flat users collection.
+    const [idxSnap, legacySnap] = await Promise.all([
+      getDocs(collection(db, "users_index")),
+      getDocs(collection(db, "users")),
+    ]);
 
-    return snapshot.docs.map((doc) => doc.data() as UserAccount);
+    const byId = new Map<string, UserAccount>();
+    legacySnap.docs.forEach((d) => {
+      const u = d.data() as UserAccount;
+      // Skip the role-label subcollection parent docs (they have no uid/email).
+      if (!(u as any).email && !u.uid && !(u as any).documentId) return;
+      byId.set((u as any).documentId || u.uid || d.id, u);
+    });
+    idxSnap.docs.forEach((d) => {
+      const u = d.data() as UserAccount;
+      byId.set((u as any).documentId || u.uid || d.id, u);
+    });
+
+    return Array.from(byId.values()).sort((a, b) => {
+      const at = (a.createdAt as any)?.seconds ?? 0;
+      const bt = (b.createdAt as any)?.seconds ?? 0;
+      return bt - at;
+    });
   } catch (error) {
     console.error("Error fetching all users:", error);
     return [];
@@ -485,7 +598,7 @@ export async function getUsersByRole(
   }
 
   try {
-    const usersRef = collection(db, "users");
+    const usersRef = collection(db, "users_index");
     const q = query(
       usersRef,
       where("companyId", "==", companyId),
@@ -523,7 +636,6 @@ export async function hasPermission(
   if (Array.isArray(requiredRole)) {
     return requiredRole.includes(user.role);
   }
-
   return user.role === requiredRole;
 }
 
@@ -544,3 +656,101 @@ export async function updateLastLogin(uid: string): Promise<void> {
     console.error("Error updating last login:", error);
   }
 }
+
+/**
+ * MIGRATION: copy every legacy flat `users/{uid}` document into the new
+ * role-grouped, name-keyed structure:
+ *   users / {Role Label} / {Active|Inactive} / {Person Name}
+ * plus the flat `users_index/{uid}` mirror.
+ *
+ * Safe to run multiple times (idempotent — it overwrites the same targets).
+ * Does NOT delete the legacy docs, so you can verify first and clean up later.
+ * Returns a summary of what was migrated.
+ */
+export async function migrateLegacyUsersToGroupedStructure(): Promise<{
+  migrated: number;
+  skipped: number;
+  errors: number;
+  details: string[];
+}> {
+  if (!isFirebaseReady() || !db) {
+    throw new Error("Firestore not configured");
+  }
+
+  const details: string[] = [];
+  let migrated = 0, skipped = 0, errors = 0;
+
+  try {
+    const legacySnap = await getDocs(collection(db, "users"));
+    for (const d of legacySnap.docs) {
+      const data = d.data() as any;
+      // Skip the role-label parent docs that aren't real user records.
+      if (!data || (!data.email && !data.uid && !data.documentId)) {
+        skipped++;
+        continue;
+      }
+      try {
+        const uid = data.uid || data.documentId || d.id;
+        const roleStr = (data.role || "CSR") as string;
+        const roleLabel = ROLE_LABELS[roleStr] ?? roleStr;
+        const isActive = data.isActive !== false;
+        const status = isActive ? "Active" : "Inactive";
+        const displayName = data.displayName || data.name || data.username || data.email || uid;
+        const docName = String(displayName)
+          .trim()
+          .replace(/[\/\\#?]/g, " ")
+          .replace(/\s+/g, " ");
+
+        // Rebuild the profile with documentId LAST.
+        const profile: Record<string, any> = {
+          name: displayName,
+          loginName: data.loginName || data.username || "",
+          username: data.username || "",
+          email: data.email || "",
+          userType: roleLabel,
+          role: roleStr,
+          companyId: data.companyId || "",
+          isActive,
+          status,
+          phoneNumber: data.phoneNumber || "",
+          employeeId: data.employeeId || "",
+          department: data.department || "",
+          managerName: data.managerName || "",
+          technicianId: data.technicianId || "",
+          assignedBranch: data.assignedBranch || "",
+          branchAccess: data.branchAccess || "",
+          poInitials: data.poInitials || "",
+          requiredCheckIn: data.requiredCheckIn || "",
+          requiredCheckOut: data.requiredCheckOut || "",
+          daysOff: data.daysOff || [],
+          permissions: data.permissions || [],
+          createdAt: data.createdAt || serverTimestamp(),
+          createdBy: data.createdBy || "migration",
+          updatedAt: serverTimestamp(),
+          documentId: uid,
+        };
+
+        await setDoc(doc(db, "users", roleLabel, status, docName), profile);
+        await setDoc(doc(db, "users_index", uid), {
+          ...profile,
+          path: `users/${roleLabel}/${status}/${docName}`,
+        });
+        migrated++;
+        details.push(`✓ ${displayName} → users/${roleLabel}/${status}/${docName}`);
+      } catch (e: any) {
+        errors++;
+        details.push(`✗ ${d.id}: ${e?.message || e}`);
+      }
+    }
+  } catch (e: any) {
+    details.push(`Fatal: ${e?.message || e}`);
+    errors++;
+  }
+
+  console.log(`Migration done: ${migrated} migrated, ${skipped} skipped, ${errors} errors`);
+  return { migrated, skipped, errors, details };
+}
+
+// Mark `updatePassword` as referenced — it was imported for the password
+// reset flow; suppress the unused-import warning until that flow lands.
+void updatePassword;

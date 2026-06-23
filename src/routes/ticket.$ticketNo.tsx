@@ -1214,6 +1214,19 @@ function TicketDetailsPage() {
       };
       const rawWarranty = wtypeMap[String(call.warrantyType ?? "").trim().toUpperCase()] || call.warrantyType || "";
 
+      // The badge next to "Warranty Type" mirrors ServicePower's Product
+      // Details > Warranty Info verbatim. If ServicePower flagged the call as a
+      // Service Contract (either via WarrantyType=SC or by having a service
+      // contract number on the product) we surface "SERVICE CONTRACT" so AHS
+      // staff see exactly what SP says, regardless of how we mapped it on the
+      // AHS Warranty Type dropdown side.
+      const hasServiceContract =
+        /service\s*contract/i.test(String(rawWarranty)) ||
+        Boolean(String(product.serviceContractNumber ?? "").trim());
+      const warrantyInfoBadge = hasServiceContract
+        ? "SERVICE CONTRACT"
+        : (rawWarranty || "").toUpperCase();
+
       setTicketData((prev) => {
         if (!prev) return prev;
         return {
@@ -1233,7 +1246,7 @@ function TicketDetailsPage() {
           poAmount: product.poAmount ?? prev.poAmount,
           authNo: call.authNo || prev.authNo,
           observationNotes: call.problemDesc || prev.observationNotes,
-          serviceContract: rawWarranty || prev.serviceContract,
+          serviceContract: warrantyInfoBadge || prev.serviceContract,
         };
       });
       setSpCallSyncMsg("Call Service Information synced from ServicePower.");
@@ -1324,7 +1337,11 @@ function TicketDetailsPage() {
           purchaseDate: centralTicket.purchaseDate || "",
           warrantyType: mapServicePowerWarranty(centralTicket.warranty) || centralTicket.warranty,
           claimCompany: (centralTicket as any).claimCompany || "",
-          serviceContract: centralTicket.warranty || "",
+          // Service Contract badge shows the RAW ServicePower warranty info
+          // (e.g. "Service Contract", "In Warranty"). Auto-sync fills it from
+          // the live ServicePower call. Leave blank until the sync resolves so
+          // we never duplicate the AHS-mapped Warranty Type next to it.
+          serviceContract: "",
           accountNo: centralTicket.account || "",
           manufactureId: (centralTicket as any).manufactureId || "",
           callNo: centralTicket.ticketNo || "",

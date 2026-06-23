@@ -1,5 +1,6 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
+import { ChevronDown, Check } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
@@ -17,13 +18,137 @@ interface NewUserFormData {
   assignedBranch: string;
   branchAccess: string;
   poInitials: string;
-  phoneNumber: string;
   requiredCheckIn: string;
   requiredCheckOut: string;
   selectedOffDays: number[];
 }
 
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// Branch/office locations (used by Assigned Branch + Branch Access dropdowns)
+const LOCATIONS = [
+  "Asheville", "Atlanta", "Birmingham", "Cape Girardeau", "Chattanooga",
+  "Columbus", "Destin", "Dallas", "Huntsville", "Jackson, MS", "Jackson, TN",
+  "Jacksonville", "Jonesboro", "Knoxville", "Lake Charles", "Little Rock",
+  "Memphis", "Mobile", "Montgomery", "Nashville", "New Orleans", "Norfolk",
+  "Richmond", "Raleigh", "San Antonio", "St. Louis", "Savannah",
+  "Tallahassee", "Wilmington", "Philippines",
+];
+
+// User types: { value stored as Firestore role, label shown in the dropdown }
+const USER_TYPES: { value: string; label: string }[] = [
+  { value: "ADMIN", label: "Admin" },
+  { value: "MANAGER", label: "Manager" },
+  { value: "TECHNICIAN", label: "Technician" },
+  { value: "CLAIMS", label: "Claims" },
+  { value: "HR", label: "HR" },
+  { value: "IT", label: "IT" },
+  { value: "PARTS", label: "Parts" },
+  { value: "FINANCE", label: "Finance" },
+  { value: "CSR_AGENT", label: "CSR Agent" },
+  { value: "CSR_TEAM_LEADER", label: "CSR Team Leader" },
+  { value: "CSR_MANAGER", label: "CSR Manager" },
+  { value: "BRANCH_MANAGER", label: "Branch Manager" },
+  { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
+  { value: "CLAIMS_MANAGER", label: "Claims Manager" },
+  { value: "PARTS_MANAGER", label: "Parts Manager" },
+  { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
+  { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
+];
+
+/**
+ * Single-select branch dropdown (Assigned Branch).
+ * A checkbox sits on the LEFT of each location; picking one selects it.
+ */
+function BranchSingleSelect({ value, onChange, placeholder }: {
+  value: string; onChange: (v: string) => void; placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="glass-input w-full text-[11px] px-2 py-1 flex items-center justify-between text-left">
+        <span className={value ? "text-slate-100" : "text-slate-500"}>{value || placeholder}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
+          {LOCATIONS.map(loc => {
+            const checked = value === loc;
+            return (
+              <button key={loc} type="button"
+                onClick={() => { onChange(loc); setOpen(false); }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10">
+                <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                  {checked && <Check className="h-2.5 w-2.5 text-white" />}
+                </span>
+                <span className="text-slate-200">{loc}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Multi-select branch dropdown (Branch Access).
+ * Each location has a LEFT checkbox; multiple may be selected. Stored as a
+ * comma-separated string so it matches the existing form/back-end contract.
+ */
+function BranchMultiSelect({ value, onChange, placeholder }: {
+  value: string; onChange: (v: string) => void; placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = useMemo(
+    () => value.split(",").map(s => s.trim()).filter(Boolean),
+    [value]
+  );
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const toggle = (loc: string) => {
+    const next = selected.includes(loc) ? selected.filter(s => s !== loc) : [...selected, loc];
+    onChange(next.join(", "));
+  };
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="glass-input w-full text-[11px] px-2 py-1 flex items-center justify-between text-left">
+        <span className={selected.length ? "text-slate-100 truncate" : "text-slate-500"}>
+          {selected.length ? `${selected.length} selected: ${selected.join(", ")}` : placeholder}
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
+          {LOCATIONS.map(loc => {
+            const checked = selected.includes(loc);
+            return (
+              <button key={loc} type="button" onClick={() => toggle(loc)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10">
+                <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                  {checked && <Check className="h-2.5 w-2.5 text-white" />}
+                </span>
+                <span className="text-slate-200">{loc}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Map a Supabase profile row to the table's UserManagementRecord shape.
 // Row shape for the table: UserManagementRecord plus the Supabase profile id
@@ -76,7 +201,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     assignedBranch: "",
     branchAccess: "",
     poInitials: "",
-    phoneNumber: "",
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
     selectedOffDays: [5, 6], // Saturday and Sunday by default
@@ -170,7 +294,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
         role: newUserForm.userType as any,
-        phoneNumber: newUserForm.phoneNumber,
+        phoneNumber: "",
         department: "",
         managerName: newUserForm.manager,
         assignedBranch: newUserForm.assignedBranch,
@@ -208,7 +332,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         assignedBranch: "",
         branchAccess: "",
         poInitials: "",
-        phoneNumber: "",
         requiredCheckIn: "08:00",
         requiredCheckOut: "17:00",
         selectedOffDays: [5, 6],
@@ -426,23 +549,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       onChange={(e) => handleAddUserFormChange("userType", e.target.value)}
                     >
                       <option value="">Select user type</option>
-                      <option value="ADMIN">Admin</option>
-                      <option value="MANAGER">Manager</option>
-                      <option value="TECHNICIAN">Technician</option>
-                      <option value="CLAIMS">Claims</option>
-                      <option value="HR">HR</option>
-                      <option value="IT">IT</option>
-                      <option value="PARTS">Parts</option>
-                      <option value="FINANCE">Finance</option>
-                      <option value="CSR Agent">CSR Agent</option>
-                      <option value="CSR Team Leader">CSR Team Leader</option>
-                      <option value="CSR Manager">CSR Manager</option>
-                      <option value="Branch Manager">Branch Manager</option>
-                      <option value="Senior Branch Manager">Senior Branch Manager</option>
-                      <option value="Claims Manager">Claims Manager</option>
-                      <option value="Parts Manager">Parts Manager</option>
-                      <option value="BizOps Manager">BizOps Manager</option>
-                      <option value="BizOps Senior Manager">BizOps Senior Manager</option>
+                      {USER_TYPES.map(t => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
                     </select>
                   </label>
                 </div>
@@ -454,12 +563,21 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <div className="grid gap-4 lg:grid-cols-2">
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Manager *</span>
-                    <input 
-                      placeholder="Assign manager" 
+                    <select
                       className="glass-input w-full text-[11px] px-2 py-1"
                       value={newUserForm.manager}
                       onChange={(e) => handleAddUserFormChange("manager", e.target.value)}
-                    />
+                    >
+                      <option value="">Assign manager</option>
+                      <option>Aleena Hii</option>
+                      <option>Daven Hodge</option>
+                      <option>Ian Montesclaros</option>
+                      <option>Jerich Leonard</option>
+                      <option>Jonathon Allen</option>
+                      <option>Justin Parker</option>
+                      <option>Naveen Lakhani</option>
+                      <option>Raul Bayuyos Jr</option>
+                    </select>
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician ID</span>
@@ -472,20 +590,18 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Assigned Branch *</span>
-                    <input 
-                      placeholder="Select branch office" 
-                      className="glass-input w-full text-[11px] px-2 py-1"
+                    <BranchSingleSelect
+                      placeholder="Select branch office"
                       value={newUserForm.assignedBranch}
-                      onChange={(e) => handleAddUserFormChange("assignedBranch", e.target.value)}
+                      onChange={(v) => handleAddUserFormChange("assignedBranch", v)}
                     />
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch Access *</span>
-                    <input 
-                      placeholder="Enter branch access (comma separated)" 
-                      className="glass-input w-full text-[11px] px-2 py-1"
+                    <BranchMultiSelect
+                      placeholder="Select branch access"
                       value={newUserForm.branchAccess}
-                      onChange={(e) => handleAddUserFormChange("branchAccess", e.target.value)}
+                      onChange={(v) => handleAddUserFormChange("branchAccess", v)}
                     />
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
@@ -496,16 +612,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       value={newUserForm.poInitials}
                       onChange={(e) => handleAddUserFormChange("poInitials", e.target.value.toUpperCase())}
                       maxLength={5}
-                    />
-                  </label>
-                  <label className="space-y-2 text-sm text-slate-200">
-                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Phone Number</span>
-                    <input 
-                      type="tel"
-                      placeholder="Enter phone number" 
-                      className="glass-input w-full text-[11px] px-2 py-1"
-                      value={newUserForm.phoneNumber}
-                      onChange={(e) => handleAddUserFormChange("phoneNumber", e.target.value)}
                     />
                   </label>
                 </div>
@@ -574,4 +680,3 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     </main>
   );
 }
-

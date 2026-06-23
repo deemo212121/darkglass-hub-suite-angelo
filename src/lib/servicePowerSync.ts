@@ -75,6 +75,22 @@ function mapSource(mfgId: string | null | undefined): string {
 }
 
 /**
+ * Decide the initial AHS Repair Status for a ticket newly imported from
+ * ServicePower. Based on the work-order Source:
+ *  - NSA (any variant)  -> "CSR-Needs Scheduling"
+ *  - everything else    -> "CSR-Assigned to ASC"
+ *
+ * NOTE: this is only used on first insert. On subsequent re-syncs the local
+ * status set by AHS users (e.g. CSR-Acknowledged once a CSR clicks Acknowledge)
+ * is preserved by upsertTicketFromServicePower so we never clobber it.
+ */
+function initialAhsStatusForSource(source: string): string {
+  const s = (source || '').trim().toUpperCase();
+  if (s.includes('NSA')) return 'CSR-Needs Scheduling';
+  return 'CSR-Assigned to ASC';
+}
+
+/**
  * Map a ServicePower WarrantyType code to readable text.
  * SC = Service Contract, IW = In Warranty, OW/OOW = Out of Warranty.
  */
@@ -87,6 +103,54 @@ const WARRANTY_TYPE_LABEL: Record<string, string> = {
 function mapWarrantyType(code: string | null | undefined): string {
   const c = String(code ?? '').trim().toUpperCase();
   return WARRANTY_TYPE_LABEL[c] || c || '';
+}
+
+/**
+ * Map a ServicePower "Warranty Info" (raw label or code) to the AHS Warranty
+ * Type the rest of the system uses. Mirrors the mapping in
+ * src/routes/ticket.$ticketNo.tsx so list and detail stay in sync.
+ *  - Sales fulfillment   -> In warranty
+ *  - Concessions         -> Concession LP
+ *  - Service Contract    -> In warranty
+ *  - Out of warranty     -> Out-of-warranty
+ *  - In warranty         -> In warranty
+ */
+function mapServicePowerWarrantyToAhs(spWarranty: string | undefined | null): string {
+  const v = (spWarranty || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v.includes('sales fulfillment')) return 'In warranty';
+  if (v.includes('concession')) return 'Concession LP';
+  if (v.includes('service contract')) return 'In warranty';
+  if (v.includes('out of warranty') || v.includes('out-of-warranty')) return 'Out-of-warranty';
+  if (v.includes('in warranty')) return 'In warranty';
+  return spWarranty || '';
+}
+
+/**
+ * Compact acronym for the ticket-list "Wty" column. Mirrors the acronym used
+ * in the ticket detail header ribbon so list and detail stay in sync.
+ *  - In Warranty       -> IW
+ *  - Out of Warranty   -> OOW
+ *  - Service Contract  -> SC
+ *  - Concession LP     -> CLP   (etc.)
+ */
+function warrantyAcronymFromLabel(label: string | null | undefined): string {
+  const v = (label || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v === 'in warranty') return 'IW';
+  if (v.includes('out of warranty') || v.includes('out-of-warranty')) return 'OOW';
+  if (v === 'concession l') return 'CL';
+  if (v === 'concession lp') return 'CLP';
+  if (v === 'concession p') return 'CP';
+  if (v.includes('ext labor')) return 'ELW';
+  if (v.includes('ext part')) return 'EPW';
+  if (v.includes('ext wty')) return 'EW';
+  if (v.includes('labor only')) return 'LOW';
+  if (v.includes('part only')) return 'POW';
+  if (v.includes('special part')) return 'SP5';
+  if (v.includes('service contract')) return 'SC';
+  if (v === 'unknown') return 'UNK';
+  return label!.toUpperCase();
 }
 
 /**
@@ -106,14 +170,22 @@ export function convertCallToTicket(call: any): Ticket {
   const city = consumer.postcodeLevel3 || consumer.postcodeLevel2 || '';
   // Work-order Source (SQUARE TRADE / ASSURANT ...) is encoded in MfgId.
   const source = mapSource(call.mfgId);
-  // Warranty is the warranty TYPE (Service Contract / In Warranty), not brand.
+  // Warranty: ServicePower returns either a code (SC/IW/OW) or a long label
+  // ("Service Contract", "In Warranty"). First normalize into a readable label,
+  // then map to the AHS warranty type so things like "Service Contract" become
+  // "In warranty" — same rule used in the ticket detail page.
   const warrantyType = mapWarrantyType(call.warrantyType);
+  const ahsWarranty = mapServicePowerWarrantyToAhs(warrantyType || call.warrantyType);
 
   return {
     // Core ticket fields
     ticketNo: call.callNumber || '',
-    ticketSource: 'ServicePower',
-    warranty: warrantyType,
+    // Ticket Source on the list = claim company (e.g. CENTRICITY, SQUARE TRADE).
+    // We derive it from the ServicePower MfgId; falls back to a generic label.
+    ticketSource: source || 'ServicePower',
+    // Wty = AHS warranty long label (e.g. "In warranty"). The list and detail
+    // header ribbon convert to acronym (IW / SC / OOW) at render time.
+    warranty: ahsWarranty,
     manufacturer: product.brandDesc || '',
     customer: fullName,
     city,
@@ -125,7 +197,11 @@ export function convertCallToTicket(call: any): Ticket {
     technician: call.techKey || '',
     customerPref: call.scheduleTimePeriod || '',
     schedule: formatServicePowerDate(call.scheduleDate),
-    status: call.callStatus || '',
+    // AHS Repair Status: assigned at first import based on source. NSA tickets
+    // start at CSR-Needs Scheduling, everything else at CSR-Assigned to ASC.
+    // The raw ServicePower call status (ACCEPTED / etc.) lives in callStatus
+    // on the ticket detail's Call Service Information section.
+    status: initialAhsStatusForSource(source),
     phone: cleanPhone(consumer.phone1),
     redo: /^y/i.test(String(call.repeatCall || '')) ? 'Yes' : '',
     aging: 0,

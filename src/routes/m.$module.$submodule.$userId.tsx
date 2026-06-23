@@ -330,9 +330,9 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
 });
 
 const ROLE_OPTIONS = [
-  "ADMIN", "MANAGER", "CSR", "TECHNICIAN", "CLAIMS", "HR", "IT", "PARTS", "FINANCE",
-  "CSR Agent", "CSR Team Leader", "CSR Manager", "Branch Manager", "Senior Branch Manager",
-  "Claims Manager", "Parts Manager", "BizOps Manager", "BizOps Senior Manager",
+  "ADMIN", "MANAGER", "CSR", "TECHNICIAN", "DISPATCHER", "CLAIMS", "HR", "IT", "PARTS", "FINANCE",
+  "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER",
+  "CLAIMS_MANAGER", "PARTS_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
 ];
 
 const USER_TABS = [

@@ -18,11 +18,19 @@ import { supabase } from "./client";
 import { getCompanyUsers as getFirestoreCompanyUsers } from "@/lib/firebase/users";
 
 export type UserRole =
-  | "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR"
-  | "TECHNICIAN" | "CLAIMS" | "HR" | "IT" | "PARTS" | "FINANCE"
-  | "CSR Agent" | "CSR Team Leader" | "CSR Manager" | "Branch Manager"
-  | "Senior Branch Manager" | "Claims Manager" | "Parts Manager"
-  | "BizOps Manager" | "BizOps Senior Manager";
+  | "SUPERADMIN"    // Access to all companies, can create/manage admins
+  | "ADMIN"         // Company admin, full access to company data
+  | "MANAGER"       // Can manage tickets, employees, reports
+  | "CSR"           // Customer Service Rep, ticket management
+  | "TECHNICIAN"    // Field technician
+  | "DISPATCHER"    // Dispatch management
+  | "HR"            // HR and payroll access
+  | "IT"            // IT support
+  | "PARTS"         // Parts management
+  | "FINANCE"       // Financial reports and billing
+  | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
+  | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
+  | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS";
 
 export interface ProfileRow {
   id: string;
