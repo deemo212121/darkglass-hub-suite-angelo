@@ -66,6 +66,18 @@ function parseProductInfo(xml: string): any {
     poNumber: parseElement(xml, 'PoNumber'),
     poAmount: parseElement(xml, 'PoAmount'),
     copayAmount: parseElement(xml, 'CopayAmount'),
+    // SP exposes the human-readable "Warranty Info" label at the product
+    // level too. Names vary by tenant — try the common variants.
+    warrantyInfo:
+      parseElement(xml, 'WarrantyInfo') ||
+      parseElement(xml, 'WarrantyType') ||
+      parseElement(xml, 'WarrantyStatus') ||
+      parseElement(xml, 'WarrantyDescription') ||
+      parseElement(xml, 'WarrantyTypeDesc'),
+    retailerName: parseElement(xml, 'RetailerName'),
+    // Keep the raw XML so the UI can grep it as a last resort if SP ever
+    // emits the field under yet another tag name.
+    rawXml: xml,
   };
 }
 
