@@ -108,15 +108,28 @@ export async function handleServicePowerRequest(
   const getEnv = (k: string): string | undefined =>
     env?.[k] ?? (typeof process !== 'undefined' ? process.env?.[k] : undefined);
 
+  // Build-time injected constants (see vite.config.ts `define`). Baked into the
+  // SERVER bundle only (dist/server), never the client. Most reliable source on
+  // Cloudflare Workers, where runtime env plumbing varies. Falls back to env.
+  // NOTE: these MUST use static dot-access so Vite's `define` text replacement
+  // applies (dynamic bracket access would not be replaced).
+  const pick = (injectedVal: unknown, envKey: string): string | undefined => {
+    if (typeof injectedVal === 'string' && injectedVal !== '') return injectedVal;
+    return getEnv(envKey);
+  };
+
   try {
     const body = (await request.json()) as ServicePowerRequestBody;
     const { action, params } = body;
 
-    const userId = getEnv('VITE_SERVICEPOWER_USER_ID');
-    const password = getEnv('VITE_SERVICEPOWER_PASSWORD');
-    const envName = getEnv('VITE_SERVICEPOWER_ENV') || 'staging';
-    const region = getEnv('VITE_SERVICEPOWER_REGION') || 'na';
-    const svcrAcct = getEnv('VITE_SERVICEPOWER_SERVICER_ACCOUNT') || userId || '';
+    const userId = pick((globalThis as any).__SP_USER_ID__, 'VITE_SERVICEPOWER_USER_ID');
+    const password = pick((globalThis as any).__SP_PASSWORD__, 'VITE_SERVICEPOWER_PASSWORD');
+    const envName = pick((globalThis as any).__SP_ENV__, 'VITE_SERVICEPOWER_ENV') || 'staging';
+    const region = pick((globalThis as any).__SP_REGION__, 'VITE_SERVICEPOWER_REGION') || 'na';
+    const svcrAcct =
+      pick((globalThis as any).__SP_SERVICER_ACCOUNT__, 'VITE_SERVICEPOWER_SERVICER_ACCOUNT') ||
+      userId ||
+      '';
 
     if (!userId || !password) {
       return json(

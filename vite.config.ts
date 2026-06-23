@@ -37,6 +37,16 @@ const SERVER_DEFINE = {
   "globalThis.__FIREBASE_PROJECT_ID__": JSON.stringify(
     rootEnv.VITE_FIREBASE_PROJECT_ID ?? ""
   ),
+  // ServicePower credentials (SERVER ONLY — baked into dist/server, never the
+  // client bundle). Runtime env plumbing is unreliable on Cloudflare Workers,
+  // so we inject these as compile-time constants like the Supabase secret.
+  "globalThis.__SP_USER_ID__": JSON.stringify(rootEnv.VITE_SERVICEPOWER_USER_ID ?? ""),
+  "globalThis.__SP_PASSWORD__": JSON.stringify(rootEnv.VITE_SERVICEPOWER_PASSWORD ?? ""),
+  "globalThis.__SP_ENV__": JSON.stringify(rootEnv.VITE_SERVICEPOWER_ENV ?? ""),
+  "globalThis.__SP_REGION__": JSON.stringify(rootEnv.VITE_SERVICEPOWER_REGION ?? ""),
+  "globalThis.__SP_SERVICER_ACCOUNT__": JSON.stringify(
+    rootEnv.VITE_SERVICEPOWER_SERVICER_ACCOUNT ?? ""
+  ),
 };
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
