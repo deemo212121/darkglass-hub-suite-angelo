@@ -5,6 +5,11 @@ import type { ModuleDef, SubModuleDef } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 import { getEmployeeFromEmail, getUserPayslips, getUserAttendance } from "@/lib/userDataSync";
 import { LOCATIONS } from "@/lib/locations";
+import {
+  type AttendanceRow,
+  getAttendanceForRange,
+  getMyProfileSchedule,
+} from "@/lib/supabase/timecards";
 
 interface PayrollRecord {
   id: string;
@@ -482,7 +487,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
 }
 
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
-  const { email } = useAuth();
+  const { email, uid } = useAuth();
   const employee = getEmployeeFromEmail(email);
   const userPayslips = getUserPayslips(email);
   
@@ -509,6 +514,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<"pto" | "dispute" | "correction" | "inquiry">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
+  // Real Supabase-backed attendance for the My Attendance tab.
+  const [liveAttendance, setLiveAttendance] = useState<AttendanceRow[]>([]);
+  const [missingAttendance, setMissingAttendance] = useState<AttendanceRow[]>([]);
+  const [warningDismissed, setWarningDismissed] = useState(false);
   const [showLoginLogout, setShowLoginLogout] = useState(false);
   const [submittedRequests, setSubmittedRequests] = useState<Request[]>(ALL_REQUESTS);
   const [formData, setFormData] = useState({
@@ -520,6 +529,42 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     branch: LOCATIONS[0] || "",
   });
   const [submitSuccess, setSubmitSuccess] = useState(false);
+
+  // Load the caller's real attendance for the last 30 days from Supabase, and
+  // flag days where they're missing a clock-in or clock-out so we can surface
+  // a warning banner. Re-runs whenever the user navigates back into the page.
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const schedule = await getMyProfileSchedule(uid);
+        if (!schedule.profileId || cancelled) return;
+        const today = new Date();
+        const start = new Date(today);
+        start.setDate(start.getDate() - 30);
+        const toKey = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const rows = await getAttendanceForRange(
+          schedule.profileId,
+          toKey(start),
+          toKey(today),
+          {
+            requiredCheckIn: schedule.requiredCheckIn,
+            requiredCheckOut: schedule.requiredCheckOut,
+          }
+        );
+        if (cancelled) return;
+        setLiveAttendance(rows);
+        setMissingAttendance(
+          rows.filter((r) => r.status === "missing-in" || r.status === "missing-out")
+        );
+      } catch (err) {
+        console.warn("Attendance load skipped:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [uid]);
 
   const tabs = [
     { id: "dashboard", label: "My Dashboard", icon: TrendingUp },
@@ -825,7 +870,41 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {/* Attendance Tab */}
         {activeTab === "attendance" && (
           <div className="space-y-6">
-            <div className="flex gap-2">
+            {/* Missed clock-in / clock-out warning */}
+            {missingAttendance.length > 0 && !warningDismissed && (
+              <div className="bg-amber-500/10 border border-amber-400/40 rounded-lg p-4 flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-amber-300 mt-0.5 shrink-0" />
+                <div className="flex-1 text-sm text-amber-100">
+                  <div className="font-semibold">
+                    {missingAttendance.length} day{missingAttendance.length === 1 ? "" : "s"} missing
+                    {missingAttendance.some((r) => r.status === "missing-in") ? " a clock-in" : ""}
+                    {missingAttendance.some((r) => r.status === "missing-in") &&
+                    missingAttendance.some((r) => r.status === "missing-out") ? " /" : ""}
+                    {missingAttendance.some((r) => r.status === "missing-out") ? " a clock-out" : ""}.
+                  </div>
+                  <div className="mt-1 text-amber-200/80">
+                    {missingAttendance.slice(0, 5).map((r) => r.date).join(", ")}
+                    {missingAttendance.length > 5 ? `, +${missingAttendance.length - 5} more` : ""}
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <Link
+                      to="/timecard"
+                      className="px-3 py-1.5 rounded bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 text-xs font-semibold transition"
+                    >
+                      Fix in My Timecard
+                    </Link>
+                    <button
+                      onClick={() => setWarningDismissed(true)}
+                      className="px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-amber-100/80 text-xs font-semibold transition"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 flex-wrap items-center">
               <button
                 onClick={() => setAttendanceView("daily")}
                 className={`px-4 py-2 rounded text-xs font-semibold transition ${
@@ -856,11 +935,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               >
                 Login/Logout History
               </button>
+              <Link
+                to="/timecard"
+                className="ml-auto px-4 py-2 rounded text-xs font-semibold bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border border-blue-400/30 transition inline-flex items-center gap-2"
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Open My Timecard
+              </Link>
             </div>
 
             {attendanceView === "daily" && (
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <h3 className="text-sm font-bold text-white mb-4">Daily Attendance</h3>
+                <h3 className="text-sm font-bold text-white mb-4">Daily Attendance (last 30 days)</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -873,17 +959,35 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </tr>
                     </thead>
                     <tbody>
-                      {ATTENDANCE_DAILY.map((record, idx) => (
-                        <tr key={idx} className="border-b border-white/10 hover:bg-white/5">
-                          <td className="px-3 py-2 text-white">{record.date}</td>
-                          <td className="px-3 py-2 text-center text-slate-300">{record.clockIn}</td>
-                          <td className="px-3 py-2 text-center text-slate-300">{record.clockOut}</td>
-                          <td className="px-3 py-2 text-center text-slate-300">{record.hoursWorked.toFixed(2)}h</td>
-                          <td className="px-3 py-2 text-center">
-                            <span className="px-2 py-1 bg-green-500/20 text-green-300 rounded text-xs font-semibold">✓</span>
+                      {liveAttendance.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-6 text-center text-slate-400">
+                            No attendance recorded yet. Open My Timecard to log your hours.
                           </td>
                         </tr>
-                      ))}
+                      )}
+                      {liveAttendance.slice().reverse().map((record) => {
+                        const statusLabel: Record<AttendanceRow["status"], { label: string; className: string }> = {
+                          present: { label: "✓ Present", className: "bg-green-500/20 text-green-300" },
+                          absent: { label: "Absent", className: "bg-red-500/20 text-red-300" },
+                          "missing-in": { label: "Missing Time-In", className: "bg-amber-500/20 text-amber-300" },
+                          "missing-out": { label: "Missing Time-Out", className: "bg-amber-500/20 text-amber-300" },
+                        };
+                        const meta = statusLabel[record.status];
+                        return (
+                          <tr key={record.date} className="border-b border-white/10 hover:bg-white/5">
+                            <td className="px-3 py-2 text-white">{record.date}</td>
+                            <td className="px-3 py-2 text-center text-slate-300">{record.clockIn || "—"}</td>
+                            <td className="px-3 py-2 text-center text-slate-300">{record.clockOut || "—"}</td>
+                            <td className="px-3 py-2 text-center text-slate-300">{record.hoursWorked.toFixed(2)}h</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-1 rounded text-xs font-semibold ${meta.className}`}>
+                                {meta.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

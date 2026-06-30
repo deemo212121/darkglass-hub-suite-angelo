@@ -44,16 +44,23 @@ import { TriagePerformanceReport } from "@/components/TriagePerformanceReport";
 import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
 import { PartOrder } from "@/components/PartOrder";
 import { PartReceive } from "@/components/PartReceive";
-import { PartCollectionPage } from "@/components/PartCollectionPage";
 import { PartFootprintPage } from "@/components/PartFootprintPage";
 import { PartHistoryPage } from "@/components/PartHistoryPage";
-import { PartInventoryPage } from "@/components/PartInventoryPage";
 import { PartManagementPage } from "@/components/PartManagementPage";
-import { PartPickupPage } from "@/components/PartPickupPage";
-import { PartReturnPage } from "@/components/PartReturnPage";
 import { PoStatusPage } from "@/components/PoStatusPage";
 import { ReturnPickupPage } from "@/components/ReturnPickupPage";
 import { RepairStatusesPage } from "@/components/RepairStatusesPage";
+// Richer parts components pulled from the upstream usapp repo. Where they
+// overlap with the existing *Page wrappers above we prefer the upstream
+// component because it has the full UI; the wrappers remain available as
+// fallbacks and for any spots that still reference them.
+import { PartInventory } from "@/components/PartInventory";
+import { PartDailyPickup } from "@/components/PartDailyPickup";
+import { PartDailyCollection } from "@/components/PartDailyCollection";
+import { PartReturn } from "@/components/PartReturn";
+import { ReservedPartList } from "@/components/ReservedPartList";
+import { PartsDashboard } from "@/components/PartsDashboard";
+import { TruckStockPage } from "@/components/TruckStockPage";
 import { TicketList } from "@/components/TicketList";
 import { NewTicketPage } from "@/components/NewTicketPage";
 import { TodoListPage } from "@/components/TodoListPage";
@@ -129,8 +136,12 @@ function SubModule() {
   
   // Check admin access using Firebase role
   const hasAdminAccess = role && (role.toUpperCase() === "ADMIN" || role.toUpperCase() === "SUPERADMIN");
-  
-  if (mod.slug === "admin" && !hasAdminAccess) {
+
+  // Carve-outs: a few admin-module pages are open to everyone since they're
+  // company-wide utilities (e.g. the internal team messenger).
+  const ALL_ROLES_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
+
+  if (mod.slug === "admin" && !hasAdminAccess && !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) {
     return (
       <>
         <AppHeader />
@@ -334,20 +345,30 @@ function SubModule() {
         ? <ReturnPickupPage />
         : sub.custom === "repair-statuses"
         ? <RepairStatusesPage />
+        : (sub as any).custom === "parts-dashboard"
+        ? <PartsDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "truck-stock"
+        ? <TruckStockPage mod={mod} sub={sub} />
+        : sub.custom === "reserved-part-list-custom"
+        ? <ReservedPartList mod={mod} sub={sub} />
         : sub.slug === "po-status"
         ? <PoStatusPage />
         : sub.slug === "part-collection"
-        ? <PartCollectionPage mod={mod} sub={sub} />
+        ? <PartDailyCollection mod={mod} sub={sub} />
         : sub.slug === "part-footprint"
         ? <PartFootprintPage mod={mod} sub={sub} />
         : sub.slug === "part-history"
         ? <PartHistoryPage mod={mod} sub={sub} />
         : sub.slug === "part-inventory"
-        ? <PartInventoryPage mod={mod} sub={sub} />
+        ? <PartInventory mod={mod} sub={sub} />
         : sub.slug === "part-management"
         ? <PartManagementPage mod={mod} sub={sub} />
         : sub.slug === "part-pickup"
-        ? <PartPickupPage mod={mod} sub={sub} />
+        ? <PartDailyPickup mod={mod} sub={sub} />
+        : sub.slug === "part-return"
+        ? <PartReturn mod={mod} sub={sub} />
+        : sub.slug === "reserved-part-list"
+        ? <ReservedPartList mod={mod} sub={sub} />
         : sub.custom === "ticket-list"
         ? <TicketList mod={mod} sub={sub} />
         : sub.slug === "new-ticket"

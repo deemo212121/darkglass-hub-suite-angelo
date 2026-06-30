@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
-import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getLatestVisitScheduleByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
@@ -52,6 +53,26 @@ function deriveStatusGroup(status: string) {
   return "op";
 }
 
+// Map a repair status to a marker color so an Unassigned ticket still
+// reads visually (it shouldn't fall back to the generic technician palette
+// since it has no technician). Mirrors the palette used elsewhere in the
+// app (Ticket List status palette).
+function statusMarkerColor(status: string): string {
+  const v = String(status || "").trim().toLowerCase();
+  if (v === "pt-need preauthorization") return "#ea580c";
+  if (v === "cl-ready to complete") return "#ef4444";
+  if (v === "op-ready for service") return "#3b82f6";
+  if (v === "csr-left message for cx") return "#10b981";
+  if (v === "op-waiting for part") return "#facc15";
+  if (v === "csr-assigned to asc") return "#94a3b8";
+  if (v === "cl-parts back ordered") return "#94a3b8";
+  if (v === "tr-need triage") return "#64748b";
+  if (v === "cl-need cancel") return "#fb923c";
+  if (v === "op-reschedule follow up") return "#ec4899";
+  if (v === "csr-acknowledged") return "#fb7185";
+  return "#60a5fa";
+}
+
 function getInitials(value: string | null | undefined) {
   if (!value) return "U";
   
@@ -87,6 +108,17 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("tickets");
   const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
   const [mapDate, setMapDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Work Map can either bucket per single day (mapDate === ticketDate) or
+  // across a window starting at mapDate. Dispatch uses the week view to
+  // sched ahead — a ticket scheduled later in the week should still surface
+  // when the start of the week is selected.
+  const [dateRangeMode, setDateRangeMode] = useState<"day" | "week" | "custom">("day");
+  const [mapDateEnd, setMapDateEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  // When true (default), show tickets scheduled for any day within the
+  // selected window as faded "other day" pins. Mirrors the ER work map
+  // "Tickets on Other Days" toggle. When false, only tickets scheduled
+  // exactly on the selected date appear at all.
+  const [showOtherDayTickets, setShowOtherDayTickets] = useState(true);
   const [ready, setReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -98,6 +130,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const polylinesRef = useRef<any[]>([]);
+  // Holds the Google Maps InfoWindow + the React-managed DOM node it
+  // renders inside, so the detail card can stay anchored to the ticket's
+  // pin while the user pans/zooms the map.
+  const infoWindowRef = useRef<any>(null);
+  const infoContentRef = useRef<HTMLDivElement | null>(null);
+  // Re-render trigger so the portal mounts on the first selection (when
+  // infoContentRef has just been created).
+  const [infoHostReady, setInfoHostReady] = useState(false);
   const { ready: authReady, allowedLocations } = useAuth();
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
 
@@ -112,6 +152,35 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           const scoped = allowedLocations === null
             ? rows
             : rows.filter((t: any) => allowedLocations.includes(normalizeLocationName(t.location || t.customer_city || t.city || "")));
+
+          // Overlay the latest visit-level schedule date onto each ticket.
+          // The Work Map should bucket a ticket under the date the CSR last
+          // saved in the Visit Log when there is one, falling back to the
+          // ServicePower schedule date otherwise. Internal UUIDs (`_id`) are
+          // attached to each row by rowToTicket in src/lib/supabase/tickets.
+          try {
+            const ids = scoped
+              .map((t: any) => String(t?._id ?? "").trim())
+              .filter(Boolean);
+            const visitMap = await getLatestVisitScheduleByTicketIds(ids);
+            for (const t of scoped as any[]) {
+              const tid = String(t?._id ?? "").trim();
+              const visitDate = tid ? visitMap.get(tid) : "";
+              if (visitDate) {
+                // Keep the SP-supplied schedule reachable so the side panel
+                // can label which source produced the date.
+                t.spScheduleDate = t.schedule || t.schedule_date || "";
+                t.scheduleSource = "visit";
+                t.schedule = visitDate;
+                t.schedule_date = visitDate;
+              } else {
+                t.scheduleSource = (t.schedule || t.schedule_date) ? "sp" : "";
+              }
+            }
+          } catch (visitErr) {
+            console.warn("Work Map: visit date overlay skipped", visitErr);
+          }
+
           setTickets(scoped);
           setReady(true);
         }
@@ -251,9 +320,53 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       ? tickets.filter((ticket) => normalizeLocationName(ticket.location || ticket.customer_city || ticket.city || "Richmond, VA") === selectedLocation)
       : tickets;
 
+    // What counts as "pending" — i.e. work that hasn't been closed out.
+    // Everything except the explicit terminal statuses (completed, claimed,
+    // cancelled, data closed). Blank status counts as pending so dispatch
+    // can still see new work.
+    const isPendingStatus = (status: unknown) => {
+      const v = String(status || "").toLowerCase().trim();
+      if (!v) return true;
+      if (
+        v === "cl-completed" || v === "completed" ||
+        v === "cl-claimed" || v === "claimed" ||
+        v === "cl-cancelled" || /\bcancell?ed\b/.test(v) ||
+        v.includes("data closed") || v.includes("data-closed")
+      ) return false;
+      return true;
+    };
+
+    // For the selected day surface:
+    //   • every ticket scheduled FOR that day, AND
+    //   • every pending ticket without a schedule date — so dispatch can see
+    //     what's waiting and slot it onto a tech's route.
+    // Resolve the inclusive [rangeStart, rangeEnd] window. In day mode the
+    // start/end collapse to the single picked date; in week mode the end is
+    // mapDate + 6 days; in custom mode the user picks both ends explicitly.
+    const rangeStart = mapDate;
+    let rangeEnd = mapDate;
+    if (dateRangeMode === "week") {
+      try {
+        const start = new Date(mapDate + "T00:00:00");
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        rangeEnd = end.toISOString().slice(0, 10);
+      } catch { rangeEnd = mapDate; }
+    } else if (dateRangeMode === "custom") {
+      rangeEnd = mapDateEnd && mapDateEnd >= mapDate ? mapDateEnd : mapDate;
+    }
+
     const dateFiltered = filtered.filter((ticket) => {
-      const ticketDate = String(ticket.schedule || ticket.created || ticket.created_at || "").slice(0, 10);
-      return !ticketDate || ticketDate === mapDate;
+      const ticketDate = String(ticket.schedule || ticket.schedule_date || "").slice(0, 10);
+      if (ticketDate) {
+        // If "Tickets on Other Days" is turned off, only tickets scheduled
+        // exactly on the selected date stay. With it on, anything inside
+        // [rangeStart, rangeEnd] is visible (today as a numbered badge,
+        // other days as faded pins — see the marker render code).
+        if (!showOtherDayTickets) return ticketDate === mapDate;
+        return ticketDate >= rangeStart && ticketDate <= rangeEnd;
+      }
+      return isPendingStatus(ticket.status);
     });
 
     // Apply filters based on current filter mode
@@ -279,7 +392,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     // If no filters are applied, show all tickets
     return dateFiltered;
-  }, [tickets, selectedLocation, mapDate, selectedTechnicians, selectedStatuses, filterMode]);
+  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, selectedTechnicians, selectedStatuses, filterMode]);
 
   // Get all technicians for the selected location (not just those with scheduled tickets)
   const uniqueTechnicians = useMemo(() => {
@@ -385,56 +498,91 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       };
       const orderedResults = [...results].sort((a, b) => slotRank(a.ticket) - slotRank(b.ticket));
 
-      // Group tickets by technician to determine hierarchy numbers
+      // Identify the "selected date" inside the current window. Only
+      // tickets scheduled exactly for this date contribute to the
+      // technician route hierarchy (numbered badges + connecting lines).
+      // Other-day tickets in the same window render as faded pins with
+      // no number and no route line — matching the ER work-map UX.
+      const selectedDay = mapDate;
+      const isOnSelectedDay = (t: any): boolean => {
+        const d = String(t?.schedule || t?.schedule_date || "").slice(0, 10);
+        return Boolean(d) && d === selectedDay;
+      };
+
+      // Group tickets by technician to determine hierarchy numbers — but
+      // only count tickets that belong to the selected day so the
+      // numbering reflects today's stops, not the whole window.
       const ticketsByTech = new Map<string, number>();
-      
+
       orderedResults.forEach(({ ticket, position }, index) => {
         if (!position) return;
 
-        // Determine hierarchy number for this technician
         const techName = ticket.technician_name || ticket.technician || "Unassigned";
-        const currentCount = ticketsByTech.get(techName) || 0;
-        const hierarchyNumber = currentCount + 1;
-        ticketsByTech.set(techName, hierarchyNumber);
+        const onDay = isOnSelectedDay(ticket);
+        const initials = getInitials(techName);
+        const markerColor = techName === "Unassigned"
+          ? statusMarkerColor(ticket.status)
+          : getTechColor(techName);
 
-        // Collect ordered route points per technician (JK1 -> JK2 -> JK3 ...).
-        if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
-        routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
+        let hierarchyNumber = 0;
+        let labelText = "";
+        let svgMarker: any;
 
-        // Get technician initials
-        const initials = getInitials(ticket.technician_name || ticket.technician || "Unassigned");
-        
-        // Create label text: initials + number (e.g., "JR1", "AM2")
-        const labelText = `${initials}${hierarchyNumber}`;
-        
-        // Always use technician color for marker background
-        const markerColor = getTechColor(techName);
+        if (onDay) {
+          // Today's stop — numbered badge + route line.
+          const currentCount = ticketsByTech.get(techName) || 0;
+          hierarchyNumber = currentCount + 1;
+          ticketsByTech.set(techName, hierarchyNumber);
+          if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
+          routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
 
-        // Create custom marker with badge/text box icon with pointer at bottom
-        const svgMarker = {
-          // SVG path for a rounded rectangle with a pointer at the bottom center
-          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
-          fillColor: markerColor,
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-          scale: 1.8, // Large size for visibility
-          anchor: new maps.Point(20, 22), // Anchor at the pointer tip
-          labelOrigin: new maps.Point(20, 10), // Center label in the badge
-        };
+          labelText = `${initials}${hierarchyNumber}`;
+          svgMarker = {
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+            fillColor: markerColor,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1.8,
+            anchor: new maps.Point(20, 22),
+            labelOrigin: new maps.Point(20, 10),
+          };
+        } else {
+          // Other-day stop in the window — faded circle, no number, no
+          // route line. Smaller too so today's badges read first.
+          labelText = "";
+          svgMarker = {
+            path: maps.SymbolPath.CIRCLE,
+            fillColor: markerColor,
+            fillOpacity: 0.4,
+            strokeColor: "#ffffff",
+            strokeWeight: 1.5,
+            strokeOpacity: 0.6,
+            scale: 7,
+          };
+        }
 
+        const ticketDateStr = String(ticket.schedule || ticket.schedule_date || "").slice(0, 10);
         const marker = new maps.Marker({
           map: mapRef.current,
           position,
-          title: `${ticket.ticketNo || ticket.ticket_no || `Ticket ${index + 1}`} - ${ticket.customer || ticket.customer_name || 'Unknown'}\n${techName} - Ticket #${hierarchyNumber}`,
+          title:
+            `${ticket.ticketNo || ticket.ticket_no || `Ticket ${index + 1}`} - ` +
+            `${ticket.customer || ticket.customer_name || 'Unknown'}\n` +
+            `${techName}${onDay ? ` - Ticket #${hierarchyNumber}` : " (other day)"}` +
+            (ticketDateStr ? `\nScheduled: ${ticketDateStr}` : ""),
           icon: svgMarker,
-          label: {
-            text: labelText,
-            color: "#ffffff",
-            fontSize: "13px",
-            fontWeight: "bold",
-          },
+          label: labelText
+            ? {
+                text: labelText,
+                color: "#ffffff",
+                fontSize: "13px",
+                fontWeight: "bold",
+              }
+            : undefined,
+          zIndex: onDay ? 5 : 1,
         });
+        (marker as any).__ticketNo = String(ticket.ticketNo || ticket.ticket_no || "").trim();
 
         marker.addListener("click", () => setSelectedTicket(ticket));
         markersRef.current.push(marker);
@@ -442,10 +590,12 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       });
 
       // Draw a route line per technician connecting their stops in order
-      // (JK1 -> JK2 -> JK3), colored to match the tech's badges. When multiple
-      // techs are shown, each gets their own colored route.
+      // (JK1 -> JK2 -> JK3), colored to match the tech's badges. Only
+      // tickets scheduled for the selected day participate — other-day
+      // stops appear as faded pins without a line.
       routePointsByTech.forEach((points, techName) => {
         if (points.length < 2) return;
+        if (techName === "Unassigned") return;
         const ordered = [...points].sort((a, b) => a.order - b.order);
         const line = new maps.Polyline({
           path: ordered.map((p) => p.position),
@@ -506,6 +656,58 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     };
   }, [mapReady, selectedLocation, visibleTickets]);
 
+  // When the user selects a ticket (marker OR sidebar card), open an
+  // anchored InfoWindow at that ticket's pin. The InfoWindow is created
+  // lazily on first selection; its content is a div that we populate with
+  // the React-rendered detail card via a portal-style move below. As long
+  // as the InfoWindow is open it stays glued to the marker — panning or
+  // zooming the map keeps the card anchored on the location.
+  useEffect(() => {
+    if (!selectedTicket || !mapRef.current) return;
+    const w = window as any;
+    const maps = w.google?.maps;
+    if (!maps) return;
+    const target = String(selectedTicket.ticketNo || selectedTicket.ticket_no || "").trim();
+    if (!target) return;
+    const marker = markersRef.current.find((m: any) => m?.__ticketNo === target);
+    if (!marker) return;
+
+    // Lazy-create the InfoWindow + its host node.
+    if (!infoWindowRef.current) {
+      infoContentRef.current = document.createElement("div");
+      infoContentRef.current.className = "ahs-ticket-iw-host";
+      infoWindowRef.current = new maps.InfoWindow({
+        content: infoContentRef.current,
+        // Push the card above the marker so it doesn't hide the pin.
+        pixelOffset: new maps.Size(0, -8),
+        // We want max readable width without pushing the map controls.
+        maxWidth: 480,
+      });
+      // When the user clicks the X on the InfoWindow itself, clear state.
+      maps.event.addListener(infoWindowRef.current, "closeclick", () => setSelectedTicket(null));
+      // Trigger a render so the portal can mount into the new host node.
+      setInfoHostReady(true);
+    }
+
+    infoWindowRef.current.open({ map: mapRef.current, anchor: marker });
+
+    // Pan / gentle zoom so the marker is centered next to the bubble.
+    const pos = marker.getPosition?.();
+    if (pos) {
+      mapRef.current.panTo(pos);
+      const currentZoom = mapRef.current.getZoom?.() ?? 8;
+      if (currentZoom < 12) mapRef.current.setZoom(12);
+    }
+  }, [selectedTicket]);
+
+  // Close + tear down the InfoWindow when the user dismisses or navigates
+  // away.
+  useEffect(() => {
+    if (!selectedTicket && infoWindowRef.current) {
+      infoWindowRef.current.close();
+    }
+  }, [selectedTicket]);
+
   const counters = useMemo(() => {
     const source = locationData.find((location) => location.location === selectedLocation)?.records ?? tickets;
     return source.reduce(
@@ -555,6 +757,41 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                 <button className="date-nav-btn" type="button" aria-label="Previous day" onClick={() => setMapDate((current) => new Date(new Date(current).getTime() - 86400000).toISOString().slice(0, 10))}>❮</button>
                 <input id="mapDate" type="date" aria-label="Date" value={mapDate} onChange={(event) => setMapDate(event.target.value)} />
                 <button className="date-nav-btn" type="button" aria-label="Next day" onClick={() => setMapDate((current) => new Date(new Date(current).getTime() + 86400000).toISOString().slice(0, 10))}>❯</button>
+                <select
+                  aria-label="Date range mode"
+                  value={dateRangeMode}
+                  onChange={(e) => setDateRangeMode(e.target.value as "day" | "week" | "custom")}
+                  className="ml-2 rounded-md bg-slate-900/85 border border-blue-400/55 px-2 py-1 text-xs text-white"
+                  title="Day = exactly the picked day. Week = picked day + 6 days. Custom = pick your own end date."
+                >
+                  <option value="day">Day</option>
+                  <option value="week">Week</option>
+                  <option value="custom">Custom</option>
+                </select>
+                {dateRangeMode === "custom" && (
+                  <input
+                    type="date"
+                    aria-label="End date"
+                    value={mapDateEnd}
+                    min={mapDate}
+                    onChange={(event) => setMapDateEnd(event.target.value)}
+                    className="ml-2 rounded-md bg-slate-900/85 border border-blue-400/55 px-2 py-1 text-xs text-white"
+                  />
+                )}
+                {dateRangeMode !== "day" && (
+                  <label
+                    className="ml-3 inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none"
+                    title="Show tickets scheduled on other days in the window as faded pins (no number, no route line)."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showOtherDayTickets}
+                      onChange={(e) => setShowOtherDayTickets(e.target.checked)}
+                      className="h-3.5 w-3.5"
+                    />
+                    Tickets on other days
+                  </label>
+                )}
               </div>
 
               <div className="color-legend">
@@ -590,8 +827,12 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                       const ticketNumber = ticket.ticketNo || ticket.ticket_no || `T-${index + 1}`;
                       const address = ticket.address || ticket.customer_address || ticket.city || ticket.customer_city || ticket.location || "Unknown address";
                       
-                      // Always get technician color for background to show assigned technician clearly
-                      const bgColor = getTechColor(techName);
+                      // Card background — by technician when assigned, by
+                      // repair status when unassigned, so Unassigned cards
+                      // still read by status color.
+                      const bgColor = techName === "Unassigned"
+                        ? statusMarkerColor(ticket.status)
+                        : getTechColor(techName);
                       const cardStyle = { 
                         backgroundColor: `${bgColor}15`, // 15 = ~8% opacity
                         borderLeftColor: bgColor,
@@ -820,7 +1061,10 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         )}
       </main>
 
-      <div className={`detail-overlay ${selectedTicket ? "open" : ""}`}>
+      {/* Ticket detail card — rendered into the Google Maps InfoWindow via
+          a React portal so it stays anchored to the ticket's pin. Pan or
+          zoom the map and the card moves with the marker. */}
+      {selectedTicket && infoHostReady && infoContentRef.current && createPortal(
         <div className="detail-modal">
           <div className="detail-modal-header">
             <div className="detail-title-row">
@@ -834,7 +1078,8 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
               </a>
               <button className="google-btn" type="button" onClick={() => selectedTicket && window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((selectedTicket.address || selectedTicket.customer_address || "") + ", " + (selectedTicket.city || selectedTicket.customer_city || ""))}`, "_blank", "noopener,noreferrer")}>Google Maps</button>
             </div>
-            <button className="modal-close-btn" type="button" aria-label="Close" onClick={() => setSelectedTicket(null)}><X className="h-5 w-5" /></button>
+            {/* Close button removed — the Google Maps InfoWindow renders
+                its own X. Showing two close buttons was confusing. */}
           </div>
 
           <div className="detail-body">
@@ -881,7 +1126,52 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                       </div>
                       <div className="detail-field">
                         <div className="detail-label">Schedule</div>
-                        <div className="detail-value"><span className="schedule-box"><CalendarDays className="h-4 w-4" /><span>{String(selectedTicket.schedule || selectedTicket.schedule_date || mapDate)}</span></span></div>
+                        {(() => {
+                          // The tickets load step overlays the latest Visit
+                          // Log scheduleDate onto `schedule` / `schedule_date`
+                          // when one exists, so `selectedTicket.schedule` is
+                          // already the right value. We surface the source
+                          // ("from Visit Log" vs "from ServicePower") so
+                          // dispatch knows where the date came from. The
+                          // visits array on the in-memory mirror is also
+                          // honoured as a secondary signal in case the
+                          // Supabase overlay missed a row.
+                          const tinyTag = (label: string) => (
+                            <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-400">
+                              {label}
+                            </span>
+                          );
+                          const visitDateFromMemory = String(
+                            latestVisit?.scheduleDate ?? "",
+                          ).trim();
+                          const overlaySource = (selectedTicket as any).scheduleSource as
+                            | "visit"
+                            | "sp"
+                            | ""
+                            | undefined;
+                          const display = String(
+                            selectedTicket.schedule ||
+                              selectedTicket.schedule_date ||
+                              visitDateFromMemory ||
+                              mapDate ||
+                              "",
+                          );
+                          const source =
+                            overlaySource === "visit" || visitDateFromMemory
+                              ? "from Visit Log"
+                              : overlaySource === "sp"
+                                ? "from ServicePower"
+                                : "";
+                          return (
+                            <div className="detail-value">
+                              <span className="schedule-box">
+                                <CalendarDays className="h-4 w-4" />
+                                <span>{display}</span>
+                              </span>
+                              {source && tinyTag(source)}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -921,8 +1211,9 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
               <div className="text-sm text-slate-300">Select a ticket to view its details.</div>
             )}
           </div>
-        </div>
-      </div>
+        </div>,
+        infoContentRef.current,
+      )}
 
       <style>{`
         .map-panel { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; overflow: hidden; color: #fff; backdrop-filter: blur(10px); display: flex; flex-direction: column; }
@@ -968,9 +1259,22 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .selected-day-header { background: #0f172a; padding: 0.55rem 0.9rem; font-size: 0.88rem; font-weight: 700; color: #fff; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .selected-day-filters { display: flex; flex-direction: column; gap: 0; padding: 0.55rem 0.85rem; max-height: 400px; overflow-y: auto; }
         .filter-chip { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: #e2e8f0; cursor: pointer; }
-        .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 200; display: none; align-items: center; justify-content: center; padding: 1rem; }
-        .detail-overlay.open { display: flex; }
-        .detail-modal { background: #1e293b; border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; width: 700px; max-width: 95vw; max-height: 92vh; overflow-y: auto; color: #f1f5f9; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+        /* Card inside Google Maps InfoWindow. The InfoWindow itself owns
+           positioning (anchored to the marker); we just style the inner
+           card and override the default white bubble to match our theme. */
+        .gm-style .gm-style-iw-c {
+          background: rgba(15,23,42,0.97);
+          border: 1px solid rgba(255,255,255,0.18);
+          border-radius: 10px;
+          box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+          padding: 0 !important;
+          color: #f1f5f9;
+        }
+        .gm-style .gm-style-iw-d { overflow: hidden !important; padding: 0 !important; }
+        .gm-style .gm-style-iw-tc::after { background: rgba(15,23,42,0.97) !important; }
+        .gm-style .gm-style-iw button[aria-label="Close"] { filter: invert(0.85); }
+        .ahs-ticket-iw-host .detail-modal { background: transparent; border: none; border-radius: 0; width: 460px; max-width: 80vw; max-height: 70vh; overflow: hidden; color: #f1f5f9; box-shadow: none; display: flex; flex-direction: column; }
+        .ahs-ticket-iw-host .detail-body { overflow-y: auto; }
         .detail-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 0.85rem 1.1rem; background: #0f172a; border-bottom: 1px solid rgba(255,255,255,0.1); position: sticky; top: 0; z-index: 1; }
         .detail-title-row { display: flex; align-items: center; gap: 0.75rem; }
         .detail-ticket-no { font-size: 1.1rem; font-weight: 700; color: #fff; }

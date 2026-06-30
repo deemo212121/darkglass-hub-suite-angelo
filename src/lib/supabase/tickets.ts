@@ -12,11 +12,99 @@
 
 import { supabase } from "./client";
 import type { Ticket } from "@/lib/ticketData";
+import { mapSource } from "@/lib/mfgSource";
 
 // ---- helpers ---------------------------------------------------------------
 
 const yn = (v: unknown) => (v === true || v === "Y" || v === "y" ? "Y" : "N");
 const bool = (v: unknown) => v === "Y" || v === "y" || v === true;
+
+/**
+ * Coerce whatever ServicePower handed us as a schedule date into a
+ * Postgres-friendly `YYYY-MM-DD` string (the `tickets.schedule_date`
+ * column is a `date`, not a `timestamp`).
+ *
+ * SP serialises the value in a handful of shapes — we already format
+ * it down to `MM/DD/YY` upstream in formatServicePowerDate, but for
+ * defensive parsing we accept either form here.
+ *
+ * Returns null when the input is empty or unparseable so the column
+ * stores SQL NULL rather than a garbled date string.
+ */
+function parseScheduleDateForSql(raw: unknown): string | null {
+  const v = String(raw ?? "").trim();
+  if (!v) return null;
+  // YYYY-MM-DD (with optional time tail we ignore).
+  const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const m = iso[2].padStart(2, "0");
+    const d = iso[3].padStart(2, "0");
+    return `${iso[1]}-${m}-${d}`;
+  }
+  // MM/DD/YY or MM/DD/YYYY (US format, our formatter's output).
+  const us = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (us) {
+    const m = us[1].padStart(2, "0");
+    const d = us[2].padStart(2, "0");
+    const y = us[3].length === 2 ? `20${us[3]}` : us[3];
+    return `${y}-${m}-${d}`;
+  }
+  // Compact YYYYMMDD.
+  const c = v.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (c) return `${c[1]}-${c[2]}-${c[3]}`;
+  return null;
+}
+
+// Per-ticket-number serialization. Multiple concurrent calls to
+// upsertTicketFromServicePower for the same ticket_no would race their
+// "look up by ticket_no -> insert if missing" sequence and could create
+// duplicate rows. We chain them through a Map of in-flight promises so the
+// second caller waits for the first to finish, then does its own lookup
+// (which by then sees the row and updates instead of inserting).
+const _ticketLocks = new Map<string, Promise<unknown>>();
+function runUnderTicketLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = _ticketLocks.get(key) ?? Promise.resolve();
+  const next = prev.then(() => fn(), () => fn());
+  // Keep the rejection contained inside `next`; the lock chain only cares
+  // about completion order.
+  _ticketLocks.set(key, next.catch(() => undefined));
+  return next.finally(() => {
+    if (_ticketLocks.get(key) === next.catch(() => undefined)) {
+      _ticketLocks.delete(key);
+    }
+  });
+}
+
+// ServicePower's ServiceLocation codes (IH = In Home, OS = On Site, DO = Drop
+// Off, etc.) used to leak into ticket.location in an older sync. They're NOT
+// valid branch names — strip them at read time so the UI shows "—" instead
+// while we wait for the next sync to overwrite the column with the real
+// resolved branch. Both upper- and lower-case forms are listed so a
+// case-insensitive check via toLowerCase actually matches the short codes.
+const SP_SERVICE_LOCATION_CODES = new Set([
+  "ih","os","do","on","dc","dr","is","od",
+  "in home","on site","drop off","drop-off","in-home","unknown",
+]);
+
+function sanitizeLocation(raw: string): string {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  if (SP_SERVICE_LOCATION_CODES.has(v.toLowerCase())) return "";
+  return v;
+}
+
+// Re-resolve a stored ticket_source value through the MfgId map. Rows synced
+// before a code was mapped will have raw codes like "I990" persisted; this
+// keeps the UI display consistent without forcing a re-sync.
+function resolveSource(raw: string): string {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  // If the value looks like a code (e.g. "I990", "K100"), try mapping it.
+  if (/^[A-Z]\d{2,4}$/.test(v.toUpperCase())) {
+    return mapSource(v) || v;
+  }
+  return v;
+}
 
 /**
  * Map a joined Supabase row (ticket + customer) back to the flat UI Ticket.
@@ -25,12 +113,12 @@ function rowToTicket(row: any): Ticket {
   const c = row.customer ?? {};
   return {
     ticketNo: row.ticket_no,
-    ticketSource: row.ticket_source ?? "",
+    ticketSource: resolveSource(row.ticket_source ?? ""),
     warranty: row.warranty ?? "",
     manufacturer: row.manufacturer ?? "",
     customer: c.full_name ?? "",
     city: c.city ?? "",
-    location: row.location ?? "",
+    location: sanitizeLocation(row.location ?? ""),
     model: row.model ?? "",
     internalNote: row.internal_note ?? "",
     problemDescription: row.problem_description ?? "",
@@ -38,6 +126,7 @@ function rowToTicket(row: any): Ticket {
     technician: row.technician ?? "",
     customerPref: row.customer_pref ? "Y" : "N",
     schedule: row.schedule_date ?? "",
+    schedulePeriod: row.time_slot ?? "",
     status: row.status ?? "",
     phone: c.phone ?? "",
     redo: row.redo ? "Y" : "N",
@@ -46,6 +135,7 @@ function rowToTicket(row: any): Ticket {
     partOrder: row.part_order ?? "",
     created: row.created_at ? String(row.created_at).slice(0, 10) : "",
     statusChangedAt: row.status_changed_at ?? undefined,
+    statusChangedBy: row.status_changed_by ?? undefined,
     account: row.account ?? "",
     type: row.type ?? "",
     delay: row.delay ?? 0,
@@ -58,6 +148,7 @@ function rowToTicket(row: any): Ticket {
     state: c.state ?? "",
     email: c.email ?? "",
     secondPhone: c.second_phone ?? "",
+    altPhone: c.alt_phone ?? "",
     addressNote: c.address_note ?? "",
     // product details
     serial: row.serial ?? "",
@@ -82,10 +173,61 @@ function rowToTicket(row: any): Ticket {
 
 const SELECT = `
   *,
-  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, email, address, address2, city, state, zip, address_note )
+  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, alt_phone, email, address, address2, city, state, zip, address_note )
 `;
 
 // ---- reads -----------------------------------------------------------------
+
+/**
+ * Backfill ticket.location for rows where it's blank or stuck on a bad SP
+ * service-location code ("IH"/"OS"/"DO"/etc.). Re-resolves the branch from
+ * the linked customer's zip → city → state using the same logic the SP sync
+ * uses, but without touching ServicePower. Safe to run repeatedly — only
+ * rows that change are written. Returns how many rows were updated.
+ */
+export async function backfillTicketLocations(): Promise<{ scanned: number; updated: number }> {
+  const { resolveBranchFromCustomer } = await import("../servicePowerSync");
+
+  const { data, error } = await supabase
+    .from("tickets")
+    .select("id, location, customer:customers ( zip, city, state )");
+
+  if (error) {
+    console.error("backfillTicketLocations select error:", error.message);
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    location: string | null;
+    customer: { zip: string | null; city: string | null; state: string | null } | null;
+  }>;
+
+  let updated = 0;
+  for (const r of rows) {
+    const current = sanitizeLocation(String(r.location ?? "")); // strips IH/OS/etc.
+    if (current) continue; // already has a good branch label
+    const c = r.customer ?? { zip: null, city: null, state: null };
+    const resolved = resolveBranchFromCustomer({
+      postcode: c.zip ?? "",
+      postcodeLevel3: c.city ?? "",
+      postcodeLevel1: c.state ?? "",
+    });
+    if (!resolved) continue; // couldn't figure it out — leave blank, don't churn
+    if (resolved === r.location) continue;
+    const { error: uErr } = await supabase
+      .from("tickets")
+      .update({ location: resolved, updated_at: new Date().toISOString() })
+      .eq("id", r.id);
+    if (uErr) {
+      console.warn("backfillTicketLocations update failed for", r.id, uErr.message);
+      continue;
+    }
+    updated++;
+  }
+
+  return { scanned: rows.length, updated };
+}
 
 /**
  * Get all tickets for the caller's company (RLS-scoped).
@@ -273,13 +415,21 @@ export async function updateTicketCustomer(
     fullName?: string;
     phone?: string;
     secondPhone?: string;
+    altPhone?: string;
     email?: string;
     address?: string;
     address2?: string;
     city?: string;
     state?: string;
     zip?: string;
-  }
+  },
+  options: {
+    /** When true, save the phones AND mark them as edited by a user so the
+     * ServicePower auto-sync won't overwrite them later. Defaults to true so
+     * UI-driven calls (the Edit Customer Info form) lock in their changes by
+     * default; pass false from background sync code. */
+    markEdited?: boolean;
+  } = { markEdited: true }
 ): Promise<void> {
   // Find the ticket + its current customer link.
   const { data: ticketRow, error: tErr } = await supabase
@@ -299,6 +449,16 @@ export async function updateTicketCustomer(
   if (fields.lastName !== undefined) payload.last_name = fields.lastName;
   if (fields.phone !== undefined) payload.phone = fields.phone;
   if (fields.secondPhone !== undefined) payload.second_phone = fields.secondPhone;
+  if (fields.altPhone !== undefined) payload.alt_phone = fields.altPhone;
+  // Whenever a user saves the Edit Customer Info form (any field), lock the
+  // entire customer record so the ServicePower auto-sync can't overwrite it.
+  // Background sync code passes markEdited=false so its own writes stay
+  // overwritable by future SP refreshes.
+  if (options.markEdited) {
+    payload.edited_by_user = true;
+    // Legacy column from the original phone-only design — kept in sync.
+    payload.phone_edited_by_user = true;
+  }
   if (fields.email !== undefined) payload.email = fields.email;
   if (fields.address !== undefined) payload.address = fields.address;
   if (fields.address2 !== undefined) payload.address2 = fields.address2;
@@ -343,15 +503,62 @@ export async function updateTicketCustomer(
 }
 
 /**
- * Update editable ticket-level fields (e.g. problem description, internal note).
+ * Update editable ticket-level fields (e.g. problem description, internal
+ * note, product info). Used by both the Edit Internal Note flow and the
+ * Edit Product Info flow on the ticket detail page.
+ *
+ * When any product-info field is included in the update the row's
+ * `product_edited_by_user` flag is flipped to true so the ServicePower
+ * sync stops overwriting those columns on future runs.
  */
 export async function updateTicketFields(
   ticketNo: string,
-  fields: { problemDescription?: string; internalNote?: string }
+  fields: {
+    problemDescription?: string;
+    internalNote?: string;
+    manufacturer?: string;
+    model?: string;
+    serial?: string;
+    modelVersion?: string;
+    productType?: string;
+    purchaseDate?: string;
+    warranty?: string;
+    claimCompany?: string;
+    originalTicketNo?: string;
+  }
 ): Promise<void> {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (fields.problemDescription !== undefined) payload.problem_description = fields.problemDescription;
   if (fields.internalNote !== undefined) payload.internal_note = fields.internalNote;
+
+  // Product-info fields. Any update to any of these flips the lock flag.
+  const productKeys: Array<keyof typeof fields> = [
+    "manufacturer",
+    "model",
+    "serial",
+    "modelVersion",
+    "productType",
+    "purchaseDate",
+    "warranty",
+    "claimCompany",
+    "originalTicketNo",
+  ];
+  const touchedProductInfo = productKeys.some((k) => fields[k] !== undefined);
+
+  if (fields.manufacturer !== undefined) payload.manufacturer = fields.manufacturer;
+  if (fields.model !== undefined) payload.model = fields.model;
+  if (fields.serial !== undefined) payload.serial = fields.serial;
+  if (fields.modelVersion !== undefined) payload.model_version = fields.modelVersion;
+  if (fields.productType !== undefined) payload.product_type = fields.productType;
+  if (fields.purchaseDate !== undefined) {
+    // Empty string -> NULL so the column never holds a malformed date.
+    payload.purchase_date = fields.purchaseDate.trim() ? fields.purchaseDate : null;
+  }
+  if (fields.warranty !== undefined) payload.warranty = fields.warranty;
+  if (fields.claimCompany !== undefined) payload.claim_company = fields.claimCompany;
+  if (fields.originalTicketNo !== undefined) payload.original_ticket_no = fields.originalTicketNo;
+  if (touchedProductInfo) payload.product_edited_by_user = true;
+
   const { error } = await supabase.from("tickets").update(payload).eq("ticket_no", ticketNo);
   if (error) {
     console.error("updateTicketFields error:", error.message);
@@ -407,6 +614,50 @@ async function getTicketId(ticketNo: string): Promise<string | null> {
     throw new Error(error.message);
   }
   return data?.id ?? null;
+}
+
+/**
+ * Bulk-fetch the most recent visit-level schedule date for a set of tickets.
+ *
+ * Returns a `Map<ticket_id, latestScheduleDate>` keyed by the internal
+ * ticket UUID. Used by the Work Map to override the SP-supplied schedule
+ * date with whatever the CSR last saved in the Visit Log — a CSR-added
+ * visit reschedules the call from dispatch's point of view, so the map
+ * should bucket the ticket under the visit date, not the original SP date.
+ *
+ * Visits with a null/empty `schedule_date` are ignored.
+ */
+export async function getLatestVisitScheduleByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  // Only RESCHEDULE / OSR visits should override the ticket's
+  // schedule_date. A plain "SCHEDULE" visit is just the initial record
+  // of the SP-issued date — overriding with it would move tickets back
+  // to their original day when SP later updates the schedule (the
+  // problem we hit when ticket pins disappeared from the Work Map).
+  // RESCHEDULE/OSR represent CSR-driven re-bookings and rightfully win.
+  const RESCHEDULE_ACTIONS = ["RESCHEDULE", "OSR"];
+  const { data, error } = await supabase
+    .from("visits")
+    .select("ticket_id, schedule_date, action_type, created_at")
+    .in("ticket_id", uniq)
+    .not("schedule_date", "is", null)
+    .in("action_type", RESCHEDULE_ACTIONS)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("getLatestVisitScheduleByTicketIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const tid = (row as any).ticket_id as string | null;
+    const sd = (row as any).schedule_date as string | null;
+    if (!tid || !sd) continue;
+    if (!out.has(tid)) out.set(tid, sd);
+  }
+  return out;
 }
 
 /** Get all visits for a ticket (newest first). */
@@ -678,6 +929,19 @@ export async function upsertTicketFromServicePower(
 ): Promise<"added" | "updated"> {
   if (!input.ticketNo) throw new Error("upsertTicketFromServicePower requires a ticketNo");
 
+  // Serialize concurrent upserts for the same ticket number inside this
+  // browser tab so the race "lookup → not found → insert" can't run twice
+  // in parallel. Cross-tab / cross-server races are blocked by the unique
+  // index on (company_id, ticket_no) added in migration 0017.
+  return runUnderTicketLock(String(input.ticketNo).trim(), () =>
+    upsertTicketFromServicePowerImpl(input),
+  );
+}
+
+async function upsertTicketFromServicePowerImpl(
+  input: Partial<Ticket>
+): Promise<"added" | "updated"> {
+
   // Customer payload (ServicePower-owned fields).
   const customerPayload = {
     first_name: input.firstName ?? "",
@@ -701,7 +965,7 @@ export async function upsertTicketFromServicePower(
     manufacturer: input.manufacturer ?? null,
     account: input.account ?? null,
     claim_company: input.claimCompany ?? null,
-    location: input.location ?? null,
+    location: sanitizeLocation(String(input.location ?? "")) || null,
     model: input.model ?? null,
     model_version: input.modelVersion ?? null,
     serial: input.serial ?? null,
@@ -710,7 +974,27 @@ export async function upsertTicketFromServicePower(
     status: input.status ?? null,
     type: input.type ?? null,
     technician: input.technician ?? null,
-    schedule_date: input.schedule || null,
+    // Schedule date sync rule:
+    //   - On the first import (no existing row), we honor SP's
+    //     ScheduleDate so the Work Map / ticket detail header
+    //     immediately reflect when SP says the appointment is.
+    //   - On re-sync we never overwrite a date the CSR may have
+    //     edited (see the "preserve CSR date" branch below).
+    //   - Empty SP dates are stored as null so the UI shows "—".
+    schedule_date: parseScheduleDateForSql(input.schedule),
+    // ServicePower's appointment window — stored on tickets.time_slot.
+    // Prefer the caller-provided frame-normalised value (e.g. "8-12") so
+    // the Work Planner column matches; fall back to the raw schedulePeriod
+    // string if the caller didn't normalise. Empty values become null so
+    // the column doesn't accumulate "" placeholders.
+    time_slot: (() => {
+      const raw =
+        ((input as any).timeSlot as string | undefined) ||
+        (input.schedulePeriod as string | undefined) ||
+        "";
+      const trimmed = String(raw).trim();
+      return trimmed ? trimmed : null;
+    })(),
     call_received_date: input.callReceivedDate || null,
     customer_pref: bool(input.customerPref),
     redo: bool(input.redo),
@@ -718,16 +1002,20 @@ export async function upsertTicketFromServicePower(
     updated_at: new Date().toISOString(),
   };
 
-  // Does the ticket already exist (company-scoped)?
-  const { data: existing, error: findErr } = await supabase
+  // Does the ticket already exist (company-scoped)? Use `limit(1)` rather
+  // than `maybeSingle()` so historic duplicates (if any) don't make the
+  // lookup throw — we just take the first row and update it.
+  const { data: existingRows, error: findErr } = await supabase
     .from("tickets")
-    .select("id, customer_id, status")
+    .select("id, customer_id, status, product_edited_by_user, schedule_date, time_slot")
     .eq("ticket_no", input.ticketNo)
-    .maybeSingle();
+    .order("created_at", { ascending: true })
+    .limit(1);
   if (findErr) {
     console.error("upsertTicketFromServicePower lookup error:", findErr.message);
     throw new Error(findErr.message);
   }
+  const existing = (existingRows && existingRows[0]) || null;
 
   if (existing) {
     // Preserve any AHS-side status change on re-sync (e.g. once a CSR clicks
@@ -735,15 +1023,64 @@ export async function upsertTicketFromServicePower(
     if (existing.status) {
       ticketPayload.status = existing.status;
     }
-    // Update the linked customer (or create one if missing).
+    // Schedule date sync rule on re-sync:
+    //   - If we already have a date AND SP didn't send one, keep ours.
+    //   - If we already have a date AND SP sent a different one,
+    //     trust SP (this is the case the user hit on 015789584139:
+    //     SP shows 7/2 but Supabase had 6/30 from a stale sync, and
+    //     the Work Map keeps showing the stale day).
+    //   - On a fresh ticket the initial assignment above already
+    //     handled it.
+    const incomingSchedule = ticketPayload.schedule_date as string | null;
+    const existingSchedule = (existing as any).schedule_date as string | null;
+    if (!incomingSchedule && existingSchedule) {
+      // SP didn't push a date this round → keep what we have.
+      ticketPayload.schedule_date = existingSchedule;
+    }
+    // Same rule for the Schedule Period (time_slot column). If SP returns
+    // a window string we trust it; if SP comes back empty we preserve
+    // whatever was previously stored so a transient empty response doesn't
+    // wipe the user-visible window.
+    const incomingPeriod = ticketPayload.time_slot as string | null;
+    const existingPeriod = (existing as any).time_slot as string | null;
+    if (!incomingPeriod && existingPeriod) {
+      ticketPayload.time_slot = existingPeriod;
+    }
+    // Honor the product-info lock flag: if a user edited Product Info via
+    // the ticket detail page, SP must NOT overwrite their values. Drop every
+    // product-related field from the payload so this update only touches
+    // SP-owned columns (ticket_source, account, location, schedule, etc.).
+    if ((existing as any).product_edited_by_user) {
+      delete ticketPayload.manufacturer;
+      delete ticketPayload.model;
+      delete ticketPayload.model_version;
+      delete ticketPayload.serial;
+      delete ticketPayload.product_type;
+      delete ticketPayload.purchase_date;
+      delete ticketPayload.warranty;
+      delete ticketPayload.claim_company;
+      delete ticketPayload.original_ticket_no;
+    }
+    // Update the linked customer (or create one if missing). If a user has
+    // manually edited any customer field (Edit Customer Info → Save), the
+    // edited_by_user flag is set and we skip the customer overwrite entirely.
+    // Their values stay; SP changes only apply on the ticket itself.
     if (existing.customer_id) {
-      const { error: cErr } = await supabase
+      const { data: lockRow } = await supabase
         .from("customers")
-        .update(customerPayload)
-        .eq("id", existing.customer_id);
-      if (cErr) {
-        console.error("upsertTicketFromServicePower customer update error:", cErr.message);
-        throw new Error(cErr.message);
+        .select("edited_by_user")
+        .eq("id", existing.customer_id)
+        .maybeSingle();
+      const userEdited = Boolean((lockRow as any)?.edited_by_user);
+      if (!userEdited) {
+        const { error: cErr } = await supabase
+          .from("customers")
+          .update(customerPayload)
+          .eq("id", existing.customer_id);
+        if (cErr) {
+          console.error("upsertTicketFromServicePower customer update error:", cErr.message);
+          throw new Error(cErr.message);
+        }
       }
     } else {
       const { data: cust, error: cErr } = await supabase
@@ -786,6 +1123,29 @@ export async function upsertTicketFromServicePower(
     ...ticketPayload,
   });
   if (tErr) {
+    // Unique violation on (company_id, ticket_no): another concurrent sync
+    // beat us to it. Re-look up the row and update instead.
+    const code = (tErr as any)?.code ?? "";
+    if (code === "23505" || /duplicate key|unique constraint/i.test(tErr.message)) {
+      const { data: rows } = await supabase
+        .from("tickets")
+        .select("id, customer_id")
+        .eq("ticket_no", input.ticketNo)
+        .order("created_at", { ascending: true })
+        .limit(1);
+      const row = rows?.[0];
+      if (row) {
+        const { error: updErr } = await supabase
+          .from("tickets")
+          .update(ticketPayload)
+          .eq("id", row.id);
+        if (updErr) {
+          console.error("upsertTicketFromServicePower race-recovery update error:", updErr.message);
+          throw new Error(updErr.message);
+        }
+        return "updated";
+      }
+    }
     console.error("upsertTicketFromServicePower ticket create error:", tErr.message);
     throw new Error(tErr.message);
   }

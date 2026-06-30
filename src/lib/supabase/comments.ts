@@ -11,6 +11,9 @@ export interface TicketComment {
   body: string;
   authorName: string;
   authorRole: string;
+  /** true = internal (AHS staff only), false = external (also visible to
+   * ServicePower / claim portals). Defaults to true on legacy rows. */
+  isInternal: boolean;
   createdAt: string;
 }
 
@@ -20,6 +23,7 @@ function rowToComment(row: any): TicketComment {
     body: row.body ?? "",
     authorName: row.author_name ?? "",
     authorRole: row.author_role ?? "",
+    isInternal: row.is_internal !== false,
     createdAt: row.created_at ?? "",
   };
 }

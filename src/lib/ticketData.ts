@@ -26,6 +26,21 @@ export interface Ticket {
   technician: string;
   customerPref: string;
   schedule: string;
+  /**
+   * ServicePower's appointment-time window for the call.
+   * Sourced from `ScheduleTimePeriod` on getCallInfo and persisted as
+   * `tickets.time_slot`. Examples: "08:00 - 12:00 MORNING",
+   * "12:00 - 17:00 AFTERNOON".
+   */
+  schedulePeriod?: string;
+  /**
+   * Canonical Work Planner slot label for the appointment window
+   * (e.g. "8-12", "1-5", "ANYTIME"). Persisted alongside
+   * `schedulePeriod` on `tickets.time_slot` after being run through
+   * `normalizeTimePeriod` at sync time. UI code that already reads
+   * `row.timeSlot` (Work Planner) keeps working.
+   */
+  timeSlot?: string;
   status: string;
   phone: string;
   redo: string;
@@ -37,6 +52,10 @@ export interface Ticket {
   statusChangedBy?: string;
   // Additional fields for ticket details
   account?: string;
+  /** ServicePower servicer credential (e.g. "GSL00002") used to authenticate
+   * to the SOAP API. Distinct from `account`, which holds the Work Order
+   * Source / claim company on a ticket-detail header. */
+  accountNo?: string;
   irKit?: string;
   type?: string;
   branch?: string;
@@ -51,6 +70,9 @@ export interface Ticket {
   state?: string;
   email?: string;
   secondPhone?: string;
+  /** Alternate contact number (in addition to home + cell). Persisted on
+   * customers.alt_phone via migration 0021. */
+  altPhone?: string;
   // Product details
   serial?: string;
   modelVersion?: string;

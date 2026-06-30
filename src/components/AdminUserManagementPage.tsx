@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Filter, Search } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
@@ -12,7 +12,10 @@ interface NewUserFormData {
   loginName: string;
   userName: string;
   email: string;
+  /** Primary role code (first ticked in the checkbox grid). Drives RLS / legacy checks. */
   userType: string;
+  /** All ticked role codes including the primary one. */
+  userTypes: string[];
   manager: string;
   technicianId: string;
   assignedBranch: string;
@@ -36,6 +39,8 @@ const LOCATIONS = [
 ];
 
 // User types: { value stored as Firestore role, label shown in the dropdown }
+// Users can tick multiple — the first ticked value becomes the primary `role`
+// (used by RLS / legacy access checks); the rest go into `extra_roles`.
 const USER_TYPES: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
@@ -54,7 +59,48 @@ const USER_TYPES: { value: string; label: string }[] = [
   { value: "PARTS_MANAGER", label: "Parts Manager" },
   { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
   { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
+  { value: "TRIAGE_USER", label: "Triage User" },
+  { value: "TRIAGE_MANAGER", label: "Triage Manager" },
 ];
+
+// Sentinel for the "All Locations" entry in Branch Access. Picking this clears
+// every individual selection — the user can see every branch. Stored as-is so
+// downstream code can detect it explicitly.
+const ALL_LOCATIONS_TOKEN = "*";
+
+// Columns that get a funnel filter on the user management table header.
+// Mirrors the Ticket List column-filter pattern.
+const UM_FILTERABLE_FIELDS = [
+  "id",
+  "loginName",
+  "userName",
+  "type",
+  "email",
+  "manager",
+  "technicianId",
+  "office",
+] as const;
+
+type UMFilterableField = (typeof UM_FILTERABLE_FIELDS)[number];
+
+/**
+ * Plain-text representation of a user record column. Mirrors what the
+ * cell renders, so the funnel dropdown shows the same values the user
+ * sees in the table.
+ */
+function colValue(record: { id: string; loginName: string; userName: string; type: string; email?: string; manager?: string; technicianId?: string; office?: string }, field: string): string {
+  switch (field as UMFilterableField) {
+    case "id":            return String(record.id ?? "");
+    case "loginName":     return String(record.loginName ?? "");
+    case "userName":      return String(record.userName ?? "");
+    case "type":          return String(record.type ?? "");
+    case "email":         return String(record.email ?? "");
+    case "manager":       return String(record.manager ?? "");
+    case "technicianId":  return String(record.technicianId ?? "");
+    case "office":        return String(record.office ?? "");
+    default:              return String((record as any)[field] ?? "");
+  }
+}
 
 /**
  * Single-select branch dropdown (Assigned Branch).
@@ -101,46 +147,175 @@ function BranchSingleSelect({ value, onChange, placeholder }: {
 /**
  * Multi-select branch dropdown (Branch Access).
  * Each location has a LEFT checkbox; multiple may be selected. Stored as a
- * comma-separated string so it matches the existing form/back-end contract.
+ * pipe-delimited string ("Jackson, MS|Jackson, TN") so location names that
+ * already contain a comma (Jackson, MS / Jackson, TN) don't get split into
+ * two phantom entries when re-parsed. Legacy comma-separated values are still
+ * recognized via a fallback parser below.
  */
+const BRANCH_DELIMITER = "|";
+
+function parseSelectedBranches(value: string): string[] {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  // New pipe-delimited format.
+  if (raw.includes(BRANCH_DELIMITER)) {
+    return raw.split(BRANCH_DELIMITER).map((s) => s.trim()).filter(Boolean);
+  }
+  // Legacy comma-delimited format: greedy-match against the known location
+  // list so multi-word names like "Jackson, MS" stay intact even when stored
+  // with a comma separator.
+  const remaining = raw;
+  const found: string[] = [];
+  // Sort longest-first so "Jackson, MS" matches before "Jackson".
+  const sorted = [...LOCATIONS].sort((a, b) => b.length - a.length);
+  let working = remaining;
+  while (working.length > 0) {
+    working = working.replace(/^[\s,]+/, "");
+    if (!working) break;
+    const hit = sorted.find((loc) => working.startsWith(loc));
+    if (!hit) {
+      // Unknown token — drop everything up to the next comma so we don't loop.
+      const next = working.indexOf(",");
+      working = next === -1 ? "" : working.slice(next + 1);
+      continue;
+    }
+    found.push(hit);
+    working = working.slice(hit.length);
+  }
+  // De-duplicate.
+  return Array.from(new Set(found));
+}
+
 function BranchMultiSelect({ value, onChange, placeholder }: {
   value: string; onChange: (v: string) => void; placeholder: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const selected = useMemo(
-    () => value.split(",").map(s => s.trim()).filter(Boolean),
-    [value]
-  );
+  const isAll = value === ALL_LOCATIONS_TOKEN;
+  const selected = useMemo(() => (isAll ? [] : parseSelectedBranches(value)), [value, isAll]);
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
   const toggle = (loc: string) => {
+    // Tapping any specific location while "All" is on switches us to a normal
+    // multi-select with just that location ticked.
+    if (isAll) { onChange(loc); return; }
     const next = selected.includes(loc) ? selected.filter(s => s !== loc) : [...selected, loc];
-    onChange(next.join(", "));
+    onChange(next.join(BRANCH_DELIMITER));
   };
+  const toggleAll = () => onChange(isAll ? "" : ALL_LOCATIONS_TOKEN);
   return (
     <div className="relative" ref={ref}>
       <button type="button" onClick={() => setOpen(o => !o)}
         className="glass-input w-full text-[11px] px-2 py-1 flex items-center justify-between text-left">
-        <span className={selected.length ? "text-slate-100 truncate" : "text-slate-500"}>
-          {selected.length ? `${selected.length} selected: ${selected.join(", ")}` : placeholder}
+        <span className={(isAll || selected.length) ? "text-slate-100 truncate" : "text-slate-500"}>
+          {isAll
+            ? "All Locations"
+            : selected.length
+              ? `${selected.length} selected: ${selected.join(", ")}`
+              : placeholder}
         </span>
         <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
       </button>
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
+          {/* All Locations sentinel — selecting this clears individual picks. */}
+          <button
+            type="button"
+            onClick={toggleAll}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10 border-b border-white/5"
+          >
+            <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${isAll ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+              {isAll && <Check className="h-2.5 w-2.5 text-white" />}
+            </span>
+            <span className="font-semibold text-blue-300">All Locations</span>
+          </button>
           {LOCATIONS.map(loc => {
-            const checked = selected.includes(loc);
+            const checked = !isAll && selected.includes(loc);
             return (
               <button key={loc} type="button" onClick={() => toggle(loc)}
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10">
+                className={`w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10 ${isAll ? "opacity-60" : ""}`}>
                 <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
                   {checked && <Check className="h-2.5 w-2.5 text-white" />}
                 </span>
                 <span className="text-slate-200">{loc}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Multi-select dropdown for User Type. Stored on the form as a string[] of
+ * role codes. The first entry is treated as the primary role (drives RLS /
+ * legacy access checks); the rest land in `extra_roles` on the profile row.
+ *
+ * Lays out exactly like BranchMultiSelect / BranchSingleSelect so the form
+ * grid stays uniform — closed state is a single-line dropdown button.
+ */
+function RoleMultiSelect({
+  values,
+  options,
+  onChange,
+  placeholder,
+}: {
+  values: string[];
+  options: { value: string; label: string }[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const labelByValue = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const o of options) m[o.value] = o.label;
+    return m;
+  }, [options]);
+  const toggle = (val: string) => {
+    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+  };
+  const summary = values.length
+    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    : placeholder;
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="glass-input w-full text-[11px] px-2 py-1 flex items-center justify-between text-left"
+      >
+        <span className={values.length ? "text-slate-100 truncate" : "text-slate-500"}>{summary}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
+          {options.map((opt) => {
+            const checked = values.includes(opt.value);
+            const isPrimary = values[0] === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-[11px] text-left hover:bg-white/10"
+              >
+                <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                  {checked && <Check className="h-2.5 w-2.5 text-white" />}
+                </span>
+                <span className="text-slate-200 flex-1 truncate">{opt.label}</span>
+                {isPrimary && (
+                  <span className="text-[9px] font-semibold uppercase text-blue-300">primary</span>
+                )}
               </button>
             );
           })}
@@ -184,10 +359,131 @@ function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug:
   );
 }
 
+// ── Per-column funnel filter ──
+// Mirrors the Ticket List / CSR Status Summary pattern: each column header
+// gets a small funnel icon that opens a checkbox list of the distinct values
+// present in the current dataset, with search-in-list and (Select All).
+// The funnel turns blue when the filter is narrowing the view so it's easy
+// to see at a glance which columns are filtered.
+function ColumnFilter({
+  field,
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  field: string;
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const visible = useMemo(
+    () => options.filter((o) => !search || o.toLowerCase().includes(search.toLowerCase())),
+    [options, search],
+  );
+  // selected.size === 0 means "no filter applied" (all rows shown).
+  // selected.has("__none__") means "explicitly empty" (no rows match).
+  const allChecked = selected.size === 0 || selected.size === options.length;
+  const active = (selected.size > 0 && selected.size < options.length) || selected.has("__none__");
+
+  const toggle = (opt: string) => {
+    const base = selected.size === 0 ? new Set(options) : new Set(selected);
+    if (base.has(opt)) base.delete(opt);
+    else base.add(opt);
+    onChange(base.size === options.length ? new Set<string>() : base);
+  };
+  const toggleAll = () => {
+    if (allChecked) onChange(new Set(["__none__"]));
+    else onChange(new Set<string>());
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const el = document.getElementById(`umfilter-${field}`);
+      if (el && !el.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, field]);
+
+  return (
+    <span id={`umfilter-${field}`} className="relative inline-flex items-center">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        className={`ml-1 inline-grid h-4 w-4 place-items-center rounded ${active ? "text-blue-100" : "text-blue-300/60"} hover:text-white`}
+        title={`Filter by ${label}`}
+      >
+        <Filter className="h-3 w-3" fill={active ? "currentColor" : "none"} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-6 z-50 w-60 rounded-lg border border-white/15 bg-slate-900 shadow-2xl p-2 text-left normal-case">
+          <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Filter by {label}
+          </div>
+          <div className="relative mb-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="w-full rounded border border-white/15 bg-slate-800 pl-7 pr-2 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            <label className="flex items-center gap-2 px-1 py-1 text-xs text-white cursor-pointer hover:bg-white/5 rounded">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={toggleAll}
+                className="accent-blue-500 h-3.5 w-3.5"
+              />
+              <span className="font-semibold">(Select All)</span>
+            </label>
+            {visible.map((opt) => {
+              const checked = selected.size === 0 || selected.size === options.length || selected.has(opt);
+              return (
+                <label
+                  key={opt}
+                  className="flex items-center gap-2 px-1 py-1 text-xs text-slate-200 cursor-pointer hover:bg-white/5 rounded"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(opt)}
+                    className="accent-blue-500 h-3.5 w-3.5"
+                  />
+                  <span className="truncate">{opt || "(blank)"}</span>
+                </label>
+              );
+            })}
+            {visible.length === 0 && (
+              <div className="px-1 py-2 text-xs text-slate-500">No matches</div>
+            )}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const auth = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
+  // Per-column funnel filters: { fieldName: Set<allowed values> }
+  // Empty set or missing key = no filter on that column.
+  // "__none__" sentinel = user toggled (Select All) off → hide everything.
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  const setColFilter = (field: string, next: Set<string>) =>
+    setColFilters((prev) => ({ ...prev, [field]: next }));
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -196,6 +492,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     userName: "",
     email: "",
     userType: "",
+    userTypes: [],
     manager: "",
     technicianId: "",
     assignedBranch: "",
@@ -230,14 +527,36 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return users;
-    return users.filter((record) =>
-      [record.id, record.loginName, record.userName, record.type, record.email, record.manager, record.technicianId, record.office, record.locations]
-        .join(" ")
-        .toLowerCase()
-        .includes(query),
-    );
-  }, [search, users]);
+    return users.filter((record) => {
+      // Free-text search across the visible fields.
+      if (query) {
+        const blob = [record.id, record.loginName, record.userName, record.type, record.email, record.manager, record.technicianId, record.office, record.locations]
+          .join(" ")
+          .toLowerCase();
+        if (!blob.includes(query)) return false;
+      }
+      // Per-column funnel filters (mirrors Ticket List behaviour).
+      for (const [field, sel] of Object.entries(colFilters)) {
+        if (!sel || sel.size === 0) continue; // no filter on this column
+        if (sel.has("__none__")) return false; // explicitly hide everything
+        const value = colValue(record, field);
+        if (!sel.has(value)) return false;
+      }
+      return true;
+    });
+  }, [search, users, colFilters]);
+
+  // Distinct values per column for the funnel dropdowns. Built from the
+  // free-text-filtered set so column dropdowns shrink with the search.
+  const columnOptions = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const field of UM_FILTERABLE_FIELDS) {
+      map[field] = Array.from(
+        new Set(users.map((r) => colValue(r, field)).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b));
+    }
+    return map;
+  }, [users]);
 
   const managerGroups = useMemo(() => {
     const groups = new Map<string, UserManagementRecord[]>();
@@ -277,7 +596,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handleCreateUser = async () => {
     // Validate required fields
-    if (!newUserForm.loginName || !newUserForm.userName || !newUserForm.email || !newUserForm.userType || !newUserForm.manager || !newUserForm.assignedBranch || !newUserForm.branchAccess) {
+    if (!newUserForm.loginName || !newUserForm.userName || !newUserForm.email || newUserForm.userTypes.length === 0 || !newUserForm.manager || !newUserForm.assignedBranch || !newUserForm.branchAccess) {
       alert("Please fill in all required fields.");
       return;
     }
@@ -288,12 +607,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }
 
     try {
+      // Pick the first ticked role as the primary; remaining go into extra_roles.
+      const primaryRole = newUserForm.userTypes[0];
+      const extraRoles = newUserForm.userTypes.slice(1);
+
       // Create user: Firebase Auth credential + Supabase profile (company-scoped)
       const newUid = await createCompanyUser({
         email: newUserForm.email,
         password: "Welcome2024!", // Default password
         displayName: newUserForm.userName,
-        role: newUserForm.userType as any,
+        role: primaryRole as any,
+        extraRoles: extraRoles as any,
         phoneNumber: "",
         department: "",
         managerName: newUserForm.manager,
@@ -327,6 +651,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         userName: "",
         email: "",
         userType: "",
+        userTypes: [],
         manager: "",
         technicianId: "",
         assignedBranch: "",
@@ -417,14 +742,54 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-4 py-3 text-left">ID</th>
-                  <th className="px-4 py-3 text-left">Login Name</th>
-                  <th className="px-4 py-3 text-left">User Name</th>
-                  <th className="px-4 py-3 text-left">Type</th>
-                  <th className="px-4 py-3 text-left">Email</th>
-                  <th className="px-4 py-3 text-left">Manager</th>
-                  <th className="px-4 py-3 text-left">Technician ID</th>
-                  <th className="px-4 py-3 text-left">Assigned Branch</th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">ID
+                      <ColumnFilter field="id" label="ID" options={columnOptions["id"] || []}
+                        selected={colFilters["id"] || new Set()} onChange={(n) => setColFilter("id", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Login Name
+                      <ColumnFilter field="loginName" label="Login Name" options={columnOptions["loginName"] || []}
+                        selected={colFilters["loginName"] || new Set()} onChange={(n) => setColFilter("loginName", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">User Name
+                      <ColumnFilter field="userName" label="User Name" options={columnOptions["userName"] || []}
+                        selected={colFilters["userName"] || new Set()} onChange={(n) => setColFilter("userName", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Type
+                      <ColumnFilter field="type" label="Type" options={columnOptions["type"] || []}
+                        selected={colFilters["type"] || new Set()} onChange={(n) => setColFilter("type", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Email
+                      <ColumnFilter field="email" label="Email" options={columnOptions["email"] || []}
+                        selected={colFilters["email"] || new Set()} onChange={(n) => setColFilter("email", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Manager
+                      <ColumnFilter field="manager" label="Manager" options={columnOptions["manager"] || []}
+                        selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Technician ID
+                      <ColumnFilter field="technicianId" label="Technician ID" options={columnOptions["technicianId"] || []}
+                        selected={colFilters["technicianId"] || new Set()} onChange={(n) => setColFilter("technicianId", n)} />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <span className="inline-flex items-center">Assigned Branch
+                      <ColumnFilter field="office" label="Assigned Branch" options={columnOptions["office"] || []}
+                        selected={colFilters["office"] || new Set()} onChange={(n) => setColFilter("office", n)} />
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-left">Branch Access</th>
                   <th className="px-4 py-3 text-left">Actions</th>
                 </tr>
@@ -543,16 +908,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">User Type *</span>
-                    <select 
-                      className="glass-input w-full text-[11px] px-2 py-1"
-                      value={newUserForm.userType}
-                      onChange={(e) => handleAddUserFormChange("userType", e.target.value)}
-                    >
-                      <option value="">Select user type</option>
-                      {USER_TYPES.map(t => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
-                      ))}
-                    </select>
+                    <RoleMultiSelect
+                      values={newUserForm.userTypes}
+                      options={USER_TYPES}
+                      placeholder="Select user type(s)"
+                      onChange={(next) => setNewUserForm((prev) => ({
+                        ...prev,
+                        userTypes: next,
+                        // Primary role stays in sync with the first ticked.
+                        userType: next[0] || "",
+                      }))}
+                    />
                   </label>
                 </div>
               </div>

@@ -1,44 +1,62 @@
+/**
+ * Team Messenger — backed by Supabase.
+ *
+ * Channels and DMs are read from / written to the messaging tables defined
+ * in 0001_init.sql. Company isolation is enforced by RLS. Default channels
+ * (#announcements, #general, …) are auto-seeded for new tenants on first
+ * load.
+ *
+ * Realtime: subscribes to INSERT on the messages table filtered to the
+ * currently-open channel/thread so other tabs and users see new lines as
+ * they arrive.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Hash, Home, MessageCircle, Search, Send, Users2 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { USER_MANAGEMENT_RECORDS, type UserManagementRecord } from "@/lib/user-management";
+import { MessageBody } from "@/components/MessageBody";
+import {
+  type ChannelRow,
+  type MessageRow,
+  getChannelMessages,
+  getDmMessages,
+  getOrCreateDmThread,
+  listChannels,
+  markThreadRead,
+  sendMessage as sendMessageRow,
+  subscribeToMessages,
+} from "@/lib/supabase/messaging";
+import {
+  getCompanyUsers,
+  getMyProfileId,
+  type ProfileRow,
+} from "@/lib/supabase/users";
 
 interface Props {
   mod: ModuleDef;
   sub: SubModuleDef;
 }
 
-type ThreadKind = "channel" | "dm";
+type ActiveThread =
+  | { kind: "channel"; id: string; channel: ChannelRow }
+  | { kind: "dm"; id: string; participant: ProfileRow };
 
-type ChatMessage = {
-  id: string;
-  sender: string;
-  body: string;
-  createdAt: string;
-  kind: "system" | "me" | "other";
-};
-
-type ThreadDef = {
-  id: string;
-  title: string;
-  subtitle: string;
-  kind: ThreadKind;
-  participant?: UserManagementRecord;
-};
-
-const STORE_KEY = "ahs:team-messenger:v1";
-const ANNOUNCEMENT_THREAD_ID = "channel:announcements";
-const HIGHER_UP_TYPES = new Set(["Admin", "Manager", "HR", "Tech Manager", "Claim Manager", "Part Manager", "Supervisor"]);
-const CHANNELS: ThreadDef[] = [
-  { id: ANNOUNCEMENT_THREAD_ID, title: "#announcements", subtitle: "Shout-outs and daily company notices", kind: "channel" },
-  { id: "channel:all-employees", title: "#all-employees", subtitle: "Broadcast updates to every employee", kind: "channel" },
-  { id: "channel:general", title: "#general", subtitle: "Company-wide chat and coordination", kind: "channel" },
-  { id: "channel:service", title: "#service", subtitle: "Service, dispatch, and scheduling", kind: "channel" },
-  { id: "channel:parts", title: "#parts", subtitle: "Parts ordering and receiving", kind: "channel" },
-  { id: "channel:admin", title: "#admin", subtitle: "Leadership, HR, and account ops", kind: "channel" },
-];
+// Higher-up roles are the only ones allowed to post in #announcements.
+const HIGHER_UP_ROLES = new Set([
+  "SUPERADMIN",
+  "ADMIN",
+  "MANAGER",
+  "HR",
+  "BRANCH_MANAGER",
+  "SENIOR_BRANCH_MANAGER",
+  "CSR_MANAGER",
+  "CLAIMS_MANAGER",
+  "PARTS_MANAGER",
+  "BIZOPS_MANAGER",
+  "BIZOPS_SENIOR_MANAGER",
+]);
 
 function formatTimestamp(value: string) {
   const date = new Date(value);
@@ -61,257 +79,230 @@ function initials(name: string) {
     .join("");
 }
 
-function makeMessageId(threadId: string) {
-  return `${threadId}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-}
-
-function seedThread(thread: ThreadDef, currentUserName: string, currentOffice: string, contacts: UserManagementRecord[]): ChatMessage[] {
-  const firstContacts = contacts.slice(0, 4);
-
-  if (thread.kind === "channel") {
-    if (thread.id === ANNOUNCEMENT_THREAD_ID) {
-      const leaders = contacts.filter((record) => HIGHER_UP_TYPES.has(record.type)).slice(0, 3);
-      return [
-        {
-          id: makeMessageId(thread.id),
-          sender: "System",
-          body: "Announcements from admin and other higher-ups appear here and surface on login.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-          kind: "system",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: leaders[0]?.userName ?? "Memphis Admin",
-          body: "Reminder: review your open tickets before the end of the day.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-          kind: "other",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: leaders[1]?.userName ?? "Nashville Admin",
-          body: "Great work on the morning schedule. Keep the momentum going.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 40).toISOString(),
-          kind: "other",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: currentUserName,
-          body: `Logged in from ${currentOffice}. Ready for today’s updates.`,
-          createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-          kind: "me",
-        },
-      ];
-    }
-
-    if (thread.id === "channel:all-employees") {
-      return [
-        {
-          id: makeMessageId(thread.id),
-          sender: "System",
-          body: "Welcome to the all employees channel. Use this space for company-wide updates.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 24).toISOString(),
-          kind: "system",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: firstContacts[0]?.userName ?? "Memphis Admin",
-          body: "Daily routes are updated and ready for review.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 14).toISOString(),
-          kind: "other",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: currentUserName,
-          body: `Checking in from ${currentOffice}. Please flag any urgent items here.`,
-          createdAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-          kind: "me",
-        },
-      ];
-    }
-
-    if (thread.id === "channel:service") {
-      return [
-        {
-          id: makeMessageId(thread.id),
-          sender: "System",
-          body: "Service updates and dispatch notes appear here.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
-          kind: "system",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: firstContacts[1]?.userName ?? "Service Desk",
-          body: "Two open visits were moved to afternoon slots.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-          kind: "other",
-        },
-        {
-          id: makeMessageId(thread.id),
-          sender: currentUserName,
-          body: "Acknowledged. I’ll keep this thread for dispatch changes.",
-          createdAt: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
-          kind: "me",
-        },
-      ];
-    }
-
-    return [
-      {
-        id: makeMessageId(thread.id),
-        sender: "System",
-        body: `Channel ${thread.title} is ready for team communication.`,
-        createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-        kind: "system",
-      },
-      {
-        id: makeMessageId(thread.id),
-        sender: firstContacts[2]?.userName ?? "Team Member",
-        body: "Please confirm any schedule changes before the end of the day.",
-        createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-        kind: "other",
-      },
-      {
-        id: makeMessageId(thread.id),
-        sender: currentUserName,
-        body: "Understood. I’ll keep updates in this channel.",
-        createdAt: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-        kind: "me",
-      },
-    ];
-  }
-
-  const participant = thread.participant;
-  return [
-    {
-      id: makeMessageId(thread.id),
-      sender: "System",
-      body: `Direct message thread opened with ${participant?.userName ?? "this employee"}.`,
-      createdAt: new Date(Date.now() - 1000 * 60 * 28).toISOString(),
-      kind: "system",
-    },
-    {
-      id: makeMessageId(thread.id),
-      sender: participant?.userName ?? "Employee",
-      body: "Hey, can you check the latest status for the open ticket?",
-      createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-      kind: "other",
-    },
-    {
-      id: makeMessageId(thread.id),
-      sender: currentUserName,
-      body: "Yes, I’m on it and will update you here once it’s resolved.",
-      createdAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-      kind: "me",
-    },
-  ];
-}
-
-function loadStore() {
-  if (typeof window === "undefined") return {} as Record<string, ChatMessage[]>;
-  try {
-    const raw = window.localStorage.getItem(STORE_KEY);
-    if (!raw) return {} as Record<string, ChatMessage[]>;
-    const parsed = JSON.parse(raw) as Record<string, ChatMessage[]>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {} as Record<string, ChatMessage[]>;
-  }
-}
-
-function resolveThread(threadId: string, contacts: UserManagementRecord[]): ThreadDef {
-  const channel = CHANNELS.find((item) => item.id === threadId);
-  if (channel) return channel;
-
-  const loginName = threadId.startsWith("dm:") ? threadId.slice(3) : threadId;
-  const participant = contacts.find((record) => record.loginName === loginName || record.email === loginName || record.userName === loginName);
-  return {
-    id: `dm:${participant?.loginName ?? loginName}`,
-    title: participant?.userName ?? loginName,
-    subtitle: participant ? `${participant.type} · ${participant.office}` : "Direct message",
-    kind: "dm",
-    participant,
-  };
-}
-
 export function TeamMessenger({ mod, sub }: Props) {
-  const { email, ready } = useAuth();
-  const currentUser = useMemo(() => USER_MANAGEMENT_RECORDS.find((record) => record.email.toLowerCase() === String(email || "").toLowerCase()) ?? null, [email]);
-  const currentUserName = currentUser?.userName ?? email ?? "Current User";
-  const currentOffice = currentUser?.office ?? "Unknown Office";
-
-  const contacts = useMemo(
-    () => [...USER_MANAGEMENT_RECORDS].sort((left, right) => left.userName.localeCompare(right.userName)),
-    [],
-  );
-  const [search, setSearch] = useState("");
-  const [activeThreadId, setActiveThreadId] = useState(CHANNELS[0].id);
+  const { email, ready, uid, displayName, role } = useAuth();
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
+  const [contacts, setContacts] = useState<ProfileRow[]>([]);
+  const [active, setActive] = useState<ActiveThread | null>(null);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
   const [draft, setDraft] = useState("");
-  const [store, setStore] = useState<Record<string, ChatMessage[]>>(() => loadStore());
+  const [search, setSearch] = useState("");
+  const [loadingThread, setLoadingThread] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!ready) return;
-    setStore((currentStore) => {
-      if (currentStore[activeThreadId]) return currentStore;
-      const thread = resolveThread(activeThreadId, contacts);
-      return {
-        ...currentStore,
-        [thread.id]: seedThread(thread, currentUserName, currentOffice, contacts),
-      };
-    });
-    setDraft("");
-  }, [activeThreadId, contacts, currentOffice, currentUserName, ready]);
+  const currentUserName = displayName || email || "Current User";
+  const canPostAnnouncement = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
 
+  // 1. Resolve my Supabase profile id from my Firebase uid (once).
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
-  }, [store]);
+    if (!ready || !uid) return;
+    let cancelled = false;
+    getMyProfileId(uid)
+      .then((id) => { if (!cancelled) setProfileId(id); })
+      .catch((err) => { if (!cancelled) setError(err.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [ready, uid]);
+
+  // 2. Load channels + contacts. Channels auto-seed on empty tenant.
+  useEffect(() => {
+    if (!ready || !profileId) return;
+    let cancelled = false;
+    Promise.all([listChannels(), getCompanyUsers()])
+      .then(async ([chans, users]) => {
+        if (cancelled) return;
+        setChannels(chans);
+        // Hide myself from the contact list.
+        const others = users.filter((u) => u.id !== profileId);
+        setContacts(others);
+
+        // If the URL hash points to a specific thread (#channel=… or #dm=…)
+        // open it; otherwise default to the first channel.
+        const hash = typeof window !== "undefined" ? window.location.hash : "";
+        if (hash.startsWith("#channel=")) {
+          const id = hash.slice("#channel=".length);
+          const ch = chans.find((c) => c.id === id);
+          if (ch) {
+            setActive({ kind: "channel", id: ch.id, channel: ch });
+            return;
+          }
+        }
+        if (hash.startsWith("#dm=")) {
+          const otherId = hash.slice("#dm=".length);
+          const other = others.find((u) => u.id === otherId);
+          if (other) {
+            try {
+              const { getOrCreateDmThread } = await import("@/lib/supabase/messaging");
+              const thread = await getOrCreateDmThread(profileId, other.id);
+              setActive({ kind: "dm", id: thread.id, participant: other });
+              return;
+            } catch { /* fall through to default */ }
+          }
+        }
+
+        if (!active && chans.length > 0) {
+          setActive({ kind: "channel", id: chans[0].id, channel: chans[0] });
+        }
+      })
+      .catch((err) => { if (!cancelled) setError(err.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [ready, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Watch the URL hash so that clicking a thread from the header dropdown
+  // (which already lives at this route) actually switches the open thread.
+  useEffect(() => {
+    if (!profileId) return;
+    const handleHash = async () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if (!hash) return;
+      if (hash.startsWith("channel=")) {
+        const id = hash.slice("channel=".length);
+        const ch = channels.find((c) => c.id === id);
+        if (ch) setActive({ kind: "channel", id: ch.id, channel: ch });
+        return;
+      }
+      if (hash.startsWith("dm=")) {
+        const otherId = hash.slice("dm=".length);
+        const other = contacts.find((u) => u.id === otherId);
+        if (!other) return;
+        try {
+          const thread = await getOrCreateDmThread(profileId, other.id);
+          setActive({ kind: "dm", id: thread.id, participant: other });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    };
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, [profileId, channels, contacts]);
+  useEffect(() => {
+    if (!active) return;
+    setLoadingThread(true);
+    let cancelled = false;
+    const loader = active.kind === "channel"
+      ? getChannelMessages(active.id)
+      : getDmMessages(active.id);
+
+    loader
+      .then((rows) => {
+        if (cancelled) return;
+        setMessages(rows);
+        // Opening a thread marks it read. Also tell the header so it can drop
+        // its unread badge immediately.
+        if (profileId) {
+          markThreadRead({
+            profileId,
+            channelId: active.kind === "channel" ? active.id : null,
+            dmThreadId: active.kind === "dm" ? active.id : null,
+          }).then(() => {
+            window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
+          }).catch(() => { /* ignore */ });
+        }
+      })
+      .catch((err) => { if (!cancelled) setError(err.message || String(err)); })
+      .finally(() => { if (!cancelled) setLoadingThread(false); });
+
+    const unsubscribe = subscribeToMessages({
+      channelId: active.kind === "channel" ? active.id : null,
+      dmThreadId: active.kind === "dm" ? active.id : null,
+      onMessage: (row) => {
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      },
+    });
+
+    // Polling fallback (2s) — covers tenants that don't have Supabase realtime
+    // turned on for the messages table. Cheap: it's just one indexed query per
+    // active thread, and only while the thread is open.
+    const pollId = window.setInterval(async () => {
+      try {
+        const rows = active.kind === "channel"
+          ? await getChannelMessages(active.id)
+          : await getDmMessages(active.id);
+        if (cancelled) return;
+        setMessages((prev) => {
+          if (prev.length === rows.length) return prev;
+          return rows;
+        });
+      } catch { /* ignore */ }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      window.clearInterval(pollId);
+    };
+  }, [active?.id, active?.kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scroll to bottom whenever new messages arrive.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, active?.id]);
 
   const filteredContacts = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return contacts;
-    return contacts.filter((record) => {
-      return [record.userName, record.loginName, record.type, record.office, record.email, record.manager]
-        .join(" ")
-        .toLowerCase()
-        .includes(term);
+    return contacts.filter((r) => {
+      const haystack = [
+        r.display_name ?? "",
+        r.email,
+        r.username ?? "",
+        r.role,
+        r.assigned_branch ?? "",
+        r.department ?? "",
+      ].join(" ").toLowerCase();
+      return haystack.includes(term);
     });
   }, [contacts, search]);
 
-  const activeThread = useMemo(() => resolveThread(activeThreadId, contacts), [activeThreadId, contacts]);
-  const activeMessages = store[activeThread.id] ?? seedThread(activeThread, currentUserName, currentOffice, contacts);
-  const participantCount = activeThread.kind === "channel" ? contacts.length : 2;
-  const canPostAnnouncement = !currentUser || HIGHER_UP_TYPES.has(currentUser.type);
+  const openDm = async (other: ProfileRow) => {
+    if (!profileId) return;
+    try {
+      const thread = await getOrCreateDmThread(profileId, other.id);
+      setActive({ kind: "dm", id: thread.id, participant: other });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeMessages.length, activeThread.id]);
-
-  const sendMessage = () => {
-    if (activeThread.id === ANNOUNCEMENT_THREAD_ID && !canPostAnnouncement) return;
-
+  const send = async () => {
+    if (!active || !profileId) return;
     const body = draft.trim();
     if (!body) return;
+    const isAnnouncement = active.kind === "channel" && active.channel.is_announcement;
+    if (isAnnouncement && !canPostAnnouncement) return;
 
-    const nextMessage: ChatMessage = {
-      id: makeMessageId(activeThread.id),
-      sender: currentUserName,
-      body,
-      createdAt: new Date().toISOString(),
-      kind: "me",
-    };
-
-    setStore((currentStore) => {
-      const existing = currentStore[activeThread.id] ?? activeMessages;
-      return {
-        ...currentStore,
-        [activeThread.id]: [...existing, nextMessage],
-      };
-    });
-    setDraft("");
+    try {
+      const row = await sendMessageRow({
+        channelId: active.kind === "channel" ? active.id : null,
+        dmThreadId: active.kind === "dm" ? active.id : null,
+        senderId: profileId,
+        senderName: currentUserName,
+        body,
+        isAnnouncement,
+      });
+      // Optimistically append; the realtime subscription will dedupe by id.
+      setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      setDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   if (!ready) return null;
+
+  const activeTitle = active?.kind === "channel"
+    ? active.channel.title
+    : active?.kind === "dm"
+      ? (active.participant.display_name || active.participant.email)
+      : "";
+  const activeSubtitle = active?.kind === "channel"
+    ? (active.channel.subtitle || "")
+    : active?.kind === "dm"
+      ? `${active.participant.role}${active.participant.assigned_branch ? ` · ${active.participant.assigned_branch}` : ""}`
+      : "";
+  const isAnnouncementsChannel = active?.kind === "channel" && active.channel.is_announcement;
 
   return (
     <main className="max-w-[1600px] mx-auto px-4 py-6 lg:px-6">
@@ -335,13 +326,19 @@ export function TeamMessenger({ mod, sub }: Props) {
         </div>
       </div>
 
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_300px]">
         <aside className="rounded-2xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
           <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2">
             <Search className="h-4 w-4 text-slate-400" />
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search people or channels"
               className="w-full bg-transparent text-sm text-white placeholder:text-slate-500 focus:outline-none"
             />
@@ -353,26 +350,36 @@ export function TeamMessenger({ mod, sub }: Props) {
               Channels
             </div>
             <div className="space-y-2">
-              {CHANNELS.map((thread) => {
-                const active = activeThread.id === thread.id;
+              {channels.map((ch) => {
+                const isActive = active?.kind === "channel" && active.id === ch.id;
                 return (
                   <button
-                    key={thread.id}
-                    onClick={() => setActiveThreadId(thread.id)}
+                    key={ch.id}
+                    onClick={() => setActive({ kind: "channel", id: ch.id, channel: ch })}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                      active
+                      isActive
                         ? "border-blue-400/50 bg-blue-500/15 text-white"
                         : "border-white/10 bg-slate-950/70 text-slate-200 hover:bg-white/8 hover:text-white"
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <Hash className="h-4 w-4 text-slate-400" />
-                      <span className="font-semibold">{thread.title}</span>
+                      <span className="font-semibold">{ch.title}</span>
+                      {ch.is_announcement && (
+                        <span className="ml-auto rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-300">
+                          Broadcast
+                        </span>
+                      )}
                     </div>
-                    <div className="mt-1 text-xs text-slate-400">{thread.subtitle}</div>
+                    {ch.subtitle && <div className="mt-1 text-xs text-slate-400">{ch.subtitle}</div>}
                   </button>
                 );
               })}
+              {channels.length === 0 && (
+                <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/70 px-3 py-3 text-xs text-slate-400">
+                  Loading channels…
+                </div>
+              )}
             </div>
           </div>
 
@@ -382,31 +389,37 @@ export function TeamMessenger({ mod, sub }: Props) {
               Employees
             </div>
             <div className="max-h-[42rem] space-y-2 overflow-y-auto pr-1">
-              {filteredContacts.map((record) => {
-                const threadId = `dm:${record.loginName}`;
-                const active = activeThread.id === threadId;
+              {filteredContacts.map((r) => {
+                const isActive = active?.kind === "dm" && active.participant.id === r.id;
                 return (
                   <button
-                    key={record.loginName}
-                    onClick={() => setActiveThreadId(threadId)}
+                    key={r.id}
+                    onClick={() => openDm(r)}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                      active
+                      isActive
                         ? "border-blue-400/50 bg-blue-500/15 text-white"
                         : "border-white/10 bg-slate-950/70 text-slate-200 hover:bg-white/8 hover:text-white"
                     }`}
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
-                        {initials(record.userName)}
+                        {initials(r.display_name || r.email)}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">{record.userName}</div>
-                        <div className="truncate text-xs text-slate-400">{record.type} · {record.office}</div>
+                        <div className="truncate font-semibold">{r.display_name || r.email}</div>
+                        <div className="truncate text-xs text-slate-400">
+                          {r.role}{r.assigned_branch ? ` · ${r.assigned_branch}` : ""}
+                        </div>
                       </div>
                     </div>
                   </button>
                 );
               })}
+              {filteredContacts.length === 0 && (
+                <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/70 px-3 py-3 text-xs text-slate-400">
+                  No teammates match that search.
+                </div>
+              )}
             </div>
           </div>
         </aside>
@@ -414,23 +427,35 @@ export function TeamMessenger({ mod, sub }: Props) {
         <section className="rounded-2xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
           <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">{activeThread.kind === "channel" ? "Channel" : "Direct Message"}</div>
-              <h2 className="mt-1 text-2xl font-bold">{activeThread.title}</h2>
-              <p className="mt-1 text-sm text-slate-300">{activeThread.subtitle}</p>
+              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">
+                {active?.kind === "channel" ? "Channel" : active?.kind === "dm" ? "Direct Message" : ""}
+              </div>
+              <h2 className="mt-1 text-2xl font-bold">{activeTitle}</h2>
+              {activeSubtitle && <p className="mt-1 text-sm text-slate-300">{activeSubtitle}</p>}
             </div>
             <div className="rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2 text-right text-xs text-slate-400">
               <div className="font-semibold text-white">{currentUserName}</div>
-              <div>{currentOffice}</div>
+              <div>{role || ""}</div>
             </div>
           </div>
 
           <div className="mt-4 max-h-[50rem] space-y-3 overflow-y-auto pr-1">
-            {activeMessages.map((message) => {
-              const isMe = message.kind === "me";
-              const isSystem = message.kind === "system";
+            {loadingThread && (
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                Loading messages…
+              </div>
+            )}
+            {!loadingThread && messages.length === 0 && (
+              <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-slate-400">
+                No messages yet. Be the first to say hi.
+              </div>
+            )}
+            {messages.map((m) => {
+              const isMe = m.sender_id === profileId;
+              const isSystem = m.kind === "system";
               return (
                 <div
-                  key={message.id}
+                  key={m.id}
                   className={`rounded-2xl border px-4 py-3 text-sm shadow-sm ${
                     isSystem
                       ? "border-white/10 bg-white/5 text-slate-300"
@@ -440,10 +465,10 @@ export function TeamMessenger({ mod, sub }: Props) {
                   }`}
                 >
                   <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                    <span>{message.sender}</span>
-                    <span>{formatTimestamp(message.createdAt)}</span>
+                    <span>{m.sender_name || (isMe ? currentUserName : "—")}</span>
+                    <span>{formatTimestamp(m.created_at)}</span>
                   </div>
-                  <p className="whitespace-pre-wrap leading-6">{message.body}</p>
+                  <MessageBody text={m.body} className="whitespace-pre-wrap leading-6" />
                 </div>
               );
             })}
@@ -451,24 +476,36 @@ export function TeamMessenger({ mod, sub }: Props) {
           </div>
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/80 p-3">
-            <label htmlFor="team-messenger-draft" className="sr-only">
-              Message composer
-            </label>
+            <label htmlFor="team-messenger-draft" className="sr-only">Message composer</label>
             <textarea
               id="team-messenger-draft"
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              disabled={activeThread.id === ANNOUNCEMENT_THREAD_ID && !canPostAnnouncement}
-              placeholder={`Message ${activeThread.kind === "channel" ? activeThread.title : activeThread.title}...`}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              disabled={!active || (isAnnouncementsChannel && !canPostAnnouncement)}
+              placeholder={
+                !active
+                  ? "Select a channel or teammate to start chatting…"
+                  : `Message ${activeTitle}…`
+              }
               className="glass-input min-h-28 w-full resize-none rounded-xl bg-slate-900 text-white placeholder:text-slate-500"
             />
             <div className="mt-3 flex items-center justify-between gap-3">
               <div className="text-xs text-slate-400">
-                {activeThread.id === ANNOUNCEMENT_THREAD_ID && !canPostAnnouncement
-                  ? "Only higher-ups can post announcements."
-                  : "Messages are stored locally in this browser for the demo build."}
+                {isAnnouncementsChannel && !canPostAnnouncement
+                  ? "Only admins, managers, and HR can post announcements."
+                  : "Enter sends. Shift+Enter for newline."}
               </div>
-              <button onClick={sendMessage} disabled={activeThread.id === ANNOUNCEMENT_THREAD_ID && !canPostAnnouncement} className="btn btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50">
+              <button
+                onClick={send}
+                disabled={!active || (isAnnouncementsChannel && !canPostAnnouncement) || !draft.trim()}
+                className="btn btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 <Send className="h-4 w-4" />
                 Send
               </button>
@@ -481,31 +518,33 @@ export function TeamMessenger({ mod, sub }: Props) {
             <MessageCircle className="h-3.5 w-3.5" />
             Thread Details
           </div>
-          <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm">
-            <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Participants</div>
-            <div className="mt-2 text-white">{participantCount} total</div>
-            <div className="mt-1 text-slate-300">
-              {activeThread.kind === "channel"
-                ? "All employees can join this broadcast channel."
-                : activeThread.participant
-                  ? `Direct conversation with ${activeThread.participant.userName}.`
-                  : "Direct conversation with this employee."}
-            </div>
-          </div>
 
-          {activeThread.kind === "dm" && activeThread.participant ? (
+          {active?.kind === "channel" ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm">
-              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Employee Info</div>
-              <div className="mt-3 space-y-2 text-slate-300">
-                <div><span className="text-slate-500">Type:</span> {activeThread.participant.type}</div>
-                <div><span className="text-slate-500">Office:</span> {activeThread.participant.office}</div>
-                <div><span className="text-slate-500">Manager:</span> {activeThread.participant.manager || "—"}</div>
-                <div><span className="text-slate-500">Email:</span> {activeThread.participant.email || "—"}</div>
+              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Channel</div>
+              <div className="mt-2 text-white">{active.channel.title}</div>
+              {active.channel.subtitle && (
+                <div className="mt-1 text-slate-300">{active.channel.subtitle}</div>
+              )}
+              <div className="mt-3 text-xs text-slate-400">
+                {active.channel.is_announcement
+                  ? "Broadcast channel — only leadership can post."
+                  : "Open to all employees in this company."}
+              </div>
+            </div>
+          ) : active?.kind === "dm" ? (
+            <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm">
+              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Direct Message</div>
+              <div className="mt-2 space-y-2 text-slate-300">
+                <div><span className="text-slate-500">Name:</span> {active.participant.display_name || "—"}</div>
+                <div><span className="text-slate-500">Role:</span> {active.participant.role}</div>
+                <div><span className="text-slate-500">Branch:</span> {active.participant.assigned_branch || "—"}</div>
+                <div><span className="text-slate-500">Email:</span> {active.participant.email}</div>
               </div>
             </div>
           ) : (
             <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm text-slate-300">
-              Use the channel list on the left to broadcast updates to everyone or switch to a direct employee thread.
+              Pick a channel or teammate to start a conversation.
             </div>
           )}
         </aside>

@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { ChevronDown, Clock, LogOut, MessageCircle, Settings as SettingsIcon, Shield, User } from "lucide-react";
+import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +12,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
+import { MessagesMenu } from "@/components/MessagesMenu";
+import { NotificationsMenu } from "@/components/NotificationsMenu";
+import { useTheme } from "@/lib/theme";
 
 function getInitials(value: string | null) {
   if (!value) return "U";
@@ -45,6 +48,7 @@ function loadEmployeePhoto(email: string | null) {
 
 export function AppHeader() {
   const { email, companyId, logout, ready } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [photoDataUrl, setPhotoDataUrl] = useState("");
 
@@ -56,25 +60,27 @@ export function AppHeader() {
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[oklch(0.16_0.04_260/0.7)] border-b border-[var(--color-panel-border)]">
       <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
         <Link to="/home" className="flex items-center gap-3">
-          <img src={logo} alt="Admin Hub Solutions" className="h-9 w-9 object-contain" />
+          <img src={logo} alt="Admin Hub Solutions" className="logo-img h-9 w-9 object-contain" />
           <div>
             <div className="font-display font-semibold tracking-tight leading-none">Admin Hub Solutions</div>
             <div className="text-xs text-muted-foreground">Operations console</div>
           </div>
         </Link>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          {ready && email && <AnnouncementsMenu />}
           {ready && email && (
-            <Link
-              to="/m/$module/$submodule"
-              params={{ module: "admin", submodule: "internal-message-support" }}
+            <button
+              type="button"
+              onClick={toggleTheme}
               className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
-              aria-label="Open Team Messenger"
-              title="Team Messenger"
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label="Toggle theme"
             >
-              <MessageCircle className="h-4 w-4" />
-            </Link>
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           )}
+          {ready && email && <AnnouncementsMenu />}
+          {ready && email && <NotificationsMenu />}
+          {ready && email && <MessagesMenu />}
           {ready && email && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

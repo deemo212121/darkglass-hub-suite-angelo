@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { normalizeLocationName } from "@/lib/locations";
+import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
 import {
   getLocations as sbGetLocations,
@@ -683,11 +683,29 @@ const DEFAULT_PART_ADDRESS_ROWS: PartAddressRow[] = [
 const DEFAULT_COVERAGE_ROWS: CoverageRow[] = [
   ...Object.entries(coverageCsvModules).flatMap(([filePath, csvText], fileIndex) => {
     const locationOffset = fileIndex * 10000;
-    return parseCoverageCsv(csvText).map((row, rowIndex) => ({
-      ...row,
-      id: String(locationOffset + rowIndex + 1),
-      location: row.location || filePath.split(/[\\/]/).pop()?.replace(/\.csv$/i, "") || "",
-    }));
+    return parseCoverageCsv(csvText).map((row, rowIndex) => {
+      // Normalise the location to the canonical form so it matches
+      // entries in src/lib/locations.ts (and the dropdown options the
+      // app builds from it). The CSV files use slightly different
+      // spellings — "Jackson,TN" vs "Jackson, TN" — and the filename
+      // fallback comes in lowercased. Run both through normalizeLocationName.
+      const filenameFallback = filePath
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.csv$/i, "")
+        // Title-case each space-separated word: "new orleans" -> "New Orleans"
+        ?.split(" ")
+        .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w))
+        .join(" ")
+        ?? "";
+      const rawLocation = row.location || filenameFallback;
+      const normalised = normalizeLocationName(rawLocation);
+      return {
+        ...row,
+        id: String(locationOffset + rowIndex + 1),
+        location: normalised,
+      };
+    });
   }),
 ];
 
@@ -767,6 +785,12 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const [partRows, setPartRows] = useState<PartAddressRow[]>(() => loadRows(PART_ADDRESS_STORAGE_KEY, DEFAULT_PART_ADDRESS_ROWS));
   const [coverageRows, setCoverageRows] = useState<CoverageRow[]>(() => loadRows(COVERAGE_STORAGE_KEY, DEFAULT_COVERAGE_ROWS));
 
+  // Real technician roster pulled from Supabase profiles (company-scoped via
+  // RLS). Drives the "Covered Technicians" check list on the Edit Location
+  // modal so the names that get ticked map to actual users — and lets us sync
+  // their `assigned_branch` when the row is saved.
+  const [technicianRoster, setTechnicianRoster] = useState<Array<{ id: string; name: string; assignedBranch: string | null }>>([]);
+
   const { companyId, ready: authReady } = useAuth();
 
   // Load location-management data from Supabase (company-scoped). On the very
@@ -818,6 +842,35 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
           }
           console.log(`📍 Coverage seed complete: ${inserted} rows inserted.`);
           cov = await sbGetCoverage();
+        } else if (DEFAULT_COVERAGE_ROWS.length > 0) {
+          // Top-up: if some branches are present in Supabase but others
+          // are missing (e.g. the original seed pre-dated newer CSVs),
+          // insert only the missing branches' rows. Compare by normalised
+          // location name so "Jackson, MS" matches "Jackson,MS".
+          const presentByLocation = new Set(
+            cov.map((r) => normalizeLocationName(r.location).toLowerCase()),
+          );
+          const missingRows = DEFAULT_COVERAGE_ROWS.filter(
+            (r) => !presentByLocation.has(normalizeLocationName(r.location).toLowerCase()),
+          );
+          if (missingRows.length > 0) {
+            const missingBranches = Array.from(
+              new Set(missingRows.map((r) => normalizeLocationName(r.location))),
+            ).join(", ");
+            console.log(`📍 Topping up coverage for missing branches (${missingRows.length} rows): ${missingBranches}`);
+            const chunkSize = 500;
+            let inserted = 0;
+            for (let i = 0; i < missingRows.length; i += chunkSize) {
+              try {
+                const saved = await sbInsertCoverageBulk(missingRows.slice(i, i + chunkSize));
+                inserted += saved.length;
+              } catch (e) {
+                console.error("top-up coverage chunk failed:", e);
+              }
+            }
+            console.log(`📍 Coverage top-up complete: ${inserted} rows inserted.`);
+            cov = await sbGetCoverage();
+          }
         }
 
         if (!cancelled) {
@@ -859,9 +912,42 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     return () => { cancelled = true; };
   }, [authReady, companyId]);
 
+  // Fetch the company's technician roster (TECHNICIAN as primary role OR in
+  // extra_roles — so multi-role users like Daven Hodge surface as well).
+  // Powers the "Covered Technicians" check list in the Edit Location modal.
+  useEffect(() => {
+    if (!authReady || !companyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCompanyUsers } = await import("@/lib/supabase/users");
+        const profiles = await getCompanyUsers();
+        if (cancelled) return;
+        const techs = profiles
+          .filter((p) => {
+            const primary = String(p.role || "").toUpperCase();
+            if (primary === "TECHNICIAN") return true;
+            const extras = (p as any).extra_roles as string[] | null | undefined;
+            return Array.isArray(extras) && extras.some((r) => String(r).toUpperCase() === "TECHNICIAN");
+          })
+          .map((p) => ({
+            id: p.id,
+            name: p.display_name || p.username || p.email,
+            assignedBranch: p.assigned_branch ?? null,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setTechnicianRoster(techs);
+      } catch (err) {
+        console.error("Load technician roster failed:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, companyId]);
+
   const [locationSearch, setLocationSearch] = useState("");
   const [partSearch, setPartSearch] = useState("");
   const [coverageSearch, setCoverageSearch] = useState("");
+  const [showZipLabels, setShowZipLabels] = useState(true);
   const [newLocationRow, setNewLocationRow] = useState<LocationRow>(() => buildEmptyLocationRow());
   const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
   const [locationModalOpen, setLocationModalOpen] = useState(false);
@@ -912,7 +998,21 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
   const filteredCoverageRows = useMemo(() => {
     const query = coverageSearch.trim().toLowerCase();
-    return coverageRows.filter((row) => row.location === selectedCoverageLocation && matchesQuery([row.id, row.zipCode, row.city, row.location, row.selfSchedule, row.daysLater, row.tierCode], query));
+    // Compare location loosely so DB rows like "Memphis " or "memphis" still
+    // match a "Memphis" dropdown pick.
+    const norm = (v: string | null | undefined) =>
+      normalizeLocationName(String(v ?? "")).toLowerCase();
+    const target = norm(selectedCoverageLocation);
+    const fromSupabase = coverageRows.filter(
+      (row) => norm(row.location) === target &&
+        matchesQuery([row.id, row.zipCode, row.city, row.location, row.selfSchedule, row.daysLater, row.tierCode], query),
+    );
+    if (fromSupabase.length > 0 || !target) return fromSupabase;
+    // Fall back to bundled CSV rows if Supabase has nothing for this branch.
+    return DEFAULT_COVERAGE_ROWS.filter(
+      (row) => norm(row.location) === target &&
+        matchesQuery([row.id, row.zipCode, row.city, row.location, row.selfSchedule, row.daysLater, row.tierCode], query),
+    );
   }, [coverageRows, coverageSearch, selectedCoverageLocation]);
 
   const selectedLocationRow = useMemo(
@@ -925,21 +1025,42 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const coverageLocationOptions = useMemo(() => {
     const locations = new Set<string>();
 
+    // A location name must contain at least one letter and not look like
+    // a zip code. This protects against old CSV imports where columns
+    // shifted and zip-code numbers leaked into the location column.
+    const isCleanLocationName = (raw: string) => {
+      const v = String(raw ?? "").trim();
+      if (!v) return false;
+      if (!/[A-Za-z]/.test(v)) return false; // must contain a letter
+      if (/^\d{3,}/.test(v)) return false;   // starts with digits (likely zip)
+      if (v.length > 40) return false;       // unrealistically long
+      return true;
+    };
+
+    // 1. Start from the canonical LOCATIONS constant — this is the
+    //    authoritative list of branches and never contains garbage.
+    for (const name of LOCATIONS) {
+      locations.add(normalizeLocationName(name));
+    }
+
+    // 2. Include any branch the user has added in the Locations tab
+    //    that isn't in the canonical list yet (still must pass the
+    //    cleanliness check).
     for (const row of locationRows) {
-      const location = row.location.trim();
-      if (location) locations.add(location);
+      if (isCleanLocationName(row.location)) {
+        locations.add(normalizeLocationName(row.location));
+      }
     }
 
-    for (const row of coverageRows) {
-      const location = row.location.trim();
-      if (location) locations.add(location);
-    }
-
+    // 3. Keep whatever the user just selected so the <select> renders
+    //    the current value even if it's brand-new.
     const selectedLocation = selectedCoverageLocation.trim();
-    if (selectedLocation) locations.add(selectedLocation);
+    if (isCleanLocationName(selectedLocation)) {
+      locations.add(normalizeLocationName(selectedLocation));
+    }
 
     return Array.from(locations).sort((left, right) => left.localeCompare(right));
-  }, [coverageRows, locationRows, selectedCoverageLocation]);
+  }, [locationRows, selectedCoverageLocation]);
 
   useEffect(() => {
     if (activeTab !== "coverage") return;
@@ -968,13 +1089,31 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       }
       return applyOfficeLocationSelection(current, selectedLocationRow.location, locationRows);
     });
-    if (selectedCoverageLocation !== selectedLocationRow.location) {
+    // Don't sync the coverage selection from the Locations form when the
+    // user is already viewing the Coverage tab — they may have just
+    // clicked a per-row "Zip Codes" button which set selectedCoverage to
+    // a different location. Letting this effect override would yank them
+    // back to whatever the form has. Only sync while still on the
+    // Locations tab.
+    if (activeTab !== "coverage" && selectedCoverageLocation !== selectedLocationRow.location) {
       setSelectedCoverageLocation(selectedLocationRow.location);
     }
-  }, [locationRows, selectedCoverageLocation, selectedLocationRow]);
+  }, [activeTab, locationRows, selectedCoverageLocation, selectedLocationRow]);
 
   const selectedLocationCoverage = useMemo(
-    () => coverageRows.filter((row) => row.location === selectedCoverageLocation),
+    () => {
+      const norm = (v: string | null | undefined) =>
+        normalizeLocationName(String(v ?? "")).toLowerCase();
+      const target = norm(selectedCoverageLocation);
+      if (!target) return [] as CoverageRow[];
+      const fromSupabase = coverageRows.filter((row) => norm(row.location) === target);
+      if (fromSupabase.length > 0) return fromSupabase;
+      // Fall back to the CSVs bundled with the app so the map still
+      // draws polygons when Supabase is missing rows for a branch
+      // (e.g. the original seed pre-dated newer CSVs, or the row
+      // got stored under a slightly different spelling).
+      return DEFAULT_COVERAGE_ROWS.filter((row) => norm(row.location) === target);
+    },
     [coverageRows, selectedCoverageLocation],
   );
 
@@ -1186,6 +1325,41 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
         if (point) {
           hasAnyValidPoints = true;
           bounds.extend(point.center);
+
+          // Plot a clickable, label-only marker at the centroid of every
+          // zip so dispatchers can read which polygon is which without
+          // hovering. A transparent 1×1 PNG keeps the marker invisible;
+          // the `label` carries the zip code text directly. We push the
+          // marker onto coverageOverlayRefs so the next render clears it.
+          try {
+            const marker = new maps.Marker({
+              position: point.center,
+              map: coverageMapRef.current,
+              clickable: false,
+              visible: showZipLabels,
+              icon: {
+                // 1×1 transparent gif — keeps the marker dot from rendering
+                // while still letting Google Maps position the label.
+                url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+                scaledSize: new maps.Size(1, 1),
+                anchor: new maps.Point(0, 0),
+                labelOrigin: new maps.Point(0, 0),
+              },
+              label: {
+                text: zipCode,
+                color: "#0f172a",
+                fontSize: "11px",
+                fontWeight: "700",
+                className: "coverage-zip-label",
+              },
+              zIndex: 1000,
+            });
+            coverageOverlayRefs.current.push(marker);
+          } catch (err) {
+            // Marker overlay is purely decorative — if Google Maps refuses
+            // it (e.g. AdvancedMarker migration), the polygon still renders.
+            console.warn(`coverage zip label failed for ${zipCode}:`, err);
+          }
         }
 
         if (geojson) {
@@ -1228,6 +1402,18 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     };
   }, [activeTab, coverageMapReady, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation]);
 
+  // Toggle the zip-code labels on/off without rebuilding the map. The map
+  // effect above tracks every label marker in coverageOverlayRefs; we just
+  // call setVisible() on each. setMap() would also work but setVisible
+  // keeps the marker attached so flipping back is instant.
+  useEffect(() => {
+    coverageOverlayRefs.current.forEach((overlay) => {
+      if (typeof overlay?.setVisible === "function") {
+        overlay.setVisible(showZipLabels);
+      }
+    });
+  }, [showZipLabels]);
+
   const addLocationRow = () => {
     if (!newLocationRow.location.trim()) return;
     const nextRow = {
@@ -1251,6 +1437,37 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
           saveRows(LOCATION_STORAGE_KEY, updated);
           return updated;
         });
+
+        // Sync the assigned_branch on the profiles for every ticked technician
+        // so they show up as "from this branch" everywhere else in the app
+        // (Work Map, Mobile Tech roster, Ticket List branch filter, etc.).
+        try {
+          const branchName = saved.location || nextRow.location;
+          const tickedNames = new Set(nextRow.coveredTechnicians ?? []);
+          if (branchName && tickedNames.size > 0) {
+            const { updateCompanyUser } = await import("@/lib/supabase/users");
+            const targets = technicianRoster.filter(
+              (t) => tickedNames.has(t.name) && t.assignedBranch !== branchName,
+            );
+            await Promise.all(
+              targets.map((t) =>
+                updateCompanyUser(t.id, { assignedBranch: branchName }).catch((e) =>
+                  console.warn(`Sync assigned_branch failed for ${t.name}:`, e),
+                ),
+              ),
+            );
+            // Refresh local roster so the UI reflects the new assignment.
+            if (targets.length > 0) {
+              setTechnicianRoster((prev) =>
+                prev.map((t) =>
+                  tickedNames.has(t.name) ? { ...t, assignedBranch: branchName } : t,
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          console.warn("Tech branch sync skipped:", e);
+        }
       } catch (err) {
         console.error("Save location failed:", err);
         alert(`Failed to save location: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -1389,22 +1606,6 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             <div>
               <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
               <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
-            </div>
-            <div className="text-right text-sm text-slate-400">
-              <div className="text-2xl font-bold text-white">31 records found</div>
-              <div>search in result</div>
-            </div>
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-end gap-4">
-            <div className="w-full max-w-md">
-              <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
-              <input
-                value={locationSearch}
-                onChange={(event) => setLocationSearch(event.target.value)}
-                placeholder="Search locations..."
-                className="glass-input mt-2 w-full"
-              />
             </div>
           </div>
         </div>
@@ -1603,17 +1804,47 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                   <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Covered Technicians</div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Ticking a technician here also sets <span className="text-slate-300">{newLocationRow.location || "this branch"}</span> as their Assigned Branch on save.
+                  </div>
                   <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-3">
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                      {COVERED_TECHNICIAN_OPTIONS.map((technician) => {
-                        const checked = (newLocationRow.coveredTechnicians ?? []).includes(technician);
-                        return (
-                          <label key={technician} className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.02] px-2 py-1 text-xs text-slate-200">
-                            <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, coveredTechnicians: toggleStringValue(current.coveredTechnicians, technician) }))} />
-                            <span>{technician}</span>
-                          </label>
-                        );
-                      })}
+                      {(() => {
+                        // Merge the live roster with any technicians already
+                        // ticked on this row but no longer in the roster (e.g.
+                        // legacy names) so saved data stays visible.
+                        const ticked = newLocationRow.coveredTechnicians ?? [];
+                        const rosterNames = new Set(technicianRoster.map((t) => t.name));
+                        const legacy = ticked.filter((name) => !rosterNames.has(name));
+                        const merged: Array<{ id: string | null; name: string; assignedBranch: string | null }> = [
+                          ...technicianRoster,
+                          ...legacy.map((name) => ({ id: null, name, assignedBranch: null })),
+                        ];
+                        if (merged.length === 0) {
+                          return (
+                            <div className="col-span-full text-xs text-slate-500 italic">
+                              No technicians found for this company. Add users with the TECHNICIAN role first.
+                            </div>
+                          );
+                        }
+                        return merged.map((tech) => {
+                          const checked = ticked.includes(tech.name);
+                          const isAssignedHere = tech.assignedBranch && newLocationRow.location && tech.assignedBranch === newLocationRow.location;
+                          return (
+                            <label key={tech.id || tech.name} className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.02] px-2 py-1 text-xs text-slate-200">
+                              <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => setNewLocationRow((current) => ({ ...current, coveredTechnicians: toggleStringValue(current.coveredTechnicians, tech.name) }))} />
+                              <span className="flex-1">
+                                <span>{tech.name}</span>
+                                {tech.assignedBranch ? (
+                                  <span className={`block text-[10px] ${isAssignedHere ? "text-emerald-300" : "text-slate-500"}`}>
+                                    {isAssignedHere ? "★ assigned here" : `currently: ${tech.assignedBranch}`}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1626,88 +1857,72 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
 
         {activeTab === "locations" && (
         <section className="mt-5 rounded-xl border border-white/15 bg-white/8 p-4 backdrop-blur-md">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-slate-300">
+              <span className="font-semibold text-white">{filteredLocations.length}</span> record{filteredLocations.length === 1 ? "" : "s"} found
+            </div>
+            <input
+              value={locationSearch}
+              onChange={(event) => setLocationSearch(event.target.value)}
+              placeholder="Search locations..."
+              className="glass-input w-full sm:w-64"
+              aria-label="Search locations"
+            />
+          </div>
           <div className="overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
-            <table className="min-w-[1600px] w-full text-[11px] leading-tight">
+            <table className="w-full text-[11px] leading-tight">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-2 py-2 text-left whitespace-nowrap">ID</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Location</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Address1</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Address2</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">City</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">State</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Zip Code</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Office</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Phone No</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Email</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Default Part Dist.</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Rep. Tech.</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">SMS</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Email</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Auto Triage</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Actions</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">ID</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Location</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Address1</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Address2</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">City</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">State</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Zip</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Office</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Phone</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Email</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Part Dist.</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Rep. Tech.</th>
+                  <th className="px-1.5 py-1.5 text-center whitespace-nowrap">SMS</th>
+                  <th className="px-1.5 py-1.5 text-center whitespace-nowrap">Email</th>
+                  <th className="px-1.5 py-1.5 text-center whitespace-nowrap">Auto</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-slate-200">
                 {filteredLocations.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.legacyId || row.id}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.legacyId || row.id}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => editLocationRow(row)}
-                        className="block px-2 py-1 text-left font-semibold text-blue-300 underline-offset-2 hover:underline focus:outline-none"
+                        className="text-left font-semibold text-blue-300 underline-offset-2 hover:underline focus:outline-none"
                         title="Open location details"
                       >
                         {row.location}
                       </button>
                     </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.address1}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.address2}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.city}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.state}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.zipCode}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.office}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.phoneNo}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.email}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.defaultPartDist}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.repTech}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.sms}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.emailFlag}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.autoTriage}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[160px]" title={row.address1}>{row.address1}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[100px]" title={row.address2}>{row.address2}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.city}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.state}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.zipCode}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[120px]" title={row.office}>{row.office}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.phoneNo}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[160px]" title={row.email}>{row.email}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[120px]" title={row.defaultPartDist}>{row.defaultPartDist}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[120px]" title={row.repTech}>{row.repTech}</td>
+                    <td className="px-1.5 py-1.5 align-middle text-center">{row.sms}</td>
+                    <td className="px-1.5 py-1.5 align-middle text-center">{row.emailFlag}</td>
+                    <td className="px-1.5 py-1.5 align-middle text-center">{row.autoTriage}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => editLocationRow(row)}
-                        className="btn mr-2"
+                        className="rounded border border-white/15 bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-700 mr-1"
                       >
                         Edit
                       </button>
@@ -1718,9 +1933,9 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                           setNewCoverageRow(buildEmptyCoverageRow(row.location));
                           setActiveTab("coverage");
                         }}
-                        className="btn"
+                        className="rounded border border-blue-400/40 bg-blue-600/20 px-2 py-1 text-[10px] font-semibold text-blue-200 hover:bg-blue-600/30"
                       >
-                        View Covered Zip Code
+                        Zip Codes
                       </button>
                     </td>
                   </tr>
@@ -1728,7 +1943,6 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
               </tbody>
             </table>
           </div>
-          <div className="mt-3 text-xs text-slate-400">{filteredLocations.length} records found</div>
         </section>
         )}
 
@@ -1739,108 +1953,74 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
               <h2 className="text-2xl font-bold tracking-tight">Part Addresses</h2>
               <p className="mt-1 text-sm text-slate-300">*Note: If you want to ship your part to the address that is not in the location, register the addresses here.</p>
             </div>
-            <div className="text-right text-sm text-slate-400">
-              <div className="text-2xl font-bold text-white">12 records found</div>
-              <div>search in result</div>
-            </div>
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-end gap-4">
-            <div className="w-full max-w-md">
-              <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
-              <input
-                value={partSearch}
-                onChange={(event) => setPartSearch(event.target.value)}
-                placeholder="Search part addresses..."
-                className="glass-input mt-2 w-full"
-              />
-            </div>
-            <div className="ml-auto flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="button" onClick={addPartRow} className="btn">Add</button>
               <button type="button" onClick={savePartRows} className="btn btn-primary">Save</button>
             </div>
           </div>
 
-          <div className="mt-5 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
-            <table className="min-w-[1200px] w-full text-[11px] leading-tight">
+          <div className="mt-4 mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-slate-300">
+              <span className="font-semibold text-white">{filteredPartRows.length}</span> record{filteredPartRows.length === 1 ? "" : "s"} found
+            </div>
+            <input
+              value={partSearch}
+              onChange={(event) => setPartSearch(event.target.value)}
+              placeholder="Search part addresses..."
+              className="glass-input w-full sm:w-64"
+              aria-label="Search part addresses"
+            />
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
+            <table className="w-full text-[11px] leading-tight">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-2 py-2 text-left whitespace-nowrap">ID</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Name</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Address1</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Address2</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">City</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">State</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Zip Code</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Location</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Actions</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">ID</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Name</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Address1</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Address2</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">City</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">State</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Zip</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Location</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-slate-200">
                 <tr className="bg-blue-500/10">
-                  <td className="px-4 py-3 align-middle">
-                    <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-200">{nextPartAddressId}</div>
+                  <td className="px-1.5 py-1.5 align-middle">
+                    <div className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-slate-200">{nextPartAddressId}</div>
                   </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.name} onChange={(event) => setNewPartRow((current) => ({ ...current, name: event.target.value }))} title="Name" placeholder="Name" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.address1} onChange={(event) => setNewPartRow((current) => ({ ...current, address1: event.target.value }))} title="Address1" placeholder="Address1" className="glass-input w-full min-w-[180px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.address2} onChange={(event) => setNewPartRow((current) => ({ ...current, address2: event.target.value }))} title="Address2" placeholder="Address2" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.city} onChange={(event) => setNewPartRow((current) => ({ ...current, city: event.target.value }))} title="City" placeholder="City" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.state} onChange={(event) => setNewPartRow((current) => ({ ...current, state: event.target.value }))} title="State" placeholder="State" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.zipCode} onChange={(event) => setNewPartRow((current) => ({ ...current, zipCode: event.target.value }))} title="Zip Code" placeholder="Zip Code" className="glass-input w-full min-w-[95px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newPartRow.location} onChange={(event) => setNewPartRow((current) => ({ ...current, location: event.target.value }))} title="Location" placeholder="Location" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <button type="button" onClick={addPartRow} className="btn btn-primary">Add</button>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.name} onChange={(event) => setNewPartRow((current) => ({ ...current, name: event.target.value }))} title="Name" placeholder="Name" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.address1} onChange={(event) => setNewPartRow((current) => ({ ...current, address1: event.target.value }))} title="Address1" placeholder="Address1" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.address2} onChange={(event) => setNewPartRow((current) => ({ ...current, address2: event.target.value }))} title="Address2" placeholder="Address2" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.city} onChange={(event) => setNewPartRow((current) => ({ ...current, city: event.target.value }))} title="City" placeholder="City" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.state} onChange={(event) => setNewPartRow((current) => ({ ...current, state: event.target.value }))} title="State" placeholder="State" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.zipCode} onChange={(event) => setNewPartRow((current) => ({ ...current, zipCode: event.target.value }))} title="Zip" placeholder="Zip" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newPartRow.location} onChange={(event) => setNewPartRow((current) => ({ ...current, location: event.target.value }))} title="Location" placeholder="Location" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
+                    <button type="button" onClick={addPartRow} className="rounded border border-blue-400/40 bg-blue-600/30 px-2 py-1 text-[10px] font-semibold text-blue-200 hover:bg-blue-600/50">Add</button>
                   </td>
                 </tr>
                 {filteredPartRows.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.id}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.name}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.address1}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.address2}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.city}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.state}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.zipCode}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <span className="block px-2 py-1">{row.location}</span>
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <button type="button" onClick={() => removePartRow(row.id)} className="btn">Delete</button>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.id}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[140px]" title={row.name}>{row.name}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[180px]" title={row.address1}>{row.address1}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[120px]" title={row.address2}>{row.address2}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.city}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.state}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.zipCode}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.location}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
+                      <button type="button" onClick={() => removePartRow(row.id)} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/20">Delete</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="mt-3 text-xs text-slate-400">{filteredPartRows.length} records found</div>
         </section>
         )}
 
@@ -1850,10 +2030,6 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             <div>
               <h2 className="text-2xl font-bold tracking-tight">Covered Zip Codes</h2>
               <p className="mt-1 text-sm text-slate-300">Location: {selectedCoverageLocation || "Select a location"}</p>
-            </div>
-            <div className="text-right text-sm text-slate-400">
-              <div className="text-2xl font-bold text-white">{filteredCoverageRows.length} records found</div>
-              <div>search in result</div>
             </div>
           </div>
 
@@ -1955,8 +2131,26 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             </div>
 
             <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
-              <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Coverage Map</div>
-              <h3 className="mt-2 text-xl font-semibold text-white">{selectedCoverageLocation || "No location selected"}</h3>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Coverage Map</div>
+                  <h3 className="mt-2 text-xl font-semibold text-white">{selectedCoverageLocation || "No location selected"}</h3>
+                </div>
+                {/* Toggle whether each polygon's zip code is rendered as a
+                    pill label at its centroid. Useful for screenshots and
+                    cleaner views; on by default. The effect that builds the
+                    map adds the marker to coverageOverlayRefs; flipping
+                    this just calls setMap(null|map) on each one. */}
+                <label className="inline-flex items-center gap-2 text-xs text-slate-300 select-none cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showZipLabels}
+                    onChange={(e) => setShowZipLabels(e.target.checked)}
+                    className="accent-blue-500 h-4 w-4"
+                  />
+                  Show zip codes
+                </label>
+              </div>
               <div className="relative mt-3 min-h-[580px] overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/10 via-slate-900 to-cyan-500/10">
                 <div ref={coverageMapContainerRef} className="google-map-canvas" aria-label="Google coverage map" />
                 {(!coverageMapReady || coverageMapLoading) && (
@@ -1975,68 +2169,55 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-end gap-4">
-            <div className="w-full max-w-md">
-              <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
-              <input
-                value={coverageSearch}
-                onChange={(event) => setCoverageSearch(event.target.value)}
-                placeholder="Search coverage zip codes..."
-                className="glass-input mt-2 w-full"
-              />
+          <div className="mt-5 mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-slate-300">
+              <span className="font-semibold text-white">{filteredCoverageRows.length}</span> record{filteredCoverageRows.length === 1 ? "" : "s"} found
+              <span className="ml-3 text-slate-500">*Format: Location + Zip Code (CSV file)</span>
             </div>
-            <div className="ml-auto text-sm text-slate-400">
-              *Format: Location + Zip Code (CSV file)
-            </div>
+            <input
+              value={coverageSearch}
+              onChange={(event) => setCoverageSearch(event.target.value)}
+              placeholder="Search zip codes..."
+              className="glass-input w-full sm:w-64"
+              aria-label="Search coverage zip codes"
+            />
           </div>
 
-          <div className="mt-5 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
-            <table className="min-w-[1300px] w-full text-[11px] leading-tight">
+          <div className="overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60">
+            <table className="w-full text-[11px] leading-tight">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Zip Code</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">City</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Location</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Self-Schedule</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">X days later</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Tier Code (SP)</th>
-                  <th className="px-2 py-2 text-left whitespace-nowrap">Actions</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Zip</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">City</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Location</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Self-Sched.</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">X days</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Tier (SP)</th>
+                  <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-slate-200">
                 <tr className="bg-blue-500/10">
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.zipCode} onChange={(event) => setNewCoverageRow((current) => ({ ...current, zipCode: event.target.value }))} placeholder="Zip Code" className="glass-input w-full min-w-[95px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.city} onChange={(event) => setNewCoverageRow((current) => ({ ...current, city: event.target.value }))} placeholder="City" className="glass-input w-full min-w-[120px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.location || selectedCoverageLocation} onChange={(event) => setNewCoverageRow((current) => ({ ...current, location: event.target.value }))} placeholder="Location" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.selfSchedule} onChange={(event) => setNewCoverageRow((current) => ({ ...current, selfSchedule: event.target.value }))} placeholder="Self-Schedule" className="glass-input w-full min-w-[140px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.daysLater} onChange={(event) => setNewCoverageRow((current) => ({ ...current, daysLater: event.target.value }))} placeholder="X days later" className="glass-input w-full min-w-[110px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <input value={newCoverageRow.tierCode} onChange={(event) => setNewCoverageRow((current) => ({ ...current, tierCode: event.target.value }))} placeholder="Tier Code (SP)" className="glass-input w-full min-w-[150px] text-[11px] px-2 py-1" />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <button type="button" onClick={addCoverageRow} className="btn btn-primary">Add</button>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.zipCode} onChange={(event) => setNewCoverageRow((current) => ({ ...current, zipCode: event.target.value }))} placeholder="Zip" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.city} onChange={(event) => setNewCoverageRow((current) => ({ ...current, city: event.target.value }))} placeholder="City" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.location || selectedCoverageLocation} onChange={(event) => setNewCoverageRow((current) => ({ ...current, location: event.target.value }))} placeholder="Location" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.selfSchedule} onChange={(event) => setNewCoverageRow((current) => ({ ...current, selfSchedule: event.target.value }))} placeholder="Self-Sched." className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.daysLater} onChange={(event) => setNewCoverageRow((current) => ({ ...current, daysLater: event.target.value }))} placeholder="X days" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle"><input value={newCoverageRow.tierCode} onChange={(event) => setNewCoverageRow((current) => ({ ...current, tierCode: event.target.value }))} placeholder="Tier" className="glass-input w-full text-[11px] px-1.5 py-1" /></td>
+                  <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
+                    <button type="button" onClick={addCoverageRow} className="rounded border border-blue-400/40 bg-blue-600/30 px-2 py-1 text-[10px] font-semibold text-blue-200 hover:bg-blue-600/50">Add</button>
                   </td>
                 </tr>
                 {filteredCoverageRows.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.zipCode}</span></td>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.city}</span></td>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.location}</span></td>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.selfSchedule}</span></td>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.daysLater}</span></td>
-                    <td className="px-4 py-3 align-middle"><span className="block px-2 py-1">{row.tierCode}</span></td>
-                    <td className="px-4 py-3 align-middle">
-                      <button type="button" onClick={() => removeCoverageRow(row.id)} className="btn">Delete</button>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.zipCode}</td>
+                    <td className="px-1.5 py-1.5 align-middle truncate max-w-[140px]" title={row.city}>{row.city}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.location}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.selfSchedule}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.daysLater}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">{row.tierCode}</td>
+                    <td className="px-1.5 py-1.5 align-middle whitespace-nowrap">
+                      <button type="button" onClick={() => removeCoverageRow(row.id)} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/20">Delete</button>
                     </td>
                   </tr>
                 ))}

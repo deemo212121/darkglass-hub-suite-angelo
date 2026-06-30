@@ -68,23 +68,31 @@ export async function retrieveClaim(params: {
   manufacturerName?: string;
   serviceCenterNumber?: string;
 }): Promise<ClaimsRetrievalResponse> {
-  const response = await fetch('/api/servicepower', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const { runWithApiHealth } = await import("./apiHealth");
+  return runWithApiHealth(
+    "servicePower.retrieveClaim",
+    async () => {
+      const response = await fetch('/api/servicepower', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'retrieveClaim', params }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to retrieve claim');
+      }
+      return response.json() as Promise<ClaimsRetrievalResponse>;
     },
-    body: JSON.stringify({
-      action: 'retrieveClaim',
-      params
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to retrieve claim');
-  }
-
-  return response.json();
+    {
+      // Treat ServicePower "ER" responses as logical failures. Some are
+      // expected (claim not on file, bad input) but persistent ER bursts
+      // still warrant an admin heads-up.
+      isFailure: (r) => Boolean(r && (r as any).responseCode === "ER"),
+      describeFailure: (r) =>
+        (r as any)?.messages?.map((m: any) => m.message).join("; ") ||
+        "ServicePower responded with ER",
+    },
+  );
 }
 
 /**

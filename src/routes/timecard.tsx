@@ -496,42 +496,61 @@ function TimecardPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex gap-2 pt-4">
-                    <button
-                      onClick={() => {
-                        if (!modalEntry.checkIn) {
-                          handleTimeToggle();
-                        } else if (!modalEntry.checkOut) {
-                          handleTimeToggle();
-                        }
-                      }}
-                      className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                      disabled={!!modalEntry.checkOut}
-                    >
-                      {!modalEntry.checkIn
-                        ? "🕐 Time In"
-                        : !modalEntry.checkOut
-                          ? "🛑 Time Out"
-                          : "✓ Done"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (!modalEntry.mealStart) {
-                          handleMealToggle();
-                        } else if (!modalEntry.mealEnd) {
-                          handleMealToggle();
-                        }
-                      }}
-                      className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                      disabled={!!modalEntry.mealEnd}
-                    >
-                      {!modalEntry.mealStart
-                        ? "🍽 Meal In"
-                        : !modalEntry.mealEnd
-                          ? "✓ Meal Out"
-                          : "Done"}
-                    </button>
-                  </div>
+                  {(() => {
+                    const todayKey = (() => {
+                      const t = new Date();
+                      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+                    })();
+                    const isToday = editingDate === todayKey;
+                    const isPast = editingDate < todayKey;
+                    if (!isToday) {
+                      return (
+                        <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-3 text-xs text-amber-200">
+                          {isPast
+                            ? "Time-in / time-out for past dates is locked. Open My Timecard on the actual day to log your hours."
+                            : "You can only log time-in / time-out on today's date."}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="flex gap-2 pt-4">
+                        <button
+                          onClick={() => {
+                            if (!modalEntry.checkIn) {
+                              handleTimeToggle();
+                            } else if (!modalEntry.checkOut) {
+                              handleTimeToggle();
+                            }
+                          }}
+                          className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
+                          disabled={!!modalEntry.checkOut}
+                        >
+                          {!modalEntry.checkIn
+                            ? "🕐 Time In"
+                            : !modalEntry.checkOut
+                              ? "🛑 Time Out"
+                              : "✓ Done"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!modalEntry.mealStart) {
+                              handleMealToggle();
+                            } else if (!modalEntry.mealEnd) {
+                              handleMealToggle();
+                            }
+                          }}
+                          className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
+                          disabled={!!modalEntry.mealEnd}
+                        >
+                          {!modalEntry.mealStart
+                            ? "🍽 Meal In"
+                            : !modalEntry.mealEnd
+                              ? "✓ Meal Out"
+                              : "Done"}
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Footer */}

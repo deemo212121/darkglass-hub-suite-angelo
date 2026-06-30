@@ -5,9 +5,11 @@ import { setDesktopOverride } from "@/lib/device";
 import { getCompanyTickets, getTicketVisits } from "@/lib/supabase/tickets";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
+import { TicketPhotos } from "@/components/TicketPhotos";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
+import { resolveTierCode } from "@/lib/tierCodes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
@@ -157,7 +159,14 @@ export function MobileTechApp() {
   // Technician roster for managers — real TECHNICIAN-role users from Supabase,
   // scoped to the manager's allowed locations (assigned_branch / branch_access).
   const roster = useMemo(() => {
-    const techUsers = users.filter((u) => (u.role || "").toUpperCase() === "TECHNICIAN");
+    // Include users who have TECHNICIAN as their primary role OR in
+    // extra_roles. Daven Hodge is a manager+technician, for example.
+    const techUsers = users.filter((u) => {
+      const primary = (u.role || "").toUpperCase();
+      if (primary === "TECHNICIAN") return true;
+      const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
+      return extras.some((r) => String(r).toUpperCase() === "TECHNICIAN");
+    });
     const inScope = techUsers.filter((u) => {
       if (allowedLocations === null) return true;
       const branches = [u.assigned_branch, ...(u.branch_access || "").split(/[,;]/)]
@@ -776,7 +785,7 @@ function DetailView({
       {tab === "general" && (
         <DetailsTab ticket={ticket} authorName={authorName} authorRole={authorRole} />
       )}
-      {tab === "tracking" && <RepairTab ticket={ticket} />}
+      {tab === "tracking" && <RepairTab ticket={ticket} authorName={authorName} />}
       {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
     </div>
   );
@@ -812,6 +821,13 @@ function DetailsTab({
       <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
       <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} />
       <InfoRow label="Location" value={resolveLocation(ticket)} />
+      {/* Tier Code — derived from warranty + zip. Shows "N/A" for warranty
+          companies outside the Assurant / GE / Miele set so techs can see
+          the field exists and that no tiered rate applies. */}
+      {(() => {
+        const tier = resolveTierCode(ticket.account || ticket.warranty, ticket.zip, (ticket as any).accountNo);
+        return <InfoRow label="Tier Code" value={tier ? tier.label : "N/A"} />;
+      })()}
 
       <div className="mtech-section-title">Contact Details</div>
       <InfoRow label="Address" value={ticket.address} />
@@ -841,7 +857,7 @@ function DetailsTab({
   );
 }
 
-function RepairTab({ ticket }: { ticket: Ticket }) {
+function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string }) {
   const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
   const [loading, setLoading] = useState(true);
 
@@ -908,7 +924,13 @@ function RepairTab({ ticket }: { ticket: Ticket }) {
       <InfoRow label="Internal Note" value={ticket.internalNote} />
 
       <div className="mtech-section-title">Attachments</div>
-      <div className="mtech-muted">Photo upload coming soon.</div>
+      <TicketPhotos
+        ticketNo={ticket.ticketNo}
+        category="service"
+        title=""
+        uploadedBy={authorName}
+        visitOptions={visits.map((v) => String(v.visitNo || "")).filter(Boolean)}
+      />
     </div>
   );
 }

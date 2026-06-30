@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleSupabaseTokenRequest } from "./lib/server/supabaseTokenBridge";
 import { handleServicePowerRequest } from "./lib/server/servicePowerBridge";
+import { handleMarconeRequest } from "./lib/server/marconeBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -110,6 +111,10 @@ export default {
     if (url.pathname === "/api/servicepower") {
       const merged = await resolveServerEnv(env);
       return await handleServicePowerRequest(request, merged);
+    }
+    if (url.pathname === "/api/marcone") {
+      const merged = await resolveServerEnv(env);
+      return await handleMarconeRequest(request, merged);
     }
 
     try {

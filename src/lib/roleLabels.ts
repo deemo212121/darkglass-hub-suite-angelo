@@ -27,4 +27,6 @@ export const ROLE_LABELS: Record<string, string> = {
   PARTS_MANAGER: "Parts Manager",
   BIZOPS_MANAGER: "BizOps Manager",
   BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
+  TRIAGE_USER: "Triage User",
+  TRIAGE_MANAGER: "Triage Manager",
 };

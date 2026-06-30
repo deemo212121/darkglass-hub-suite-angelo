@@ -1,25 +1,22 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Search, X } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { ChevronLeft, Columns3, Filter, History, Search, X } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { exportToCSV } from "@/lib/csvExport";
+import { REPAIR_STATUS_OPTIONS, TICKETS, TICKET_SOURCES, type Ticket } from "@/lib/ticketData";
+import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-
-// All CSR statuses from ticket system
-const ALL_CSR_STATUSES = [
-  "CSR-Assigned to ASC",
-  "CSR-Left Message for Cx",
-  "CSR-Needs Scheduling",
-  "CSR-Acknowledged",
-  "CSR-Pending Callback",
-  "CSR-Escalated",
-  "CSR-Resolved",
-  "OP-Waiting for Part",
-  "OP-UPDATE HOLD",
-  "TR-Need Triage",
-  "TR-Need PO",
-  "CL-Parts Back Ordered",
-];
 
 const STATUS_COLORS: Record<string, string> = {
   "CSR-Assigned to ASC": "#3b82f6",
@@ -30,166 +27,1011 @@ const STATUS_COLORS: Record<string, string> = {
   "CSR-Escalated": "#ef4444",
   "CSR-Resolved": "#22c55e",
   "OP-Waiting for Part": "#60a5fa",
+  "OP-Ready for Service": "#06b6d4",
+  "OP-Reschedule Follow up": "#818cf8",
   "OP-UPDATE HOLD": "#fbbf24",
   "TR-Need Triage": "#f472b6",
   "TR-Need PO": "#c084fc",
+  "CL-Need": "#facc15",
   "CL-Parts Back Ordered": "#94a3b8",
+  "CL-Ready to Complete": "#10b981",
+  "CL-Claimed": "#a3e635",
+  "PT-Need PreAuthorization": "#fca5a5",
+  Cancel: "#9ca3af",
+  "Data Closed": "#64748b",
+  Completed: "#16a34a",
 };
 
-// Simulated CSR status snapshot data — will connect to Supabase
-const generateStatusData = () => {
-  const data: Record<string, { count: number; agents: string[]; tickets: string[] }> = {};
-  ALL_CSR_STATUSES.forEach(s => {
-    const count = Math.floor(Math.random() * 45) + 2;
-    data[s] = {
-      count,
-      agents: ["Anna D.", "Jeryan L.", "Rogie O.", "Alona B.", "Ma. Czarina L."].slice(0, Math.floor(Math.random() * 4) + 1),
-      tickets: Array.from({ length: Math.min(count, 5) }, (_, i) => `SA-${3700000 + i * 100 + Math.floor(Math.random() * 50)}`),
+const colorFor = (status: string) => STATUS_COLORS[status] || "#94a3b8";
+
+// High-contrast tooltip — always readable in both light & dark mode
+const TOOLTIP_STYLE = {
+  background: "#ffffff",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  color: "#0f172a",
+  fontSize: 12,
+  fontWeight: 600,
+  boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+} as const;
+
+const TICKET_COLUMNS = [
+  { key: "ticketNo", label: "Ticket No" },
+  { key: "warranty", label: "Wty" },
+  { key: "ticketSource", label: "Ticket Source" },
+  { key: "customer", label: "Cx Name" },
+  { key: "city", label: "City" },
+  { key: "location", label: "Loc" },
+  { key: "product", label: "Product" },
+  { key: "model", label: "Model" },
+  { key: "internalNote", label: "Internal Note" },
+  { key: "repair", label: "Repair" },
+  { key: "technician", label: "Technician" },
+  { key: "customerPref", label: "Cx Prefer" },
+  { key: "schedule", label: "Schedule" },
+  { key: "status", label: "Status" },
+  { key: "phone", label: "Phone" },
+  { key: "redo", label: "Redo" },
+  { key: "aging", label: "Aging" },
+  { key: "statusSpend", label: "Status Spend" },
+  { key: "calls", label: "Calls" },
+  { key: "partOrder", label: "Part Order" },
+  { key: "posting", label: "Posting" },
+] as const;
+type TicketColumnKey = (typeof TICKET_COLUMNS)[number]["key"];
+
+const FILTERABLE = [
+  "ticketSource",
+  "warranty",
+  "customer",
+  "city",
+  "location",
+  "product",
+  "technician",
+  "customerPref",
+  "schedule",
+  "status",
+  "redo",
+  "partOrder",
+] as const;
+
+// ── Ticket-List display helpers (ported for visual parity) ──
+function warrantyAcronym(value: string | null | undefined): string {
+  const v = (value || "").trim();
+  if (!v) return "";
+  if (v.length <= 4 && v === v.toUpperCase()) return v;
+  return v.toUpperCase();
+}
+
+function statusTextColor(status: string): string {
+  const key = (status || "").trim().toLowerCase();
+  const map: Record<string, string> = {
+    "op-waiting for part": "text-yellow-400",
+    "op-ready for service": "text-blue-400",
+    "csr-left message for cx": "text-green-400",
+    "cl-ready to complete": "text-red-400",
+    "cl-parts back ordered": "text-slate-100",
+  };
+  return map[key] ?? "text-blue-300";
+}
+
+function productLabel(ticket: { productType?: string; model?: string }): string {
+  const explicit = (ticket.productType || "").trim();
+  if (explicit) return explicit;
+  const model = (ticket.model || "").toLowerCase();
+  const guesses: Array<[RegExp, string]> = [
+    [/dryer/, "Dryer"],
+    [/washer|washing/, "Washer"],
+    [/refrig|fridge/, "Refrigerator"],
+    [/freezer/, "Freezer"],
+    [/dishwash/, "Dishwasher"],
+    [/range|stove|oven|cooktop/, "Range/Oven"],
+    [/microwave/, "Microwave"],
+    [/ice\s*maker/, "Ice Maker"],
+    [/disposal/, "Disposal"],
+    [/water\s*heater/, "Water Heater"],
+  ];
+  for (const [re, label] of guesses) if (re.test(model)) return label;
+  return "—";
+}
+
+function daysSinceCreated(created: string | undefined): number {
+  if (!created) return 0;
+  const raw = String(created).trim();
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  let createdDate: Date | null = null;
+  if (slash) {
+    const mm = parseInt(slash[1], 10) - 1;
+    const dd = parseInt(slash[2], 10);
+    let yy = parseInt(slash[3], 10);
+    if (yy < 100) yy += 2000;
+    createdDate = new Date(yy, mm, dd);
+  } else {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) createdDate = parsed;
+  }
+  if (!createdDate || isNaN(createdDate.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now() - createdDate.getTime()) / 86400000));
+}
+
+const agingColor = (d: number) =>
+  d <= 3 ? "text-green-400" : d <= 7 ? "text-yellow-400" : d <= 14 ? "text-orange-400" : "text-red-400";
+
+function colValue(ticket: Ticket, field: string): string {
+  switch (field) {
+    case "ticketSource":
+      return ticket.ticketSource || ticket.manufacturer || "";
+    case "warranty":
+      return ticket.warranty || "";
+    case "customer":
+      return ticket.customer || "";
+    case "city":
+      return ticket.city || "";
+    case "location":
+      return ticket.location || "";
+    case "product":
+      return productLabel(ticket);
+    case "technician":
+      return ticket.technician || "";
+    case "status":
+      return ticket.status || "";
+    case "customerPref":
+      return ticket.customerPref || "";
+    case "redo":
+      return ticket.redo || "";
+    case "partOrder":
+      return ticket.partOrder || "";
+    case "schedule":
+      return ticket.schedule || "";
+    default:
+      return ((ticket as any)[field] ?? "").toString();
+  }
+}
+
+function parseTicketDate(s?: string): number | null {
+  if (!s) return null;
+  const p = s.split("/");
+  if (p.length < 3) return null;
+  const parts = p.map((x) => parseInt(x, 10));
+  let [m, d, y] = parts;
+  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
+  if (y < 100) y += 2000;
+  return y * 10000 + m * 100 + d;
+}
+function parseInputDate(v: string): number | null {
+  if (!v) return null;
+  const p = v.split("-");
+  if (p.length < 3) return null;
+  const [y, m, d] = p.map((x) => parseInt(x, 10));
+  if (isNaN(m) || isNaN(d) || isNaN(y)) return null;
+  return y * 10000 + m * 100 + d;
+}
+
+// ── Per-column funnel filter (ported from Ticket List) ──
+function ColumnFilter({
+  field,
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  field: string;
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const visible = useMemo(
+    () => options.filter((o) => !search || o.toLowerCase().includes(search.toLowerCase())),
+    [options, search],
+  );
+  const allChecked = selected.size === 0 || selected.size === options.length;
+  const active = selected.size > 0 && selected.size < options.length;
+
+  const toggle = (opt: string) => {
+    const base = selected.size === 0 ? new Set(options) : new Set(selected);
+    if (base.has(opt)) base.delete(opt);
+    else base.add(opt);
+    onChange(base.size === options.length ? new Set<string>() : base);
+  };
+  const toggleAll = () => {
+    if (allChecked) onChange(new Set(["__none__"]));
+    else onChange(new Set<string>());
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const el = document.getElementById(`colfilter-${field}`);
+      if (el && !el.contains(e.target as Node)) setOpen(false);
     };
-  });
-  return data;
-};
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, field]);
 
-const STATUS_DATA = generateStatusData();
+  return (
+    <span id={`colfilter-${field}`} className="relative inline-flex items-center">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        className={`ml-1 inline-grid h-4 w-4 place-items-center rounded ${active ? "text-blue-200" : "text-blue-400/60"} hover:text-white`}
+        title={`Filter by ${label}`}
+      >
+        <Filter className="h-3 w-3" fill={active ? "currentColor" : "none"} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-6 z-50 w-60 rounded-lg border border-white/15 bg-slate-900 shadow-2xl p-2 text-left normal-case">
+          <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Filter by {label}
+          </div>
+          <div className="relative mb-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="w-full rounded border border-white/15 bg-slate-800 pl-7 pr-2 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            <label className="flex items-center gap-2 px-1 py-1 text-xs text-white cursor-pointer hover:bg-white/5 rounded">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={toggleAll}
+                className="accent-blue-500 h-3.5 w-3.5"
+              />
+              <span className="font-semibold">(Select All)</span>
+            </label>
+            {visible.map((opt) => {
+              const checked = selected.size === 0 || selected.size === options.length || selected.has(opt);
+              return (
+                <label
+                  key={opt}
+                  className="flex items-center gap-2 px-1 py-1 text-xs text-slate-200 cursor-pointer hover:bg-white/5 rounded"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(opt)}
+                    className="accent-blue-500 h-3.5 w-3.5"
+                  />
+                  <span className="truncate">{opt || "(blank)"}</span>
+                </label>
+              );
+            })}
+            {visible.length === 0 && (
+              <div className="px-1 py-2 text-xs text-slate-500">No matches</div>
+            )}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
 
-export function CSRStatusSummary({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [statusFilter, setStatusFilter] = useState("");
-  const [agentSearch, setAgentSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const [repairStatusFilter, setRepairStatusFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
+  const [ticketSourceFilter, setTicketSourceFilter] = useState("");
 
-  const hasFilters = !!(statusFilter || agentSearch || dateFrom || dateTo);
-  const clearFilters = () => { setStatusFilter(""); setAgentSearch(""); setDateFrom(""); setDateTo(""); };
+  const [selectedStatus, setSelectedStatus] = useState<string>("");
+  const [showPieLabels, setShowPieLabels] = useState(true);
 
-  const filteredStatuses = useMemo(() => {
-    let entries = Object.entries(STATUS_DATA);
-    if (statusFilter) entries = entries.filter(([s]) => s === statusFilter);
-    if (agentSearch) entries = entries.filter(([, v]) => v.agents.some(a => a.toLowerCase().includes(agentSearch.toLowerCase())));
-    return entries;
-  }, [statusFilter, agentSearch]);
+  // Per-column funnel filters
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  const setColFilter = (field: string, next: Set<string>) =>
+    setColFilters((prev) => ({ ...prev, [field]: next }));
 
-  const totalCount = filteredStatuses.reduce((s, [, v]) => s + v.count, 0);
+  // Column visibility
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true])),
+  );
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const isColVisible = (key: TicketColumnKey) => visibleColumns[key] !== false;
+  const toggleColumn = (key: TicketColumnKey) =>
+    setVisibleColumns((prev) => ({ ...prev, [key]: prev[key] === false }));
+  const showAllColumns = () =>
+    setVisibleColumns(Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true])));
 
-  const pieData = filteredStatuses.map(([name, v]) => ({ name, value: v.count }));
-  const barData = filteredStatuses.map(([name, v]) => ({ name: name.replace("CSR-", "").replace("OP-", "OP: ").replace("TR-", "TR: ").replace("CL-", "CL: "), value: v.count, fill: STATUS_COLORS[name] || "#94a3b8" }));
+  const locationOptions = useMemo(
+    () => mergeLocationOptions(LOCATIONS, TICKETS.map((t) => t.location)),
+    [],
+  );
+  const ticketSourceOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...TICKET_SOURCES,
+          ...(TICKETS.map((t) => t.ticketSource).filter(Boolean) as string[]),
+        ]),
+      ),
+    [],
+  );
+
+  // ── Top-filter the real ticket list ──
+  const filteredTickets = useMemo(() => {
+    const fromN = parseInputDate(startDateFilter);
+    const toN = parseInputDate(endDateFilter);
+    return TICKETS.filter((t) => {
+      if (repairStatusFilter && t.status !== repairStatusFilter) return false;
+      if (locationFilter && t.location !== locationFilter) return false;
+      if (ticketSourceFilter && t.ticketSource !== ticketSourceFilter) return false;
+      if (fromN || toN) {
+        const dn = parseTicketDate(t.schedule) ?? parseTicketDate(t.created);
+        if (dn == null) return false;
+        if (fromN && dn < fromN) return false;
+        if (toN && dn > toN) return false;
+      }
+      return true;
+    });
+  }, [repairStatusFilter, locationFilter, ticketSourceFilter, startDateFilter, endDateFilter]);
+
+  // ── Group filtered tickets by status (drives cards + charts) ──
+  const statusGroups = useMemo(() => {
+    const map: Record<string, Ticket[]> = {};
+    filteredTickets.forEach((t) => {
+      (map[t.status] = map[t.status] || []).push(t);
+    });
+    return Object.entries(map).sort(([, a], [, b]) => b.length - a.length);
+  }, [filteredTickets]);
+
+  const totalCount = filteredTickets.length;
+
+  const hasFilters = !!(
+    repairStatusFilter ||
+    locationFilter ||
+    startDateFilter ||
+    endDateFilter ||
+    ticketSourceFilter
+  );
+  const clearFilters = () => {
+    setRepairStatusFilter("");
+    setLocationFilter("");
+    setStartDateFilter("");
+    setEndDateFilter("");
+    setTicketSourceFilter("");
+    setSelectedStatus("");
+    setColFilters({});
+  };
+
+  const pieData = statusGroups.map(([name, list]) => ({ name, value: list.length }));
+  const barData = statusGroups.map(([name, list]) => ({
+    name: name
+      .replace("CSR-", "")
+      .replace("OP-", "OP: ")
+      .replace("TR-", "TR: ")
+      .replace("CL-", "CL: ")
+      .replace("PT-", "PT: "),
+    value: list.length,
+    fill: colorFor(name),
+  }));
+
+  // Column-filter option lists (built from the top-filtered set)
+  const columnOptions = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const f of FILTERABLE) {
+      map[f] = Array.from(new Set(filteredTickets.map((t) => colValue(t, f)).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b),
+      );
+    }
+    return map;
+  }, [filteredTickets]);
+
+  // Tickets shown in the bottom table: top filters → selected status → per-column filters
+  const listTickets = useMemo(() => {
+    let rows = selectedStatus ? filteredTickets.filter((t) => t.status === selectedStatus) : filteredTickets;
+    rows = rows.filter((t) =>
+      Object.entries(colFilters).every(([field, sel]) => {
+        if (!sel || sel.size === 0) return true;
+        if (sel.has("__none__")) return false;
+        return sel.has(colValue(t, field));
+      }),
+    );
+    return rows;
+  }, [selectedStatus, filteredTickets, colFilters]);
+
+  const visibleColCount = TICKET_COLUMNS.filter((c) => isColVisible(c.key)).length;
 
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module/$submodule" params={{ module: "dashboard", submodule: "csr-dashboard" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <Link
+            to="/m/$module/$submodule"
+            params={{ module: "dashboard", submodule: "csr-dashboard" }}
+            className="btn hover:bg-white/15"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Link>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
-          <span className="px-2 py-0.5 rounded text-xs bg-yellow-500/15 text-yellow-300 border border-yellow-500/25">Sample data · connects to Supabase</span>
         </div>
 
         {/* Filters */}
         <div className="panel mb-6">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</label>
-              <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md min-w-[220px]">
-                <option value="">All Statuses</option>
-                {ALL_CSR_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select></div>
-            <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</label>
-              <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input value={agentSearch} onChange={e => setAgentSearch(e.target.value)} placeholder="Search agent…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-36" /></div></div>
-            <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" style={{ colorScheme: "dark" }} /></div>
-            <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" style={{ colorScheme: "dark" }} /></div>
-            {hasFilters && (
-              <button onClick={clearFilters} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-white/10 border border-white/10 transition-colors self-end mb-0.5">
-                <X className="h-3.5 w-3.5" />Clear
-              </button>
-            )}
-            <div className="ml-auto flex items-center gap-2 self-end mb-0.5">
-              <span className="text-xs text-muted-foreground">{totalCount} total tickets · {filteredStatuses.length} statuses</span>
-              <button onClick={() => exportToCSV("csr_status_summary", ["Status", "Count", "Top Agents", "Sample Tickets"],
-                filteredStatuses.map(([s, v]) => [s, v.count, v.agents.join(", "), v.tickets.slice(0, 3).join(", ")]))}
-                title="Download CSV" className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-              </button>
+          <div className="space-y-3">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <select
+                aria-label="Repair status filter"
+                value={repairStatusFilter}
+                onChange={(e) => setRepairStatusFilter(e.target.value)}
+                className="glass-input w-full"
+              >
+                <option value="">All Repair Status</option>
+                {REPAIR_STATUS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Location filter"
+                value={locationFilter}
+                onChange={(e) => setLocationFilter(e.target.value)}
+                className="glass-input w-full"
+              >
+                <option value="">All Locations</option>
+                {locationOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <input
+                aria-label="Start date"
+                type="date"
+                value={startDateFilter}
+                onChange={(e) => setStartDateFilter(e.target.value)}
+                className="glass-input w-full"
+              />
+              <input
+                aria-label="End date"
+                type="date"
+                value={endDateFilter}
+                onChange={(e) => setEndDateFilter(e.target.value)}
+                className="glass-input w-full"
+              />
+              <select
+                aria-label="Ticket source filter"
+                value={ticketSourceFilter}
+                onChange={(e) => setTicketSourceFilter(e.target.value)}
+                className="glass-input w-full"
+              >
+                <option value="">All Ticket Sources</option>
+                {ticketSourceOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              {(hasFilters || Object.keys(colFilters).length > 0) && (
+                <button
+                  onClick={clearFilters}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-white/10 border border-white/10 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />Clear
+                </button>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {totalCount} total tickets · {statusGroups.length} statuses
+                </span>
+                <button
+                  onClick={() =>
+                    exportToCSV(
+                      "csr_status_summary",
+                      ["Status", "Count", "Sample Tickets"],
+                      statusGroups.map(([s, list]) => [
+                        s,
+                        list.length,
+                        list.slice(0, 3).map((t) => t.ticketNo).join(", "),
+                      ]),
+                    )
+                  }
+                  title="Download CSV"
+                  className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Status count cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 mb-6">
-          {filteredStatuses.map(([status, v]) => (
-            <button key={status} onClick={() => setStatusFilter(statusFilter === status ? "" : status)}
-              className={`panel p-3 text-left border transition-colors ${statusFilter === status ? "border-white/30 bg-white/10" : "border-transparent hover:border-white/10 hover:bg-white/5"}`}>
-              <div className="w-2 h-2 rounded-full mb-2" style={{ background: STATUS_COLORS[status] || "#94a3b8" }} />
-              <p className="text-xl font-bold" style={{ color: STATUS_COLORS[status] || "#fff" }}>{v.count}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{status}</p>
-            </button>
-          ))}
-        </div>
-
         {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Status Distribution</p>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={barData} margin={{ left: -10 }}>
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-20} textAnchor="end" height={50} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: "#94a3b8", fontSize: 9 }}
+                  angle={-20}
+                  textAnchor="end"
+                  height={50}
+                />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(148,163,184,0.1)" }} />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Tickets">
-                  {barData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                  {barData.map((entry, i) => (
+                    <Cell key={i} fill={entry.fill} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="panel p-4">
-            <p className="text-sm font-semibold mb-4">Pie Breakdown</p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-semibold">Pie Breakdown</p>
+              <button
+                onClick={() => setShowPieLabels((v) => !v)}
+                className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded border transition-colors ${showPieLabels ? "border-white/20 bg-white/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+              >
+                {showPieLabels ? "Hide Labels" : "Show Labels"}
+              </button>
+            </div>
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
-                  {pieData.map((entry, i) => <Cell key={i} fill={STATUS_COLORS[entry.name] || "#94a3b8"} />)}
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  label={showPieLabels ? ({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%` : false}
+                  labelLine={false}
+                >
+                  {pieData.map((entry, i) => (
+                    <Cell key={i} fill={colorFor(entry.name)} />
+                  ))}
                 </Pie>
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }}
-                  formatter={(v: any, n: string) => [v, n]} />
-                <Legend wrapperStyle={{ fontSize: 10, color: "#94a3b8" }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: any) => [v, n]} />
+                <Legend
+                  wrapperStyle={{ fontSize: 10, color: "var(--foreground)" }}
+                  formatter={(value) => <span style={{ color: "var(--foreground)" }}>{value}</span>}
+                />
               </PieChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Detail table */}
+        {/* Status count cards */}
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2 mb-6">
+          <button
+            onClick={() => setSelectedStatus("")}
+            className={`panel p-2.5 text-left border transition-colors ${!selectedStatus ? "border-white/30 bg-white/10" : "border-transparent hover:border-white/10 hover:bg-white/5"}`}
+          >
+            <div className="w-1.5 h-1.5 rounded-full mb-1.5 bg-foreground/70" />
+            <p className="text-lg font-bold leading-none">{totalCount}</p>
+            <p className="text-[9px] text-muted-foreground mt-1 leading-tight uppercase tracking-wide">Total</p>
+          </button>
+          {statusGroups.length === 0 ? (
+            <p className="col-span-full text-center text-muted-foreground py-6">No tickets match filters.</p>
+          ) : (
+            statusGroups.map(([status, list]) => (
+              <button
+                key={status}
+                onClick={() => setSelectedStatus(selectedStatus === status ? "" : status)}
+                className={`panel p-2.5 text-left border transition-colors ${selectedStatus === status ? "border-white/30 bg-white/10" : "border-transparent hover:border-white/10 hover:bg-white/5"}`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full mb-1.5" style={{ background: colorFor(status) }} />
+                <p className="text-lg font-bold leading-none" style={{ color: colorFor(status) }}>
+                  {list.length}
+                </p>
+                <p className="text-[9px] text-muted-foreground mt-1 leading-tight">{status}</p>
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* ── Ticket list ── */}
         <div className="panel p-0 overflow-hidden">
-          <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm">Status Detail</div>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-white/10 bg-white/5">
-              <th className="px-4 py-2.5 text-left text-xs text-muted-foreground uppercase">Status</th>
-              <th className="px-4 py-2.5 text-right text-xs text-muted-foreground uppercase">Count</th>
-              <th className="px-4 py-2.5 text-left text-xs text-muted-foreground uppercase">Agents Involved</th>
-              <th className="px-4 py-2.5 text-left text-xs text-muted-foreground uppercase">Sample Tickets</th>
-            </tr></thead>
-            <tbody>
-              {filteredStatuses.length === 0
-                ? <tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No records match filters.</td></tr>
-                : filteredStatuses.sort(([, a], [, b]) => b.count - a.count).map(([status, v], i) => (
-                  <tr key={status} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: STATUS_COLORS[status] || "#94a3b8" }} />
-                        <span className="text-sm font-medium">{status}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right font-bold text-lg" style={{ color: STATUS_COLORS[status] || "#fff" }}>{v.count}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{v.agents.join(", ")}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {v.tickets.slice(0, 4).map(t => (
-                          <span key={t} className="px-1.5 py-0.5 rounded text-[10px] bg-white/10 text-muted-foreground border border-white/10">{t}</span>
-                        ))}
-                        {v.count > 4 && <span className="text-[10px] text-muted-foreground">+{v.count - 4} more</span>}
-                      </div>
+          <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap">
+            {selectedStatus ? (
+              <>
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: colorFor(selectedStatus) }} />
+                <span className="font-semibold text-sm">{selectedStatus}</span>
+                <span className="px-2 py-0.5 rounded-full text-xs bg-white/10 text-muted-foreground border border-white/10">
+                  {listTickets.length} tickets
+                </span>
+                <button
+                  onClick={() => setSelectedStatus("")}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />Show all
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-sm">All Tickets</span>
+                <span className="px-2 py-0.5 rounded-full text-xs bg-white/10 text-muted-foreground border border-white/10">
+                  {listTickets.length} tickets
+                </span>
+              </>
+            )}
+
+            {/* Columns visibility menu */}
+            <div className="relative ml-auto">
+              <button
+                type="button"
+                onClick={() => setColumnsMenuOpen((o) => !o)}
+                className="btn hover:bg-white/15 inline-flex items-center gap-2"
+                aria-haspopup="true"
+                aria-expanded={columnsMenuOpen}
+              >
+                <Columns3 className="h-4 w-4" /> Columns
+                <span className="text-xs text-muted-foreground">
+                  ({visibleColCount}/{TICKET_COLUMNS.length})
+                </span>
+              </button>
+              {columnsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setColumnsMenuOpen(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl">
+                    <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/10 mb-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show columns</span>
+                      <button
+                        type="button"
+                        onClick={showAllColumns}
+                        className="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        Show all
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {TICKET_COLUMNS.map((col) => (
+                        <label
+                          key={col.key}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isColVisible(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                            className="accent-blue-500"
+                          />
+                          <span className="text-slate-200">{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px] leading-tight">
+              <thead>
+                <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                  <th className="px-2 py-1.5 text-center font-semibold text-blue-300">✓</th>
+                  {isColVisible("ticketNo") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Ticket No</th>
+                  )}
+                  {isColVisible("warranty") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Wty
+                        <ColumnFilter
+                          field="warranty"
+                          label="Wty"
+                          options={columnOptions["warranty"] || []}
+                          selected={colFilters["warranty"] || new Set()}
+                          onChange={(n) => setColFilter("warranty", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("ticketSource") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Ticket Source
+                        <ColumnFilter
+                          field="ticketSource"
+                          label="Ticket Source"
+                          options={columnOptions["ticketSource"] || []}
+                          selected={colFilters["ticketSource"] || new Set()}
+                          onChange={(n) => setColFilter("ticketSource", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("customer") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Cx Name
+                        <ColumnFilter
+                          field="customer"
+                          label="Cx Name"
+                          options={columnOptions["customer"] || []}
+                          selected={colFilters["customer"] || new Set()}
+                          onChange={(n) => setColFilter("customer", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("city") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        City
+                        <ColumnFilter
+                          field="city"
+                          label="City"
+                          options={columnOptions["city"] || []}
+                          selected={colFilters["city"] || new Set()}
+                          onChange={(n) => setColFilter("city", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("location") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Loc
+                        <ColumnFilter
+                          field="location"
+                          label="Loc"
+                          options={columnOptions["location"] || []}
+                          selected={colFilters["location"] || new Set()}
+                          onChange={(n) => setColFilter("location", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("product") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Product
+                        <ColumnFilter
+                          field="product"
+                          label="Product"
+                          options={columnOptions["product"] || []}
+                          selected={colFilters["product"] || new Set()}
+                          onChange={(n) => setColFilter("product", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("model") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Model</th>
+                  )}
+                  {isColVisible("internalNote") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Internal Note</th>
+                  )}
+                  {isColVisible("repair") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Repair</th>
+                  )}
+                  {isColVisible("technician") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Technician
+                        <ColumnFilter
+                          field="technician"
+                          label="Technician"
+                          options={columnOptions["technician"] || []}
+                          selected={colFilters["technician"] || new Set()}
+                          onChange={(n) => setColFilter("technician", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("customerPref") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Cx Prefer
+                        <ColumnFilter
+                          field="customerPref"
+                          label="Cx Prefer"
+                          options={columnOptions["customerPref"] || []}
+                          selected={colFilters["customerPref"] || new Set()}
+                          onChange={(n) => setColFilter("customerPref", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("schedule") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Schedule</th>
+                  )}
+                  {isColVisible("status") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Status
+                        <ColumnFilter
+                          field="status"
+                          label="Status"
+                          options={columnOptions["status"] || []}
+                          selected={colFilters["status"] || new Set()}
+                          onChange={(n) => setColFilter("status", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("phone") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Phone</th>
+                  )}
+                  {isColVisible("redo") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Redo
+                        <ColumnFilter
+                          field="redo"
+                          label="Redo"
+                          options={columnOptions["redo"] || []}
+                          selected={colFilters["redo"] || new Set()}
+                          onChange={(n) => setColFilter("redo", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("aging") && (
+                    <th className="px-2 py-1.5 text-center font-semibold text-blue-300">Aging</th>
+                  )}
+                  {isColVisible("statusSpend") && (
+                    <th className="px-2 py-1.5 text-center font-semibold text-blue-300">Status Spend</th>
+                  )}
+                  {isColVisible("calls") && (
+                    <th className="px-2 py-1.5 text-center font-semibold text-blue-300">Calls</th>
+                  )}
+                  {isColVisible("partOrder") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300">
+                      <span className="inline-flex items-center">
+                        Part Order
+                        <ColumnFilter
+                          field="partOrder"
+                          label="Part Order"
+                          options={columnOptions["partOrder"] || []}
+                          selected={colFilters["partOrder"] || new Set()}
+                          onChange={(n) => setColFilter("partOrder", n)}
+                        />
+                      </span>
+                    </th>
+                  )}
+                  {isColVisible("posting") && (
+                    <th className="px-2 py-1.5 text-left font-semibold text-blue-300 whitespace-nowrap">Posting</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {listTickets.length === 0 ? (
+                  <tr>
+                    <td colSpan={visibleColCount + 1} className="px-4 py-10 text-center text-muted-foreground">
+                      No tickets match filters.
                     </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
+                ) : (
+                  listTickets.map((t, i) => {
+                    const aging = daysSinceCreated(t.created);
+                    const spend = t.statusChangedAt ? daysSinceCreated(t.statusChangedAt) : (t.aging ?? aging);
+                    return (
+                      <tr key={t.ticketNo + i} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                        <td className="px-2 py-1.5 text-center font-bold text-green-400">{""}</td>
+                        {isColVisible("ticketNo") && (
+                          <td className="px-2 py-1.5 font-mono text-blue-400 font-semibold whitespace-nowrap">
+                            <a
+                              href={`/ticket/${t.ticketNo}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:text-blue-300 hover:underline transition cursor-pointer"
+                            >
+                              {t.ticketNo}
+                            </a>
+                          </td>
+                        )}
+                        {isColVisible("warranty") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{warrantyAcronym(t.warranty)}</td>
+                        )}
+                        {isColVisible("ticketSource") && (
+                          <td
+                            className="px-2 py-1.5 text-slate-300 max-w-[110px] truncate"
+                            title={t.ticketSource || t.manufacturer}
+                          >
+                            {t.ticketSource || t.manufacturer}
+                          </td>
+                        )}
+                        {isColVisible("customer") && (
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[120px] truncate" title={t.customer}>
+                            {t.customer}
+                          </td>
+                        )}
+                        {isColVisible("city") && (
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[90px] truncate" title={t.city}>
+                            {t.city}
+                          </td>
+                        )}
+                        {isColVisible("location") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{t.location}</td>
+                        )}
+                        {isColVisible("product") && (
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[120px] truncate" title={productLabel(t)}>
+                            {productLabel(t)}
+                          </td>
+                        )}
+                        {isColVisible("model") && (
+                          <td className="px-2 py-1.5 font-mono text-slate-300 max-w-[90px] truncate" title={t.model}>
+                            {t.model}
+                          </td>
+                        )}
+                        {isColVisible("internalNote") && (
+                          <td className="px-2 py-1.5 text-slate-400 max-w-[140px] truncate" title={t.internalNote}>
+                            {t.internalNote || "—"}
+                          </td>
+                        )}
+                        {isColVisible("repair") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{t.diagnosed}</td>
+                        )}
+                        {isColVisible("technician") && (
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[110px] truncate" title={t.technician}>
+                            {t.technician || "—"}
+                          </td>
+                        )}
+                        {isColVisible("customerPref") && (
+                          <td className="px-2 py-1.5 text-center text-slate-300">{t.customerPref}</td>
+                        )}
+                        {isColVisible("schedule") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{t.schedule}</td>
+                        )}
+                        {isColVisible("status") && (
+                          <td
+                            className={`px-2 py-1.5 font-semibold max-w-[130px] truncate ${statusTextColor(t.status)}`}
+                            title={t.status}
+                          >
+                            {t.status}
+                          </td>
+                        )}
+                        {isColVisible("phone") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{t.phone}</td>
+                        )}
+                        {isColVisible("redo") && (
+                          <td className="px-2 py-1.5 text-center text-slate-300">{t.redo}</td>
+                        )}
+                        {isColVisible("aging") && (
+                          <td className="px-2 py-1.5 text-center">
+                            <span className={`font-bold text-sm ${agingColor(aging)}`}>{aging}d</span>
+                          </td>
+                        )}
+                        {isColVisible("statusSpend") && (
+                          <td className="px-2 py-1.5 text-center">
+                            <span className="inline-flex flex-col items-center gap-0.5">
+                              <span className={`font-bold text-sm ${agingColor(spend)}`}>{spend}d</span>
+                              <History className="h-3 w-3 text-white/20" />
+                            </span>
+                          </td>
+                        )}
+                        {isColVisible("calls") && (
+                          <td className="px-2 py-1.5 text-center text-slate-300">{t.calls}</td>
+                        )}
+                        {isColVisible("partOrder") && (
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[110px] truncate" title={t.partOrder}>
+                            {t.partOrder}
+                          </td>
+                        )}
+                        {isColVisible("posting") && (
+                          <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{t.created}</td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </main>
     </div>

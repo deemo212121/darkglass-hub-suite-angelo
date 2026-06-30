@@ -1,377 +1,323 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Search, Plus, Trash2 } from "lucide-react";
-import { getLocationRanking, getOverallStatus, getTechRanking, getTicketStatistics, getTickets } from "@/lib/db-api";
-import type { ModuleDef, SubModuleDef, DashboardOverallStatus, LocationRankingRecord, TechRankingRecord, TicketStatistic, Ticket } from "@/lib/db";
-import { LOCATIONS } from "@/lib/locations";
+import { ChevronLeft, Printer, Download, Search } from "lucide-react";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
+import {
+  loadOverallStatusData,
+  EMPTY_OVERALL_STATUS,
+  type OverallStatusData,
+  type RankingRow,
+  type DonutSlice,
+} from "@/lib/overallStatusData";
 
-type StatsSnapshot = {
-  totalTickets: number;
-  pendingTickets: number;
-  completedTickets: number;
-  ftfRate: string;
-};
+/**
+ * Overall Status dashboard. Layout mirrors janeyyy16/usapp's OverallStatusPage
+ * (filters → line chart → 3 donuts → 2 ranking tables) but every number is
+ * computed live from the company's tickets via `loadOverallStatusData`.
+ */
 
-function formatPercent(value: number) {
-  if (!Number.isFinite(value)) return "0%";
-  return `${Math.round(value * 10) / 10}%`;
-}
-
-function buildSnapshot(overallStatus: DashboardOverallStatus | undefined, tickets: Ticket[]): StatsSnapshot {
-  if (overallStatus) {
-    const completed = overallStatus.resolvedTickets + overallStatus.closedTickets;
-    const pending = overallStatus.openTickets + overallStatus.inProgressTickets;
-    const total = overallStatus.totalTickets || tickets.length;
-    return {
-      totalTickets: total,
-      pendingTickets: pending,
-      completedTickets: completed,
-      ftfRate: total > 0 ? formatPercent((completed / total) * 100) : "0%",
-    };
+function Donut({ data, title }: { data: DonutSlice[]; title: string }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+        <p className="mb-2 text-center text-lg font-semibold">{title}</p>
+        <p className="text-center text-sm text-slate-400 py-12">No data yet.</p>
+      </div>
+    );
   }
-
-  const total = tickets.length;
-  const pending = tickets.filter((ticket) => ticket.status === "open" || ticket.status === "in-progress").length;
-  const completed = tickets.filter((ticket) => ticket.status === "resolved" || ticket.status === "closed").length;
-  return {
-    totalTickets: total,
-    pendingTickets: pending,
-    completedTickets: completed,
-    ftfRate: total > 0 ? formatPercent((completed / total) * 100) : "0%",
-  };
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+      <p className="mb-2 text-center text-lg font-semibold">{title}</p>
+      <ResponsiveContainer width="100%" height={320}>
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            cx="50%"
+            cy="50%"
+            innerRadius={70}
+            outerRadius={120}
+            paddingAngle={1}
+            label={(entry: any) => `${entry.value}`}
+            labelLine={false}
+          >
+            {data.map((d, i) => (
+              <Cell key={i} fill={d.color} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={{ background: "rgba(15,23,42,0.95)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#fff" }}
+            formatter={(value: any, name: any) => [value, name]}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px] text-slate-400 max-h-24 overflow-y-auto">
+        {data.slice(0, 30).map((d, i) => (
+          <span key={i} className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full" style={{ background: d.color }} />
+            {d.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
-function groupTicketStats(stats: TicketStatistic[]) {
-  return stats.reduce<Record<string, TicketStatistic[]>>((acc, stat) => {
-    acc[stat.type] = acc[stat.type] ?? [];
-    acc[stat.type].push(stat);
-    return acc;
-  }, {});
-}
-
-function compareText(a: string, b: string) {
-  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-}
-
-interface InterviewCandidate {
-  id: string;
-  name: string;
-  position: string;
-  branch: string;
-  interviewDate: string;
-  interviewTime: string;
-  status: "scheduled" | "completed" | "hired" | "rejected";
-  notes: string;
-}
-
-export function OverallStatusPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [ticketStats, setTicketStats] = useState<TicketStatistic[]>([]);
-  const [techRanking, setTechRanking] = useState<TechRankingRecord[]>([]);
-  const [locationRanking, setLocationRanking] = useState<LocationRankingRecord[]>([]);
-  const [overallStatus, setOverallStatus] = useState<DashboardOverallStatus | undefined>(undefined);
+function RankingTable({ title, rows, label, locationFilter }: { title: string; rows: RankingRow[]; label: string; locationFilter: string }) {
   const [search, setSearch] = useState("");
-  const [activeStatType, setActiveStatType] = useState<"monthly" | "daily">("monthly");
-  
-  // HR Interview Management State
-  const [candidates, setCandidates] = useState<InterviewCandidate[]>([
-    { id: "1", name: "John Smith", position: "Technician", branch: "Atlanta", interviewDate: "2026-06-12", interviewTime: "10:00", status: "scheduled", notes: "" },
-    { id: "2", name: "Sarah Johnson", position: "CSR", branch: "Nashville", interviewDate: "2026-06-15", interviewTime: "14:00", status: "scheduled", notes: "" },
-    { id: "3", name: "Mike Davis", position: "Technician", branch: "Memphis", interviewDate: "2026-06-10", interviewTime: "09:30", status: "completed", notes: "Strong technical background" },
-    { id: "4", name: "Emily Wilson", position: "Tech Manager", branch: "Birmingham", interviewDate: "2026-06-08", interviewTime: "11:00", status: "hired", notes: "Excellent fit for team" },
-  ]);
-  const [showAddInterview, setShowAddInterview] = useState(false);
-  const [newCandidate, setNewCandidate] = useState<Partial<InterviewCandidate>>({
-    name: "",
-    position: "",
-    branch: "",
-    interviewDate: "",
-    interviewTime: "",
-    status: "scheduled",
-    notes: "",
-  });
+  const [sortKey, setSortKey] = useState<"rank" | "thirtyDay" | "tenDay">("rank");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  useEffect(() => {
-    let mounted = true;
-
-    Promise.all([getTickets(), getTicketStatistics(), getTechRanking(), getLocationRanking(), getOverallStatus()])
-      .then(([nextTickets, nextStats, nextTechRanking, nextLocationRanking, nextOverallStatus]) => {
-        if (!mounted) return;
-        setTickets(nextTickets);
-        setTicketStats(nextStats);
-        setTechRanking(nextTechRanking);
-        setLocationRanking(nextLocationRanking);
-        setOverallStatus(nextOverallStatus[0]);
-      })
-      .catch((error) => {
-        console.error("Failed to load overall status data:", error);
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const snapshot = useMemo(() => buildSnapshot(overallStatus, tickets), [overallStatus, tickets]);
-  const ticketGroups = useMemo(() => groupTicketStats(ticketStats), [ticketStats]);
-  const filteredTechRanking = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return techRanking.filter((record) => {
-      if (!term) return true;
-      return [record.techName, record.office, String(record.rank)]
-        .join(" ")
-        .toLowerCase()
-        .includes(term);
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    let r = rows.filter((row) => {
+      if (locationFilter !== "ALL" && row.office !== locationFilter) return false;
+      if (!q) return true;
+      return row.name.toLowerCase().includes(q) || row.office.toLowerCase().includes(q);
     });
-  }, [search, techRanking]);
-
-  const filteredLocationRanking = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return locationRanking.filter((record) => {
-      if (!term) return true;
-      return [record.office, String(record.rank)]
-        .join(" ")
-        .toLowerCase()
-        .includes(term);
+    r = [...r].sort((a, b) => {
+      const av = a[sortKey] ?? -1;
+      const bv = b[sortKey] ?? -1;
+      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
-  }, [search, locationRanking]);
+    return r;
+  }, [rows, search, sortKey, sortDir, locationFilter]);
 
-  const dateRange = overallStatus?.dateRange;
-  const totalTickets = snapshot.totalTickets;
-  const pendingTickets = snapshot.pendingTickets;
-  const completedTickets = snapshot.completedTickets;
-
-  const monthlyStats = (ticketGroups.monthly ?? []).slice().sort((a, b) => compareText(a.date, b.date));
-  const dailyStats = (ticketGroups.daily ?? []).slice().sort((a, b) => compareText(a.date, b.date));
-  const liveDataLabel = companyId
-    ? `Live data: ${totalTickets} ticket(s) for company ${companyId}.`
-    : `Live data: ${totalTickets} ticket(s).`;
+  const toggleSort = (key: "rank" | "thirtyDay" | "tenDay") => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "rank" ? "asc" : "desc"); }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
-              <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
-          </div>
-
-          <div className="panel mb-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Location</p>
-                <div className="mt-2 text-2xl font-display font-semibold">ALL</div>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Date</p>
-                <div className="mt-2 text-lg font-medium text-foreground/90">
-                  {dateRange ? (
-                    <span>
-                      {dateRange.start}
-                      <span className="mx-3 text-muted-foreground">~</span>
-                      {dateRange.end}
-                    </span>
-                  ) : (
-                    <span>—</span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <p className="mt-4 text-sm text-muted-foreground">{liveDataLabel}</p>
-          </div>
-
-          <div>
-            <h1 className="text-4xl font-display font-bold tracking-tight mb-2">Overall Status</h1>
-            <p className="text-lg text-muted-foreground">System-wide health, tickets, and ranking summaries.</p>
+    <section className="rounded-xl border border-white/10 bg-white/5 p-5 mb-4">
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold">{title}</h2>
+          <p className="text-sm text-slate-400">{filtered.length} records out of {rows.length} found</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="rounded-md border border-white/15 bg-slate-800/70 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700" title="Print" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" />
+          </button>
+          <button className="rounded-md border border-white/15 bg-slate-800/70 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700" title="Export CSV" onClick={() => exportCsv(title, filtered, label)}>
+            <Download className="h-4 w-4" />
+          </button>
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="search in result"
+              className="rounded-md border border-white/15 bg-slate-950 pl-8 pr-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            />
           </div>
         </div>
+      </div>
+      <div className="overflow-x-auto border border-white/10 rounded-lg">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-blue-900/50 border-b border-blue-500/30">
+              <th className="px-3 py-2 text-left font-semibold text-blue-300 cursor-pointer" onClick={() => toggleSort("rank")}>Rank{sortKey === "rank" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</th>
+              <th className="px-3 py-2 text-left font-semibold text-blue-300">{label}</th>
+              <th className="px-3 py-2 text-left font-semibold text-blue-300">Office</th>
+              <th className="px-3 py-2 text-right font-semibold text-blue-300 cursor-pointer" onClick={() => toggleSort("thirtyDay")}>30 Day{sortKey === "thirtyDay" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</th>
+              <th className="px-3 py-2 text-right font-semibold text-blue-300 cursor-pointer" onClick={() => toggleSort("tenDay")}>10 Day{sortKey === "tenDay" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center text-slate-500">No records.</td>
+              </tr>
+            ) : (
+              filtered.map((row) => (
+                <tr key={`${row.rank}-${row.name}-${row.office}`} className="border-b border-white/5 hover:bg-white/5">
+                  <td className="px-3 py-2 text-slate-400">{row.rank}</td>
+                  <td className="px-3 py-2 text-slate-200 font-medium">{row.name}</td>
+                  <td className="px-3 py-2 text-slate-300">{row.office}</td>
+                  <td className="px-3 py-2 text-right text-emerald-300">{row.thirtyDay != null ? row.thirtyDay.toFixed(2) : "—"}</td>
+                  <td className="px-3 py-2 text-right text-sky-300">{row.tenDay != null ? row.tenDay.toFixed(2) : "—"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
-        <section className="panel">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">Total Tickets</p>
-              <p className="mt-2 text-3xl font-semibold">{totalTickets}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">Pending</p>
-              <p className="mt-2 text-3xl font-semibold">{pendingTickets}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">Completed</p>
-              <p className="mt-2 text-3xl font-semibold">{completedTickets}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">FTF Rate</p>
-              <p className="mt-2 text-3xl font-semibold">{snapshot.ftfRate}</p>
-            </div>
-          </div>
-        </section>
+function exportCsv(title: string, rows: RankingRow[], label: string) {
+  const header = ["Rank", label, "Office", "30 Day", "10 Day"];
+  const body = rows.map((r) => [r.rank, r.name, r.office, r.thirtyDay ?? "", r.tenDay ?? ""]);
+  const csv = [header, ...body].map((line) => line.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${title.toLowerCase().replace(/\s+/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-        <section className="grid gap-6 lg:grid-cols-2">
-          <div className="panel">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <h2 className="text-2xl font-semibold">Ticket Statistics</h2>
-                <p className="text-sm text-muted-foreground">Ticket Statistics ({activeStatType === "monthly" ? "Monthly" : "Daily"})</p>
-              </div>
-              <div className="flex gap-2">
-                <button className={`btn ${activeStatType === "monthly" ? "btn-primary" : ""}`} onClick={() => setActiveStatType("monthly")}>Ticket Statistics (Monthly)</button>
-                <button className={`btn ${activeStatType === "daily" ? "btn-primary" : ""}`} onClick={() => setActiveStatType("daily")}>Ticket Statistics (Daily)</button>
-              </div>
-            </div>
-            <div className="table-wrap overflow-x-auto">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Status</th>
-                    <th className="text-center">Count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(activeStatType === "monthly" ? monthlyStats : dailyStats).map((row) => (
-                    <tr key={`${row.type}-${row.date}-${row.status}`}>
-                      <td>{row.date}</td>
-                      <td>{row.status}</td>
-                      <td className="text-center">{row.count}</td>
-                    </tr>
-                  ))}
-                  {(activeStatType === "monthly" ? monthlyStats : dailyStats).length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="py-10 text-center text-muted-foreground">No live ticket statistics available.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
+  const [data, setData] = useState<OverallStatusData>(EMPTY_OVERALL_STATUS);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [statType, setStatType] = useState<"monthly" | "daily">("monthly");
+  const [location, setLocation] = useState("ALL");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-          <div className="panel">
-            <h2 className="text-2xl font-semibold mb-4">Pending Tickets Analysis</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-sm text-muted-foreground">Pending Tickets by Status</p>
-                <div className="mt-3 space-y-2 text-sm">
-                  <div className="flex items-center justify-between"><span>Open</span><span>{tickets.filter((ticket) => ticket.status === "open").length}</span></div>
-                  <div className="flex items-center justify-between"><span>In Progress</span><span>{tickets.filter((ticket) => ticket.status === "in-progress").length}</span></div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-sm text-muted-foreground">Ready for Service</p>
-                <p className="mt-3 text-3xl font-semibold">{tickets.filter((ticket) => ticket.status === "resolved").length}</p>
-              </div>
-            </div>
+  // Default date range: last 30 days.
+  const today = new Date();
+  const thirtyAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+  const [startDate, setStartDate] = useState<string>(isoDay(thirtyAgo));
+  const [endDate, setEndDate] = useState<string>(isoDay(today));
 
-            <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">CSR Activity</p>
-              <p className="mt-2 text-lg">{overallStatus ? `${overallStatus.csrActivityCount} activities recorded` : `${tickets.length} live tickets available`}</p>
-            </div>
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const next = await loadOverallStatusData();
+        if (!cancelled) setData(next);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load overall status data.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
-            <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-muted-foreground">Activity Distribution</p>
-              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-lg bg-black/10 p-3">
-                  <div className="text-muted-foreground">Pending</div>
-                  <div className="text-xl font-semibold">{pendingTickets}</div>
-                </div>
-                <div className="rounded-lg bg-black/10 p-3">
-                  <div className="text-muted-foreground">Completed</div>
-                  <div className="text-xl font-semibold">{completedTickets}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+  const statData = statType === "monthly" ? data.monthlyStats : data.dailyStats;
+  // Show every line on both monthly and daily — sources come straight from
+  // the data so any source present in tickets gets a line on the chart.
+  const activeLines = data.statLines;
 
-        <section className="panel">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+  // Apply the location filter to the donuts that are location-scoped.
+  const filteredByLocation = useMemo(() => {
+    if (location === "ALL") return data.pendingByLocation;
+    return data.pendingByLocation.filter((d) => d.name === location);
+  }, [data.pendingByLocation, location]);
+
+  return (
+    <div className="min-h-screen flex flex-col bg-slate-950 text-white">
+      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-slate-800/70 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700">
+            <ChevronLeft className="h-4 w-4" /> {mod.label}
+          </Link>
+        </div>
+
+        <div className="mb-6 text-center">
+          <h1 className="text-3xl font-bold underline">Overall Status</h1>
+          {companyId && <p className="mt-1 text-xs text-slate-400">Company {companyId}</p>}
+        </div>
+
+        {/* Filters */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">
+          <div className="flex flex-wrap items-end justify-end gap-4">
             <div>
-              <h2 className="text-2xl font-semibold">Tech Ranking Report</h2>
-              <p className="text-sm text-muted-foreground">{filteredTechRanking.length} records out of {techRanking.length} found</p>
+              <label className="text-xs uppercase tracking-[0.16em] text-slate-400">Location</label>
+              <select
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="mt-1 w-48 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+              >
+                {data.allLocationsFilter.map((loc) => <option key={loc} value={loc}>{loc}</option>)}
+              </select>
             </div>
-            <label className="relative w-full md:w-[320px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <div>
+              <label className="text-xs uppercase tracking-[0.16em] text-slate-400">Date</label>
               <input
-                className="glass-input pl-9"
-                placeholder="Search in result..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
               />
-            </label>
+            </div>
+            <span className="pb-2 text-slate-400">~</span>
+            <div>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="mt-1 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setRefreshKey((k) => k + 1)}
+              disabled={loading}
+              className="rounded-md border border-blue-400/40 bg-blue-600/30 px-4 py-1.5 text-sm font-semibold text-blue-200 hover:bg-blue-600/50 disabled:opacity-50"
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
-          <div className="table-wrap overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Tech Name</th>
-                  <th>Office</th>
-                  <th className="text-center">Tickets</th>
-                  <th className="text-center">Completed</th>
-                  <th className="text-center">Pending</th>
-                  <th className="text-center">Completion %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTechRanking.map((record) => (
-                  <tr key={`${record.rank}-${record.techName}`}>
-                    <td>{record.rank}</td>
-                    <td>{record.techName}</td>
-                    <td>{record.office}</td>
-                    <td className="text-center">{record.completions + record.redos}</td>
-                    <td className="text-center">{record.completions}</td>
-                    <td className="text-center">{record.redos}</td>
-                    <td className="text-center">{formatPercent((record.completions / Math.max(record.completions + record.redos, 1)) * 100)}</td>
-                  </tr>
+          {error && (
+            <p className="mt-3 text-sm text-rose-400">Error: {error}</p>
+          )}
+        </div>
+
+        {/* Ticket Statistics line chart */}
+        <section className="rounded-xl border border-white/10 bg-white/5 p-5 mb-4">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-2xl font-semibold">Ticket Statistics ({statType === "monthly" ? "Monthly" : "Daily"})</h2>
+            <div className="flex gap-2">
+              <button
+                className={`rounded-md px-3 py-1.5 text-sm font-semibold border ${statType === "monthly" ? "border-blue-400/40 bg-blue-600/30 text-blue-200" : "border-white/15 bg-slate-800/70 text-slate-300 hover:bg-slate-700"}`}
+                onClick={() => setStatType("monthly")}
+              >
+                Monthly
+              </button>
+              <button
+                className={`rounded-md px-3 py-1.5 text-sm font-semibold border ${statType === "daily" ? "border-blue-400/40 bg-blue-600/30 text-blue-200" : "border-white/15 bg-slate-800/70 text-slate-300 hover:bg-slate-700"}`}
+                onClick={() => setStatType("daily")}
+              >
+                Daily
+              </button>
+            </div>
+          </div>
+          {statData.length === 0 ? (
+            <p className="text-sm text-slate-400 py-12 text-center">No ticket activity recorded for this range.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={360}>
+              <LineChart data={statData} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#cbd5e1" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#cbd5e1" }} />
+                <Tooltip contentStyle={{ background: "rgba(15,23,42,0.95)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#fff" }} />
+                <Legend />
+                {activeLines.map((line) => (
+                  <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={line.key === "TOTAL" ? 3 : 1.5} dot={{ r: 2 }} />
                 ))}
-                {filteredTechRanking.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-10 text-center text-muted-foreground">No live tech ranking records available.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </section>
 
-        <section className="panel">
-          <div className="mb-4">
-            <h2 className="text-2xl font-semibold">Location Ranking Report</h2>
-            <p className="text-sm text-muted-foreground">{filteredLocationRanking.length} records out of {locationRanking.length} found</p>
-          </div>
-          <div className="table-wrap overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Office</th>
-                  <th className="text-center">30-Day Score</th>
-                  <th className="text-center">10-Day Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLocationRanking.map((record) => (
-                  <tr key={`${record.rank}-${record.office}`}>
-                    <td>{record.rank}</td>
-                    <td>{record.office}</td>
-                    <td className="text-center">{record.thirtydayScore}%</td>
-                    <td className="text-center">{record.tendayScore}%</td>
-                  </tr>
-                ))}
-                {filteredLocationRanking.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="py-10 text-center text-muted-foreground">No live location ranking records available.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+        {/* Three donuts */}
+        <section className="grid gap-4 mb-4 lg:grid-cols-3">
+          <Donut data={data.pendingByStatus} title="Pending Tickets by Status" />
+          <Donut data={filteredByLocation} title="Pending Tickets by Location" />
+          <Donut data={data.csrActivity} title="CSR Activity" />
         </section>
 
-        <section className="panel">
-          <p className="text-sm text-muted-foreground">No dummy data is rendered on this page. It displays whatever live records exist in the database tables.</p>
-        </section>
+        {/* Ranking tables */}
+        <RankingTable title="Tech Ranking Report" rows={data.techRanking} label="Tech Name" locationFilter={location} />
+        <RankingTable title="Location Ranking Report" rows={data.locationRanking} label="Office" locationFilter={location} />
+
+        <p className="text-xs text-slate-500 italic mb-8">
+          All numbers above are computed live from the <code className="text-slate-300">tickets</code> table (company-scoped via RLS). Date pickers and filters narrow the visible records; pull "Refresh" to re-query.
+        </p>
       </main>
     </div>
   );

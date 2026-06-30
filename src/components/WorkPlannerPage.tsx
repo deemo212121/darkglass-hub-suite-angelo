@@ -5,7 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
-import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame } from "@/lib/timeframes";
+import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame, normalizeTimePeriod } from "@/lib/timeframes";
 import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import type { TechnicianHome } from "@/lib/supabase/users";
@@ -141,15 +141,24 @@ function techColor(roster: readonly string[], techName: string): string {
 }
 
 function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
-  return rows.map((row, index) => {
+  // Daily schedule should hide cancelled work — drop them at the source so
+  // they never appear on the planner board, map, or counts. "Need Cancel"
+  // is still an open work item (CSR requested cancellation but it isn't
+  // approved yet), so it stays visible.
+  const isCancelled = (status: unknown) => {
+    const v = String(status || "").toLowerCase().trim();
+    if (!v) return false;
+    if (v.includes("need cancel")) return false;
+    return /\bcancell?ed\b/.test(v) || v === "cx" || v.startsWith("cx-cancel");
+  };
+  return rows.filter((row) => !isCancelled(row.status)).map((row, index) => {
     // Time slot is persisted on the ticket. If a ticket has never been
     // scheduled into a slot, default it to ANYTIME (stable across reloads,
-    // not a rotating value).
-    const visitTimeSlot = (row.slot || row.timeSlot) as TimeFrame | undefined;
-    // Migrate legacy AM/PM values to a frame so old tickets still slot in.
-    const legacyMap: Record<string, TimeFrame> = { AM: "8-12", PM: "1-5" };
-    const rawSlot = visitTimeSlot || "ANYTIME";
-    const slot: TimeFrame = (legacyMap[rawSlot as string] ?? rawSlot) as TimeFrame;
+    // not a rotating value). Normalise SP-style raw windows ("08:00 - 12:00
+    // MORNING", "1:00 PM - 5:00 PM", "AM", "AFTERNOON", …) into the
+    // canonical frame label so old rows still bucket into the right column.
+    const rawSlot = String(row.slot || row.timeSlot || row.schedulePeriod || "").trim();
+    const slot: TimeFrame = normalizeTimePeriod(rawSlot) ?? "ANYTIME";
     
     const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
     const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
@@ -229,6 +238,33 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const geocodeCacheRef = useRef<Map<string, { lat: number; lng: number } | null>>(new Map());
   const dragSourceRef = useRef<{ ticketNo: string; slot: PlannerTicket["slot"]; technician: string } | null>(null);
 
+  // Manual order within a single (date, technician, slot) cell. Keyed by
+  // `${date}|${technician}|${slot}` → array of ticket numbers in the order
+  // dispatch wants them rendered. Anything not in the array sorts to the
+  // bottom by ticket number. Persisted to localStorage so the next page
+  // load preserves the route the user laid out.
+  const ORDER_KEY = "ahs:work-planner:slot-order:v1";
+  const [slotOrder, setSlotOrder] = useState<Record<string, string[]>>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem(ORDER_KEY) : null;
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, string[]>) : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ORDER_KEY, JSON.stringify(slotOrder));
+      }
+    } catch { /* ignore quota */ }
+  }, [slotOrder]);
+  const slotOrderKey = (date: string, technician: string, slot: string) =>
+    `${date}|${technician}|${slot}`;
+
+  // Track which card is being dragged so we can compute the drop index
+  // when the user releases over another card in the same cell.
+  const reorderDragRef = useRef<{ ticketNo: string; cellKey: string } | null>(null);
+
   useEffect(() => {
     // Load tickets from Supabase (company-scoped via RLS).
     let cancelled = false;
@@ -298,9 +334,24 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
   const visibleTickets = useMemo(() => {
     const selectedDate = plannerDate;
+    // Statuses that explicitly mean the ticket is NOT yet scheduled for a
+    // day. These should never appear on the daily Work Planner / Work Map
+    // even if some legacy row happens to carry a date.
+    const isPreScheduleStatus = (status: string) => {
+      const v = String(status || "").toLowerCase().trim();
+      if (!v) return false;
+      if (v.startsWith("csr-assigned to asc")) return true;
+      if (v.startsWith("csr-needs scheduling")) return true;
+      if (v.startsWith("pt-")) return true; // PT-Preauthentication, PT-Preauthorization, etc.
+      return false;
+    };
     return plannerTickets.filter((ticket) => {
-      const ticketDate = String(ticket.schedule || ticket.created || "").slice(0, 10);
-      if (ticketDate && ticketDate !== selectedDate) return false;
+      // Must have an actual scheduled date — no fallback to created_at.
+      // Anything else is "unscheduled" and stays off the planner.
+      const ticketDate = String(ticket.schedule || "").slice(0, 10);
+      if (!ticketDate) return false;
+      if (ticketDate !== selectedDate) return false;
+      if (isPreScheduleStatus(ticket.status)) return false;
       if (location && normalizeBranch(ticket.location || ticket.city || ticket.branch) !== location) return false;
       if (!showRescheduled && String(ticket.status || "").toLowerCase().includes("resched")) return false;
       return true;
@@ -308,11 +359,36 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   }, [plannerTickets, plannerDate, location, showRescheduled]);
 
   const groupedTickets = useMemo(() => {
+    // Apply the manual per-cell order (date, tech, slot) on top of the
+    // default ticket-number sort. Tickets that don't appear in the saved
+    // order land at the bottom in ticket-number order — so brand-new
+    // tickets stay visible without breaking an existing layout.
+    const applyOrder = (tech: string, slot: string, list: PlannerTicket[]) => {
+      const key = slotOrderKey(plannerDate, tech, slot);
+      const saved = slotOrder[key] ?? [];
+      if (saved.length === 0) return list;
+      const pos = new Map<string, number>();
+      saved.forEach((n, idx) => pos.set(n, idx));
+      return [...list].sort((a, b) => {
+        const ai = pos.has(a.ticketNo) ? pos.get(a.ticketNo)! : Number.MAX_SAFE_INTEGER;
+        const bi = pos.has(b.ticketNo) ? pos.get(b.ticketNo)! : Number.MAX_SAFE_INTEGER;
+        if (ai !== bi) return ai - bi;
+        return String(a.ticketNo).localeCompare(String(b.ticketNo));
+      });
+    };
     return selectedTechRoster.map((tech) => ({
       tech,
-      slots: TIME_SLOTS.map((slot) => visibleTickets.filter((ticket) => ticket.technician === tech && ticket.slot === slot)),
+      slots: TIME_SLOTS.map((slot) =>
+        applyOrder(
+          tech,
+          slot,
+          visibleTickets.filter(
+            (ticket) => ticket.technician === tech && ticket.slot === slot,
+          ),
+        ),
+      ),
     }));
-  }, [selectedTechRoster, visibleTickets]);
+  }, [selectedTechRoster, visibleTickets, plannerDate, slotOrder]);
 
   const techSummary = useMemo(() => {
     return selectedTechRoster.map((tech, index) => {
@@ -721,6 +797,26 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       return { ...ticket, technician, slot, scheduleTime: SLOT_TIMES[slot] };
     }));
 
+    // Maintain the per-cell manual order: drop the ticket out of the
+    // source cell and append it at the bottom of the destination cell
+    // so its position stays predictable. The user can reorder from
+    // there.
+    if (technicianChanged || slotChanged) {
+      const srcKey = slotOrderKey(plannerDate, dragSource.technician, dragSource.slot);
+      const dstKey = slotOrderKey(plannerDate, technician, slot);
+      setSlotOrder((prev) => {
+        const next = { ...prev };
+        if (next[srcKey]) {
+          next[srcKey] = next[srcKey].filter((n) => n !== dragSource.ticketNo);
+        }
+        const dstList = next[dstKey] ?? [];
+        if (!dstList.includes(dragSource.ticketNo)) {
+          next[dstKey] = [...dstList, dragSource.ticketNo];
+        }
+        return next;
+      });
+    }
+
     // Persist the assignment change to Supabase (audit trigger records who/when).
     if (technicianChanged || slotChanged) {
       try {
@@ -833,6 +929,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                 <div className="time-slot-grid">
                 {TIME_SLOTS.map((slot, slotIndex) => {
                   const tickets = slots[slotIndex] || [];
+                  const cellKey = slotOrderKey(plannerDate, tech, slot);
                   return (
                     <div
                       key={`${tech}-${slot}`}
@@ -849,14 +946,56 @@ export function WorkPlannerPage({ mod, sub }: Props) {
                           const fullTicket = getTicketByNumber(ticket.ticketNo);
                           const latestVisit = fullTicket?.visits?.[0];
                           const displayStatus = latestVisit?.repairStatus || ticket.status || "Pending";
-                          
+
                           return (
                             <div
                               key={ticket.ticketNo}
                               className={`work-order-card ${getToneClass(ticket, techIndex + index)}`}
                               draggable
-                              onDragStart={() => handleDragStart(ticket.ticketNo, ticket.slot, ticket.technician)}
+                              onDragStart={(event) => {
+                                // Track both transfers: cross-cell move (handleDragStart)
+                                // AND in-cell reorder (reorderDragRef).
+                                handleDragStart(ticket.ticketNo, ticket.slot, ticket.technician);
+                                reorderDragRef.current = { ticketNo: ticket.ticketNo, cellKey };
+                                event.dataTransfer.effectAllowed = "move";
+                              }}
+                              onDragOver={(event) => {
+                                // Only intercept reorder when the drag started in
+                                // the same cell. Otherwise let the parent .time-slot
+                                // handle the cross-cell drop.
+                                if (reorderDragRef.current?.cellKey === cellKey) {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  event.dataTransfer.dropEffect = "move";
+                                }
+                              }}
+                              onDrop={(event) => {
+                                const src = reorderDragRef.current;
+                                if (!src || src.cellKey !== cellKey) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                if (src.ticketNo === ticket.ticketNo) {
+                                  reorderDragRef.current = null;
+                                  return;
+                                }
+                                // Build a new order: full current order, then
+                                // remove src, then insert before this ticket.
+                                const currentList = tickets.map((t) => t.ticketNo);
+                                const without = currentList.filter((n) => n !== src.ticketNo);
+                                const dropIndex = without.indexOf(ticket.ticketNo);
+                                const next = [
+                                  ...without.slice(0, dropIndex),
+                                  src.ticketNo,
+                                  ...without.slice(dropIndex),
+                                ];
+                                setSlotOrder((prev) => ({ ...prev, [cellKey]: next }));
+                                reorderDragRef.current = null;
+                                // Suppress the cross-cell handler that will
+                                // also fire on the parent.
+                                dragSourceRef.current = null;
+                              }}
                               onClick={() => setSelectedTicket(ticket)}
+                              title="Drag to reorder within this slot, or to a different slot/technician"
                             >
                               <a
                                 className="work-order-ticket"

@@ -9,8 +9,10 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth";
+import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
+import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SystemDataInitializer } from "@/components/SystemDataInitializer";
 
 import appCss from "../styles.css?url";
@@ -90,12 +92,18 @@ function RootComponent() {
   
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <SystemDataInitializer />
-        {!hideChrome && <AnnouncementBanner />}
-        <Outlet />
-        {!hideChrome && <TicketSearchFab />}
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <SystemDataInitializer />
+          {!hideChrome && <AnnouncementBanner />}
+          <Outlet />
+          {!hideChrome && <TicketSearchFab />}
+          {/* Floating module navigator — sits below the AppHeader on every
+              authenticated page so users can hop between modules without
+              going back to /home. */}
+          {!hideChrome && <ModuleNavigator />}
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

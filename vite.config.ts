@@ -47,6 +47,18 @@ const SERVER_DEFINE = {
   "globalThis.__SP_SERVICER_ACCOUNT__": JSON.stringify(
     rootEnv.VITE_SERVICEPOWER_SERVICER_ACCOUNT ?? ""
   ),
+  // Marcone mSupply credentials (SERVER ONLY — same pattern as SP secrets).
+  "globalThis.__MARCONE_ENV__": JSON.stringify(rootEnv.VITE_MARCONE_ENV ?? "integration"),
+  "globalThis.__MARCONE_INT_CLIENT_ID__": JSON.stringify(rootEnv.VITE_MARCONE_INT_CLIENT_ID ?? ""),
+  "globalThis.__MARCONE_INT_CLIENT_SECRET__": JSON.stringify(
+    rootEnv.VITE_MARCONE_INT_CLIENT_SECRET ?? ""
+  ),
+  "globalThis.__MARCONE_PROD_CLIENT_ID__": JSON.stringify(
+    rootEnv.VITE_MARCONE_PROD_CLIENT_ID ?? ""
+  ),
+  "globalThis.__MARCONE_PROD_CLIENT_SECRET__": JSON.stringify(
+    rootEnv.VITE_MARCONE_PROD_CLIENT_SECRET ?? ""
+  ),
 };
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
@@ -126,6 +138,43 @@ function servicePowerDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/marcone locally. Same shape as the SP
+// plugin above — delegates to the runtime-agnostic bridge so dev and prod
+// behave identically.
+function marconeDevPlugin() {
+  return {
+    name: "marcone-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/marcone", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks).toString("utf8");
+
+          const { handleMarconeRequest } = await server.ssrLoadModule(
+            "/src/lib/server/marconeBridge.ts"
+          );
+          const webReq = new Request("http://localhost/api/marcone", {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleMarconeRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Marcone request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -134,7 +183,7 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       rollupOptions: {

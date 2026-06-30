@@ -139,3 +139,119 @@ export async function deleteEntry(profileId: string, workDate: string): Promise<
     throw new Error(error.message);
   }
 }
+
+
+/**
+ * Compute hours worked between two HH:MM strings, accounting for an optional
+ * meal break. Mirrors the math used by the personal timecard page so the
+ * self-service Attendance tab agrees with the timecard.
+ */
+function hoursBetween(t1: string, t2: string): number {
+  if (!t1 || !t2) return 0;
+  const [h1, m1] = t1.split(":").map(Number);
+  const [h2, m2] = t2.split(":").map(Number);
+  return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+}
+
+export function calcWorkedHours(entry: UITimeEntry): number {
+  if (!entry || !entry.checkIn || !entry.checkOut) return 0;
+  let hrs = hoursBetween(entry.checkIn, entry.checkOut);
+  if (entry.mealStart && entry.mealEnd) {
+    hrs -= hoursBetween(entry.mealStart, entry.mealEnd);
+  }
+  return Math.max(0, hrs);
+}
+
+/** Public helper for components that need the raw HH:MM diff. */
+export function hoursDiff(t1: string, t2: string): number {
+  return hoursBetween(t1, t2);
+}
+
+/**
+ * Daily attendance summary row used by the self-service Attendance tab and
+ * the warning detector. One row per date in the requested range; days the
+ * user didn't clock in at all are included with status="absent".
+ */
+export interface AttendanceRow {
+  date: string;          // "YYYY-MM-DD"
+  clockIn: string;       // "HH:MM" or ""
+  clockOut: string;      // "HH:MM" or ""
+  hoursWorked: number;
+  status: "present" | "absent" | "missing-in" | "missing-out";
+}
+
+/**
+ * Build a date-by-date attendance summary for the caller. Compares each
+ * day's timecard against the user's scheduled shift to flag missing
+ * clock-in or clock-out entries.
+ */
+export async function getAttendanceForRange(
+  profileId: string,
+  startDate: string,
+  endDate: string,
+  scheduled: { requiredCheckIn?: string; requiredCheckOut?: string; daysOff?: number[] } = {}
+): Promise<AttendanceRow[]> {
+  const { data, error } = await supabase
+    .from("timecard_entries")
+    .select("work_date, check_in, check_out, meal_start, meal_end")
+    .eq("profile_id", profileId)
+    .gte("work_date", startDate)
+    .lte("work_date", endDate)
+    .order("work_date", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const byDate = new Map<string, any>();
+  for (const row of data ?? []) byDate.set(row.work_date as string, row);
+
+  // Iterate every day in the inclusive range.
+  const rows: AttendanceRow[] = [];
+  const start = new Date(startDate + "T00:00:00");
+  const end = new Date(endDate + "T00:00:00");
+  const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const key = `${yyyy}-${mm}-${dd}`;
+    const dow = d.getDay();
+    const isOffDay = daysOff.has(dow);
+    const row = byDate.get(key);
+    if (!row) {
+      // No timecard entry. Skip days that are explicitly off so we don't
+      // alarm users about weekends/RDOs. Future days are also skipped.
+      const isFuture = key > new Date().toISOString().slice(0, 10);
+      if (!isOffDay && !isFuture) {
+        rows.push({
+          date: key,
+          clockIn: "",
+          clockOut: "",
+          hoursWorked: 0,
+          status: "absent",
+        });
+      }
+      continue;
+    }
+    const entry: UITimeEntry = {
+      checkIn: row.check_in ?? "",
+      checkOut: row.check_out ?? "",
+      mealStart: row.meal_start ?? "",
+      mealEnd: row.meal_end ?? "",
+      notes: "",
+    };
+    let status: AttendanceRow["status"] = "present";
+    if (entry.checkIn && !entry.checkOut) status = "missing-out";
+    else if (!entry.checkIn && entry.checkOut) status = "missing-in";
+    rows.push({
+      date: key,
+      clockIn: entry.checkIn,
+      clockOut: entry.checkOut,
+      hoursWorked: calcWorkedHours(entry),
+      status,
+    });
+  }
+  // Tag scheduled lookup unused-var to make linters happy without dropping
+  // it from the public API. The arg is reserved for future late/early checks.
+  void scheduled.requiredCheckIn;
+  void scheduled.requiredCheckOut;
+  return rows;
+}

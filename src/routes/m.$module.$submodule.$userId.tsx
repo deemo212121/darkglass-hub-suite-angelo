@@ -1,6 +1,7 @@
 import { createFileRoute, notFound, Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown } from "lucide-react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
@@ -329,11 +330,105 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   component: UserDetailsPage,
 });
 
-const ROLE_OPTIONS = [
-  "ADMIN", "MANAGER", "CSR", "TECHNICIAN", "DISPATCHER", "CLAIMS", "HR", "IT", "PARTS", "FINANCE",
-  "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER",
-  "CLAIMS_MANAGER", "PARTS_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "ADMIN", label: "Admin" },
+  { value: "MANAGER", label: "Manager" },
+  { value: "CSR", label: "CSR" },
+  { value: "TECHNICIAN", label: "Technician" },
+  { value: "DISPATCHER", label: "Dispatcher" },
+  { value: "CLAIMS", label: "Claims" },
+  { value: "HR", label: "HR" },
+  { value: "IT", label: "IT" },
+  { value: "PARTS", label: "Parts" },
+  { value: "FINANCE", label: "Finance" },
+  { value: "CSR_AGENT", label: "CSR Agent" },
+  { value: "CSR_TEAM_LEADER", label: "CSR Team Leader" },
+  { value: "CSR_MANAGER", label: "CSR Manager" },
+  { value: "BRANCH_MANAGER", label: "Branch Manager" },
+  { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
+  { value: "CLAIMS_MANAGER", label: "Claims Manager" },
+  { value: "PARTS_MANAGER", label: "Parts Manager" },
+  { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
+  { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
+  { value: "TRIAGE_USER", label: "Triage User" },
+  { value: "TRIAGE_MANAGER", label: "Triage Manager" },
 ];
+
+/**
+ * Multi-select dropdown for User Type. Mirrors the look + behavior of the
+ * same control in Admin User Management's Add New User modal. First ticked
+ * value becomes the primary `role` (used by RLS and access checks); the rest
+ * are stored on `extra_roles`, so a user like Daven Hodge (manager who is
+ * also a technician) can hold both roles simultaneously.
+ */
+function RoleMultiSelect({
+  values,
+  options,
+  onChange,
+  placeholder,
+}: {
+  values: string[];
+  options: { value: string; label: string }[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const labelByValue = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const o of options) m[o.value] = o.label;
+    return m;
+  }, [options]);
+  const toggle = (val: string) => {
+    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+  };
+  const summary = values.length
+    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    : placeholder;
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white flex items-center justify-between text-left focus:outline-none focus:border-blue-500"
+      >
+        <span className={values.length ? "text-slate-100 truncate" : "text-slate-500"}>{summary}</span>
+        <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
+          {options.map((opt) => {
+            const checked = values.includes(opt.value);
+            const isPrimary = values[0] === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-white/10"
+              >
+                <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                  {checked && <Check className="h-3 w-3 text-white" />}
+                </span>
+                <span className="text-slate-200 flex-1 truncate">{opt.label}</span>
+                {isPrimary && (
+                  <span className="text-[9px] font-semibold uppercase text-blue-300">primary</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const USER_TABS = [
   "General Information",
@@ -363,6 +458,9 @@ function UserDetailsPage() {
     username: "",
     displayName: "",
     role: "",
+    /** Full role list, including primary. First entry is the primary role; the
+     *  rest are persisted into extra_roles on save. */
+    roles: [] as string[],
     phoneNumber: "",
     managerName: "",
     assignedBranch: "",
@@ -403,6 +501,12 @@ function UserDetailsPage() {
           username: p.username || "",
           displayName: p.display_name || "",
           role: p.role || "",
+          // Combine primary + extra into a single ordered list so the
+          // multi-select renders all roles the user holds. The primary stays
+          // first so the "primary" pill marker lines up with what RLS uses.
+          roles: [p.role, ...((p.extra_roles as string[] | null) ?? [])]
+            .filter((r): r is string => Boolean(r))
+            .filter((r, i, arr) => arr.indexOf(r) === i),
           phoneNumber: p.phone_number || "",
           managerName: p.manager_name || "",
           assignedBranch: p.assigned_branch || "",
@@ -468,9 +572,13 @@ function UserDetailsPage() {
     setStatus(null);
     try {
       const { updateCompanyUser } = await import("@/lib/supabase/users");
+      // First role in the list is the primary; the rest land in extra_roles.
+      const primaryRole = (form.roles[0] || form.role || "") as any;
+      const extraRoles = form.roles.slice(1) as any;
       await updateCompanyUser(profileId, {
         displayName: form.displayName,
-        role: form.role as any,
+        role: primaryRole,
+        extraRoles,
         phoneNumber: form.phoneNumber,
         managerName: form.managerName,
         assignedBranch: form.assignedBranch,
@@ -602,11 +710,17 @@ function UserDetailsPage() {
                       </label>
 
                       <label className="space-y-1.5 text-sm">
-                        <span className={labelCls}>User Type</span>
-                        <select value={form.role} onChange={(e) => update("role", e.target.value)} className={inputCls}>
-                          {!ROLE_OPTIONS.includes(form.role) && form.role && <option value={form.role}>{form.role}</option>}
-                          {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                        </select>
+                        <span className={labelCls}>User Type <span className="normal-case text-[10px] text-slate-500">(tick all that apply — first ticked is primary)</span></span>
+                        <RoleMultiSelect
+                          values={form.roles}
+                          options={ROLE_OPTIONS}
+                          onChange={(next) => {
+                            // Keep `role` mirrored as the primary so anywhere
+                            // we still read form.role gets the right value.
+                            setForm((prev) => ({ ...prev, roles: next, role: next[0] || "" }));
+                          }}
+                          placeholder="Select user type(s)"
+                        />
                       </label>
                       {textField("User Name", "displayName")}
                       {textField("PO # Initial", "poInitials", { note: "(used as part of PO #)" })}

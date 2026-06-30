@@ -3,8 +3,28 @@ import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
 import { getEmployeeFromEmail } from "@/lib/userDataSync";
-import { Save, Clock, Calendar } from "lucide-react";
+import { Save, Clock, Calendar, Lock } from "lucide-react";
 import { DUMMY_EMPLOYEES } from "@/lib/dummyData";
+import {
+  getMyProfileSchedule,
+} from "@/lib/supabase/timecards";
+import { updateCompanyUser } from "@/lib/supabase/users";
+import { supabase } from "@/lib/supabase/client";
+
+// Roles that are allowed to change a user's Required Schedule and Days Off.
+const SCHEDULE_EDIT_ROLES = new Set([
+  "SUPERADMIN",
+  "ADMIN",
+  "HR",
+  "MANAGER",
+  "BRANCH_MANAGER",
+  "SENIOR_BRANCH_MANAGER",
+  "CSR_MANAGER",
+  "CLAIMS_MANAGER",
+  "PARTS_MANAGER",
+  "BIZOPS_MANAGER",
+  "BIZOPS_SENIOR_MANAGER",
+]);
 
 export const Route = createFileRoute("/profile")({
   head: () => ({ meta: [{ title: "My Profile — Admin Hub Solutions" }] }),
@@ -83,8 +103,10 @@ const DEFAULT_LOCATIONS = [
 ];
 
 function ProfilePage() {
-  const { email } = useAuth();
+  const { email, uid, role } = useAuth();
   const employee = getEmployeeFromEmail(email);
+  const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
+  const [profileId, setProfileId] = useState<string | null>(null);
   
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
@@ -146,6 +168,7 @@ function ProfilePage() {
   };
 
   const toggleOffDay = (dayNum: number) => {
+    if (!canEditSchedule) return;
     setSelectedOffDays(prev => {
       const newOffDays = prev.includes(dayNum)
         ? prev.filter(d => d !== dayNum)
@@ -259,10 +282,48 @@ function ProfilePage() {
     generateCurrentWeek();
   }, [selectedOffDays]);
 
-  const save = () => {
+  // Load the authoritative Required Schedule + days off from Supabase. This
+  // is what the timecard page also reads, so changes here keep both views in
+  // sync. Falls back to whatever localStorage had if Supabase is unreachable.
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sched = await getMyProfileSchedule(uid);
+        if (cancelled) return;
+        if (sched.profileId) {
+          setProfileId(sched.profileId);
+          if (sched.requiredCheckIn || sched.requiredCheckOut) {
+            setRequiredSchedule({
+              requiredCheckIn: sched.requiredCheckIn || "08:00",
+              requiredCheckOut: sched.requiredCheckOut || "17:00",
+            });
+          }
+        }
+        // Pull off_days separately — getMyProfileSchedule doesn't return it.
+        const { data } = await supabase
+          .from("profiles")
+          .select("off_days")
+          .eq("firebase_uid", uid)
+          .maybeSingle();
+        if (!cancelled && Array.isArray((data as any)?.off_days)) {
+          setSelectedOffDays((data as any).off_days as number[]);
+        }
+      } catch (err) {
+        console.warn("Profile load (Supabase) skipped:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+    // void unused import to satisfy linter when getProfileIdByFirebaseUid is
+    // reserved for future use.
+  }, [uid]);
+
+  const save = async () => {
     localStorage.setItem(KEY, JSON.stringify(profile));
-    
-    // Also save required schedule and PO initials
+
+    // Also save required schedule and PO initials locally so other parts of
+    // the legacy UI that still read from localStorage stay current.
     if (employee) {
       const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
       if (dummyEmployee) {
@@ -273,19 +334,73 @@ function ProfilePage() {
         }
       }
     }
-    
+
+    // Persist the schedule + off-days to Supabase so the timecard and
+    // attendance dashboards pick them up too. Only do this if the user has
+    // permission (RLS will also reject otherwise).
+    if (profileId && canEditSchedule) {
+      try {
+        await updateCompanyUser(profileId, {
+          requiredCheckIn: requiredSchedule.requiredCheckIn,
+          requiredCheckOut: requiredSchedule.requiredCheckOut,
+          offDays: selectedOffDays,
+          poInitials: profile.poInitials || "",
+        });
+      } catch (err) {
+        console.warn("Schedule save (Supabase) failed:", err);
+      }
+    }
+
     setSaved("Profile saved.");
     setTimeout(() => setSaved(""), 2000);
   };
 
-  const changePassword = () => {
-    if (!password.next || password.next !== password.confirm) {
+  const changePassword = async () => {
+    if (!password.next || password.next.length < 6) {
+      setSaved("New password must be at least 6 characters.");
+      return;
+    }
+    if (password.next !== password.confirm) {
       setSaved("Passwords don't match.");
       return;
     }
-    setPassword({ current: "", next: "", confirm: "" });
-    setSaved("Password updated.");
-    setTimeout(() => setSaved(""), 2000);
+    if (!password.current) {
+      setSaved("Enter your current password to confirm.");
+      return;
+    }
+    try {
+      const [{ auth }, firebaseAuth] = await Promise.all([
+        import("@/lib/firebase/config"),
+        import("firebase/auth"),
+      ]);
+      const user = auth?.currentUser;
+      if (!user || !user.email) {
+        setSaved("Not signed in.");
+        return;
+      }
+      // Re-authenticate with the current password before changing it; Firebase
+      // requires this for security-sensitive operations on long-lived sessions.
+      const credential = firebaseAuth.EmailAuthProvider.credential(
+        user.email,
+        password.current,
+      );
+      await firebaseAuth.reauthenticateWithCredential(user, credential);
+      await firebaseAuth.updatePassword(user, password.next);
+      setPassword({ current: "", next: "", confirm: "" });
+      setSaved("Password updated.");
+      setTimeout(() => setSaved(""), 3000);
+    } catch (err: any) {
+      const code = String(err?.code || "");
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        setSaved("Current password is incorrect.");
+      } else if (code === "auth/weak-password") {
+        setSaved("New password is too weak.");
+      } else if (code === "auth/requires-recent-login") {
+        setSaved("Please sign out and back in, then try again.");
+      } else {
+        setSaved(err?.message || "Could not update password.");
+      }
+    }
   };
 
   const field = (label: string, key: keyof Profile, type = "text") => (
@@ -352,7 +467,15 @@ function ProfilePage() {
 
         {/* Required Schedule */}
         <div className="pt-6 border-t border-white/10">
-          <h3 className="text-sm font-semibold text-slate-300 mb-4">Required Schedule</h3>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h3 className="text-sm font-semibold text-slate-300">Required Schedule</h3>
+            {!canEditSchedule && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-amber-300/90">
+                <Lock className="h-3 w-3" />
+                Only HR, admins, and managers can change this
+              </span>
+            )}
+          </div>
           <div className="grid sm:grid-cols-2 gap-4 mb-4">
             <label className="flex flex-col gap-2">
               <span className="text-xs text-slate-400">Check-In Time</span>
@@ -360,7 +483,8 @@ function ProfilePage() {
                 type="time"
                 value={requiredSchedule.requiredCheckIn}
                 onChange={(e) => setRequiredSchedule({ ...requiredSchedule, requiredCheckIn: e.target.value })}
-                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                disabled={!canEditSchedule}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
             </label>
             <label className="flex flex-col gap-2">
@@ -369,7 +493,8 @@ function ProfilePage() {
                 type="time"
                 value={requiredSchedule.requiredCheckOut}
                 onChange={(e) => setRequiredSchedule({ ...requiredSchedule, requiredCheckOut: e.target.value })}
-                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                disabled={!canEditSchedule}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
             </label>
           </div>
@@ -377,13 +502,22 @@ function ProfilePage() {
 
         {/* Days Off */}
         <div className="pt-6 border-t border-white/10">
-          <h3 className="text-sm font-semibold text-slate-300 mb-4">Days Off</h3>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h3 className="text-sm font-semibold text-slate-300">Days Off</h3>
+            {!canEditSchedule && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-amber-300/90">
+                <Lock className="h-3 w-3" />
+                Only HR, admins, and managers can change this
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-7 gap-2 mb-4">
             {currentWeekDays.map((day) => (
               <button
                 key={day.dayNum}
                 onClick={() => toggleOffDay(day.dayNum)}
-                className={`p-2 rounded border transition text-xs font-semibold flex flex-col items-center justify-center h-16 ${
+                disabled={!canEditSchedule}
+                className={`p-2 rounded border transition text-xs font-semibold flex flex-col items-center justify-center h-16 disabled:cursor-not-allowed disabled:opacity-70 ${
                   day.isOffDay
                     ? "bg-red-500/20 border-red-500/50 text-red-300"
                     : "bg-slate-700 border-white/10 text-slate-300 hover:border-white/30"

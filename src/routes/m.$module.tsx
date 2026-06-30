@@ -49,16 +49,16 @@ function ModuleIndex() {
 
 
   const partsLandingOrder = [
+    "part-pickup",
     "part-collection",
-    "part-footprint",
-    "part-history",
+    "part-return-status",
+    "part-receive",
     "part-inventory",
+    "part-history",
+    "part-footprint",
+    "part-return",
     "part-management",
     "part-order",
-    "part-pickup",
-    "part-receive",
-    "part-return",
-    "part-return-status",
     "po-status",
     "return-pickup",
   ];

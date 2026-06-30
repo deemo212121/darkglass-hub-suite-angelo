@@ -1,15 +1,29 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
-import { savePartOrder, createPartOrderFromTicket } from "@/lib/supabase/partOrders";
-import { Copy, Map as MapIcon, CalendarDays } from "lucide-react";
+import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
+import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useIsPhone } from "@/lib/device";
 import { TicketPhotos } from "@/components/TicketPhotos";
+import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
+import { TruckStockBatchModal, type TruckStockBatchSelection } from "@/components/TruckStockBatchModal";
+import { TicketSidebar } from "@/components/TicketSidebar";
 import { TIME_FRAMES } from "@/lib/timeframes";
+import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { resolveTierCode } from "@/lib/tierCodes";
 import { getLocationManagementCoordinates } from "@/components/LocationManagementPage";
+import {
+  buildSquaretradeUrlFromToken,
+  extractSquaretradeUrl,
+  getSquaretradeUrl,
+  resolveSquaretradeUrl,
+  setSquaretradeUrl,
+} from "@/lib/squaretradeUrl";
 import { 
   loadTickets, 
   updateTicket, 
@@ -34,7 +48,7 @@ import {
   deleteTicketPart as sbDeleteTicketPart,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
-
+import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
 // Product category options for the ticket Product Information dropdown.
 const PRODUCT_CATEGORY_OPTIONS = [
   "Air Conditioner", "Bed", "Coffee Machines", "Compactor", "Cooktop", "Dehumidifier",
@@ -113,6 +127,28 @@ function formatSpDate(dateStr: string | null | undefined): string {
   }
 }
 
+// Format a ServicePower running-note date as "MM/DD/YYYY HH:MM:SS" so it
+// matches the layout the Customer Notes section uses for the legacy dummy
+// rows. ServicePower returns ISO 8601 strings (e.g. "2026-06-29T05:39:26Z");
+// if parsing fails we return the raw value rather than dropping the note.
+function formatSpNoteDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  try {
+    const clean = String(dateStr).replace(/[-+]\d{2}:\d{2}$/, "");
+    const d = new Date(clean);
+    if (isNaN(d.getTime())) return String(dateStr);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${mm}/${dd}/${yyyy} ${hh}:${mi}:${ss}`;
+  } catch {
+    return String(dateStr);
+  }
+}
+
 
 interface TicketData {
   ticketNo: string;
@@ -133,6 +169,7 @@ interface TicketData {
   zip: string;
   homePhone: string;
   cellPhone: string;
+  altPhone?: string;
   email: string;
   brand: string;
   model: string;
@@ -340,7 +377,7 @@ function createEmptyPartDraft(): PartTransactionDraft {
     markup: "",
     totalMarkup: "",
     claimTo: "",
-    status: "",
+    status: "Need PO",
     note: "",
     visitId: "",
     orderNo: "",
@@ -895,6 +932,53 @@ const TICKET_DATA: Record<string, TicketData> = {
   },
 };
 
+function ModelResourceButton(props: {
+  label: string;
+  url: string;
+  onEdit: () => void;
+}) {
+  const { label, url, onEdit } = props;
+  const hasLink = Boolean(url && url.trim());
+  return (
+    <div className="inline-flex items-center rounded-lg border border-slate-600/60 bg-slate-800/70 text-xs overflow-hidden">
+      {hasLink ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
+          title={url}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          <span className="font-semibold">{label}</span>
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="px-3 py-1 flex items-center gap-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+          title={`Add ${label} link`}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          <span className="font-semibold">{label}</span>
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">Add</span>
+        </button>
+      )}
+      {hasLink && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="px-2 py-1 border-l border-slate-600/60 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+          title={`Edit ${label} link`}
+          aria-label={`Edit ${label} link`}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function buildTicketCopyPayload(ticket: TicketData): TicketCopyPayload {
   const customerName = `${ticket.firstName} ${ticket.lastName}`.trim();
   return {
@@ -935,14 +1019,23 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, companyId: currentCompanyId, uid } = useAuth();
+  // Tech-only required-field gating: technicians (and anyone using the mobile
+  // tech app) must fill Cause of Failure + Repair Notes before saving a
+  // visit. On desktop / web for other roles these stay optional.
+  const isPhone = useIsPhone();
+  const isTechRole = useMemo(() => {
+    const r = String(currentUserRole || "").toUpperCase();
+    return r === "TECHNICIAN";
+  }, [currentUserRole]);
+  const requireTechVisitFields = isPhone || isTechRole;
   const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
   const [newVisitNote, setNewVisitNote] = useState("");
   const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
-  const [newVisitTechnician, setNewVisitTechnician] = useState("");
+  const [newVisitTechnician, setNewVisitTechnician] = useState("Memphis Admin");
   const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
   const [newVisitActivity, setNewVisitActivity] = useState("");
   const [newVisitActionType, setNewVisitActionType] = useState("SCHEDULE");
@@ -967,6 +1060,17 @@ function TicketDetailsPage() {
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
+  // ServicePower Running Notes modal (next to Add Visit).
+  const [isRunningNotesOpen, setIsRunningNotesOpen] = useState(false);
+  const [runningNotes, setRunningNotes] = useState<Array<{
+    date: string; body: string; addedBy: string; isInternal: boolean;
+  }>>([]);
+  const [runningNotesLoading, setRunningNotesLoading] = useState(false);
+  const [runningNotesError, setRunningNotesError] = useState<string | null>(null);
+  const [newRunningNote, setNewRunningNote] = useState("");
+  const [newRunningNoteVisibility, setNewRunningNoteVisibility] = useState<"internal" | "external">("internal");
+  const [postingRunningNote, setPostingRunningNote] = useState(false);
+  const [runningNotePostError, setRunningNotePostError] = useState<string | null>(null);
   const [viewingVisitEntry, setViewingVisitEntry] = useState<VisitLogEntry | null>(null);
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
@@ -978,6 +1082,67 @@ function TicketDetailsPage() {
   const [visitsLoaded, setVisitsLoaded] = useState(false);
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
   const [partRowsLoaded, setPartRowsLoaded] = useState(false);
+  // Marcone Parts Order modal state — pre-filtered Marcone parts and the
+  // pre-fetched address book. The modal owns its own form state; this only
+  // gates open/closed + which parts to seed it with.
+  const [marconeModal, setMarconeModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
+  // Truck Stock batch modal — opens from the new Truck Stock button next
+  // to Submit POs. Lets the user fulfill Need PO parts from an in-house
+  // branch with one confirmation, instead of placing distributor POs.
+  const [truckStockModal, setTruckStockModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
+  const [partAddressBook, setPartAddressBook] = useState<AddressBookEntry[]>([]);
+  const [defaultShipTo, setDefaultShipTo] = useState<ShipToAddress>({
+    name: "", street1: "", street2: "", city: "", state: "", zip: "", phone: "", email: "",
+  });
+  // Claim Transaction rows — lives in component state for now; persistence
+  // can land later. One row per claim submission (Visit Log linkage,
+  // claim # + status, fee columns, payment, etc).
+  interface ClaimTransactionRow {
+    id: string;
+    claimTo: string;
+    visitLogId: string;
+    claimNo: string;
+    claimDate: string;
+    claimStatus: string;
+    laborFee: string;
+    partFee: string;
+    diagnoseFee: string;
+    shippingFee: string;
+    extraMileFee: string;
+    otherFee: string;
+    taxFee: string;
+    totalFee: string;
+    paymentMethod: string;
+    mileage: string;
+    ccLast4: string;
+    note: string;
+  }
+  const [claimRows, setClaimRows] = useState<ClaimTransactionRow[]>([]);
+  const [claimNote, setClaimNote] = useState("");
+  // Inline draft for adding a NEW claim transaction (mirrors partDraft pattern).
+  // Filled by the editable two-row block at the top of the Claim table; on
+  // Save the draft is appended to claimRows and reset.
+  const createEmptyClaimDraft = (): Omit<ClaimTransactionRow, "id"> => ({
+    claimTo: "",
+    visitLogId: "",
+    claimNo: "",
+    claimDate: "",
+    claimStatus: "",
+    laborFee: "",
+    partFee: "",
+    diagnoseFee: "",
+    shippingFee: "",
+    extraMileFee: "",
+    otherFee: "",
+    taxFee: "",
+    totalFee: "",
+    paymentMethod: "",
+    mileage: "",
+    ccLast4: "",
+    note: "",
+  });
+  const [claimDraft, setClaimDraft] = useState<Omit<ClaimTransactionRow, "id">>(createEmptyClaimDraft);
+  const [editingClaimId, setEditingClaimId] = useState<string | null>(null);
   // All company tickets (for the Related Tickets matcher on the tracking tab).
   const [allCompanyTickets, setAllCompanyTickets] = useState<any[]>([]);
 
@@ -991,7 +1156,17 @@ function TicketDetailsPage() {
     return () => { cancelled = true; };
   }, [authReady]);
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
+  // Per-row edits that haven't been saved yet. Keyed by part row id. The
+  // saved rows are always rendered as input cells (no separate "edit"
+  // mode); changes the user types go into rowEdits[row.id] and stay
+  // pending until they click the global Update button (next to Submit
+  // POs). Empty patches are cleaned up so we never persist a no-op.
+  const [rowEdits, setRowEdits] = useState<Record<string, Partial<PartTransactionRow>>>({});
+  const [rowEditsSaving, setRowEditsSaving] = useState(false);
   const [partDraft, setPartDraft] = useState<PartTransactionDraft>(createEmptyPartDraft());
+  // Marcone /parts/lookup state for the inline Add row's "Lookup" button.
+  const [marconeLookupBusy, setMarconeLookupBusy] = useState(false);
+  const [marconeLookupMsg, setMarconeLookupMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
     {
       id: "comp-1",
@@ -1030,6 +1205,19 @@ function TicketDetailsPage() {
   const [isEditingProductInfo, setIsEditingProductInfo] = useState(false);
   const [editedProductInfo, setEditedProductInfo] = useState<Partial<TicketData>>({});
 
+  // Per-model reference links (Exploded View / Service Bulletin). Shared
+  // across every ticket carrying the same model number. Loaded from Supabase
+  // whenever the ticket's model changes.
+  const [modelResources, setModelResources] = useState<{
+    explodedViewUrl: string;
+    serviceBulletinUrl: string;
+  }>({ explodedViewUrl: "", serviceBulletinUrl: "" });
+  const [modelResourceModal, setModelResourceModal] = useState<
+    | null
+    | { kind: "exploded" | "bulletin"; value: string }
+  >(null);
+  const [modelResourceSaving, setModelResourceSaving] = useState(false);
+
   // Edit mode state for schedule information
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
@@ -1067,6 +1255,50 @@ function TicketDetailsPage() {
         setPartRows([]);
         setPartRowsLoaded(true);
       });
+
+    // Load saved Part Pickup Addresses + branch locations so the Marcone
+    // Parts Order modal's Address dropdown is populated without an extra
+    // round-trip when the user clicks Submit POs. Best-effort — if either
+    // call fails we just open the modal with a minimal address book.
+    Promise.all([
+      getPartAddresses().catch(() => []),
+      getLocations().catch(() => []),
+    ]).then(([addrs, locs]) => {
+      const book: AddressBookEntry[] = [];
+      for (const loc of locs) {
+        book.push({
+          id: `branch:${loc.id}`,
+          label: `${loc.location} — ${[loc.address1, loc.city, loc.state].filter(Boolean).join(", ")}`,
+          shipTo: {
+            name: loc.location,
+            street1: loc.address1 || "",
+            street2: loc.address2 || "",
+            city: loc.city || "",
+            state: loc.state || "",
+            zip: loc.zipCode || "",
+            phone: loc.phoneNo || "",
+            email: loc.email || "",
+          },
+        });
+      }
+      for (const a of addrs) {
+        book.push({
+          id: `part:${a.id}`,
+          label: `${a.name} — ${[a.address1, a.city, a.state].filter(Boolean).join(", ")}`,
+          shipTo: {
+            name: a.name,
+            street1: a.address1 || "",
+            street2: a.address2 || "",
+            city: a.city || "",
+            state: a.state || "",
+            zip: a.zipCode || "",
+            phone: "",
+            email: "",
+          },
+        });
+      }
+      setPartAddressBook(book);
+    });
     
     // Load alert messages from localStorage
     setAlertMessages(loadAlertMessages(ticketNo));
@@ -1185,9 +1417,18 @@ function TicketDetailsPage() {
   const handleSyncCallInfo = async (silent = false) => {
     setSpCallSyncing(true);
     if (!silent) setSpCallSyncMsg(null);
+    // eslint-disable-next-line no-console
+    console.log("[SP auto-sync] starting for ticket:", ticketNo);
     try {
       const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
       const result = await fetchServicePowerCalls({ callNo: ticketNo });
+      // eslint-disable-next-line no-console
+      console.log("[SP auto-sync] response:", {
+        success: result.success,
+        callsCount: (result.calls || []).length,
+        error: result.error,
+        rawXmlSnippet: String(result.rawXml || "").slice(0, 600),
+      });
       if (!result.success) {
         const msg = typeof result.error === "string"
           ? result.error
@@ -1206,9 +1447,13 @@ function TicketDetailsPage() {
       const product = call.product || {};
       const mfgSourceMap: Record<string, string> = {
         I565: "SQUARE TRADE", I455: "ASSURANT SOLUTIONS", B100: "CENTRICITY",
+        I404: "GE", I406: "GE", I402: "GE",
       };
       const mfgCode = String(call.mfgId ?? "").trim().toUpperCase();
-      const source = mfgSourceMap[mfgCode] || mfgCode || "";
+      const mfgName = String(call.mfgName ?? "").trim();
+      // Prefer the friendly source name SP returned; fall back to our code map;
+      // last resort is the raw MfgId code.
+      const source = (mfgName || mfgSourceMap[mfgCode] || mfgCode || "").toUpperCase();
 
       // Raw warranty as ServicePower sent it (could be a code like "SC"/"IW"
       // or a full text label like "Service Contract").
@@ -1219,41 +1464,100 @@ function TicketDetailsPage() {
       };
       const rawWarranty = wtypeMap[rawWarrantyUpper] || rawWarrantyValue || "";
 
+      // ServicePower exposes a "Warranty Info" label at the product level too.
+      // The parser tries several tag names; fall back to grepping the raw XML.
+      const productWarrantyInfo = String((product as any).warrantyInfo ?? "").trim();
+      const productXmlBlob = String((product as any).rawXml ?? "");
+      const xmlHasServiceContract = /service\s*contract/i.test(productXmlBlob);
+
       // The badge next to "Warranty Type" mirrors ServicePower's Product
       // Details > Warranty Info verbatim. Detect "Service Contract" from any
-      // of the signals SP exposes:
-      //   - WarrantyType code is "SC"
-      //   - Warranty value (raw or mapped) contains "service contract"
-      //   - Product has a ServiceContractNumber populated
-      //   - Product has a ServiceContractExpireDate populated
+      // signal SP exposes:
       const hasServiceContract =
         rawWarrantyUpper === "SC" ||
         /service\s*contract/i.test(rawWarrantyValue) ||
         /service\s*contract/i.test(String(rawWarranty)) ||
+        /service\s*contract/i.test(productWarrantyInfo) ||
         Boolean(String(product.serviceContractNumber ?? "").trim()) ||
-        Boolean(String(product.serviceContractExpireDate ?? "").trim());
+        Boolean(String(product.serviceContractExpireDate ?? "").trim()) ||
+        xmlHasServiceContract;
+
       const warrantyInfoBadge = hasServiceContract
         ? "SERVICE CONTRACT"
-        : (rawWarranty || "").toUpperCase();
+        : (productWarrantyInfo || rawWarranty || "").toUpperCase();
 
       // Diagnostic: surface the raw SP fields so we can see why the badge
       // resolves the way it does. Safe to keep — only logs in the user's own
       // browser console.
       console.log("[SP auto-sync]", {
         callNumber: call.callNumber,
+        mfgId: call.mfgId,
+        mfgName: call.mfgName,
+        resolvedSource: source,
         warrantyTypeRaw: call.warrantyType,
         warrantyTypeMapped: rawWarranty,
+        productWarrantyInfo,
         serviceContractNumber: product.serviceContractNumber,
         serviceContractExpireDate: product.serviceContractExpireDate,
+        xmlHasServiceContract,
         hasServiceContract,
         warrantyInfoBadge,
+        productXmlSnippet: productXmlBlob.slice(0, 500),
+        callXmlSnippet: String(call.callRawXml || "").slice(0, 800),
       });
+
+      // Account No for any ServicePower-sourced ticket is the servicer
+      // account we authenticated as (the credential used to call the SOAP
+      // API), NOT the manufacturer-supplied source label. Pull it from the
+      // configured env var first; fall back to whatever SP echoed back.
+      const configuredAcct =
+        (import.meta as any).env?.VITE_SERVICEPOWER_SERVICER_ACCOUNT ||
+        (import.meta as any).env?.VITE_SERVICEPOWER_USER_ID ||
+        "";
+      const accountNo = configuredAcct || call.servicerAccount || "";
+
+      // Customer phone refresh: pull straight from the SP consumer block so
+      // General Information and Service Tracking always show what SP has on
+      // file right now. SP returns "0" / blank for missing numbers — strip
+      // those. Phone1 is home, Phone2/CellPhone is the secondary number.
+      const cleanSpPhone = (v: any) => {
+        const s = String(v ?? "").trim();
+        return s === "0" || s === "" ? "" : s;
+      };
+      const consumer = call.consumer || {};
+      const spHomePhone = cleanSpPhone(consumer.phone1);
+      const spCellPhone = cleanSpPhone(consumer.phone2) || cleanSpPhone(consumer.cellPhone);
+
+      // If a user previously edited the customer info via "Edit Customer
+      // Info" form, lock the entire customer record from auto-sync overwrite.
+      // The flag protects name, address, phones, email, etc. — anything they
+      // changed stays.
+      let customerLocked = false;
+      try {
+        const { supabase } = await import("@/lib/supabase/client");
+        const { data: ticketRow } = await supabase
+          .from("tickets")
+          .select("customer_id")
+          .eq("ticket_no", ticketNo)
+          .maybeSingle();
+        if (ticketRow?.customer_id) {
+          const { data: customerRow } = await supabase
+            .from("customers")
+            .select("edited_by_user")
+            .eq("id", ticketRow.customer_id)
+            .maybeSingle();
+          customerLocked = Boolean((customerRow as any)?.edited_by_user);
+        }
+      } catch (e) {
+        console.warn("[SP auto-sync] customer lock check skipped:", e);
+      }
+      const phoneEditedByUser = customerLocked;
 
       setTicketData((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          accountNo: call.servicerAccount || prev.accountNo,
+          accountNo: accountNo || prev.accountNo,
           manufactureId: mfgCode || prev.manufactureId,
           callNo: call.callNumber || ticketNo,
           ticketSource: source || prev.ticketSource,
@@ -1269,8 +1573,31 @@ function TicketDetailsPage() {
           authNo: call.authNo || prev.authNo,
           observationNotes: call.problemDesc || prev.observationNotes,
           serviceContract: warrantyInfoBadge || prev.serviceContract,
+          // Trust SP for phone numbers UNLESS a user already edited them.
+          // Their saved value wins; otherwise we sync from the live call so
+          // General Info and Service Tracking match what SP currently has.
+          homePhone: phoneEditedByUser ? prev.homePhone : (spHomePhone || prev.homePhone),
+          cellPhone: phoneEditedByUser ? prev.cellPhone : (spCellPhone || prev.cellPhone),
         };
       });
+
+      // Persist the refreshed phones to Supabase so the next page load doesn't
+      // revert to a stale number. Skip when a user has manually edited.
+      if (!phoneEditedByUser && (spHomePhone || spCellPhone)) {
+        try {
+          const { updateTicketCustomer } = await import("@/lib/supabase/tickets");
+          await updateTicketCustomer(
+            ticketNo,
+            {
+              phone: spHomePhone || undefined,
+              secondPhone: spCellPhone || undefined,
+            },
+            { markEdited: false },
+          );
+        } catch (e) {
+          console.warn("[SP auto-sync] customer phone save skipped:", e);
+        }
+      }
       setSpCallSyncMsg("Call Service Information synced from ServicePower.");
     } catch (err) {
       if (!silent) setSpCallSyncMsg(
@@ -1349,6 +1676,7 @@ function TicketDetailsPage() {
           zip: centralTicket.zip || "",
           homePhone: centralTicket.phone,
           cellPhone: centralTicket.secondPhone || "",
+          altPhone: (centralTicket as any).altPhone || "",
           email: centralTicket.email || "",
           brand: centralTicket.manufacturer,
           model: centralTicket.model,
@@ -1364,7 +1692,7 @@ function TicketDetailsPage() {
           // the live ServicePower call. Leave blank until the sync resolves so
           // we never duplicate the AHS-mapped Warranty Type next to it.
           serviceContract: "",
-          accountNo: centralTicket.account || "",
+          accountNo: (centralTicket as any).accountNo || "",
           manufactureId: (centralTicket as any).manufactureId || "",
           callNo: centralTicket.ticketNo || "",
           ticketSource: centralTicket.ticketSource || centralTicket.account || "",
@@ -1382,7 +1710,9 @@ function TicketDetailsPage() {
           observationNotes: (centralTicket as any).observationNotes || "",
           problemDescription: centralTicket.problemDescription || centralTicket.internalNote || "",
           scheduleDate: centralTicket.schedule,
-          schedulePeriod: "",
+          // ServicePower's appointment window string, lives on
+          // tickets.time_slot and surfaces as Ticket.schedulePeriod.
+          schedulePeriod: (centralTicket as any).schedulePeriod || "",
           technician: centralTicket.technician,
           customerNotes: [],
           servicerNotes: [],
@@ -1408,6 +1738,105 @@ function TicketDetailsPage() {
   }, [ticketNo, authReady]);
 
   const ticket = ticketData;
+
+  // Squaretrade tickets need a per-ticket appointment-completion URL so the
+  // claims team can finish the repair. We persist whatever the user pastes
+  // (full URL or just the token) keyed by ticket number; the modal below
+  // lets them update it inline.
+  const [squaretradeUrl, setSquaretradeUrlState] = useState<string>("");
+  const [squaretradeEditOpen, setSquaretradeEditOpen] = useState(false);
+  const [squaretradeDraft, setSquaretradeDraft] = useState("");
+
+  useEffect(() => {
+    setSquaretradeUrlState(getSquaretradeUrl(ticketNo));
+  }, [ticketNo]);
+
+  // Load per-model reference links (Exploded View / Service Bulletin) when
+  // the ticket's model changes. Shared across every ticket with the same
+  // model number — saving here updates the resource for all of them.
+  useEffect(() => {
+    const model = String(ticket?.model || "").trim();
+    if (!model) {
+      setModelResources({ explodedViewUrl: "", serviceBulletinUrl: "" });
+      return;
+    }
+    let cancelled = false;
+    getModelResources(model)
+      .then((res) => {
+        if (cancelled) return;
+        setModelResources({
+          explodedViewUrl: res.explodedViewUrl || "",
+          serviceBulletinUrl: res.serviceBulletinUrl || "",
+        });
+      })
+      .catch((err) => console.error("getModelResources error:", err));
+    return () => { cancelled = true; };
+  }, [ticket?.model]);
+
+  const handleSaveModelResource = async () => {
+    if (!modelResourceModal) return;
+    const model = String(ticket?.model || "").trim();
+    if (!model) {
+      alert("This ticket has no model number. Set a model first before linking resources.");
+      return;
+    }
+    const url = modelResourceModal.value.trim();
+    setModelResourceSaving(true);
+    try {
+      const updated = await saveModelResources(model, {
+        explodedViewUrl: modelResourceModal.kind === "exploded" ? url : modelResources.explodedViewUrl,
+        serviceBulletinUrl: modelResourceModal.kind === "bulletin" ? url : modelResources.serviceBulletinUrl,
+      });
+      setModelResources({
+        explodedViewUrl: updated.explodedViewUrl,
+        serviceBulletinUrl: updated.serviceBulletinUrl,
+      });
+      setModelResourceModal(null);
+    } catch (err) {
+      console.error("saveModelResources error:", err);
+      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setModelResourceSaving(false);
+    }
+  };
+
+  // Auto-pull Call Service Information from ServicePower once the ticket has
+  // loaded. Runs once per ticket number. Reads handleSyncCallInfo lazily via
+  // a ref so the effect doesn't need it in its dep list (the function closes
+  // over `ticketNo` already).
+  useEffect(() => {
+    if (!ticketData) return;
+    if (autoSyncedRef.current === ticketNo) return;
+    autoSyncedRef.current = ticketNo;
+    // eslint-disable-next-line no-console
+    console.log("[SP auto-sync] effect firing for ticket:", ticketNo);
+    handleSyncCallInfo(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketData, ticketNo]);
+
+  // Pick a default Ship-To for the Marcone Parts Order modal: the ticket's
+  // branch row in the address book if we have it; fall back to the
+  // currently-signed-in user's email as the recipient. Recomputes any time
+  // the ticket's branch or the address book reloads.
+  useEffect(() => {
+    if (partAddressBook.length === 0) return;
+    const branchKey = (ticket?.location || "").trim().toLowerCase();
+    const branchEntry = partAddressBook.find((a) =>
+      a.id.startsWith("branch:") && a.shipTo.name.trim().toLowerCase() === branchKey,
+    );
+    const next = branchEntry?.shipTo ?? null;
+    setDefaultShipTo({
+      name: next?.name || ticket?.location || "",
+      street1: next?.street1 || "",
+      street2: next?.street2 || "",
+      city: next?.city || "",
+      state: next?.state || "",
+      zip: next?.zip || "",
+      phone: next?.phone || "",
+      email: next?.email || currentUserEmail || "",
+    });
+  }, [partAddressBook, ticket?.location, currentUserEmail]);
+
 
   // Compute DRIVING miles from the office to this ticket's address using the
   // Google Distance Matrix API (matches what Google Maps shows). Falls back
@@ -1577,9 +2006,10 @@ function TicketDetailsPage() {
 
   const startEditingCustomerInfo = () => {
     if (ticket) {
+      // Only fields the user can actually edit are pre-loaded into the form
+      // (address fields + phone numbers). Name and email are intentionally
+      // omitted — they're shown as read-only labels in the form.
       setEditedCustomerInfo({
-        firstName: ticket.firstName,
-        lastName: ticket.lastName,
         address: ticket.address,
         address2: ticket.address2,
         city: ticket.city,
@@ -1587,7 +2017,7 @@ function TicketDetailsPage() {
         zip: ticket.zip,
         homePhone: ticket.homePhone,
         cellPhone: ticket.cellPhone,
-        email: ticket.email,
+        altPhone: ticket.altPhone,
       });
       setIsEditingCustomerInfo(true);
     }
@@ -1596,7 +2026,9 @@ function TicketDetailsPage() {
   const saveCustomerInfo = () => {
     if (!ticket) return;
 
-    const fieldsToCheck: (keyof TicketData)[] = ["firstName", "lastName", "address", "city", "state", "zip", "homePhone", "cellPhone", "email"];
+    // Only address fields + phone numbers are auditable from this form.
+    // Name and email are read-only.
+    const fieldsToCheck: (keyof TicketData)[] = ["address", "address2", "city", "state", "zip", "homePhone", "cellPhone", "altPhone"];
 
     fieldsToCheck.forEach((field) => {
       const oldValue = formatAuditValue(ticket[field]);
@@ -1615,22 +2047,22 @@ function TicketDetailsPage() {
       }
     });
 
-    // Update centralized ticket system
+    // Update centralized ticket system. Name + email are read-only on this
+    // form so we always pass the existing values through unchanged.
     updateTicket(ticketNo, {
-      firstName: editedCustomerInfo.firstName || ticket.firstName,
-      lastName: editedCustomerInfo.lastName || ticket.lastName,
-      address: editedCustomerInfo.address || ticket.address,
-      city: editedCustomerInfo.city || ticket.city,
-      zip: editedCustomerInfo.zip || ticket.zip,
-      phone: editedCustomerInfo.homePhone || ticket.homePhone,
-      email: editedCustomerInfo.email || ticket.email,
+      firstName: ticket.firstName,
+      lastName: ticket.lastName,
+      address: editedCustomerInfo.address ?? ticket.address,
+      city: editedCustomerInfo.city ?? ticket.city,
+      zip: editedCustomerInfo.zip ?? ticket.zip,
+      phone: editedCustomerInfo.homePhone ?? ticket.homePhone,
+      email: ticket.email,
     });
 
     // Persist to Supabase (source of truth). Customer details live in the
-    // linked `customers` row.
+    // linked `customers` row. Name + email are intentionally NOT written —
+    // they're read-only in the UI so we leave whatever's in the row alone.
     sbUpdateTicketCustomer(ticketNo, {
-      firstName: editedCustomerInfo.firstName ?? ticket.firstName,
-      lastName: editedCustomerInfo.lastName ?? ticket.lastName,
       address: editedCustomerInfo.address ?? ticket.address,
       address2: editedCustomerInfo.address2 ?? ticket.address2,
       city: editedCustomerInfo.city ?? ticket.city,
@@ -1638,7 +2070,7 @@ function TicketDetailsPage() {
       zip: editedCustomerInfo.zip ?? ticket.zip,
       phone: editedCustomerInfo.homePhone ?? ticket.homePhone,
       secondPhone: editedCustomerInfo.cellPhone ?? ticket.cellPhone,
-      email: editedCustomerInfo.email ?? ticket.email,
+      altPhone: editedCustomerInfo.altPhone ?? ticket.altPhone,
     }).catch((err) => {
       console.error("Failed to save customer info to Supabase:", err);
       alert(`Failed to save customer info: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -1704,7 +2136,7 @@ function TicketDetailsPage() {
     }
   };
 
-  const saveProductInfo = () => {
+  const saveProductInfo = async () => {
     if (!ticket) return;
 
     const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "modelVersion", "redoTicketNo", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
@@ -1725,7 +2157,7 @@ function TicketDetailsPage() {
       }
     });
 
-    // Update centralized ticket system
+    // Update centralized ticket system (in-memory + localStorage cache)
     updateTicket(ticketNo, {
       manufacturer: editedProductInfo.brand || ticket.brand,
       model: editedProductInfo.model || ticket.model,
@@ -1735,7 +2167,30 @@ function TicketDetailsPage() {
       productType: editedProductInfo.productCategory || ticket.productCategory,
       purchaseDate: editedProductInfo.purchaseDate || ticket.purchaseDate,
       warranty: editedProductInfo.warrantyType || ticket.warrantyType,
+      claimCompany: editedProductInfo.claimCompany ?? ticket.claimCompany,
     });
+
+    // Persist to Supabase (source of truth). The `tickets` row is updated
+    // and `product_edited_by_user` is flipped to true so the ServicePower
+    // sync stops overwriting these columns on future runs.
+    try {
+      await sbUpdateTicketFields(ticketNo, {
+        manufacturer: editedProductInfo.brand ?? ticket.brand,
+        model: editedProductInfo.model ?? ticket.model,
+        serial: editedProductInfo.serialNo ?? ticket.serialNo,
+        modelVersion: editedProductInfo.modelVersion ?? ticket.modelVersion,
+        productType: editedProductInfo.productCategory ?? ticket.productCategory,
+        purchaseDate: editedProductInfo.purchaseDate ?? ticket.purchaseDate,
+        warranty: editedProductInfo.warrantyType ?? ticket.warrantyType,
+        claimCompany: editedProductInfo.claimCompany ?? ticket.claimCompany,
+        originalTicketNo: editedProductInfo.redoTicketNo ?? ticket.redoTicketNo,
+      });
+    } catch (err) {
+      console.error("Failed to persist product info:", err);
+      alert(`Could not save Product Info to the database: ${err instanceof Error ? err.message : "Unknown error"}\n\nYour changes are still applied locally; please retry the save.`);
+      // Keep edit mode open so the user can retry without losing input.
+      return;
+    }
 
     setIsEditingProductInfo(false);
     setEditedProductInfo({});
@@ -1757,7 +2212,7 @@ function TicketDetailsPage() {
     }
   };
 
-  const saveScheduleInfo = () => {
+  const saveScheduleInfo = async () => {
     if (!ticket) return;
 
     const fieldsToCheck: (keyof TicketData)[] = ["scheduleDate", "schedulePeriod", "technician"];
@@ -1779,11 +2234,26 @@ function TicketDetailsPage() {
       }
     });
 
-    // Update centralized ticket system
+    // Update centralized in-memory ticket map for any consumers reading
+    // through getTicketByNumber (legacy code paths).
     updateTicket(ticketNo, {
       schedule: editedScheduleInfo.scheduleDate || ticket.scheduleDate,
       technician: editedScheduleInfo.technician || ticket.technician,
     });
+
+    // Persist the change to Supabase so the value survives reloads and
+    // also feeds the Work Map / Work Planner (both read schedule_date and
+    // time_slot from the tickets table). Falls back silently if the
+    // ticket isn't in Supabase yet (e.g. local-only fake tickets).
+    try {
+      await sbUpdateTicketAssignment(ticketNo, {
+        technician: editedScheduleInfo.technician ?? ticket.technician,
+        scheduleDate: editedScheduleInfo.scheduleDate ?? ticket.scheduleDate,
+        timeSlot: editedScheduleInfo.schedulePeriod ?? ticket.schedulePeriod ?? "",
+      });
+    } catch (err) {
+      console.warn("saveScheduleInfo: Supabase update skipped", err);
+    }
 
     setIsEditingScheduleInfo(false);
     setEditedScheduleInfo({});
@@ -1800,10 +2270,46 @@ function TicketDetailsPage() {
     }
 
     const trimmedNote = newVisitNote.trim();
-    // Only Action Type is required now.
+    // Required fields:
+    //  - Action Type
+    //  - Repair Status (drives the ticket's status; must always be set)
     if (!newVisitActionType) {
       alert("Please select an Action Type.");
       return;
+    }
+    if (!newVisitRepairStatus.trim()) {
+      alert("Repair Status is required before a visit log can be submitted.");
+      // Pop the field into view and focus it.
+      const el = document.getElementById("visit-repair-status-modal") as HTMLSelectElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => el.focus(), 80);
+      }
+      return;
+    }
+    // Cause of Failure (diagnosis) + Repair Notes (resolution) are required
+    // before a technician can submit / complete a visit. Office roles on the
+    // web aren't blocked — only technicians and anyone using the mobile tech
+    // app must fill them in.
+    if (requireTechVisitFields) {
+      if (!newVisitDiagnosis.trim()) {
+        alert("Cause of Failure (Tech) is required before a visit can be completed.");
+        const el = document.getElementById("visit-diagnosis-modal") as HTMLTextAreaElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => el.focus(), 80);
+        }
+        return;
+      }
+      if (!newVisitResolution.trim()) {
+        alert("Repair Notes (Tech) is required before a visit can be completed.");
+        const el = document.getElementById("visit-resolution-modal") as HTMLTextAreaElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => el.focus(), 80);
+        }
+        return;
+      }
     }
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
@@ -1908,7 +2414,7 @@ function TicketDetailsPage() {
     setNewVisitNote("");
     setNewVisitStatus("Visited");
     setNewVisitScheduleDate("");
-    setNewVisitTechnician("");
+    setNewVisitTechnician("Memphis Admin");
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
     setNewVisitActionType("SCHEDULE");
@@ -1929,6 +2435,165 @@ function TicketDetailsPage() {
   const openVisitCreateModal = () => {
     clearVisitForm();
     setIsVisitModalOpen(true);
+  };
+
+  // Raw XML from the last running-notes fetch (both getCallNotes and
+  // getCallInfo). The Squaretrade URL extractor scans this so we can
+  // catch the Appointment Completion URL even when it lives inside a
+  // SP field we don't have a dedicated parser for (SpecialInstructions,
+  // ProblemDesc, etc).
+  const [runningNotesRawXml, setRunningNotesRawXml] = useState<string>("");
+
+  // ---- ServicePower Running Notes ----------------------------------------
+  const loadRunningNotes = useCallback(async () => {
+    if (!ticketNo) return;
+    setRunningNotesLoading(true);
+    setRunningNotesError(null);
+    try {
+      const { fetchServicePowerNotes } = await import("@/lib/servicePowerNotes");
+      const result = await fetchServicePowerNotes(ticketNo);
+      // Stash both XML payloads concatenated so the URL extractor can
+      // search anywhere in them (notes thread + work-order details).
+      setRunningNotesRawXml(`${result.rawXml ?? ""}\n${result.rawCallInfoXml ?? ""}`);
+      if (!result.success) {
+        setRunningNotesError(result.error || "Failed to load running notes.");
+        setRunningNotes([]);
+      } else {
+        setRunningNotes(result.notes.map((n) => ({
+          date: n.date,
+          body: n.body,
+          addedBy: n.addedBy,
+          isInternal: n.isInternal,
+        })));
+      }
+    } catch (err) {
+      setRunningNotesError(err instanceof Error ? err.message : String(err));
+      setRunningNotes([]);
+      setRunningNotesRawXml("");
+    } finally {
+      setRunningNotesLoading(false);
+    }
+  }, [ticketNo]);
+
+  const openRunningNotesModal = () => {
+    setIsRunningNotesOpen(true);
+    setNewRunningNote("");
+    setRunningNotePostError(null);
+    void loadRunningNotes();
+  };
+
+  // Auto-fetch ServicePower Running Notes when a ticket loads so the
+  // "Customer Notes" section on the General tab mirrors what the warranty
+  // company (Allstate / Squaretrade / etc.) wrote on SP — without the user
+  // having to open the Running Notes modal first.
+  useEffect(() => {
+    if (!ticketNo) return;
+    void loadRunningNotes();
+  }, [ticketNo, loadRunningNotes]);
+
+  // Auto-sync the per-ticket Squaretrade Appointment Completion URL from
+  // ServicePower whenever notes refresh. Squaretrade typically embeds
+  // the ticket-specific confirmappointment URL inside the running-notes
+  // thread, but on some tickets it only appears in the call-info
+  // payload (special instructions / problem description / a SP field
+  // we don't have a dedicated parser for). To catch both cases we scan
+  // the parsed note bodies first, and fall back to the raw XML from
+  // both getCallNotes and getCallInfo — any URL anywhere in those
+  // payloads gets picked up.
+  useEffect(() => {
+    if (!ticketNo) return;
+    const accountName = String(ticket?.account || "").toLowerCase().replace(/\s+/g, "");
+    if (!accountName.includes("squaretrade")) return;
+    const notesBlob = runningNotes.map((n) => n.body || "").join("\n");
+    const fullBlob = [notesBlob, runningNotesRawXml].filter(Boolean).join("\n");
+    if (!fullBlob) return;
+    const found = extractSquaretradeUrl(fullBlob);
+    if (!found) return;
+    const current = getSquaretradeUrl(ticketNo);
+    if (current === found) return;
+    const saved = setSquaretradeUrl(ticketNo, found);
+    setSquaretradeUrlState(saved);
+  }, [ticketNo, ticket?.account, runningNotes, runningNotesRawXml]);
+
+  // Compose the Customer Notes list shown on the General tab. We always
+  // prefer the live SP running notes when available (so the customer-facing
+  // thread stays in sync with what the warranty company posted). The
+  // legacy ticket.customerNotes array is only used as a fallback when SP
+  // returned nothing — otherwise dummy seeds would inflate the count.
+  const displayedCustomerNotes = useMemo(() => {
+    const fromSp = runningNotes.map((n) => ({
+      // Render SP's ISO date in the same "MM/DD/YYYY HH:MM:SS" style the
+      // existing Customer Notes block uses, so the design stays consistent.
+      date: formatSpNoteDate(n.date),
+      notes: n.body,
+      by: n.addedBy || "ServicePower",
+    }));
+    const fromTicket = (ticket?.customerNotes ?? []) as Array<{ date: string; notes: string; by: string }>;
+    // SP is the source of truth. If it returned at least one note, show
+    // only those (de-duped by date+body). Only fall back to the
+    // ticket-stored notes when SP came back empty.
+    const source = fromSp.length > 0 ? fromSp : fromTicket;
+    const seen = new Set<string>();
+    const merged: Array<{ date: string; notes: string; by: string }> = [];
+    for (const note of source) {
+      const key = `${(note.date || "").trim()}::${(note.notes || "").trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(note);
+    }
+    // Chronological: first note at the top, most recent at the bottom so
+    // dispatchers read the thread the way it was written on SP.
+    merged.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    return merged;
+  }, [runningNotes, ticket?.customerNotes]);
+
+  const closeRunningNotesModal = () => {
+    setIsRunningNotesOpen(false);
+    setRunningNotePostError(null);
+    setNewRunningNote("");
+  };
+
+  const submitRunningNote = async () => {
+    const noteBody = newRunningNote.trim();
+    if (!noteBody) return;
+    setPostingRunningNote(true);
+    setRunningNotePostError(null);
+    try {
+      const { addServicePowerNote } = await import("@/lib/servicePowerNotes");
+      const isInternal = newRunningNoteVisibility === "internal";
+      // SP threads notes by AddedBy. Use our servicer account so the warranty
+      // company sees the note as coming from us, not the logged-in agent's
+      // email (which leaks employee identities).
+      const servicerAccount =
+        (import.meta as any).env?.VITE_SERVICEPOWER_SERVICER_ACCOUNT || "GSL00002";
+      const result = await addServicePowerNote({
+        callNo: ticketNo,
+        note: noteBody,
+        addedBy: servicerAccount,
+        isInternal,
+      });
+      if (!result.success) {
+        setRunningNotePostError(result.error || "Failed to post note to ServicePower.");
+        return;
+      }
+      // Optimistically append to the local thread; the next refresh will sync.
+      setRunningNotes((prev) => [
+        ...prev,
+        {
+          date: new Date().toISOString(),
+          body: noteBody,
+          addedBy: servicerAccount,
+          isInternal,
+        },
+      ]);
+      setNewRunningNote("");
+      // Trigger a fresh fetch so SP-formatted timestamps land in place.
+      void loadRunningNotes();
+    } catch (err) {
+      setRunningNotePostError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPostingRunningNote(false);
+    }
   };
 
   const openVisitEditModal = (entry: VisitLogEntry) => {
@@ -2051,7 +2716,60 @@ function TicketDetailsPage() {
     alert(`PO ${partOrder.poNo} created successfully! View it in Part Order page.`);
   };
 
-  // Submit POs for all parts that need them
+  // Helper: silent batch submission for non-Marcone parts (existing legacy
+  // path). Creates one PO per part, stamps PO Made + PO#, persists to
+  // Supabase, and appends audit entries. Returns the list of PO numbers
+  // created so the caller can surface them in the success toast.
+  const submitSilentPOs = async (parts: PartTransactionRow[]): Promise<string[]> => {
+    if (parts.length === 0) return [];
+    const poNumbers: string[] = [];
+    const updatedRows: PartTransactionRow[] = [];
+    const ordersToSave: ReturnType<typeof createPartOrderFromTicket>[] = [];
+    const updatedParts = partRows.map(part => {
+      const needsPO = parts.some(p => p.id === part.id);
+      if (needsPO) {
+        const partOrder = createPartOrderFromTicket(ticketNo, part);
+        ordersToSave.push(partOrder);
+        poNumbers.push(partOrder.poNo);
+
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Submitted PO (Batch)",
+          field: "Part Transaction",
+          before: `${part.partNo} - Status: ${part.status || 'No status'}`,
+          after: `${part.partNo} - Status: PO Made - PO #: ${partOrder.poNo}`,
+        });
+
+        const updated = {
+          ...part,
+          status: 'PO Made',
+          poNo: partOrder.poNo,
+          poDate: partOrder.poDate,
+        };
+        updatedRows.push(updated);
+        return updated;
+      }
+      return part;
+    });
+
+    try {
+      await Promise.all(ordersToSave.map((o) => savePartOrder(o)));
+    } catch (err) {
+      console.error("Failed to save some POs:", err);
+    }
+    try {
+      await Promise.all(updatedRows.map((p) => sbUpdateTicketPart(p.id, p as any)));
+    } catch (err) {
+      console.error("Failed to persist batch POs:", err);
+      alert(`Some PO updates failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+    setPartRows(updatedParts);
+    return poNumbers;
+  };
+
+  // Submit POs for all parts that need them. Splits Marcone parts (which
+  // open the Marcone Parts Order modal for CSR review) from non-Marcone
+  // parts (which go through the existing silent batch flow).
   const submitAllPOs = async () => {
     // First, fix any parts that have PO numbers but incorrect status
     const partsToFix = partRows.filter(part => part.poNo && part.status !== 'PO Made');
@@ -2081,9 +2799,9 @@ function TicketDetailsPage() {
     }
 
     // Filter parts that need PO
-    const partsNeedingPO = partRows.filter(part => 
+    const partsNeedingPO = partRows.filter(part =>
       !part.poNo &&
-      part.status !== 'PO Made' && 
+      part.status !== 'PO Made' &&
       part.status !== 'Cancelled' &&
       (part.status === 'Need PO' || part.status === 'Tech Pickup' || part.status === 'Part Ready' || !part.status)
     );
@@ -2095,56 +2813,576 @@ function TicketDetailsPage() {
       return;
     }
 
-    if (!confirm(`Submit ${partsNeedingPO.length} PO(s) for parts without existing orders?`)) return;
+    // Split: Marcone goes through the review modal; everything else takes
+    // the silent batch path so the user isn't blocked on confirming each
+    // distributor separately.
+    const marconeParts = partsNeedingPO.filter((p) => isMarconeDist(p.partDist));
+    const otherParts = partsNeedingPO.filter((p) => !isMarconeDist(p.partDist));
 
-    const poNumbers: string[] = [];
-    const updatedRows: PartTransactionRow[] = [];
-    const ordersToSave: ReturnType<typeof createPartOrderFromTicket>[] = [];
-    const updatedParts = partRows.map(part => {
-      const needsPO = partsNeedingPO.some(p => p.id === part.id);
-      if (needsPO) {
-        const partOrder = createPartOrderFromTicket(ticketNo, part);
-        ordersToSave.push(partOrder);
-        poNumbers.push(partOrder.poNo);
+    // Kick off non-Marcone silent submission immediately; the modal opening
+    // doesn't need to wait on it. If both sets are non-empty we surface a
+    // combined success message after the modal closes.
+    let silentPoNumbers: string[] = [];
+    if (otherParts.length > 0) {
+      silentPoNumbers = await submitSilentPOs(otherParts);
+    }
 
+    if (marconeParts.length > 0) {
+      setMarconeModal({ open: true, parts: marconeParts });
+      return;
+    }
+
+    // No Marcone parts — show the silent-only result.
+    if (silentPoNumbers.length > 0) {
+      alert(`${silentPoNumbers.length} PO(s) created successfully:\n${silentPoNumbers.join('\n')}\n\nView them in Part Order page.`);
+    }
+  };
+
+  // Handler the Marcone Parts Order modal calls when the user clicks Place
+  // Order. Routes to placeMarconeOrder, reloads parts from Supabase so the
+  // grid reflects the canonical state, then closes the modal.
+  const handleMarconePlaceOrder = async (payload: MarconeOrderPayload) => {
+    const result = await placeMarconeOrder(payload);
+    const { poNo, marconeOrderNo } = result;
+    // Audit log every line so reviewers can see who did what.
+    for (const line of payload.lineItems) {
+      const after = [
+        `${line.partNumber}`,
+        `Status: PO Made`,
+        `PO #: ${poNo}`,
+        `Ship: ${payload.shipMethod}`,
+        marconeOrderNo ? `Marcone Order: ${marconeOrderNo}` : null,
+      ].filter(Boolean).join(" - ");
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Submitted PO (Marcone Modal)",
+        field: "Part Transaction",
+        before: `${line.partNumber}`,
+        after,
+      });
+    }
+    // Reload parts so the grid picks up the new statuses + PO numbers
+    // + Marcone Order # the order returned. ETA / tracking / invoice
+    // come from /orders/orderstatus once Marcone has shipped.
+    try {
+      const parts = await sbGetTicketParts(ticketNo);
+      setPartRows(parts as any);
+    } catch (err) {
+      console.warn("Failed to refresh parts after Marcone order:", err);
+    }
+    setMarconeModal({ open: false, parts: [] });
+    const summary = [
+      `Marcone PO ${poNo} placed — ${payload.lineItems.length} part${payload.lineItems.length === 1 ? "" : "s"}.`,
+      marconeOrderNo ? `Marcone Order #: ${marconeOrderNo}` : null,
+      "ETA, tracking, and invoice # will populate once Marcone ships.",
+    ].filter(Boolean).join("\n");
+    alert(summary);
+  };
+
+  // ── Truck Stock batch flow ──
+  // Open the Truck Stock modal with every part on the ticket that
+  // currently needs a PO. The modal itself fetches the matching
+  // truck_stock rows and lets the user pick a source branch per part.
+  const openTruckStockBatch = () => {
+    if (partsEditDisabled) {
+      alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
+      return;
+    }
+    const candidates = partRows.filter((part) =>
+      !part.poNo &&
+      part.status !== "PO Made" &&
+      part.status !== "Cancelled" &&
+      (part.status === "Need PO" || part.status === "Tech Pickup" || part.status === "Part Ready" || !part.status),
+    );
+    if (candidates.length === 0) {
+      alert("No parts currently need PO. Nothing to source from Truck Stock.");
+      return;
+    }
+    setTruckStockModal({ open: true, parts: candidates });
+  };
+
+  // Pull the requested parts from truck_stock and stamp PO Made + auto
+  // PO No on each affected row. Quantities are decremented atomically
+  // inside decrementTruckStock so two open tabs can't oversell.
+  const handleTruckStockBatchConfirm = async (selections: TruckStockBatchSelection[]) => {
+    const { decrementTruckStock } = await import("@/lib/supabase/truckStock");
+    const today = new Date().toISOString().slice(0, 10);
+    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string }> = [];
+
+    // Step 1: decrement stock for each selection. If any one fails we
+    // stop and surface the error — earlier successful decrements stay
+    // applied (Supabase doesn't have a multi-row transactional client
+    // here, and the source rows are independent).
+    for (const sel of selections) {
+      const part = truckStockModal.parts.find((p) => p.id === sel.partId);
+      if (!part) continue;
+      try {
+        await decrementTruckStock({
+          branch: sel.branch,
+          partNo: part.partNo,
+          qty: sel.quantity,
+        });
+      } catch (err) {
+        throw new Error(`${part.partNo}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const autoPo = `INH-${sel.branch.replace(/\s+/g, "").slice(0, 4).toUpperCase()}-${Date.now().toString().slice(-6)}-${updates.length}`;
+      const noteAdd = `Pulled ${sel.quantity} from ${sel.branch}${sel.storageLocation ? ` @ ${sel.storageLocation}` : ""} on ${today}.`;
+      const nextRow: PartTransactionRow = {
+        ...part,
+        partDist: `In-House (${sel.branch})`,
+        status: "PO Made",
+        poNo: part.poNo || autoPo,
+        poDate: part.poDate || today,
+        quantity: String(sel.quantity),
+        note: part.note ? `${part.note}\n${noteAdd}` : noteAdd,
+        lastModifiedBy: currentEditor,
+      };
+      updates.push({ partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation });
+    }
+
+    // Step 2: persist each updated part row to Supabase.
+    for (const u of updates) {
+      try {
+        await sbUpdateTicketPart(u.partId, u.nextRow as any);
+      } catch (err) {
+        console.warn(`Failed to persist truck-stock update for ${u.nextRow.partNo}:`, err);
+      }
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Pulled from Truck Stock",
+        field: PART_FIELD_LABELS.status,
+        before: "Need PO",
+        after: `${u.nextRow.partNo} - Status: PO Made - PO #: ${u.nextRow.poNo} - From: ${u.branch}${u.storage ? ` @ ${u.storage}` : ""}`,
+      });
+    }
+
+    // Step 3: apply updates locally so the grid refreshes immediately.
+    setPartRows((prev) =>
+      prev.map((row) => {
+        const u = updates.find((x) => x.partId === row.id);
+        return u ? u.nextRow : row;
+      }),
+    );
+    setTruckStockModal({ open: false, parts: [] });
+
+    // Step 4: notify the Parts Manager when the actor is Triage or a
+    // non-manager Parts user. Privileged roles (Parts Manager, Admin,
+    // etc.) don't trigger the alert since they're the audience. Fire
+    // one notification per unique source branch in this batch so the
+    // message is specific enough to act on.
+    try {
+      const { shouldNotifyOnTruckStockUse, notifyPartsManagerOfTruckStockUse } =
+        await import("@/lib/truckStockNotify");
+      if (
+        shouldNotifyOnTruckStockUse(currentUserRole, currentUserExtraRoles) &&
+        currentCompanyId &&
+        updates.length > 0
+      ) {
+        const byBranch = new Map<string, typeof updates>();
+        for (const u of updates) {
+          const arr = byBranch.get(u.branch) ?? [];
+          arr.push(u);
+          byBranch.set(u.branch, arr);
+        }
+        for (const [branch, group] of byBranch) {
+          void notifyPartsManagerOfTruckStockUse({
+            actorName: currentUserName ?? "",
+            actorEmail: currentUserEmail ?? "",
+            actorRole: String(currentUserRole ?? ""),
+            ticketNo,
+            branch,
+            items: group.map((g) => ({
+              partNo: g.nextRow.partNo,
+              qty: g.pulled,
+              branch: g.branch,
+              storageLocation: g.storage,
+            })),
+            companyId: currentCompanyId,
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.warn("Truck Stock parts-manager notify skipped:", notifyErr);
+    }
+
+    alert(`Pulled ${updates.length} part${updates.length === 1 ? "" : "s"} from Truck Stock. Each is now PO Made with an INH-… PO number.`);
+  };
+
+  // ── Sync parts from ServicePower running notes ──
+  // The warranty company (Squaretrade / Allstate) posts structured
+  // part-order and tracking notes onto the SP work order. This handler
+  // parses those notes, creates a Need-PO part row for each new part the
+  // claims team announced, and overlays tracking number + carrier onto
+  // existing rows when a "tracking details" note arrives.
+  const [syncingNotesParts, setSyncingNotesParts] = useState(false);
+
+  const syncPartsFromNotes = useCallback(async () => {
+    if (!ticketNo) return;
+    if (runningNotes.length === 0) {
+      alert("No ServicePower running notes loaded yet. Hit Refresh on Customer Notes first.");
+      return;
+    }
+    const { aggregateSquaretradeParts } = await import("@/lib/squaretradeNotesParser");
+    const parsed = aggregateSquaretradeParts(runningNotes);
+    if (parsed.size === 0) {
+      alert("No part-order or tracking notes found in this ticket's ServicePower thread.");
+      return;
+    }
+
+    setSyncingNotesParts(true);
+    try {
+      // Snapshot current rows so duplicate part numbers update in place.
+      const byPartNo = new Map<string, PartTransactionRow>();
+      for (const row of partRows) {
+        const key = String(row.partNo || "").trim().toUpperCase();
+        if (key && !byPartNo.has(key)) byPartNo.set(key, row);
+      }
+
+      const insertions: PartTransactionRow[] = [];
+      const updates: Array<{ id: string; next: PartTransactionRow }> = [];
+
+      // Squaretrade tickets carry SQTRADE-style claim-to. Fall back to
+      // whatever the user typically uses (Squaretrade dist).
+      const claimTo = "Squaretrade";
+      const partDist = "Squaretrade";
+
+      for (const p of parsed.values()) {
+        const key = p.partNo.toUpperCase();
+        const existing = byPartNo.get(key);
+        if (existing) {
+          // Merge tracking / description / quantity onto the existing
+          // row, but only when SP actually has something new to give us.
+          // Manual edits on our side always win — we never overwrite a
+          // tracking number, description, or quantity the dispatcher
+          // already typed.
+          const next: PartTransactionRow = {
+            ...existing,
+            partDesc: existing.partDesc || p.partDesc,
+            quantity: existing.quantity || p.quantity || "1",
+            inTracking: existing.inTracking || p.trackingNumber,
+            note: existing.note ||
+              [p.shippingProvider && `Carrier: ${p.shippingProvider}`, p.requiresReturn && `Requires return: ${p.requiresReturn}`]
+                .filter(Boolean)
+                .join(" | "),
+            lastModifiedBy: currentEditor,
+          };
+          // Skip the round-trip if nothing actually changed — keeps
+          // already-tracked parts (e.g. WE04X24719 already has its
+          // tracking number) from being touched and from inflating the
+          // "N rows updated" alert.
+          const sameAsExisting =
+            next.partDesc === existing.partDesc &&
+            next.quantity === existing.quantity &&
+            next.inTracking === existing.inTracking &&
+            next.note === existing.note;
+          if (sameAsExisting) continue;
+          updates.push({ id: existing.id, next });
+          continue;
+        }
+
+        const newId =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+
+        const nextRow: PartTransactionRow = {
+          id: newId,
+          partNo: p.partNo,
+          partDist,
+          partDesc: p.partDesc,
+          poNo: "",
+          poDate: "",
+          invoiceNo: "",
+          invoiceDate: "",
+          quantity: p.quantity || "1",
+          partPrice: "",
+          coreValue: "",
+          shipCost: "",
+          markup: "",
+          totalMarkup: "",
+          claimTo,
+          status: "Need PO",
+          note: [
+            "Imported from SP customer notes",
+            p.shippingProvider && `Carrier: ${p.shippingProvider}`,
+            p.requiresReturn && `Requires return: ${p.requiresReturn}`,
+          ].filter(Boolean).join(" | "),
+          visitId: "",
+          orderNo: "",
+          eta: "",
+          inTracking: p.trackingNumber,
+          raDate: "",
+          raNo: "",
+          outTracking: "",
+          creditNo: "",
+          hold: "No",
+          cxPaid: "No",
+          createdBy: currentEditor,
+          lastModifiedBy: currentEditor,
+        };
+        insertions.push(nextRow);
+      }
+
+      // Persist updates first (cheaper roundtrips) then new rows.
+      for (const u of updates) {
+        try {
+          await sbUpdateTicketPart(u.id, u.next as any);
+        } catch (err) {
+          console.error("Failed to update part from notes:", err);
+        }
+      }
+      const insertedWithIds: PartTransactionRow[] = [];
+      for (const row of insertions) {
+        try {
+          const saved = await sbAddTicketPart(ticketNo, row as any);
+          insertedWithIds.push({ ...row, id: saved.id });
+        } catch (err) {
+          console.error("Failed to insert part from notes:", err);
+        }
+      }
+
+      // Reflect changes in the grid immediately.
+      setPartRows((prev) => {
+        const next = prev.map((row) => {
+          const u = updates.find((x) => x.id === row.id);
+          return u ? u.next : row;
+        });
+        return [...insertedWithIds, ...next];
+      });
+
+      // Audit log entries so the timeline shows who imported what.
+      for (const row of insertedWithIds) {
         appendAuditEntry({
           by: currentEditor,
-          action: "Submitted PO (Batch)",
+          action: "Imported part from SP customer notes",
           field: "Part Transaction",
-          before: `${part.partNo} - Status: ${part.status || 'No status'}`,
-          after: `${part.partNo} - Status: PO Made - PO #: ${partOrder.poNo}`,
+          before: "—",
+          after: `${row.partNo} - ${row.partDesc || "(no description)"} - Qty ${row.quantity} - Need PO`,
         });
-
-        const updated = {
-          ...part,
-          status: 'PO Made',
-          poNo: partOrder.poNo,
-          poDate: partOrder.poDate,
-        };
-        updatedRows.push(updated);
-        return updated;
       }
-      return part;
-    });
+      for (const u of updates) {
+        appendAuditEntry({
+          by: currentEditor,
+          action: "Updated part tracking from SP notes",
+          field: "Part Transaction",
+          before: u.id,
+          after: `${u.next.partNo} - Tracking: ${u.next.inTracking || "(none)"}`,
+        });
+      }
 
-    // Save all the new POs to Supabase
-    try {
-      await Promise.all(ordersToSave.map((o) => savePartOrder(o)));
-    } catch (err) {
-      console.error("Failed to save some POs:", err);
+      alert(
+        `Sync complete: added ${insertedWithIds.length} new part${insertedWithIds.length === 1 ? "" : "s"}, updated ${updates.length} existing row${updates.length === 1 ? "" : "s"}.`,
+      );
+    } finally {
+      setSyncingNotesParts(false);
     }
+  }, [ticketNo, runningNotes, partRows, currentEditor]);
 
-    // Persist each updated part to Supabase
-    try {
-      await Promise.all(updatedRows.map((p) => sbUpdateTicketPart(p.id, p as any)));
-    } catch (err) {
-      console.error("Failed to persist batch POs:", err);
-      alert(`Some PO updates failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+  // ── Sync from Assurant Claim ──
+  // When the ticket is an Assurant-flagged claim that's already been
+  // claimed on ServicePower's claims portal, the API exposes payment
+  // breakdown (paidLaborAmount, paidPartsAmount, etc.) plus the claim
+  // number + status. This handler pulls that data and stamps it onto
+  // the part transactions so the Claims team doesn't have to retype
+  // anything. Only enabled for tickets whose account looks like
+  // Assurant and whose status mentions "claim".
+  const [syncingClaim, setSyncingClaim] = useState(false);
+
+  const isAssurantClaimedTicket = useMemo(() => {
+    const account = String(ticket?.account || "").toLowerCase();
+    const status = String(ticket?.status || "").toLowerCase();
+    const brand = String(ticket?.brand || "").toLowerCase();
+    const claimCompany = String(ticket?.claimCompany || "").toLowerCase();
+    // Direct-service manufacturers run their own claim portals — they should
+    // never go through Assurant's retrieveClaim even when the Work Order
+    // Source string happens to contain "assurant" (e.g. legacy data, or a
+    // typo in SP). If the manufacturer or claim company is Electrolux /
+    // Frigidaire / GE, treat as direct-service and hide the Assurant Sync
+    // from Claim button.
+    const DIRECT_SERVICE_BRANDS = [
+      "electrolux", "frigidaire", "ge appliance", "general electric",
+    ];
+    if (
+      DIRECT_SERVICE_BRANDS.some((b) => brand.includes(b)) ||
+      DIRECT_SERVICE_BRANDS.some((b) => claimCompany.includes(b))
+    ) {
+      return false;
     }
+    if (!account.includes("assurant") && !claimCompany.includes("assurant")) return false;
+    return status.includes("claim");
+  }, [ticket?.account, ticket?.status, ticket?.brand, ticket?.claimCompany]);
 
-    setPartRows(updatedParts);
-    alert(`${poNumbers.length} PO(s) created successfully:\n${poNumbers.join('\n')}\n\nView them in Part Order page.`);
-  };
+  const syncFromClaim = useCallback(async () => {
+    if (!ticketNo) return;
+    if (!isAssurantClaimedTicket) {
+      alert(
+        "Sync from Claim is only available on Assurant tickets whose status indicates the claim has been filed.",
+      );
+      return;
+    }
+    setSyncingClaim(true);
+    try {
+      const { retrieveClaim } = await import("@/lib/servicePowerApiClient");
+      // ServicePower's claim retrieval API needs:
+      //   - manufacturerName (Assurant variants)
+      //   - serviceCenterNumber (our servicer ID that Assurant issued us)
+      //   - one of: callNumber / claimNumber / claimIdentifier
+      // We try every reasonable combination so we land on whichever
+      // permutation SP's tenant happens to accept.
+      const manufacturerNames = ["ASSURANT", "ASSURANT SOLUTIONS", "Assurant"];
+      // Service-center numbers to try in order. Empty string means
+      // "let the server pick its default" (env-driven). Concrete numeric
+      // values pulled from the ticket's stored servicer credentials.
+      const serviceCenterCandidates = [
+        "",
+        ticket?.accountNo || "",
+        "GSL00002",
+      ].filter((v, i, arr) => arr.indexOf(v) === i); // de-dupe
+      const queries: Array<{ label: string; params: Record<string, string> }> = [];
+      for (const m of manufacturerNames) {
+        for (const sc of serviceCenterCandidates) {
+          const scLabel = sc ? ` / sc=${sc}` : "";
+          queries.push({ label: `${m}${scLabel} / callNumber`, params: { callNumber: ticketNo, manufacturerName: m, ...(sc ? { serviceCenterNumber: sc } : {}) } });
+          queries.push({ label: `${m}${scLabel} / claimNumber`, params: { claimNumber: ticketNo, manufacturerName: m, ...(sc ? { serviceCenterNumber: sc } : {}) } });
+          queries.push({ label: `${m}${scLabel} / claimIdentifier`, params: { claimIdentifier: ticketNo, manufacturerName: m, ...(sc ? { serviceCenterNumber: sc } : {}) } });
+        }
+      }
+
+      const attempts: Array<{ label: string; responseCode?: string; claimCount: number; messages?: string }> = [];
+      let result: Awaited<ReturnType<typeof retrieveClaim>> | null = null;
+      let usedQuery = "";
+
+      for (const q of queries) {
+        try {
+          const r = await retrieveClaim(q.params as any);
+          attempts.push({
+            label: q.label,
+            responseCode: r.responseCode,
+            claimCount: r.claims?.length ?? 0,
+            messages: r.messages?.map((m) => m.message).join("; "),
+          });
+          if (r.responseCode === "OK" && r.claims && r.claims.length > 0) {
+            result = r;
+            usedQuery = q.label;
+            break;
+          }
+        } catch (err) {
+          attempts.push({
+            label: q.label,
+            responseCode: "ERR",
+            claimCount: 0,
+            messages: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      if (!result) {
+        // Log every attempt so we can see exactly what SP returned for
+        // each query shape (the SP responseCode / messages help diagnose
+        // whether we hit the wrong field or the wrong environment).
+        console.error("[syncFromClaim] All retrieveClaim attempts failed", attempts);
+        const summary = attempts
+          .map((a) => `${a.label}: ${a.responseCode || "?"} (${a.claimCount} claims)${a.messages ? ` — ${a.messages}` : ""}`)
+          .join("\n");
+        alert(
+          `No claim found on ServicePower for ticket #${ticketNo}.\n\n` +
+          `Tried:\n${summary}\n\n` +
+          `If the claim exists in SP HUB, the API may need a different query field or a different environment. ` +
+          `Open DevTools Console for the raw responses.`,
+        );
+        return;
+      }
+
+      console.info(`[syncFromClaim] Matched via ${usedQuery}:`, result.claims);
+
+      // Use the most-recent claim entry (claims for the same call get
+      // batched / re-submitted; the last one carries the latest payment
+      // breakdown).
+      const claim = [...(result.claims ?? [])].sort((a, b) =>
+        String(b.editedDate || b.receivedDate || "").localeCompare(
+          String(a.editedDate || a.receivedDate || ""),
+        ),
+      )[0];
+      if (!claim) {
+        alert("ServicePower returned an empty claim list. Nothing to sync.");
+        return;
+      }
+
+      // Pretty money formatter shared with the audit log entries.
+      const money = (n: number) =>
+        Number.isFinite(n) ? `$${n.toFixed(2)}` : "$0.00";
+      const fmtDate = (yyyymmdd: string) => {
+        if (!yyyymmdd || yyyymmdd.length !== 8) return yyyymmdd || "";
+        return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
+      };
+
+      // Build a single audit-friendly summary line we can reuse on every
+      // part-row note and the audit entry.
+      const summary =
+        `Claim #${claim.claimNumber} — ${claim.claimStatusDescription || claim.claimStatusCode}. ` +
+        `Paid: ${money(claim.paymentAmount)} (Labor ${money(claim.paidLaborAmount)} · Parts ${money(claim.paidPartsAmount)} · Travel ${money(claim.paidTravelAmount)}). ` +
+        `Payment date ${fmtDate(claim.paymentDate)}.`;
+
+      // Update every existing part row. If there are no rows yet, just
+      // record a single audit entry — there's nothing to stamp parts on.
+      const updates: Array<{ id: string; next: PartTransactionRow }> = [];
+      for (const row of partRows) {
+        const next: PartTransactionRow = {
+          ...row,
+          status: "Claimed",
+          claimTo: row.claimTo || claim.brandName || "Assurant",
+          creditNo: row.creditNo || claim.claimNumber,
+          cxPaid: claim.paymentAmount > 0 ? "Yes" : row.cxPaid,
+          note: row.note ? `${row.note}\n${summary}` : summary,
+          lastModifiedBy: currentEditor,
+        };
+        // Skip if nothing actually changed.
+        const same =
+          next.status === row.status &&
+          next.claimTo === row.claimTo &&
+          next.creditNo === row.creditNo &&
+          next.cxPaid === row.cxPaid &&
+          next.note === row.note;
+        if (!same) updates.push({ id: row.id, next });
+      }
+
+      for (const u of updates) {
+        try {
+          await sbUpdateTicketPart(u.id, u.next as any);
+        } catch (err) {
+          console.error("Failed to update part from claim:", err);
+        }
+      }
+
+      setPartRows((prev) =>
+        prev.map((row) => {
+          const u = updates.find((x) => x.id === row.id);
+          return u ? u.next : row;
+        }),
+      );
+
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Synced from Assurant Claim",
+        field: "Part Transaction",
+        before: `${partRows.length} part rows`,
+        after: summary,
+      });
+
+      alert(
+        `Synced from claim:\n\n${summary}\n\n` +
+        `${updates.length} part row${updates.length === 1 ? "" : "s"} updated.`,
+      );
+    } catch (err) {
+      console.error("[syncFromClaim] failed:", err);
+      alert(
+        `Failed to retrieve claim from ServicePower: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setSyncingClaim(false);
+    }
+  }, [ticketNo, isAssurantClaimedTicket, partRows, currentEditor]);
 
   // Alert message system
   const addAlertMessage = () => {
@@ -2188,12 +3426,432 @@ function TicketDetailsPage() {
     clearVisitForm();
   };
 
+  // Part Transaction lock: once the ticket has been Claimed or Data Closed,
+  // only the Claims department (or Naveen) is allowed to change a part
+  // status. Anyone else who tries triggers a notification to Naveen / Ian /
+  // Tina and the change is rejected. UI elements are also disabled for
+  // non-Claims users so it's clear up front.
+  const PART_LOCK_STATUSES = useMemo(
+    () => new Set([
+      "cl-claimed",
+      "claimed",
+      "cl-data closed",
+      "data closed",
+    ]),
+    [],
+  );
+  const isTicketPartLocked = useMemo(() => {
+    const s = String(ticket?.status || "").trim().toLowerCase();
+    return PART_LOCK_STATUSES.has(s);
+  }, [ticket?.status, PART_LOCK_STATUSES]);
+  // Roles allowed to edit Part Transactions on a locked (Claimed /
+  // Data Closed) ticket. Parts + Claims teams and their managers are
+  // the day-to-day editors; Admins, Managers and Branch Managers can
+  // override. CSR Manager and below (CSR agents, technicians, triage)
+  // stay locked out.
+  const PART_LOCK_BYPASS_ROLES = useMemo(
+    () => new Set([
+      "CLAIMS",
+      "CLAIMS_MANAGER",
+      "PARTS",
+      "PARTS_MANAGER",
+      "MANAGER",
+      "ADMIN",
+      "BRANCH_MANAGER",
+      "SENIOR_BRANCH_MANAGER",
+      "BIZOPS_MANAGER",
+      "BIZOPS_SENIOR_MANAGER",
+    ]),
+    [],
+  );
+  // Track the caller's extra_roles separately so we can do multi-role
+  // checks without coupling to the auth provider shape. Loaded once on
+  // mount.
+  const [currentUserExtraRoles, setCurrentUserExtraRoles] = useState<string[]>([]);
+  useEffect(() => {
+    if (!authReady || !uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { supabase } = await import("@/lib/supabase/client");
+        const { data } = await supabase
+          .from("profiles")
+          .select("extra_roles")
+          .eq("firebase_uid", uid)
+          .maybeSingle();
+        if (cancelled) return;
+        const extras = (data?.extra_roles as string[] | null) ?? [];
+        setCurrentUserExtraRoles(Array.isArray(extras) ? extras : []);
+      } catch {
+        if (!cancelled) setCurrentUserExtraRoles([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, uid]);
+
+  const isClaimsRole = useMemo(() => {
+    const primary = String(currentUserRole || "").toUpperCase();
+    if (PART_LOCK_BYPASS_ROLES.has(primary)) return true;
+    return currentUserExtraRoles.some((r) =>
+      PART_LOCK_BYPASS_ROLES.has(String(r).toUpperCase()),
+    );
+  }, [currentUserRole, currentUserExtraRoles, PART_LOCK_BYPASS_ROLES]);
+  const isNaveen = useMemo(() => {
+    const n = String(currentUserName || "").trim().toLowerCase();
+    return n === "naveen" || n.startsWith("naveen ");
+  }, [currentUserName]);
+  // Disable edits to existing rows for non-Claims users once the ticket is
+  // locked. Adding brand-new rows is also blocked when the lock is on.
+  const partsEditDisabled = isTicketPartLocked && !isClaimsRole && !isNaveen;
+
+  // Claim Transaction section visibility. Only the Claims department and
+  // Admin / Manager / Branch-level roles can see (or interact with) the
+  // claim transaction grid. Everyone else — CSR, technician, parts, triage
+  // — never sees the section. Naveen also retained as an explicit allow
+  // by name (matches the Part-lock allow-list semantics so the two
+  // surfaces stay symmetrical).
+  const CLAIM_VIEW_ROLES = useMemo(
+    () => new Set([
+      "CLAIMS",
+      "CLAIMS_MANAGER",
+      "MANAGER",
+      "ADMIN",
+      "SUPERADMIN",
+      "BRANCH_MANAGER",
+      "SENIOR_BRANCH_MANAGER",
+      "BIZOPS_MANAGER",
+      "BIZOPS_SENIOR_MANAGER",
+    ]),
+    [],
+  );
+  const canSeeClaimTransaction = useMemo(() => {
+    if (isNaveen) return true;
+    const primary = String(currentUserRole || "").toUpperCase();
+    if (CLAIM_VIEW_ROLES.has(primary)) return true;
+    return currentUserExtraRoles.some((r) =>
+      CLAIM_VIEW_ROLES.has(String(r).toUpperCase()),
+    );
+  }, [currentUserRole, currentUserExtraRoles, CLAIM_VIEW_ROLES, isNaveen]);
+
+  const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
+    if (!currentCompanyId) return;
+    try {
+      const { sendNotificationToUsers } = await import("@/lib/firebase/notifications");
+      await sendNotificationToUsers(
+        ["Naveen", "Ian", "Tina"],
+        currentCompanyId,
+        {
+          title: "Locked ticket: unauthorized part edit attempt",
+          body:
+            `${currentUserName || currentUserEmail || "A user"} (${currentUserRole || "no role"}) tried to change a part on ticket ${ticketNo} ` +
+            `while it was in status "${ticket?.status || "?"}". ` +
+            (attemptedRow ? `Part: ${attemptedRow.partNo || "(new)"} → ${partDraft.status || "(no status)"}.` : ""),
+          kind: "part_lock_violation",
+          ticketNo,
+        } as any,
+      );
+    } catch (err) {
+      console.warn("notifyUnauthorizedPartEdit failed:", err);
+    }
+  }, [currentCompanyId, currentUserName, currentUserEmail, currentUserRole, ticketNo, ticket?.status, partDraft.status]);
+
   const clearPartForm = () => {
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
   };
 
+  // ── Marcone /parts/lookup — autofill Description / List Price / Core / Stock ──
+  const handleMarconeLookup = async () => {
+    const partNumber = partDraft.partNo.trim();
+    const partDist = partDraft.partDist.trim();
+    if (!partDist) {
+      setMarconeLookupMsg({ kind: "err", text: "Pick Part Dist. first." });
+      return;
+    }
+    // Marcone is the only distributor we have an API for right now. Other
+    // distributors (GE, AIG, Encompass, ...) need their own integrations.
+    const distLower = partDist.toLowerCase();
+    const isMarconeDist = distLower.startsWith("marcone");
+    if (!isMarconeDist) {
+      setMarconeLookupMsg({
+        kind: "err",
+        text: `Lookup not available for ${partDist}. Currently wired for Marcone only.`,
+      });
+      return;
+    }
+    if (!partNumber) {
+      setMarconeLookupMsg({ kind: "err", text: "Enter a Part No first." });
+      return;
+    }
+    setMarconeLookupBusy(true);
+    setMarconeLookupMsg(null);
+    try {
+      const { marconeLookupPart } = await import("@/lib/marconeApi");
+      // The inline Lookup is for vendor (Marcone) info only now — in-house
+      // truck-stock fulfilment is handled by the dedicated Truck Stock
+      // button next to Submit POs. That separation keeps the Lookup
+      // banner short and focused on what the distributor can supply.
+      const result = await marconeLookupPart({
+        partNumber,
+        quantity: Number(partDraft.quantity) || 1,
+      });
+
+      if (result.notFound) {
+        setMarconeLookupMsg({
+          kind: "err",
+          text: `Marcone: ${partNumber} not found.`,
+        });
+        return;
+      }
+      if (!result.success || !result.data) {
+        setMarconeLookupMsg({
+          kind: "err",
+          text: `Marcone error: ${result.error || "request failed"}`,
+        });
+        return;
+      }
+      const d = result.data;
+      // Patch the draft only for fields the user hasn't typed yet; never
+      // overwrite Part No, Visit ID, or the Part Dist. they picked.
+      setPartDraft((prev) => ({
+        ...prev,
+        partDesc: prev.partDesc || d.description || "",
+        partPrice: prev.partPrice || (d.netPrice ?? d.listPrice ?? "").toString(),
+        coreValue: prev.coreValue || (d.coreValue ?? "").toString(),
+      }));
+      const stockLine = d.inStock ? "in stock" : "out of stock";
+      const discLine = d.isDiscontinued ? " · discontinued" : "";
+      setMarconeLookupMsg({
+        kind: "ok",
+        text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
+      });
+    } catch (err) {
+      setMarconeLookupMsg({
+        kind: "err",
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setMarconeLookupBusy(false);
+    }
+  };
+
+  // ── Refresh a single part row's status from Marcone /orders/orderstatus ──
+  // Pulls live ETA / invoice / tracking back to the Part Transaction row.
+  // Only meaningful when the row has an `orderNo` we got from Marcone's
+  // /orders/purchaseorder response. Other distributors keep using the
+  // legacy manual ETA / invoice fields.
+  //
+  // Manual click only — there is no background auto-poll for now. The
+  // user explicitly removed it; if needed later, restore the useEffect
+  // that called syncMarconeOrderStatus({ silent: true }) on an interval.
+  const [marconeRefreshingId, setMarconeRefreshingId] = useState<string | null>(null);
+
+  // Core sync routine. `silent` controls UI feedback. Currently only the
+  // manual button calls it (silent: false). Returns true when the row
+  // picked up at least one new field.
+  const syncMarconeOrderStatus = async (
+    row: PartTransactionRow,
+    options: { silent: boolean },
+  ): Promise<boolean> => {
+    if (!row.orderNo?.trim() || !isMarconeDist(row.partDist)) return false;
+
+    const { marconeOrderStatus } = await import("@/lib/marconeApi");
+    const result = await marconeOrderStatus({ orderNumber: row.orderNo.trim() });
+    if (!result.success || !result.data) {
+      if (!options.silent) {
+        alert(`Marcone order status failed: ${result.error || "no data returned"}`);
+      } else {
+        console.warn(
+          `[marcone auto-sync] ${row.partNo} (${row.orderNo}) failed:`,
+          result.error || "no data",
+        );
+      }
+      return false;
+    }
+
+    const info = result.data;
+    const patch: Record<string, unknown> = {};
+    if (info.eta && info.eta !== row.eta) patch.eta = info.eta;
+    if (info.invoiceNumber && info.invoiceNumber !== row.invoiceNo) patch.invoice_no = info.invoiceNumber;
+    if (info.invoiceDate && info.invoiceDate !== row.invoiceDate) patch.invoice_date = info.invoiceDate;
+    if (info.trackingNumbers && info.trackingNumbers !== row.inTracking) patch.in_tracking = info.trackingNumbers;
+
+    // Status promotion rules after a Marcone status refresh:
+    //   - "PO Made" stays "PO Made" while the part is in transit, even
+    //     when Marcone hands back an invoice # or a tracking #. The
+    //     part isn't physically with us yet, so promoting to
+    //     "Part Ready" is misleading.
+    //   - Back-order from Marcone bubbles up to "Back Order".
+    //   - Tech Pickup / Used / Part Ready / Cx Home / etc. stay where
+    //     they are; the dispatcher set those manually for a reason.
+    // The grid still picks up the tracking #, invoice #, and ETA so
+    // the row reflects the carrier's progress — we just don't promote
+    // the part status on the strength of an in-flight shipment.
+    const ms = (info.status || "").toLowerCase();
+    let nextStatus = row.status;
+    if (ms.includes("back") && row.status === "PO Made") nextStatus = "Back Order";
+    if (nextStatus !== row.status) patch.status = nextStatus;
+
+    if (Object.keys(patch).length === 0) {
+      if (!options.silent) {
+        alert(
+          `Marcone order ${info.orderNumber || row.orderNo} — status: ${info.status || "pending"}. ` +
+          "No new ETA, invoice, or tracking yet.",
+        );
+      }
+      return false;
+    }
+
+    const nextRow: PartTransactionRow = {
+      ...row,
+      ...(info.eta ? { eta: info.eta } : {}),
+      ...(info.invoiceNumber ? { invoiceNo: info.invoiceNumber } : {}),
+      ...(info.invoiceDate ? { invoiceDate: info.invoiceDate } : {}),
+      ...(info.trackingNumbers ? { inTracking: info.trackingNumbers } : {}),
+      ...(nextStatus !== row.status ? { status: nextStatus } : {}),
+      lastModifiedBy: currentEditor,
+    };
+    await sbUpdateTicketPart(row.id, nextRow as any);
+    setPartRows((prev) => prev.map((r) => (r.id === row.id ? nextRow : r)));
+
+    appendAuditEntry({
+      by: options.silent ? "Auto-sync (Marcone)" : currentEditor,
+      action: options.silent ? "Auto-synced from Marcone" : "Refreshed from Marcone",
+      field: "Part Transaction",
+      before: `${row.partNo} - Status: ${row.status} - ETA: ${row.eta || "—"} - Tracking: ${row.inTracking || "—"} - Invoice: ${row.invoiceNo || "—"}`,
+      after: `${row.partNo} - Status: ${nextStatus} - ETA: ${info.eta || row.eta || "—"} - Tracking: ${info.trackingNumbers || row.inTracking || "—"} - Invoice: ${info.invoiceNumber || row.invoiceNo || "—"}`,
+    });
+
+    if (!options.silent) {
+      const updates: string[] = [];
+      if (info.eta) updates.push(`ETA: ${info.eta}`);
+      if (info.invoiceNumber) updates.push(`Invoice #: ${info.invoiceNumber}`);
+      if (info.trackingNumbers) updates.push(`Tracking: ${info.trackingNumbers}`);
+      if (nextStatus !== row.status) updates.push(`Status: ${nextStatus}`);
+      alert(`Refreshed from Marcone order ${info.orderNumber || row.orderNo}:\n${updates.join("\n")}`);
+    }
+    return true;
+  };
+
+  const refreshMarconeOrderStatus = async (row: PartTransactionRow) => {
+    if (!row.orderNo?.trim()) {
+      alert("This part has no Marcone Order # to refresh.");
+      return;
+    }
+    if (!isMarconeDist(row.partDist)) {
+      alert("Refresh from Marcone is only available for Marcone parts.");
+      return;
+    }
+    setMarconeRefreshingId(row.id);
+    try {
+      await syncMarconeOrderStatus(row, { silent: false });
+    } catch (err) {
+      alert(`Failed to refresh from Marcone: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setMarconeRefreshingId(null);
+    }
+  };
+
+  // ── Inline row edit helpers ──
+  // Each saved part row renders as inputs/selects driven by the row + any
+  // pending edits in rowEdits[rowId]. updateRowField() buffers a change;
+  // saveAllRowEdits() flushes everything to Supabase + state + audit log
+  // when the user clicks Update.
+  const getRowValue = <K extends keyof PartTransactionRow>(row: PartTransactionRow, field: K): PartTransactionRow[K] => {
+    const patch = rowEdits[row.id];
+    if (patch && field in patch) return patch[field] as PartTransactionRow[K];
+    return row[field];
+  };
+  const updateRowField = <K extends keyof PartTransactionRow>(rowId: string, field: K, value: PartTransactionRow[K]) => {
+    if (partsEditDisabled) {
+      const row = partRows.find((r) => r.id === rowId) ?? null;
+      void notifyUnauthorizedPartEdit(row);
+      return;
+    }
+    setRowEdits((prev) => {
+      const existingPatch = prev[rowId] ?? {};
+      const original = partRows.find((r) => r.id === rowId);
+      // If the user types back the original value, drop the patch entry
+      // so the Update button reflects "nothing to save".
+      if (original && original[field] === value) {
+        const { [field]: _omit, ...rest } = existingPatch;
+        if (Object.keys(rest).length === 0) {
+          const { [rowId]: _omitRow, ...remaining } = prev;
+          return remaining;
+        }
+        return { ...prev, [rowId]: rest };
+      }
+      return { ...prev, [rowId]: { ...existingPatch, [field]: value } };
+    });
+  };
+  const dirtyRowCount = Object.keys(rowEdits).length;
+
+  const saveAllRowEdits = async () => {
+    if (partsEditDisabled) {
+      alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
+      return;
+    }
+    if (dirtyRowCount === 0) {
+      alert("Nothing to update. Type a change in any cell first.");
+      return;
+    }
+    setRowEditsSaving(true);
+    try {
+      const merged: Array<{ before: PartTransactionRow; after: PartTransactionRow }> = [];
+      for (const [rowId, patch] of Object.entries(rowEdits)) {
+        const before = partRows.find((r) => r.id === rowId);
+        if (!before) continue;
+        const after: PartTransactionRow = {
+          ...before,
+          ...patch,
+          lastModifiedBy: currentEditor,
+        };
+        await sbUpdateTicketPart(rowId, after as any);
+        merged.push({ before, after });
+      }
+
+      // Apply locally + audit each row's changes field-by-field.
+      setPartRows((prev) =>
+        prev.map((r) => merged.find((m) => m.after.id === r.id)?.after ?? r),
+      );
+      for (const { before, after } of merged) {
+        for (const key of Object.keys(rowEdits[after.id] ?? {})) {
+          const fieldKey = key as keyof PartTransactionRow;
+          // PART_FIELD_LABELS doesn't index id / createdBy / lastModifiedBy
+          // but row edits never touch those; safe to cast for the lookup.
+          const label = (PART_FIELD_LABELS as Record<string, string>)[String(key)] ?? String(key);
+          appendAuditEntry({
+            by: currentEditor,
+            action: "Updated part transaction",
+            field: label,
+            before: formatAuditValue(before[fieldKey]),
+            after: formatAuditValue(after[fieldKey]),
+          });
+        }
+      }
+      setRowEdits({});
+    } catch (err) {
+      alert(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRowEditsSaving(false);
+    }
+  };
+
+  // ── Auto-poll Marcone every 15 minutes ────────────────────────────────
+  // Iterates over the ticket's parts and silently syncs each Marcone
+  // order that's still in flight (PO Made / Back Order). Rows that are
+  // already Used / Tech Pickup / Cancelled don't get polled — Marcone
+  // status no longer drives them. Errors stay in the console; the user
+  // is never interrupted.
+  //
+  // (Auto-poll removed by user request. Refresh is manual-only.)
+
   const loadPartForEdit = (row: PartTransactionRow) => {
+    if (partsEditDisabled) {
+      alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
+      void notifyUnauthorizedPartEdit(row);
+      return;
+    }
     setEditingPartId(row.id);
     setPartDraft({
       partNo: row.partNo || "",
@@ -2226,7 +3884,28 @@ function TicketDetailsPage() {
   };
 
   const savePartRow = async () => {
-    if (!partDraft.partNo.trim() || !partDraft.partDist.trim() || !partDraft.quantity.trim() || !partDraft.status.trim() || !partDraft.visitId.trim()) return;
+    // Friendly validation — alert which required fields are missing so the
+    // user knows what to fill instead of getting a silent no-op. Part
+    // Status used to require Visit ID too, but that blocks brand-new
+    // tickets that have no visit yet; we now treat Visit ID as optional.
+    const missing: string[] = [];
+    if (!partDraft.partNo.trim()) missing.push("Part No");
+    if (!partDraft.partDist.trim()) missing.push("Part Dist.");
+    if (!partDraft.quantity.trim()) missing.push("Qty");
+    if (!partDraft.status.trim()) missing.push("Part Status");
+    if (missing.length > 0) {
+      alert(`Please fill: ${missing.join(", ")}.`);
+      return;
+    }
+
+    // Lock gate — only Claims (or Naveen) can touch parts once the ticket is
+    // Claimed / Data Closed. Anyone else gets blocked + a notification fires.
+    if (partsEditDisabled) {
+      const existing = editingPartId ? partRows.find((r) => r.id === editingPartId) ?? null : null;
+      alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
+      void notifyUnauthorizedPartEdit(existing);
+      return;
+    }
 
     const rowId = editingPartId ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -2321,6 +4000,12 @@ function TicketDetailsPage() {
   };
 
   const deletePartRow = async (rowId: string) => {
+    if (partsEditDisabled) {
+      const row = partRows.find((r) => r.id === rowId) ?? null;
+      alert(`Parts are locked because this ticket is "${ticket?.status}". Only the Claims department can delete them.`);
+      void notifyUnauthorizedPartEdit(row);
+      return;
+    }
     if (!confirm("Remove this part transaction?")) return;
 
     const rowToDelete = partRows.find((row) => row.id === rowId) ?? null;
@@ -2343,6 +4028,117 @@ function TicketDetailsPage() {
     if (editingPartId === rowId) {
       clearPartForm();
     }
+  };
+
+  // ---- Claim Transaction helpers -----------------------------------------
+  const newClaimId = () =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+
+  const addClaimTransactionRow = () => {
+    setClaimRows((rows) => [
+      ...rows,
+      {
+        id: newClaimId(),
+        claimTo: "",
+        visitLogId: "",
+        claimNo: "",
+        claimDate: new Date().toISOString().slice(0, 10),
+        claimStatus: "",
+        laborFee: "",
+        partFee: "",
+        diagnoseFee: "",
+        shippingFee: "",
+        extraMileFee: "",
+        otherFee: "",
+        taxFee: "",
+        totalFee: "",
+        paymentMethod: "",
+        mileage: "",
+        ccLast4: "",
+        note: "",
+      },
+    ]);
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Added claim transaction",
+      field: "Claim Transaction",
+      before: "—",
+      after: "Blank claim row created",
+    });
+  };
+
+  const updateClaimRow = (
+    id: string,
+    field: keyof Omit<ClaimTransactionRow, "id">,
+    value: string,
+  ) => {
+    setClaimRows((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    );
+  };
+
+  const deleteClaimRow = (id: string) => {
+    if (!confirm("Remove this claim transaction row?")) return;
+    setClaimRows((rows) => rows.filter((row) => row.id !== id));
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Deleted claim transaction",
+      field: "Claim Transaction",
+      before: "Row removed",
+      after: "—",
+    });
+  };
+
+  // ── Inline Claim draft (mirror of partDraft pattern) ─────────────────────
+  const updateClaimDraftField = (
+    field: keyof Omit<ClaimTransactionRow, "id">,
+    value: string,
+  ) => {
+    setClaimDraft((d) => ({ ...d, [field]: value }));
+  };
+
+  const clearClaimDraft = () => {
+    setEditingClaimId(null);
+    setClaimDraft(createEmptyClaimDraft());
+  };
+
+  const saveClaimDraft = () => {
+    if (!claimDraft.claimTo.trim() || !claimDraft.claimNo.trim()) {
+      alert("Claim To and Claim # are required.");
+      return;
+    }
+    if (editingClaimId) {
+      const before = claimRows.find((r) => r.id === editingClaimId);
+      setClaimRows((rows) =>
+        rows.map((r) => (r.id === editingClaimId ? { ...claimDraft, id: editingClaimId } : r)),
+      );
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Updated claim transaction",
+        field: "Claim Transaction",
+        before: before ? `${before.claimTo} #${before.claimNo}` : "—",
+        after: `${claimDraft.claimTo} #${claimDraft.claimNo}`,
+      });
+    } else {
+      const id = newClaimId();
+      setClaimRows((rows) => [...rows, { ...claimDraft, id }]);
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Added claim transaction",
+        field: "Claim Transaction",
+        before: "—",
+        after: `${claimDraft.claimTo} #${claimDraft.claimNo}`,
+      });
+    }
+    clearClaimDraft();
+  };
+
+  const loadClaimForEdit = (row: ClaimTransactionRow) => {
+    setEditingClaimId(row.id);
+    const { id: _id, ...rest } = row;
+    setClaimDraft(rest);
   };
 
   const addCompensationRow = () => {
@@ -2381,6 +4177,110 @@ function TicketDetailsPage() {
     window.open(`/m/tickets/new-ticket?copyToken=${encodeURIComponent(token)}`, "_blank", "noopener,noreferrer");
   };
 
+  // ── Share ticket via Internal Messenger ────────────────────────────────────
+  // Open a small modal, type a teammate's name (or pick from suggestions),
+  // and DM them the ticket number.
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [shareQuery, setShareQuery] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
+  const [shareContacts, setShareContacts] = useState<Array<{ id: string; display_name: string | null; email: string | null; role: string | null }>>([]);
+  const [shareSending, setShareSending] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  // Lazy-load colleagues once the modal opens.
+  useEffect(() => {
+    if (!isShareModalOpen || shareContacts.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCompanyUsers } = await import("@/lib/supabase/users");
+        const rows = await getCompanyUsers();
+        if (!cancelled) setShareContacts(rows as any);
+      } catch (err) {
+        if (!cancelled) setShareError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isShareModalOpen, shareContacts.length]);
+
+  // Resolve the typed name to a contact. Exact match first, then a single
+  // case-insensitive prefix match. Returns null if nothing or ambiguous.
+  const resolveShareContact = (raw: string) => {
+    const q = raw.trim().toLowerCase();
+    if (!q) return null;
+    const exact = shareContacts.find(
+      (c) => (c.display_name ?? "").trim().toLowerCase() === q ||
+             (c.email ?? "").trim().toLowerCase() === q,
+    );
+    if (exact) return exact;
+    const matches = shareContacts.filter(
+      (c) => `${c.display_name ?? ""} ${c.email ?? ""}`.toLowerCase().includes(q),
+    );
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  const filteredShareContacts = useMemo(() => {
+    const q = shareQuery.trim().toLowerCase();
+    if (!q) return [];
+    return shareContacts.filter(
+      (c) => `${c.display_name ?? ""} ${c.email ?? ""}`.toLowerCase().includes(q),
+    ).slice(0, 6);
+  }, [shareContacts, shareQuery]);
+
+  const sendTicketToContact = async (contact: { id: string; display_name: string | null; email: string | null }) => {
+    if (!ticket || !uid) return;
+    setShareSending(true);
+    setShareError(null);
+    try {
+      const { getMyProfileId } = await import("@/lib/supabase/users");
+      const { getOrCreateDmThread, sendMessage } = await import("@/lib/supabase/messaging");
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Your profile isn't linked yet — open Team Messenger once and try again.");
+      const thread = await getOrCreateDmThread(myProfileId, contact.id);
+      // Compose: optional note + the ticket reference. MessageBody linkifies
+      // `#TICKET` to a clickable link on the recipient's side. The note (if
+      // present) goes first so it reads like "Please check on this: #XYZ".
+      const note = shareMessage.trim();
+      const body = note ? `${note}\n\n#${ticket.ticketNo}` : `#${ticket.ticketNo}`;
+      await sendMessage({
+        channelId: null,
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: currentUserName || currentUserEmail || "User",
+        body,
+      });
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Shared ticket via messenger",
+        field: "Ticket",
+        before: "—",
+        after: `Sent to ${contact.display_name || contact.email || contact.id}${note ? " with note" : ""}`,
+      });
+      setIsShareModalOpen(false);
+      setShareQuery("");
+      setShareMessage("");
+      alert(`Ticket sent to ${contact.display_name || contact.email}.`);
+    } catch (err) {
+      console.error("sendTicketToContact failed:", err);
+      setShareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setShareSending(false);
+    }
+  };
+
+  const handleShareSubmit = () => {
+    const target = resolveShareContact(shareQuery);
+    if (!target) {
+      setShareError(
+        shareContacts.length === 0
+          ? "Teammate list still loading…"
+          : "No teammate matches that name. Pick a suggestion or type the exact name."
+      );
+      return;
+    }
+    void sendTicketToContact(target);
+  };
+
   const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
     setCompensationRows((rows) =>
       rows.map((row) =>
@@ -2406,9 +4306,202 @@ function TicketDetailsPage() {
     );
   };
 
+  // Editable Part Transaction rows used both at the top of the table (Add
+  // mode) and inline in place of a saved row (Edit mode). Keeping it as one
+  // chunk lets us reuse the same inputs without duplication; rendering it in
+  // place keeps the user's scroll position when they click Edit on a row
+  // far down the page.
+  const renderPartDraftRows = () => (
+    <>
+      <tr className="bg-slate-900/60 align-top">
+        <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
+        <td className="px-1 py-1.5">
+          <div className="flex gap-1">
+            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className="flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Part No*" />
+            <button
+              type="button"
+              onClick={handleMarconeLookup}
+              disabled={marconeLookupBusy || partsEditDisabled || !partDraft.partNo.trim() || !partDraft.partDist.trim()}
+              title={
+                !partDraft.partDist.trim()
+                  ? "Pick Part Dist. first"
+                  : !partDraft.partNo.trim()
+                  ? "Enter a Part No first"
+                  : "Look up part on Marcone (autofill description, price, stock)"
+              }
+              className="shrink-0 rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              {marconeLookupBusy ? "…" : "Lookup"}
+            </button>
+          </div>
+          {marconeLookupMsg ? (
+            <div className={`mt-1 text-[10px] ${marconeLookupMsg.kind === "ok" ? "text-emerald-300" : "text-rose-300"}`}>
+              {marconeLookupMsg.text}
+            </div>
+          ) : null}
+        </td>
+        <td className="px-1 py-1.5">
+          <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+            <option value="">Dist.*</option>
+            {/* In-house transfer values like "In-House (Asheville)" are
+                stamped by the Use in-house button on the Marcone Lookup
+                result — render the current draft value as an option so
+                the select doesn't fall back to blank. */}
+            {partDraft.partDist.startsWith("In-House (") ? (
+              <option value={partDraft.partDist}>{partDraft.partDist}</option>
+            ) : null}
+            <option>AIG</option>
+            <option>Electrolux</option>
+            <option>Encompass</option>
+            <option>Encompass-Birmingham / Montgomery</option>
+            <option>GE</option>
+            <option>LG</option>
+            <option>Marcone- Birmingham / Montgomery</option>
+            <option>Marcone-162468</option>
+            <option>Midea</option>
+            <option>Miele</option>
+            <option>NSA</option>
+            <option>OW</option>
+            <option>SB</option>
+            <option>Sharp</option>
+            <option>SP</option>
+            <option>Squaretrade</option>
+            <option>SS</option>
+          </select>
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.partDesc} onChange={(e) => setPartDraft((d) => ({ ...d, partDesc: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.poNo} onChange={(e) => setPartDraft((d) => ({ ...d, poNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="PO No (Auto-gen)" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input type="date" value={partDraft.poDate} onChange={(e) => setPartDraft((d) => ({ ...d, poDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" title="Auto-populated on PO creation" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.invoiceNo} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Invoice No" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input type="date" value={partDraft.invoiceDate} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.quantity} onChange={(e) => setPartDraft((d) => ({ ...d, quantity: e.target.value }))} className="w-20 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Qty*" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.partPrice} onChange={(e) => setPartDraft((d) => ({ ...d, partPrice: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.coreValue} onChange={(e) => setPartDraft((d) => ({ ...d, coreValue: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.shipCost} onChange={(e) => setPartDraft((d) => ({ ...d, shipCost: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
+        </td>
+        <td className="px-1 py-1.5">
+          <select value={partDraft.markup || "0"} onChange={(e) => setPartDraft((d) => ({ ...d, markup: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+            {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
+              <option key={v} value={String(v)}>{v}%</option>
+            ))}
+          </select>
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.claimTo} onChange={(e) => setPartDraft((d) => ({ ...d, claimTo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Claim To" />
+        </td>
+      </tr>
+      <tr className="bg-slate-900/40 align-top border-b border-white/10">
+        <td className="px-1 py-1.5">
+          <select value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+            <option value="">Status*</option>
+            <option>Back Order</option>
+            <option>Cancelled</option>
+            <option>Claimed</option>
+            <option>CX Home</option>
+            <option>Cx Received</option>
+            <option>Defective</option>
+            <option>Hold for Estimation</option>
+            <option>Hold for next vist</option>
+            <option>Lost</option>
+            <option>Need PO</option>
+            <option>Not Used &amp; Stocked</option>
+            <option>PAID</option>
+            <option>Part Ready</option>
+            <option>PO Made</option>
+            <option>RA - Defect</option>
+            <option>RA- DMG</option>
+            <option>RA - PNN</option>
+            <option>RA - Qty Discrepancy</option>
+            <option>SQT Received</option>
+            <option>Tech Pickup</option>
+            <option>Used</option>
+          </select>
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.note} onChange={(e) => setPartDraft((d) => ({ ...d, note: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Visit ID*" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.orderNo} onChange={(e) => setPartDraft((d) => ({ ...d, orderNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Order #" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input type="date" value={partDraft.eta} onChange={(e) => setPartDraft((d) => ({ ...d, eta: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.inTracking} onChange={(e) => setPartDraft((d) => ({ ...d, inTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="In Track #" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input type="date" value={partDraft.raDate} onChange={(e) => setPartDraft((d) => ({ ...d, raDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.raNo} onChange={(e) => setPartDraft((d) => ({ ...d, raNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="RA #" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.outTracking} onChange={(e) => setPartDraft((d) => ({ ...d, outTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Out Track #" />
+        </td>
+        <td className="px-1 py-1.5">
+          <input value={partDraft.creditNo} onChange={(e) => setPartDraft((d) => ({ ...d, creditNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Credit #" />
+        </td>
+        <td className="px-2 py-1.5 text-slate-400 text-xs whitespace-nowrap">
+          {partDraft.totalMarkup ? `$${partDraft.totalMarkup}` : "—"}
+        </td>
+        <td className="px-2 py-1.5 text-center">
+          <input type="checkbox" checked={partDraft.hold === "Hold"} onChange={(e) => setPartDraft((d) => ({ ...d, hold: e.target.checked ? "Hold" : "No" }))} className="accent-blue-500" />
+          <div className="text-slate-500 text-[10px]">Hold</div>
+        </td>
+        <td className="px-2 py-1.5 text-center">
+          <input type="checkbox" checked={partDraft.cxPaid === "Paid"} onChange={(e) => setPartDraft((d) => ({ ...d, cxPaid: e.target.checked ? "Paid" : "No" }))} className="accent-blue-500" />
+          <div className="text-slate-500 text-[10px]">Paid</div>
+        </td>
+        <td className="px-2 py-1.5 whitespace-nowrap">
+          <button
+            type="button"
+            onClick={savePartRow}
+            disabled={partsEditDisabled}
+            className={`rounded border px-3 py-1 text-xs font-semibold transition ${
+              partsEditDisabled
+                ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
+            }`}
+            title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : (editingPartId ? "Update part" : "Add part")}
+          >
+            {editingPartId ? "Update" : "Add"}
+          </button>
+          {editingPartId ? (
+            <button type="button" onClick={clearPartForm} className="ml-1 rounded border border-white/15 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition">
+              Cancel
+            </button>
+          ) : null}
+        </td>
+      </tr>
+    </>
+  );
+
   return (
     <>
       <AppHeader />
+      {/* Quick-nav rail (hidden under xl). Switches the active tab + scrolls
+          tracking sub-section anchors into view. */}
+      <TicketSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 bg-slate-950 py-6">
         <div className="max-w-6xl mx-auto px-6">
           <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
@@ -2432,6 +4525,16 @@ function TicketDetailsPage() {
                 className="inline-flex items-center justify-center rounded border border-blue-400/40 bg-blue-500/15 p-2 text-blue-200 transition hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Copy className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsShareModalOpen(true)}
+                disabled={!ticket}
+                title="Send ticket via Internal Messenger"
+                aria-label="Send ticket via Internal Messenger"
+                className="inline-flex items-center justify-center rounded border border-emerald-400/40 bg-emerald-500/15 p-2 text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
               </button>
               
               {/* Alert Messages Display - Inline beside controls */}
@@ -2469,7 +4572,62 @@ function TicketDetailsPage() {
                 
                 {ticket ? (
                   <div className="text-sm text-slate-300 leading-relaxed">
-                    <span className="text-slate-400">Account</span> <span className="font-semibold text-white">{ticket.account}</span>
+                    <span className="text-slate-400">Account</span>{" "}
+                    {(() => {
+                      // Squaretrade tickets jump to the appointment-completion
+                      // form so the claims team can close out the repair
+                      // without leaving the hub. Every other account still
+                      // opens the ServicePower workorders dashboard. Each
+                      // Squaretrade ticket carries its own token, so we
+                      // resolve the URL per-ticket via squaretradeUrl
+                      // (falls back to the Squaretrade landing form when
+                      // no token has been saved yet).
+                      const accountName = String(ticket.account || "").toLowerCase().replace(/\s+/g, "");
+                      const isSquaretrade = accountName.includes("squaretrade");
+                      const hasSaved = isSquaretrade && Boolean(squaretradeUrl);
+                      // Squaretrade tickets jump straight to that ticket's
+                      // Appointment Completion form when we have it. When
+                      // we don't, we deep-link to the same work order in
+                      // ServicePower HUB — SP's SOAP API doesn't expose
+                      // the HUB-only conversation thread that contains
+                      // the URL, so landing on the right work order lets
+                      // claims read it off HUB and paste it via the
+                      // pencil icon.
+                      const href = isSquaretrade
+                        ? resolveSquaretradeUrl(ticketNo)
+                        : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
+                      const title = isSquaretrade
+                        ? hasSaved
+                          ? "Open this ticket's Squaretrade appointment completion form in a new tab"
+                          : "Opens this work order in ServicePower HUB so you can read the Appointment Completion URL and paste it back here via the pencil icon."
+                        : "Open this work order in ServicePower HUB";
+                      return (
+                        <>
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={title}
+                            className="font-semibold text-white underline-offset-2 hover:underline hover:text-blue-300 transition-colors"
+                          >
+                            {ticket.account}
+                          </a>
+                          {isSquaretrade && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSquaretradeDraft(squaretradeUrl);
+                                setSquaretradeEditOpen(true);
+                              }}
+                              title={hasSaved ? "Edit appointment completion URL (auto-synced from ServicePower running notes)" : "Set appointment completion URL for this ticket — usually auto-extracted from ServicePower running notes"}
+                              className={`ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded border align-middle transition-colors ${hasSaved ? "border-emerald-400/40 text-emerald-300 hover:bg-emerald-400/10" : "border-amber-400/40 text-amber-300 hover:bg-amber-400/10"}`}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                     <span className="mx-3 text-slate-600">•</span>
                     <span className="text-slate-400">Warranty</span> <span className="font-semibold text-white">{warrantyAcronym(ticket.warrantyType) }</span>
                     <span className="mx-3 text-slate-600">•</span>
@@ -2481,7 +4639,22 @@ function TicketDetailsPage() {
                     <span className="mx-3 text-slate-600">•</span>
                     <span className="text-slate-400">Schedule</span> <span className="font-semibold text-white">{ticket.scheduleDate}</span>
                     <span className="mx-3 text-slate-600">•</span>
-                    <span className="text-slate-400">Contact</span> <span className="font-semibold text-white">{ticket.contact}</span>
+                    {/* Tier (Assurant / GE / Miele only) — derived from the
+                        customer ZIP + warranty company. Shows the tier
+                        code by itself (no dollar amount); "Base" / no
+                        match renders as N/A so the ribbon stays clean. */}
+                    {(() => {
+                      const tier = resolveTierCode(ticket.account, ticket.zip, ticket.accountNo);
+                      const display = tier && tier.code && tier.code.toLowerCase() !== "base"
+                        ? tier.code
+                        : "N/A";
+                      return (
+                        <>
+                          <span className="text-slate-400">Tier</span>{" "}
+                          <span className="font-semibold text-white">{display}</span>
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
@@ -2493,22 +4666,35 @@ function TicketDetailsPage() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-6 mt-3">
-          <div className="flex flex-wrap gap-2.5">
-            {["general", "tracking", "compensation", "billing"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab as any)}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${
-                  activeTab === tab
-                    ? "border-blue-400/60 bg-blue-500/25 text-white"
-                    : "border-white/20 bg-slate-900/90 text-slate-300 hover:border-slate-200/30 hover:text-white"
-                }`}
-              >
-                {tab === "tracking" ? "Service Tracking" : tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, " $1")}
-              </button>
-            ))}
+        {/* Tabs replaced by the floating TicketSidebar — kept here as a
+            comment marker so it's clear the navigation lives on the rail.
+
+            But the rail is hidden under md (<768px) where it would overlap
+            the body. So phone users get a horizontal tab strip in its
+            place that switches the same four sections. */}
+        <div className="md:hidden sticky top-[64px] z-10 -mx-1 px-1 pb-2">
+          <div className="overflow-x-auto">
+            <div className="flex gap-1 rounded-lg border border-white/10 bg-slate-900/85 backdrop-blur-md p-1 shadow-sm shadow-blue-900/20 w-max">
+              {([
+                { tab: "general", label: "General" },
+                { tab: "tracking", label: "Tracking" },
+                { tab: "compensation", label: "Compensation" },
+                { tab: "billing", label: "Billing" },
+              ] as const).map(({ tab, label }) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    activeTab === tab
+                      ? "bg-blue-500/25 text-white border border-blue-400/40"
+                      : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -2551,7 +4737,7 @@ function TicketDetailsPage() {
                       className="text-xs font-semibold text-slate-300"
                       title="Driving distance from office to customer"
                     >
-                      {officeDistanceMiles != null ? `${officeDistanceMiles.toFixed(1)} mi from office` : "— mi"}
+                      {officeDistanceMiles != null ? `${officeDistanceMiles.toFixed(1)} mi` : "— mi"}
                     </span>
                   </div>
                 </div>
@@ -2593,32 +4779,22 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <div className="text-slate-500 font-semibold text-xs">Phone</div>
-                      <div className="text-white font-semibold mt-1">{ticket.cellPhone || ticket.homePhone}</div>
+                      <div className="text-white font-semibold mt-1">{ticket.homePhone || ticket.cellPhone || "—"}</div>
                     </div>
                     <div>
                       <div className="text-slate-500 font-semibold text-xs">Location</div>
-                      <div className="text-white font-semibold mt-1">{ticket.city}</div>
+                      <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
                     </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <label className="text-slate-500 font-semibold text-xs block mb-1">First Name</label>
-                      <input
-                        type="text"
-                        value={editedCustomerInfo.firstName || ""}
-                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, firstName: e.target.value })}
-                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold text-xs block mb-1">Last Name</label>
-                      <input
-                        type="text"
-                        value={editedCustomerInfo.lastName || ""}
-                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, lastName: e.target.value })}
-                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
+                    {/* Name is intentionally read-only — only address fields
+                        and phone numbers may be edited from the ticket page. */}
+                    <div className="col-span-2">
+                      <label className="text-slate-500 font-semibold text-xs block mb-1">Name <span className="ml-1 text-[10px] uppercase tracking-wide text-slate-600">read-only</span></label>
+                      <div className="px-3 py-2 rounded bg-slate-900/60 border border-slate-700 text-slate-300 text-sm">
+                        {ticket.firstName} {ticket.lastName}
+                      </div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold text-xs block mb-1">City</label>
@@ -2658,10 +4834,35 @@ function TicketDetailsPage() {
                       <label className="text-slate-500 font-semibold">Cell Phone</label>
                       <div className="text-white mt-1">{ticket.cellPhone}</div>
                     </div>
-                    <div className="col-span-2">
+                    <div>
+                      <label className="text-slate-500 font-semibold">Alternate Phone</label>
+                      <div className="text-white mt-1">{ticket.altPhone || "—"}</div>
+                    </div>
+                    <div>
                       <label className="text-slate-500 font-semibold">Email</label>
                       <div className="text-white mt-1">{ticket.email}</div>
                     </div>
+                    {/* Tier Code — derived from warranty company + customer
+                        ZIP. Shows the tier code only (no dollar amount);
+                        "Base" / no match renders as N/A. */}
+                    {(() => {
+                      const tier = resolveTierCode(ticket.account, ticket.zip, ticket.accountNo);
+                      const display = tier && tier.code && tier.code.toLowerCase() !== "base"
+                        ? tier.code
+                        : "N/A";
+                      const showCompany = tier && display !== "N/A";
+                      return (
+                        <div>
+                          <label className="text-slate-500 font-semibold">Tier Code</label>
+                          <div className="text-white mt-1">
+                            {display}
+                            {showCompany ? (
+                              <span className="ml-2 text-xs font-normal text-slate-400">({tier.company})</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -2719,14 +4920,21 @@ function TicketDetailsPage() {
                         className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
                       />
                     </div>
-                    <div className="col-span-2">
-                      <label className="text-slate-500 font-semibold block mb-1">Email</label>
+                    <div>
+                      <label className="text-slate-500 font-semibold block mb-1">Alternate Phone</label>
                       <input
-                        type="email"
-                        value={editedCustomerInfo.email || ""}
-                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, email: e.target.value })}
+                        type="tel"
+                        value={editedCustomerInfo.altPhone || ""}
+                        onChange={(e) => setEditedCustomerInfo({ ...editedCustomerInfo, altPhone: e.target.value })}
+                        placeholder="Optional"
                         className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
                       />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-slate-500 font-semibold block mb-1">Email <span className="ml-1 text-[10px] uppercase tracking-wide text-slate-600">read-only</span></label>
+                      <div className="px-3 py-2 rounded bg-slate-900/60 border border-slate-700 text-slate-300 text-sm">
+                        {ticket.email || "—"}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2734,31 +4942,46 @@ function TicketDetailsPage() {
 
               {/* Product Information */}
               <div className="space-y-4 mb-8">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h4 className="font-semibold text-slate-300">Product Information</h4>
-                  {!isEditingProductInfo ? (
-                    <button
-                      onClick={startEditingProductInfo}
-                      className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold transition-colors border border-blue-500/30"
-                    >
-                      Edit Product Info
-                    </button>
-                  ) : (
-                    <div className="flex gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Per-model reference links — synced across every ticket
+                        sharing this model number. Saving here updates them
+                        for all matching tickets at once. */}
+                    <ModelResourceButton
+                      label="Exploded View"
+                      url={modelResources.explodedViewUrl}
+                      onEdit={() => setModelResourceModal({ kind: "exploded", value: modelResources.explodedViewUrl })}
+                    />
+                    <ModelResourceButton
+                      label="Service Bulletin"
+                      url={modelResources.serviceBulletinUrl}
+                      onEdit={() => setModelResourceModal({ kind: "bulletin", value: modelResources.serviceBulletinUrl })}
+                    />
+                    {!isEditingProductInfo ? (
                       <button
-                        onClick={saveProductInfo}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                        onClick={startEditingProductInfo}
+                        className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold transition-colors border border-blue-500/30"
                       >
-                        Save
+                        Edit Product Info
                       </button>
-                      <button
-                        onClick={cancelEditingProductInfo}
-                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={saveProductInfo}
+                          className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={cancelEditingProductInfo}
+                          className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {!isEditingProductInfo ? (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -3009,10 +5232,6 @@ function TicketDetailsPage() {
                     <label className="text-slate-500 font-semibold">Auth No</label>
                     <div className="text-white mt-1">{ticket.authNo || "—"}</div>
                   </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-500 font-semibold">Observation Notes</label>
-                    <div className="text-white mt-1 whitespace-pre-wrap">{ticket.observationNotes || "—"}</div>
-                  </div>
                 </div>
               </div>
 
@@ -3046,7 +5265,7 @@ function TicketDetailsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <label className="text-slate-500 font-semibold">Schedule Date</label>
+                    <label className="text-slate-500 font-semibold">Schedule Date (SP)</label>
                     {isEditingScheduleInfo ? (
                       <input
                         type="date"
@@ -3055,7 +5274,7 @@ function TicketDetailsPage() {
                         className="glass-input w-full mt-1"
                       />
                     ) : (
-                      <div className="text-white mt-1">{ticket.scheduleDate}</div>
+                      <div className="text-white mt-1">{ticket.scheduleDate || "—"}</div>
                     )}
                   </div>
                   <div>
@@ -3071,6 +5290,16 @@ function TicketDetailsPage() {
                     ) : (
                       <div className="text-white mt-1">{ticket.schedulePeriod}</div>
                     )}
+                  </div>
+                  <div>
+                    {/* Cx Preferred Date mirrors Schedule Date (SP) — they
+                        both come from ServicePower's scheduled date. We
+                        show them as separate labels because the customer-
+                        preferred and SP-assigned date can legitimately
+                        differ on rescheduling tickets, but until that
+                        diverges they stay in sync read-only. */}
+                    <label className="text-slate-500 font-semibold">Cx Preferred Date</label>
+                    <div className="text-white mt-1">{ticket.scheduleDate || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Technician</label>
@@ -3094,60 +5323,53 @@ function TicketDetailsPage() {
                 </div>
               </div>
 
-              {/* Problem Description */}
+              {/* Problem Description (read-only — synced from ServicePower) */}
               <div className="space-y-4 mb-8">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold text-slate-300">Problem Description</h4>
-                  {!isEditingProblem ? (
-                    <button
-                      onClick={startEditingProblem}
-                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors"
-                    >
-                      Edit
-                    </button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveProblemDescription}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={cancelEditingProblem}
-                        className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
+                <h4 className="font-semibold text-slate-300">Problem Description</h4>
+                <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm text-slate-300">
+                  {ticket.problemDescription || "—"}
                 </div>
-                {!isEditingProblem ? (
-                  <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm text-slate-300">
-                    {ticket.problemDescription || "—"}
-                  </div>
-                ) : (
-                  <textarea
-                    value={editedProblem}
-                    onChange={(e) => setEditedProblem(e.target.value)}
-                    rows={4}
-                    className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                    placeholder="Describe the problem..."
-                  />
-                )}
               </div>
 
-              {/* Customer Notes */}
+              {/* Customer Notes — mirrors ServicePower Running Notes so
+                  whatever the warranty company (Allstate / Squaretrade /
+                  etc.) types on the SP work order shows up here for the
+                  technician. Notes auto-load when the ticket opens; the
+                  refresh button forces a fresh pull from SP. */}
               <div className="space-y-4 mb-8">
-                <h4 className="font-semibold text-slate-300">Customer Notes</h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-semibold text-slate-300">Customer Notes</h4>
+                  <div className="flex items-center gap-2">
+                    {runningNotesLoading && (
+                      <span className="text-xs text-slate-400">Syncing from ServicePower…</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void loadRunningNotes()}
+                      disabled={runningNotesLoading}
+                      className="rounded border border-white/15 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-white/30 hover:bg-white/5 disabled:opacity-60"
+                      title="Re-fetch the Running Notes thread from ServicePower"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+                {runningNotesError && (
+                  <div className="rounded border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    Couldn't sync from ServicePower: {runningNotesError}
+                  </div>
+                )}
                 <div className="space-y-3">
-                  {ticket.customerNotes.map((note, idx) => (
+                  {displayedCustomerNotes.length === 0 && !runningNotesLoading && (
+                    <p className="text-slate-500 text-sm">No customer notes yet for this work order.</p>
+                  )}
+                  {displayedCustomerNotes.map((note, idx) => (
                     <div key={idx} className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
                       <div className="flex justify-between items-start mb-2">
                         <div className="text-slate-400">{note.date}</div>
                         <div className="text-blue-400">By: {note.by}</div>
                       </div>
-                      <p className="text-slate-300">{note.notes}</p>
+                      <p className="text-slate-300 whitespace-pre-wrap">{note.notes}</p>
                     </div>
                   ))}
                 </div>
@@ -3194,7 +5416,7 @@ function TicketDetailsPage() {
         {activeTab === "tracking" && (
           <div className="space-y-8">
             {/* Related Tickets */}
-            <div>
+            <div id="section-related-tickets" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Related Tickets</h4>
               <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3 mb-3 text-sm text-slate-400">
                 {relatedTickets.length} distinct record{relatedTickets.length === 1 ? "" : "s"} found
@@ -3260,19 +5482,25 @@ function TicketDetailsPage() {
             </div>
 
             {/* Attachments / Photos */}
-            <div>
+            <div id="section-attachments" className="scroll-mt-28">
               <div className="bg-slate-900/50 border border-white/10 rounded p-4">
-                <TicketPhotos ticketNo={ticketNo} category="service" title="Attachments" />
+                <TicketPhotos
+                  ticketNo={ticketNo}
+                  category="service"
+                  title="Attachments"
+                  uploadedBy={currentEditor}
+                  visitOptions={Array.from(new Set(visitLogEntries.map((v: any) => String(v.visitNo || "")).filter(Boolean)))}
+                />
               </div>
             </div>
 
             {/* Visit Log */}
-            <div>
+            <div id="section-visit-log" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
               <div className="space-y-4 text-sm">
                 <div>
                   <label className="text-slate-500 font-semibold">Phone</label>
-                  <div className="text-white mt-1">409-221-5089</div>
+                  <div className="text-white mt-1">{ticket?.homePhone || ticket?.cellPhone || "—"}</div>
                 </div>
                 <div>
                   <label className="text-slate-500 font-semibold">Chat</label>
@@ -3286,6 +5514,14 @@ function TicketDetailsPage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button type="button" onClick={openVisitCreateModal} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
                   Add Visit
+                </button>
+                <button
+                  type="button"
+                  onClick={openRunningNotesModal}
+                  className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
+                  title="View / post ServicePower Running Notes for this work order"
+                >
+                  Running Notes
                 </button>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
@@ -3484,8 +5720,17 @@ function TicketDetailsPage() {
                           </select>
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Status</label>
-                          <select id="visit-repair-status-modal" value={newVisitRepairStatus} onChange={(event) => setNewVisitRepairStatus(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                          <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                            Repair Status <span className="text-rose-400">*</span>
+                          </label>
+                          <select
+                            id="visit-repair-status-modal"
+                            value={newVisitRepairStatus}
+                            onChange={(event) => setNewVisitRepairStatus(event.target.value)}
+                            className={`w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${
+                              newVisitRepairStatus.trim() ? "border-white/15" : "border-rose-400/40"
+                            }`}
+                          >
                             <option value="">— select —</option>
                             <option>CL-Cancelled</option>
                             <option>CL-Claimed</option>
@@ -3532,12 +5777,12 @@ function TicketDetailsPage() {
                           <textarea id="visit-symptom-cx-modal" value={newVisitSymptomCx} onChange={(event) => setNewVisitSymptomCx(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-diagnosis-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Cause of Failure (Tech)</label>
-                          <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                          <label htmlFor="visit-diagnosis-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Cause of Failure (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
+                          <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitDiagnosis.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech)</label>
-                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className="min-h-18 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
+                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitResolution.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
@@ -3568,6 +5813,146 @@ function TicketDetailsPage() {
                             Cancel Edit
                           </button>
                         ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {isRunningNotesOpen ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                  <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-emerald-400/30 bg-slate-900 p-5 text-white shadow-2xl">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">
+                          ServicePower
+                        </p>
+                        <h3 className="text-xl font-bold text-white">Running Notes</h3>
+                        <p className="mt-1 text-sm text-slate-400">
+                          Work Order #{ticketNo}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={closeRunningNotesModal}
+                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200/90">
+                      ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events
+                      and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration.
+                    </div>
+
+                    <div className="mt-4 space-y-3 max-h-[40vh] overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 p-3">
+                      {runningNotesLoading ? (
+                        <div className="text-sm text-slate-400">Loading notes from ServicePower…</div>
+                      ) : runningNotesError ? (
+                        <div className="rounded-md border border-red-500/30 bg-red-900/20 px-3 py-2 text-sm text-red-200">
+                          {runningNotesError}
+                        </div>
+                      ) : runningNotes.length === 0 ? (
+                        <div className="text-sm text-slate-400">No running notes recorded yet for this work order.</div>
+                      ) : (
+                        runningNotes.map((n, idx) => (
+                          <div
+                            key={idx}
+                            className={`rounded-md border p-3 ${
+                              n.isInternal
+                                ? "border-amber-400/30 bg-amber-900/10"
+                                : "border-emerald-400/30 bg-emerald-900/10"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+                              <div className="font-semibold text-slate-300">
+                                {n.addedBy || "—"}
+                                <span className="ml-2 text-slate-500">
+                                  {n.date
+                                    ? new Date(n.date).toLocaleString("en-US", {
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                        year: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })
+                                    : ""}
+                                </span>
+                              </div>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  n.isInternal
+                                    ? "bg-amber-400/20 text-amber-200"
+                                    : "bg-emerald-400/20 text-emerald-200"
+                                }`}
+                              >
+                                {n.isInternal ? "Internal" : "External"}
+                              </span>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{n.body}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="mt-4 border-t border-white/10 pt-4">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <p className="text-sm font-semibold text-slate-200">Add a note</p>
+                        <div className="inline-flex rounded-md border border-white/15 bg-slate-950/80 p-0.5 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setNewRunningNoteVisibility("internal")}
+                            className={`rounded px-2 py-1 font-semibold ${
+                              newRunningNoteVisibility === "internal"
+                                ? "bg-amber-500/30 text-amber-200"
+                                : "text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            Internal
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewRunningNoteVisibility("external")}
+                            className={`rounded px-2 py-1 font-semibold ${
+                              newRunningNoteVisibility === "external"
+                                ? "bg-emerald-500/30 text-emerald-200"
+                                : "text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            External
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        value={newRunningNote}
+                        onChange={(e) => setNewRunningNote(e.target.value)}
+                        placeholder="Type your running note. Internal notes are only visible to AHS staff; external notes are sent to the warranty company."
+                        className="w-full min-h-[100px] rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-400/50 focus:outline-none"
+                        disabled={postingRunningNote}
+                      />
+                      {runningNotePostError ? (
+                        <div className="mt-2 rounded-md border border-red-500/30 bg-red-900/20 px-3 py-2 text-xs text-red-200">
+                          {runningNotePostError}
+                        </div>
+                      ) : null}
+                      <div className="mt-3 flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void loadRunningNotes()}
+                          disabled={runningNotesLoading || postingRunningNote}
+                          className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40 disabled:opacity-60"
+                        >
+                          Refresh
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void submitRunningNote()}
+                          disabled={postingRunningNote || !newRunningNote.trim()}
+                          className="rounded-md border border-emerald-400/40 bg-emerald-500/30 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500/40 disabled:opacity-60"
+                        >
+                          {postingRunningNote ? "Sending…" : "Send to ServicePower"}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -3724,11 +6109,27 @@ function TicketDetailsPage() {
             ) : null}
 
             {/* Part Transaction */}
-            <div>
+            <div id="section-part-transaction" className="scroll-mt-28">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
                   <h4 className="font-semibold text-slate-300">Part Transaction</h4>
                   <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
+                  {isTicketPartLocked ? (
+                    <span
+                      className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        partsEditDisabled
+                          ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                          : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                      }`}
+                      title={
+                        partsEditDisabled
+                          ? `Ticket is "${ticket?.status}". Only Claims can change parts.`
+                          : `Ticket is "${ticket?.status}". Claims-only edit window.`
+                      }
+                    >
+                      🔒 Locked — Claims only
+                    </span>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <button 
@@ -3747,14 +6148,81 @@ function TicketDetailsPage() {
                   </button>
                   <button 
                     type="button"
-                    onClick={submitAllPOs}
-                    className="rounded border border-green-400/40 bg-green-600/20 px-3 py-1.5 text-xs font-semibold text-green-200 transition hover:bg-green-600/30"
-                    title="Submit PO for all parts that need ordering"
+                    onClick={() => void syncPartsFromNotes()}
+                    disabled={partsEditDisabled || syncingNotesParts}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || syncingNotesParts
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-purple-400/40 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : "Import parts the warranty company announced in SP customer notes (Squaretrade / Allstate). Adds Need-PO rows for new parts and overlays tracking numbers onto existing ones."
+                    }
                   >
-                    Submit All POs
+                    {syncingNotesParts ? "Syncing…" : "Sync Parts from Notes"}
                   </button>
+                  <button 
+                    type="button"
+                    onClick={openTruckStockBatch}
+                    disabled={partsEditDisabled}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-emerald-400/40 bg-emerald-600/20 text-emerald-200 hover:bg-emerald-600/30"
+                    }`}
+                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Fulfill Need PO parts from in-house Truck Stock"}
+                  >
+                    Truck Stock
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={submitAllPOs}
+                    disabled={partsEditDisabled}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
+                    }`}
+                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Submit POs for parts that need ordering"}
+                  >
+                    Submit POs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveAllRowEdits}
+                    disabled={partsEditDisabled || rowEditsSaving || dirtyRowCount === 0}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || dirtyRowCount === 0
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : dirtyRowCount === 0
+                        ? "Edit any cell in a part row, then click Update to save"
+                        : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
+                    }
+                  >
+                    {rowEditsSaving
+                      ? "Saving…"
+                      : dirtyRowCount > 0
+                      ? `Update (${dirtyRowCount})`
+                      : "Update"}
+                  </button>
+                  {/* Auto-sync indicator removed — Marcone order status
+                      is now manual-refresh only via the per-row Refresh
+                      button. */}
                 </div>
               </div>
+              {partsEditDisabled ? (
+                <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  This ticket is <span className="font-semibold">{ticket?.status}</span>. Part Transactions are locked.
+                  Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them. Any attempt will alert Naveen, Ian, and Tina.
+                </div>
+              ) : null}
 
               <div className="overflow-x-auto border border-white/10 rounded-lg">
                 <table className="w-full text-xs" style={{ minWidth: "1700px" }}>
@@ -3794,190 +6262,627 @@ function TicketDetailsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {/* ── Add / Edit inline row ── */}
-                    <tr className="bg-slate-900/60 align-top">
-                      <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Part No*" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
-                          <option value="">Dist.*</option>
-                          <option>AIG</option>
-                          <option>Electrolux</option>
-                          <option>Encompass</option>
-                          <option>Encompass-Birmingham / Montgomery</option>
-                          <option>GE</option>
-                          <option>LG</option>
-                          <option>Marcone- Birmingham / Montgomery</option>
-                          <option>Marcone-162468</option>
-                          <option>Midea</option>
-                          <option>Miele</option>
-                          <option>NSA</option>
-                          <option>OW</option>
-                          <option>SB</option>
-                          <option>Sharp</option>
-                          <option>SP</option>
-                          <option>Squaretrade</option>
-                          <option>SS</option>
-                        </select>
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.partDesc} onChange={(e) => setPartDraft((d) => ({ ...d, partDesc: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.poNo} onChange={(e) => setPartDraft((d) => ({ ...d, poNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="PO No (Auto-gen)" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input type="date" value={partDraft.poDate} onChange={(e) => setPartDraft((d) => ({ ...d, poDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" title="Auto-populated on PO creation" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.invoiceNo} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Invoice No" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input type="date" value={partDraft.invoiceDate} onChange={(e) => setPartDraft((d) => ({ ...d, invoiceDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.quantity} onChange={(e) => setPartDraft((d) => ({ ...d, quantity: e.target.value }))} className="w-20 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Qty*" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.partPrice} onChange={(e) => setPartDraft((d) => ({ ...d, partPrice: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.coreValue} onChange={(e) => setPartDraft((d) => ({ ...d, coreValue: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.shipCost} onChange={(e) => setPartDraft((d) => ({ ...d, shipCost: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$0.00" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.markup} onChange={(e) => setPartDraft((d) => ({ ...d, markup: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="0%" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.claimTo} onChange={(e) => setPartDraft((d) => ({ ...d, claimTo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Claim To" />
-                      </td>
-                    </tr>
-                    <tr className="bg-slate-900/40 align-top border-b border-white/10">
-                      <td className="px-1 py-1.5">
-                        <select value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
-                          <option value="">Status*</option>
-                          <option>Back Order</option>
-                          <option>Cancelled</option>
-                          <option>Claimed</option>
-                          <option>CX Home</option>
-                          <option>Cx Received</option>
-                          <option>Defective</option>
-                          <option>Hold for Estimation</option>
-                          <option>Hold for next vist</option>
-                          <option>Lost</option>
-                          <option>Need PO</option>
-                          <option>Not Used &amp; Stocked</option>
-                          <option>PAID</option>
-                          <option>Part Ready</option>
-                          <option>PO Made</option>
-                          <option>RA - Defect</option>
-                          <option>RA- DMG</option>
-                          <option>RA - PNN</option>
-                          <option>RA - Qty Discrepancy</option>
-                          <option>SQT Received</option>
-                          <option>Tech Pickup</option>
-                          <option>Used</option>
-                        </select>
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.note} onChange={(e) => setPartDraft((d) => ({ ...d, note: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Visit ID*" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.orderNo} onChange={(e) => setPartDraft((d) => ({ ...d, orderNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Order #" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input type="date" value={partDraft.eta} onChange={(e) => setPartDraft((d) => ({ ...d, eta: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.inTracking} onChange={(e) => setPartDraft((d) => ({ ...d, inTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="In Track #" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input type="date" value={partDraft.raDate} onChange={(e) => setPartDraft((d) => ({ ...d, raDate: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.raNo} onChange={(e) => setPartDraft((d) => ({ ...d, raNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="RA #" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.outTracking} onChange={(e) => setPartDraft((d) => ({ ...d, outTracking: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Out Track #" />
-                      </td>
-                      <td className="px-1 py-1.5">
-                        <input value={partDraft.creditNo} onChange={(e) => setPartDraft((d) => ({ ...d, creditNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Credit #" />
-                      </td>
-                      <td className="px-2 py-1.5 text-slate-400 text-xs whitespace-nowrap">
-                        {partDraft.totalMarkup ? `$${partDraft.totalMarkup}` : "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        <input type="checkbox" checked={partDraft.hold === "Hold"} onChange={(e) => setPartDraft((d) => ({ ...d, hold: e.target.checked ? "Hold" : "No" }))} className="accent-blue-500" />
-                        <div className="text-slate-500 text-[10px]">Hold</div>
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        <input type="checkbox" checked={partDraft.cxPaid === "Paid"} onChange={(e) => setPartDraft((d) => ({ ...d, cxPaid: e.target.checked ? "Paid" : "No" }))} className="accent-blue-500" />
-                        <div className="text-slate-500 text-[10px]">Paid</div>
-                      </td>
-                      <td className="px-2 py-1.5 whitespace-nowrap">
-                        <button type="button" onClick={savePartRow} className="rounded border border-blue-400/40 bg-blue-600/30 px-3 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-600/50 transition">
-                          {editingPartId ? "Update" : "Add"}
-                        </button>
-                        {editingPartId ? (
-                          <button type="button" onClick={clearPartForm} className="ml-1 rounded border border-white/15 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition">
-                            Cancel
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
+                    {/* ── Add inline row (hidden while editing — the editor
+                          appears in-place at the row being edited so the
+                          page does not jump to the top) ── */}
+                    {editingPartId ? null : renderPartDraftRows()}
 
-                    {/* ── Saved rows (2 sub-rows each) ── */}
+                    {/* ── Saved rows — every cell is an editable input. The
+                          user types changes that buffer into rowEdits; the
+                          global Update button (next to Submit POs) flushes
+                          them to Supabase. There is no separate "edit
+                          mode" or Edit button anymore. ── */}
                     {partRows.length === 0 ? (
                       <tr>
                         <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
                       </tr>
                     ) : (
-                      partRows.map((row, index) => (
+                      partRows.map((row, index) => {
+                        const isDirty = !!rowEdits[row.id];
+                        const cellWrap = "px-1 py-1";
+                        const inputCls = "w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50";
+                        const selectCls = inputCls;
+                        const val = <K extends keyof PartTransactionRow>(field: K) => getRowValue(row, field);
+                        const set = <K extends keyof PartTransactionRow>(field: K, v: PartTransactionRow[K]) =>
+                            updateRowField(row.id, field, v);
+                        return (
                         <React.Fragment key={row.id}>
-                          <tr className="bg-slate-900/30 align-top">
-                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>P{index + 1}</td>
-                            <td className="px-2 py-1.5 text-blue-300 font-semibold">{row.partNo}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.partDist || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.partDesc || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.poNo || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.poDate || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.invoiceNo || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.invoiceDate || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.quantity || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.partPrice ? `$${row.partPrice}` : "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.coreValue ? `$${row.coreValue}` : "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.shipCost ? `$${row.shipCost}` : "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.markup ? `${row.markup}%` : "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.claimTo || "—"}</td>
+                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
+                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
+                              P{index + 1}
+                              {isDirty ? (
+                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
+                              ) : null}
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} text-blue-300 font-semibold`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                                <option value="">Dist.*</option>
+                                {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
+                                <option>AIG</option>
+                                <option>Electrolux</option>
+                                <option>Encompass</option>
+                                <option>Encompass-Birmingham / Montgomery</option>
+                                <option>GE</option>
+                                <option>LG</option>
+                                <option>Marcone- Birmingham / Montgomery</option>
+                                <option>Marcone-162468</option>
+                                <option>Midea</option>
+                                <option>Miele</option>
+                                <option>NSA</option>
+                                <option>OW</option>
+                                <option>SB</option>
+                                <option>Sharp</option>
+                                <option>SP</option>
+                                <option>Squaretrade</option>
+                                <option>SS</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Description" /></td>
+                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="PO No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Invoice No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
+                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                                {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
+                                  <option key={v} value={String(v)}>{v}%</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Claim To" /></td>
                           </tr>
-                          <tr className="bg-slate-900/20 align-top border-b border-white/5">
-                            <td className="px-2 py-1.5 text-blue-300 font-semibold">{row.status || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-400 italic">{row.note || ""}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.visitId || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.orderNo || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.eta || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.inTracking || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.raDate || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.raNo || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.outTracking || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.creditNo || "—"}</td>
-                            <td className="px-2 py-1.5 text-slate-300">{row.totalMarkup ? `Markup: $${row.totalMarkup}` : "—"}</td>
-                            <td className="px-2 py-1.5 text-center text-slate-400">{row.hold === "Hold" ? <span className="rounded bg-amber-500/20 px-1 text-amber-300">Hold</span> : "—"}</td>
-                            <td className="px-2 py-1.5 text-center text-slate-400">{row.cxPaid === "Paid" ? <span className="rounded bg-green-500/20 px-1 text-green-300">Paid</span> : "—"}</td>
+                          <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
+                            <td className={cellWrap}>
+                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled} className={`${selectCls} text-blue-300 font-semibold`}>
+                                <option value="">Status*</option>
+                                <option>Back Order</option>
+                                <option>Cancelled</option>
+                                <option>Claimed</option>
+                                <option>CX Home</option>
+                                <option>Cx Received</option>
+                                <option>Defective</option>
+                                <option>Hold for Estimation</option>
+                                <option>Hold for next vist</option>
+                                <option>Lost</option>
+                                <option>Need PO</option>
+                                <option>Not Used &amp; Stocked</option>
+                                <option>PAID</option>
+                                <option>Part Ready</option>
+                                <option>PO Made</option>
+                                <option>RA - Defect</option>
+                                <option>RA- DMG</option>
+                                <option>RA - PNN</option>
+                                <option>RA - Qty Discrepancy</option>
+                                <option>SQT Received</option>
+                                <option>Tech Pickup</option>
+                                <option>Used</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Note" /></td>
+                            <td className={cellWrap}><input value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Visit ID*" /></td>
+                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Order #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="In Track #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="RA #" /></td>
+                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Out Track #" /></td>
+                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Credit #" /></td>
+                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                            </td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                            </td>
                             <td className="px-2 py-1.5 whitespace-nowrap">
-                              <button type="button" onClick={() => loadPartForEdit(row)} className="rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition mr-1">
-                                Edit
-                              </button>
-                              <button type="button" onClick={() => deletePartRow(row.id)} className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/20 transition">
+                              {row.orderNo && isMarconeDist(row.partDist) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => refreshMarconeOrderStatus(row)}
+                                  disabled={marconeRefreshingId === row.id}
+                                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
+                                  title={`Pull ETA / invoice / tracking from Marcone for order ${row.orderNo}`}
+                                >
+                                  {marconeRefreshingId === row.id ? "…" : "Refresh"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => deletePartRow(row.id)}
+                                disabled={partsEditDisabled}
+                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${
+                                  partsEditDisabled
+                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
+                                    : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                                }`}
+                                title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Delete part"}
+                              >
                                 Delete
                               </button>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {partRows.length > 0 && (() => {
+                    const totals = partRows.reduce((acc, r) => {
+                      const qty = parseFloat(r.quantity) || 0;
+                      acc.qty += qty;
+                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
+                      acc.coreValue += parseFloat(r.coreValue) || 0;
+                      acc.shipCost += parseFloat(r.shipCost) || 0;
+                      acc.markup += parseFloat(r.markup) || 0;
+                      return acc;
+                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
+                    const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
+                    const money = (n: number) => `$${n.toFixed(2)}`;
+                    return (
+                      <tfoot>
+                        <tr className="bg-yellow-200 text-slate-900 font-semibold text-[11px]">
+                          <td className="px-2 py-1.5 uppercase tracking-wide" colSpan={8}>Total</td>
+                          <td className="px-2 py-1.5">{totals.qty}</td>
+                          <td className="px-2 py-1.5">{money(totals.partPrice)}</td>
+                          <td className="px-2 py-1.5">{money(totals.coreValue)}</td>
+                          <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
+                          <td className="px-2 py-1.5">{money(totals.markup)}</td>
+                          <td className="px-2 py-1.5 text-right" colSpan={20}>
+                            <span className="mr-2 text-slate-700">Grand Total:</span>
+                            <span className="text-slate-900">{money(grand)}</span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+            </div>
+            {canSeeClaimTransaction && (
+            <div id="section-claim-transaction" className="scroll-mt-28">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-semibold text-slate-300">Claim Transaction</h4>
+                  <span className="text-xs font-semibold text-slate-400">Ticket #:</span>
+                  <span className="font-mono text-xs text-blue-300">{ticketNo}</span>
+                  {ticket?.ticketSource ? (
+                    <span className="rounded-full bg-blue-700/30 border border-blue-500/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-200">
+                      {ticket.ticketSource}
+                    </span>
+                  ) : null}
+                  {officeDistanceMiles != null ? (
+                    <span className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                      {officeDistanceMiles.toFixed(1)} mi
+                    </span>
+                  ) : null}
+                  <span className="text-xs font-semibold text-blue-300 ml-2">
+                    {claimRows.length} distinct record{claimRows.length === 1 ? "" : "s"} found
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isAssurantClaimedTicket && (
+                    <button
+                      type="button"
+                      onClick={() => void syncFromClaim()}
+                      disabled={syncingClaim}
+                      className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
+                        syncingClaim
+                          ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                          : "border-teal-400/40 bg-teal-500/20 text-teal-200 hover:bg-teal-500/30"
+                      }`}
+                      title="Pull the filed Assurant claim from ServicePower and stamp claim #, payment amounts, and status onto every part row."
+                    >
+                      {syncingClaim ? "Syncing…" : "Sync from Claim"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => alert("Request Authorization — feature pending. Will post an RFA to ServicePower for this claim.")}
+                    className="rounded-md border border-blue-400/40 bg-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/30"
+                  >
+                    Request Authorization
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      appendAuditEntry({
+                        by: currentEditor,
+                        action: "Updated claim transactions",
+                        field: "Claim Transaction",
+                        before: "—",
+                        after: `${claimRows.length} row(s) saved`,
+                      });
+                      alert("Claim transactions saved.");
+                    }}
+                    className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={claimNote}
+                onChange={(e) => setClaimNote(e.target.value)}
+                placeholder="(CLAIM NOTE HERE)"
+                className="w-full mb-3 rounded-md border border-yellow-400/30 bg-yellow-100/5 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-yellow-300/60"
+                rows={2}
+              />
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-xs" style={{ minWidth: "1900px" }}>
+                  {/* Two-row header — mirrors Part Transaction layout */}
+                  <thead>
+                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
+                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim To*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Visit Log ID*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim #*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Labor Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Diagnose Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Shipping Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Extra Mile Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Other Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Tax Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Total Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Payment Method</th>
+                      <th className="px-2 py-2 text-left font-semibold">Mileage</th>
+                      <th className="px-2 py-2 text-left font-semibold" rowSpan={2}>Actions</th>
+                    </tr>
+                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
+                      <th className="px-2 py-2 text-left font-semibold">Claim Date*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim Status*</th>
+                      <th className="px-2 py-2 text-left font-semibold">CC # (Last 4)</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Labor Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Part Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Diagnose Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Shipping Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Extra Mile Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Other Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Tax Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">App. Total Fee</th>
+                      <th className="px-2 py-2 text-left font-semibold">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {/* ── Inline Add / Edit draft row (always visible, like Part Transaction) ── */}
+                    <tr className="bg-slate-900/60 align-top">
+                      <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
+                      <td className="px-1 py-1.5">
+                        <select
+                          value={claimDraft.claimTo}
+                          onChange={(e) => updateClaimDraftField("claimTo", e.target.value)}
+                          className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">— Claim To* —</option>
+                          {CLAIM_TOS.map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <select
+                          value={claimDraft.visitLogId}
+                          onChange={(e) => updateClaimDraftField("visitLogId", e.target.value)}
+                          className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">Visit Log ID*</option>
+                          {visitLogEntries.map((v) => (
+                            <option key={v.id} value={v.visitNo}>{v.visitNo}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input
+                          value={claimDraft.claimNo}
+                          onChange={(e) => updateClaimDraftField("claimNo", e.target.value)}
+                          className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                          placeholder="Claim #*"
+                        />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.laborFee} onChange={(e) => updateClaimDraftField("laborFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.partFee} onChange={(e) => updateClaimDraftField("partFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.diagnoseFee} onChange={(e) => updateClaimDraftField("diagnoseFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.shippingFee} onChange={(e) => updateClaimDraftField("shippingFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.extraMileFee} onChange={(e) => updateClaimDraftField("extraMileFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.otherFee} onChange={(e) => updateClaimDraftField("otherFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.taxFee} onChange={(e) => updateClaimDraftField("taxFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.totalFee} onChange={(e) => updateClaimDraftField("totalFee", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="$" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <select
+                          value={claimDraft.paymentMethod}
+                          onChange={(e) => updateClaimDraftField("paymentMethod", e.target.value)}
+                          className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">Payment Method</option>
+                          {PAYMENT_METHODS.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.mileage} onChange={(e) => updateClaimDraftField("mileage", e.target.value)} inputMode="decimal" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Mileage" />
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap align-middle" rowSpan={2}>
+                        <button
+                          type="button"
+                          onClick={saveClaimDraft}
+                          className="rounded border border-blue-400/40 bg-blue-600/30 px-3 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-600/50 transition"
+                        >
+                          {editingClaimId ? "Update" : "Add"}
+                        </button>
+                        {editingClaimId ? (
+                          <button type="button" onClick={clearClaimDraft} className="ml-1 rounded border border-white/15 bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition">
+                            Cancel
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                    <tr className="bg-slate-900/40 align-top border-b border-white/10">
+                      <td className="px-1 py-1.5">
+                        <input type="date" value={claimDraft.claimDate} onChange={(e) => updateClaimDraftField("claimDate", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <select
+                          value={claimDraft.claimStatus}
+                          onChange={(e) => updateClaimDraftField("claimStatus", e.target.value)}
+                          className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">Claim Status</option>
+                          {CLAIM_STATUSES.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.ccLast4} onChange={(e) => updateClaimDraftField("ccLast4", e.target.value)} maxLength={4} inputMode="numeric" className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="CC # (Last 4)" />
+                      </td>
+                      {/* Approved (App.) fees — duplicated bindings until distinct fields land. */}
+                      {([
+                        "laborFee","partFee","diagnoseFee","shippingFee",
+                        "extraMileFee","otherFee","taxFee","totalFee",
+                      ] as const).map((key) => (
+                        <td key={key} className="px-1 py-1.5">
+                          <input value={claimDraft[key]} onChange={(e) => updateClaimDraftField(key, e.target.value)} inputMode="decimal" className="w-full rounded border border-white/10 bg-slate-950/60 px-2 py-1 text-slate-300 focus:outline-none focus:border-blue-500" placeholder="App." />
+                        </td>
+                      ))}
+                      <td className="px-1 py-1.5">
+                        <input value={claimDraft.note} onChange={(e) => updateClaimDraftField("note", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
+                      </td>
+                    </tr>
+
+                    {claimRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={15} className="px-3 py-6 text-center text-slate-500">
+                          No claim transactions yet. Fill the row above and click Add.
+                        </td>
+                      </tr>
+                    ) : (
+                      claimRows.map((row, idx) => (
+                        <React.Fragment key={row.id}>
+                          {/* Row A — Submitted: Claim To, Visit Log, Claim #, fees, Payment, Mileage */}
+                          <tr className="bg-slate-900/60 align-top">
+                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>C{idx + 1}</td>
+                            <td className="px-1 py-1.5">
+                              <select
+                                value={row.claimTo}
+                                onChange={(e) => updateClaimRow(row.id, "claimTo", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="">— Claim To —</option>
+                                {CLAIM_TOS.map((c) => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <select
+                                value={row.visitLogId}
+                                onChange={(e) => updateClaimRow(row.id, "visitLogId", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="">Visit Log ID</option>
+                                {visitLogEntries.map((v) => (
+                                  <option key={v.id} value={v.visitNo}>{v.visitNo}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.claimNo}
+                                onChange={(e) => updateClaimRow(row.id, "claimNo", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Claim #"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.laborFee}
+                                onChange={(e) => updateClaimRow(row.id, "laborFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.partFee}
+                                onChange={(e) => updateClaimRow(row.id, "partFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.diagnoseFee}
+                                onChange={(e) => updateClaimRow(row.id, "diagnoseFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.shippingFee}
+                                onChange={(e) => updateClaimRow(row.id, "shippingFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.extraMileFee}
+                                onChange={(e) => updateClaimRow(row.id, "extraMileFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.otherFee}
+                                onChange={(e) => updateClaimRow(row.id, "otherFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.taxFee}
+                                onChange={(e) => updateClaimRow(row.id, "taxFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.totalFee}
+                                onChange={(e) => updateClaimRow(row.id, "totalFee", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="$"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <select
+                                value={row.paymentMethod}
+                                onChange={(e) => updateClaimRow(row.id, "paymentMethod", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="">Payment Method</option>
+                                {PAYMENT_METHODS.map((m) => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.mileage}
+                                onChange={(e) => updateClaimRow(row.id, "mileage", e.target.value)}
+                                inputMode="decimal"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Mileage"
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap align-middle" rowSpan={2}>
+                              <div className="flex flex-col gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => loadClaimForEdit(row)}
+                                  className="rounded border border-white/15 bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-200 hover:bg-slate-700 transition"
+                                  title="Edit this claim row"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteClaimRow(row.id)}
+                                  className="rounded border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/20 transition"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          {/* Row B — Approved: Claim Date, Claim Status, CC#, App fees, Note */}
+                          <tr className="bg-slate-900/40 align-top border-b border-white/10">
+                            <td className="px-1 py-1.5">
+                              <input
+                                type="date"
+                                value={row.claimDate}
+                                onChange={(e) => updateClaimRow(row.id, "claimDate", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                              />
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <select
+                                value={row.claimStatus}
+                                onChange={(e) => updateClaimRow(row.id, "claimStatus", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="">Claim Status</option>
+                                {CLAIM_STATUSES.map((s) => (
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.ccLast4}
+                                onChange={(e) => updateClaimRow(row.id, "ccLast4", e.target.value)}
+                                maxLength={4}
+                                inputMode="numeric"
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="CC # (Last 4)"
+                              />
+                            </td>
+                            {/* Approved fees — visually de-emphasized (lighter bg) since they
+                                shadow the submitted fees above. Distinct keys land later. */}
+                            {([
+                              "laborFee","partFee","diagnoseFee","shippingFee",
+                              "extraMileFee","otherFee","taxFee","totalFee",
+                            ] as const).map((key) => (
+                              <td key={key} className="px-1 py-1.5">
+                                <input
+                                  value={row[key]}
+                                  onChange={(e) => updateClaimRow(row.id, key, e.target.value)}
+                                  inputMode="decimal"
+                                  className="w-full rounded border border-white/10 bg-slate-950/60 px-2 py-1 text-slate-300 focus:outline-none focus:border-blue-500"
+                                  placeholder="App."
+                                />
+                              </td>
+                            ))}
+                            <td className="px-1 py-1.5">
+                              <input
+                                value={row.note}
+                                onChange={(e) => updateClaimRow(row.id, "note", e.target.value)}
+                                className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Note"
+                              />
                             </td>
                           </tr>
                         </React.Fragment>
@@ -3987,6 +6892,7 @@ function TicketDetailsPage() {
                 </table>
               </div>
             </div>
+            )}
 
             {/* Part List Modal */}
             {isPartListModalOpen ? (
@@ -4509,6 +7415,303 @@ function TicketDetailsPage() {
         )}
         </div>
       </main>
+
+      {/* Share Ticket via Internal Messenger Modal (root-level so it's
+          available regardless of which tab is active) */}
+      {isShareModalOpen ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-3 mb-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Internal Messenger</p>
+                <h3 className="text-lg font-bold">Send Ticket #{ticketNo}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setIsShareModalOpen(false); setShareQuery(""); setShareMessage(""); setShareError(null); }}
+                className="rounded border border-white/15 bg-slate-950 px-2 py-1 text-xs text-slate-300 hover:border-slate-200/40"
+              >
+                Close
+              </button>
+            </div>
+
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Recipient name</label>
+            <input
+              autoFocus
+              type="text"
+              value={shareQuery}
+              onChange={(e) => { setShareQuery(e.target.value); setShareError(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleShareSubmit(); } }}
+              placeholder="Enter teammate name…"
+              className="w-full rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+            />
+
+            {shareQuery.trim() && filteredShareContacts.length > 0 ? (
+              <div className="mt-2 max-h-40 overflow-y-auto rounded border border-white/10 bg-slate-950/60">
+                {filteredShareContacts.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setShareQuery(c.display_name || c.email || "")}
+                    className="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left text-xs hover:bg-emerald-500/10 transition"
+                  >
+                    <span className="truncate">
+                      <span className="font-semibold text-slate-200">{c.display_name || c.email}</span>
+                      <span className="text-slate-500 ml-2 text-[10px]">{c.role || ""}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {shareError ? (
+              <div className="mt-3 rounded border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{shareError}</div>
+            ) : null}
+
+            <label className="block mt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Message (optional)</label>
+            <textarea
+              value={shareMessage}
+              onChange={(e) => setShareMessage(e.target.value)}
+              placeholder="Add a note to send with the ticket…"
+              rows={3}
+              className="w-full rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 resize-y"
+            />
+            <div className="mt-1 text-[10px] text-slate-500">
+              {shareMessage.trim()
+                ? `Recipient will see your note followed by #${ticketNo}.`
+                : `Recipient will see just #${ticketNo} (clickable).`}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleShareSubmit}
+              disabled={shareSending || !shareQuery.trim()}
+              className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-md border border-emerald-400/40 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send className="h-4 w-4" />
+              {shareSending ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Per-model resource link editor (Exploded View / Service Bulletin) */}
+      {modelResourceModal ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+                  {modelResourceModal.kind === "exploded" ? "Exploded View link" : "Service Bulletin link"}
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  Shared with every ticket using model{" "}
+                  <span className="font-mono text-slate-200">{ticket?.model || "—"}</span>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModelResourceModal(null)}
+                className="rounded border border-white/15 bg-slate-950 px-2 py-1 text-xs text-slate-300 hover:border-slate-200/40"
+              >
+                Close
+              </button>
+            </div>
+
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">URL</label>
+            <input
+              type="url"
+              value={modelResourceModal.value}
+              onChange={(e) => setModelResourceModal({ ...modelResourceModal, value: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveModelResource(); } }}
+              placeholder="https://…"
+              autoFocus
+              className="mt-1 w-full rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+            />
+
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setModelResourceModal({ ...modelResourceModal, value: "" })}
+                className="text-xs text-slate-400 hover:text-rose-300"
+                title="Clear the saved link"
+              >
+                Clear link
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModelResourceModal(null)}
+                  className="rounded-lg border border-white/15 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-200/40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveModelResource}
+                  disabled={modelResourceSaving || !ticket?.model}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {modelResourceSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Marcone Parts Order modal — opens when Submit POs catches at least
+          one Marcone part. Non-Marcone parts already went through the
+          silent batch flow before this point. */}
+      <MarconePartsOrderModal
+        open={marconeModal.open}
+        onClose={() => setMarconeModal({ open: false, parts: [] })}
+        parts={marconeModal.parts.map((p): MarconePartLine => ({
+          id: p.id,
+          partNo: p.partNo,
+          partDesc: p.partDesc,
+          partPrice: p.partPrice,
+          coreValue: p.coreValue,
+          quantity: p.quantity,
+        }))}
+        ticketNo={ticketNo}
+        defaultShipTo={defaultShipTo}
+        addressBook={partAddressBook}
+        onPlaceOrder={handleMarconePlaceOrder}
+      />
+
+      {/* Truck Stock batch modal — opens from the Truck Stock button next
+          to Submit POs. Fulfils Need PO parts from in-house branches
+          instead of placing distributor POs. */}
+      <TruckStockBatchModal
+        open={truckStockModal.open}
+        onClose={() => setTruckStockModal({ open: false, parts: [] })}
+        ticketNo={ticketNo}
+        parts={truckStockModal.parts.map((p) => ({
+          id: p.id,
+          partNo: p.partNo,
+          partDesc: p.partDesc,
+          quantity: p.quantity,
+        }))}
+        fetchStock={async (partNos) => {
+          const { supabase } = await import("@/lib/supabase/client");
+          const trimmed = partNos.map((p) => p.trim()).filter(Boolean);
+          if (trimmed.length === 0) return [];
+          const { data, error } = await supabase
+            .from("truck_stock")
+            .select("*")
+            .in("part_no", trimmed)
+            .gt("quantity", 0);
+          if (error) {
+            console.warn("truck stock batch fetch error:", error.message);
+            return [];
+          }
+          return (data ?? []).map((r: any) => ({
+            id: r.id,
+            branch: r.branch ?? "",
+            partNo: r.part_no ?? "",
+            description: r.description ?? "",
+            manufacturer: r.manufacturer ?? "",
+            quantity: Number(r.quantity ?? 0),
+            storageLocation: r.storage_location ?? "",
+            notes: r.notes ?? "",
+            updatedAt: r.updated_at ?? undefined,
+          }));
+        }}
+        onConfirm={handleTruckStockBatchConfirm}
+      />
+
+      {/* Squaretrade Appointment Completion URL — per-ticket dialog.
+          Each Squaretrade ticket has its own unique token, so the
+          claims team pastes the URL they received from Squaretrade
+          and we persist it under this ticket number. Saving stamps
+          the bare token form too, so they can paste either the
+          whole URL or just the token. */}
+      {squaretradeEditOpen && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+          onClick={() => setSquaretradeEditOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-white/15 bg-slate-900/95 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-white">Squaretrade appointment URL</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  Auto-synced from ServicePower running notes for ticket #{ticketNo}. Paste a full URL or just the token here only if SP didn't include the link.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSquaretradeEditOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <label className="mt-4 block">
+              <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">URL or Token</span>
+              <input
+                value={squaretradeDraft}
+                onChange={(e) => setSquaretradeDraft(e.target.value)}
+                placeholder="https://www.squaretrade.com/.../confirmappointment?...&token=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                className="mt-1 w-full rounded border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-400 focus:outline-none"
+                autoFocus
+              />
+            </label>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Example token: <code className="text-slate-300">458838a4-a266-45c5-8fa7-f64560fb9c04</code>
+            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+              {squaretradeUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSquaretradeUrl(ticketNo, "");
+                    setSquaretradeUrlState("");
+                    setSquaretradeDraft("");
+                    setSquaretradeEditOpen(false);
+                  }}
+                  className="rounded border border-rose-400/40 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSquaretradeEditOpen(false)}
+                className="rounded border border-white/15 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const raw = squaretradeDraft.trim();
+                  if (!raw) {
+                    setSquaretradeUrl(ticketNo, "");
+                    setSquaretradeUrlState("");
+                    setSquaretradeEditOpen(false);
+                    return;
+                  }
+                  // If it doesn't look like a URL, treat it as a bare
+                  // token and build the canonical URL around it.
+                  const looksLikeUrl = /^https?:\/\//i.test(raw);
+                  const finalUrl = looksLikeUrl ? raw : buildSquaretradeUrlFromToken(raw);
+                  const saved = setSquaretradeUrl(ticketNo, finalUrl);
+                  setSquaretradeUrlState(saved);
+                  setSquaretradeEditOpen(false);
+                }}
+                className="rounded bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-400"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </>

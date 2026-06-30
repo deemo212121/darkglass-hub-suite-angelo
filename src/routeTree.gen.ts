@@ -21,6 +21,7 @@ import { Route as HomeRouteImport } from './routes/home'
 import { Route as FirebaseSetupRouteImport } from './routes/firebase-setup'
 import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TicketsMapRouteImport } from './routes/tickets.map'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
@@ -88,6 +89,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TicketsMapRoute = TicketsMapRouteImport.update({
+  id: '/tickets/map',
+  path: '/tickets/map',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TicketTicketNoRoute = TicketTicketNoRouteImport.update({
   id: '/ticket/$ticketNo',
   path: '/ticket/$ticketNo',
@@ -136,6 +142,7 @@ export interface FileRoutesByFullPath {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
+  '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
@@ -156,6 +163,7 @@ export interface FileRoutesByTo {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
+  '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
@@ -177,6 +185,7 @@ export interface FileRoutesById {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
+  '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
@@ -199,6 +208,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
+    | '/tickets/map'
     | '/m/$module/$submodule'
     | '/m/$module/$submodule/$userId'
   fileRoutesByTo: FileRoutesByTo
@@ -219,6 +229,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
+    | '/tickets/map'
     | '/m/$module/$submodule'
     | '/m/$module/$submodule/$userId'
   id:
@@ -239,6 +250,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
+    | '/tickets/map'
     | '/m/$module/$submodule'
     | '/m/$module/$submodule/$userId'
   fileRoutesById: FileRoutesById
@@ -260,6 +272,7 @@ export interface RootRouteChildren {
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
   TicketTicketNoRoute: typeof TicketTicketNoRoute
+  TicketsMapRoute: typeof TicketsMapRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -348,6 +361,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tickets/map': {
+      id: '/tickets/map'
+      path: '/tickets/map'
+      fullPath: '/tickets/map'
+      preLoaderRoute: typeof TicketsMapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ticket/$ticketNo': {
       id: '/ticket/$ticketNo'
       path: '/ticket/$ticketNo'
@@ -432,6 +452,7 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
   TicketTicketNoRoute: TicketTicketNoRoute,
+  TicketsMapRoute: TicketsMapRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

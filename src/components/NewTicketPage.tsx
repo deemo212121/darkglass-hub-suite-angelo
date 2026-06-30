@@ -5,6 +5,11 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type Ticket } from "@/lib/ticketData";
 import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
 import { lookupZip } from "@/lib/zipCoverage";
+import {
+  cityStateMatchesZip,
+  lookupZipCityState,
+  type ZipLookupResult,
+} from "@/lib/zipLookup";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -77,6 +82,14 @@ export function NewTicketPage({ mod, sub }: Props) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState("");
   const [location, setLocation] = useState("");
+  // Live USPS-equivalent zip lookup state.
+  // - zipLookup: most recent successful resolution for the current zip.
+  // - zipLookupPending: a request is in flight (used to disable the
+  //   apply-suggestion button so we don't race the response).
+  // - zipLookupError: "not found" / network failure indicator.
+  const [zipLookup, setZipLookup] = useState<ZipLookupResult | null>(null);
+  const [zipLookupPending, setZipLookupPending] = useState(false);
+  const [zipLookupError, setZipLookupError] = useState<string | null>(null);
   const navigate = useNavigate();
   const createdTicketStatus = "Acknowledged";
   
@@ -146,7 +159,7 @@ export function NewTicketPage({ mod, sub }: Props) {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
-  const handleCreateTicket = () => {
+  const handleCreateTicket = async () => {
     // Validate required fields
     if (!form.ticketNo.trim()) {
       setStatus("Error: Ticket number is required");
@@ -179,6 +192,22 @@ export function NewTicketPage({ mod, sub }: Props) {
     if (!form.state) {
       setStatus("Error: State is required");
       return;
+    }
+    // Final zip ↔ city/state guard. We re-run the lookup at submit time
+    // so we still block when the user typed everything fast and the
+    // banner hadn't refreshed yet. If the live lookup is unreachable
+    // (offline / API down), fall through — we don't want to block ticket
+    // creation on a third-party service.
+    try {
+      const verify = await lookupZipCityState(form.zipCode);
+      if (verify && !cityStateMatchesZip(verify, form.city, form.state)) {
+        setStatus(
+          `Error: ZIP ${verify.zip} is ${verify.primary.city}, ${verify.primary.state} — not ${form.city || "—"}, ${form.state || "—"}. Fix the city / state (or the ZIP) before saving.`,
+        );
+        return;
+      }
+    } catch {
+      // ignore — network blip shouldn't block the save
     }
     if (!form.model.trim()) {
       setStatus("Error: Model is required");
@@ -353,24 +382,103 @@ export function NewTicketPage({ mod, sub }: Props) {
               </div>
               <div className="form-group">
                 <label className="form-label required" htmlFor="zipCode">Zip Code</label>
-                <input id="zipCode" className="form-input" value={form.zipCode}
+                <input
+                  id="zipCode"
+                  className="form-input"
+                  value={form.zipCode}
                   onChange={(event) => {
-                    const val = event.target.value;
+                    const val = event.target.value.replace(/\D/g, "").slice(0, 5);
                     update("zipCode", val);
+                    // Reset lookup state on every keystroke so the banner
+                    // doesn't lag behind the input.
+                    setZipLookup(null);
+                    setZipLookupError(null);
                     if (val.length === 5) {
+                      // Internal branch / coverage match (instant — local data).
                       const found = lookupZip(val);
-                      if (found) {
-                        setLocation(found.location);
-                        update("city", found.city || form.city);
-                      }
+                      if (found) setLocation(found.location);
+                      // Live USPS-equivalent lookup so we can verify the
+                      // typed city / state match this ZIP. Auto-fills any
+                      // empty city / state field with the canonical value.
+                      setZipLookupPending(true);
+                      void lookupZipCityState(val).then((result) => {
+                        setZipLookupPending(false);
+                        if (!result) {
+                          setZipLookupError("ZIP not found in the USPS lookup. Double-check the value.");
+                          return;
+                        }
+                        setZipLookup(result);
+                        setForm((prev) => ({
+                          ...prev,
+                          // Auto-fill empty fields. Don't overwrite values
+                          // the user already typed — the banner below
+                          // flags mismatches and offers a one-click fix.
+                          city: prev.city.trim() ? prev.city : result.primary.city,
+                          state: prev.state.trim() ? prev.state : result.primary.state,
+                        }));
+                      });
+                    } else {
+                      setZipLookupPending(false);
                     }
                   }}
-                  required />
-                {form.zipCode.length === 5 && (() => { const z = lookupZip(form.zipCode); return z ? (
-                  <p className="text-xs text-green-400 mt-1">✓ {z.location} branch — {z.city}{z.tierCode ? ` (${z.tierCode})` : ""}</p>
-                ) : (
-                  <p className="text-xs text-red-400 mt-1">⚠ Zip code not in coverage area</p>
-                ); })()}
+                  inputMode="numeric"
+                  pattern="\d{5}"
+                  maxLength={5}
+                  required
+                />
+                {/* Internal coverage match (branch / tier) */}
+                {form.zipCode.length === 5 && (() => {
+                  const z = lookupZip(form.zipCode);
+                  return z ? (
+                    <p className="text-xs text-green-400 mt-1">
+                      ✓ {z.location} branch — {z.city}
+                      {z.tierCode ? ` (${z.tierCode})` : ""}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-red-400 mt-1">
+                      ⚠ Zip code not in coverage area
+                    </p>
+                  );
+                })()}
+                {/* USPS-equivalent validation status */}
+                {form.zipCode.length === 5 && zipLookupPending && (
+                  <p className="text-xs text-slate-400 mt-1">
+                    Looking up city / state for {form.zipCode}…
+                  </p>
+                )}
+                {zipLookupError && (
+                  <p className="text-xs text-amber-300 mt-1">⚠ {zipLookupError}</p>
+                )}
+                {zipLookup && !cityStateMatchesZip(zipLookup, form.city, form.state) && (
+                  <div className="mt-1 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">
+                    <div>
+                      ⚠ ZIP <span className="font-mono">{zipLookup.zip}</span> is in{" "}
+                      <span className="font-semibold">
+                        {zipLookup.primary.city}, {zipLookup.primary.state}
+                      </span>
+                      {zipLookup.places.length > 1 && (
+                        <span className="text-amber-300/80">
+                          {" "}
+                          (also: {zipLookup.places.slice(1).map((p) => p.city).join(", ")})
+                        </span>
+                      )}
+                      , not {form.city || "—"}, {form.state || "—"}.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          city: zipLookup.primary.city,
+                          state: zipLookup.primary.state,
+                        }))
+                      }
+                      className="mt-1 text-xs font-semibold text-amber-100 underline underline-offset-2 hover:text-white"
+                    >
+                      Use suggested values
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label className="form-label required" htmlFor="state">State</label>

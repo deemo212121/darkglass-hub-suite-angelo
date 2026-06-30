@@ -30,7 +30,8 @@ export type UserRole =
   | "FINANCE"       // Financial reports and billing
   | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
   | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
-  | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS";
+  | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
+  | "TRIAGE_USER" | "TRIAGE_MANAGER";
 
 export interface ProfileRow {
   id: string;
@@ -40,6 +41,8 @@ export interface ProfileRow {
   username: string | null;
   display_name: string | null;
   role: UserRole;
+  /** Additional roles beyond the primary one. Stored as text[] in Postgres. */
+  extra_roles: UserRole[] | null;
   phone_number: string | null;
   department: string | null;
   manager_name: string | null;
@@ -76,10 +79,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   displayName: string;
   isActive: boolean;
   workPlan: Record<string, any> | null;
+  branchAccess: string | null;
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, companies:company_id (legacy_code)")
+    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -97,6 +101,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     displayName: data.display_name ?? data.email,
     isActive: data.is_active,
     workPlan: (data as any).work_plan ?? null,
+    branchAccess: (data as any).branch_access ?? null,
   };
 }
 
@@ -135,10 +140,30 @@ export async function getUserByUsername(
   if (!data) return null;
   return { email: data as string, isActive: true };
 }
+
+/**
+ * Resolve the current user's Supabase profile id (uuid) from their Firebase
+ * uid. Cheap, scoped by RLS. Returns null if the profile hasn't been created
+ * yet (e.g. legacy Firebase-only user pre-migration).
+ */
+export async function getMyProfileId(firebaseUid: string): Promise<string | null> {
+  if (!firebaseUid) return null;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+  if (error) {
+    console.error("getMyProfileId error:", error.message);
+    return null;
+  }
+  return data?.id ?? null;
+}
+
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 
@@ -212,10 +237,14 @@ export interface TechnicianHome {
  * employee_info (home address) and assigned_branch. Company-scoped via RLS.
  */
 export async function getCompanyTechnicianHomes(): Promise<TechnicianHome[]> {
+  // Match either the primary `role` or any entry in `extra_roles` — a user
+  // can be both a manager and a technician (Daven Hodge, for example), and
+  // we want them on the Work Map regardless of which slot the TECHNICIAN
+  // tag sits in.
   const { data, error } = await supabase
     .from("profiles")
-    .select("display_name, username, email, role, assigned_branch, employee_info")
-    .eq("role", "TECHNICIAN");
+    .select("display_name, username, email, role, extra_roles, assigned_branch, employee_info")
+    .or("role.eq.TECHNICIAN,extra_roles.cs.{TECHNICIAN}");
   if (error) {
     console.error("getCompanyTechnicianHomes error:", error.message);
     return [];
@@ -246,6 +275,7 @@ export async function createCompanyUser(input: {
   password: string;
   displayName: string;
   role: UserRole;
+  extraRoles?: UserRole[];
   companyId?: string;
   phoneNumber?: string;
   department?: string;
@@ -294,12 +324,15 @@ export async function createCompanyUser(input: {
   // from the calling admin's company (auth_company_id()), so we don't send it.
   // This avoids the client passing the wrong format (e.g. legacy "COMP001").
   const username = generateUsername(input.displayName);
+  // De-duplicate extra roles and strip the primary one so it isn't double-stored.
+  const extras = Array.from(new Set((input.extraRoles ?? []).filter((r) => r && r !== input.role)));
   const { error: insertErr } = await supabase.from("profiles").insert({
     firebase_uid: newUid,
     email: input.email,
     username,
     display_name: input.displayName,
     role: input.role,
+    extra_roles: extras,
     phone_number: input.phoneNumber ?? "",
     department: input.department ?? "",
     manager_name: input.managerName ?? "",
@@ -341,7 +374,7 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, is_active, created_at")
     .ilike("username", username)
     .maybeSingle();
   if (error) {
@@ -359,6 +392,8 @@ export async function updateCompanyUser(
   fields: Partial<{
     displayName: string;
     role: UserRole;
+    /** Additional roles beyond the primary (e.g. a manager who is also a TECHNICIAN). */
+    extraRoles: UserRole[];
     phoneNumber: string;
     department: string;
     managerName: string;
@@ -378,6 +413,13 @@ export async function updateCompanyUser(
   const payload: Record<string, unknown> = {};
   if (fields.displayName !== undefined) payload.display_name = fields.displayName;
   if (fields.role !== undefined) payload.role = fields.role;
+  if (fields.extraRoles !== undefined) {
+    // Dedupe + remove the primary role from extras so it isn't double-stored.
+    const primary = fields.role;
+    payload.extra_roles = Array.from(
+      new Set((fields.extraRoles || []).filter((r) => r && r !== primary)),
+    );
+  }
   if (fields.phoneNumber !== undefined) payload.phone_number = fields.phoneNumber;
   if (fields.department !== undefined) payload.department = fields.department;
   if (fields.managerName !== undefined) payload.manager_name = fields.managerName;

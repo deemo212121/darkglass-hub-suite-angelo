@@ -180,10 +180,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setRole(sbProfile.role);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
-                  // Compute location access from the work plan (restricted roles only).
+                  // Compute location access. Two overrides win over the
+                  // work-plan-based filter:
+                  //   1. branch_access = "*" (admin set "All Locations") →
+                  //      unrestricted regardless of role.
+                  //   2. role is unrestricted → null.
+                  // Otherwise fall back to work-plan-derived locations.
                   try {
                     const { accessibleLocations, isLocationRestrictedRole } = await import("./workPlan");
-                    if (isLocationRestrictedRole(sbProfile.role)) {
+                    const isAllLocations = (sbProfile.branchAccess || "").trim() === "*";
+                    if (isAllLocations) {
+                      setAllowedLocations(null); // explicit override
+                    } else if (isLocationRestrictedRole(sbProfile.role)) {
                       setAllowedLocations(accessibleLocations(sbProfile.workPlan as any));
                     } else {
                       setAllowedLocations(null); // unrestricted
@@ -285,6 +293,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
   
+  // Mirror the resolved company id into the API health tracker so
+  // background fetches that don't go through React (e.g. SP / Marcone
+  // sync timers) can still notify admins of the right company when the
+  // API breaks.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { setApiHealthCompanyId } = await import("./apiHealth");
+        if (!cancelled) setApiHealthCompanyId(companyId);
+      } catch {
+        // optional dep — ignore if the file isn't there yet
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId]);
+
   const logout = async () => {
     if (!isFirebaseReady() || !auth) {
       console.warn("Firebase not configured");

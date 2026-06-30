@@ -94,6 +94,15 @@ function parseCallInfo(callXml: string): any {
     techKey: parseElement(callXml, 'TechKey'),
     callNumber: parseElement(callXml, 'CallNumber'),
     mfgId: parseElement(callXml, 'MfgId'),
+    // SP's "Work Order Source" label (the readable name shown in their UI).
+    // Tag names vary by tenant; we try the common variants.
+    mfgName:
+      parseElement(callXml, 'MfgName') ||
+      parseElement(callXml, 'MfgDesc') ||
+      parseElement(callXml, 'WorkOrderSource') ||
+      parseElement(callXml, 'SourceName') ||
+      parseElement(callXml, 'Source'),
+    callRawXml: callXml,
     fssCallId: parseElement(callXml, 'FSSCallId'),
     serviceCenter: parseElement(callXml, 'ServiceCenter'),
     warrantyType: parseElement(callXml, 'WarrantyType'),
@@ -200,24 +209,56 @@ export function parseErrorResponse(xml: string): any {
 
 /**
  * Helper to format dates from ServicePower format (various formats)
- * to MM/DD/YY format
+ * to MM/DD/YY format.
+ *
+ * Important: ServicePower's schedule dates are calendar days (no time
+ * component), but the API often serialises them as ISO timestamps with
+ * a `Z` (UTC) suffix or a timezone offset. Parsing those with the
+ * `Date` constructor and then reading `getDate()` runs the value
+ * through the browser's local timezone, which silently shifts a
+ * 2026-07-02T00:00:00Z back to 2026-07-01 for anyone east of UTC and
+ * forward to 2026-07-03 for users west of UTC.
+ *
+ * To stay calendar-correct, we read the y/m/d fragment directly out of
+ * the string instead of leaning on `new Date(...)`. Supported inputs:
+ *   - 2026-07-02 / 2026-07-02T00:00:00 / 2026-07-02T...Z / 2026-07-02T...+05:00
+ *   - 20260702 (compact)
+ *   - 07/02/2026 / 07/02/26 (already MM/DD/YY)
+ *   - 7/2/2026  (single-digit US)
+ * Falls back to whatever the API sent if none of these match.
  */
 export function formatServicePowerDate(dateStr: string | null): string {
   if (!dateStr) return '';
-  
-  // ServicePower uses various date formats
-  // Try to parse and format consistently
+  const raw = String(dateStr).trim();
+  if (!raw) return '';
+
+  const formatYmd = (y: string, m: string, d: string) =>
+    `${m.padStart(2, '0')}/${d.padStart(2, '0')}/${y.length === 4 ? y.slice(-2) : y}`;
+
+  // 1. ISO style: YYYY-MM-DD (with optional time/timezone tail we ignore).
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return formatYmd(iso[1], iso[2], iso[3]);
+
+  // 2. Compact YYYYMMDD.
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) return formatYmd(compact[1], compact[2], compact[3]);
+
+  // 3. US style: M/D/YY or MM/DD/YYYY.
+  const us = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (us) {
+    const yy = us[3].length === 2 ? us[3] : us[3].slice(-2);
+    return `${us[1].padStart(2, '0')}/${us[2].padStart(2, '0')}/${yy}`;
+  }
+
+  // 4. Last-resort: let Date parse it, but stay timezone-safe by
+  //    reading the UTC components (since SP usually emits UTC).
   try {
-    // Remove timezone info if present
-    const cleanDate = dateStr.replace(/[-+]\d{2}:\d{2}$/, '');
-    const date = new Date(cleanDate);
-    
-    if (isNaN(date.getTime())) return dateStr; // Return original if can't parse
-    
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const year = String(date.getFullYear()).substring(2);
-    
+    const cleaned = raw.replace(/[-+]\d{2}:\d{2}$/, '');
+    const date = new Date(cleaned);
+    if (isNaN(date.getTime())) return raw;
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const year = String(date.getUTCFullYear()).slice(-2);
     return `${month}/${day}/${year}`;
   } catch {
     return dateStr;

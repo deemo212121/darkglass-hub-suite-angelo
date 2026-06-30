@@ -2301,3 +2301,407 @@
   color: #475569;
   margin-bottom: 0.3rem;
 }
+
+
+/* ─── LIGHT THEME ─────────────────────────────────────────────────────────
+   Activated by <html data-theme="light">. Overrides the CSS variables and,
+   below, the most common hardcoded Tailwind dark utility classes so existing
+   components flip without per-component edits. */
+:root[data-theme="light"] {
+  --background: #ede3cf;
+  --foreground: oklch(0.22 0.03 260);
+  --card: #fdf8f0;
+  --card-foreground: oklch(0.22 0.03 260);
+  --popover: #fdf8f0;
+  --popover-foreground: oklch(0.22 0.03 260);
+  --primary: oklch(0.55 0.22 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: #f7efdf;
+  --secondary-foreground: oklch(0.22 0.03 260);
+  --muted: #f7efdf;
+  --muted-foreground: oklch(0.45 0.02 260);
+  --accent: oklch(0.55 0.22 255);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.58 0.24 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.22 0.03 260 / 0.15);
+  --input: oklch(0.22 0.03 260 / 0.06);
+  --ring: oklch(0.55 0.22 255);
+  --panel: #fdf8f0;
+  --panel-border: oklch(0.22 0.03 260 / 0.12);
+}
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, oklch(0.85 0.10 180 / 0.20), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, oklch(0.85 0.08 175 / 0.15), transparent 60%),
+    linear-gradient(180deg, #fdf8f0 0%, #ede3cf 100%);
+  background-attachment: fixed;
+}
+
+/* ─── LIGHT THEME — hardcoded Tailwind dark-class overrides ────────────────
+   The app uses many literal dark utilities (bg-slate-900, text-slate-300,
+   bg-blue-900/50, etc.). These !important overrides remap the most common ones
+   to light equivalents when light mode is active, so components flip without
+   editing each one. Scoped under [data-theme="light"] so dark mode is untouched. */
+:root[data-theme="light"] {
+  --lt-surface: #fdf8f0;
+  --lt-surface-2: #f7efdf;
+  --lt-surface-3: #ede3cf;
+  --lt-text: #1e293b;
+  --lt-text-2: #475569;
+  --lt-text-3: #64748b;
+  --lt-border: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-theme="light"] .bg-slate-950,
+:root[data-theme="light"] .bg-slate-900,
+:root[data-theme="light"] .bg-slate-900\/50,
+:root[data-theme="light"] .bg-slate-900\/60,
+:root[data-theme="light"] .bg-slate-900\/80,
+:root[data-theme="light"] .bg-slate-900\/90,
+:root[data-theme="light"] .bg-slate-800,
+:root[data-theme="light"] .bg-slate-800\/50 {
+  background-color: var(--lt-surface) !important;
+}
+
+:root[data-theme="light"] .bg-blue-900\/20,
+:root[data-theme="light"] .bg-blue-900\/30,
+:root[data-theme="light"] .bg-blue-900\/50 {
+  background-color: var(--lt-surface-2) !important;
+}
+
+:root[data-theme="light"] .text-white,
+:root[data-theme="light"] .text-slate-100,
+:root[data-theme="light"] .text-slate-200 {
+  color: var(--lt-text) !important;
+}
+
+:root[data-theme="light"] .text-slate-300,
+:root[data-theme="light"] .text-slate-400 {
+  color: var(--lt-text-2) !important;
+}
+
+:root[data-theme="light"] .text-slate-500,
+:root[data-theme="light"] .text-muted-foreground {
+  color: var(--lt-text-3) !important;
+}
+
+/* Keep blue/colored accent text readable on light */
+:root[data-theme="light"] .text-blue-300,
+:root[data-theme="light"] .text-blue-400 {
+  color: #2563eb !important;
+}
+
+/* Borders */
+:root[data-theme="light"] .border-white\/10,
+:root[data-theme="light"] .border-white\/20,
+:root[data-theme="light"] .border-white\/5,
+:root[data-theme="light"] .border-slate-600,
+:root[data-theme="light"] .border-slate-700 {
+  border-color: var(--lt-border) !important;
+}
+
+/* Hover states */
+:root[data-theme="light"] .hover\:bg-white\/5:hover,
+:root[data-theme="light"] .hover\:bg-white\/8:hover,
+:root[data-theme="light"] .hover\:bg-white\/10:hover {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* Table header bands that use blue-900 */
+:root[data-theme="light"] thead tr.bg-blue-900\/50,
+:root[data-theme="light"] thead tr.bg-blue-900\/30 {
+  background-color: var(--lt-surface-3) !important;
+}
+
+/* Glass inputs in light mode */
+:root[data-theme="light"] .glass-input {
+  background-color: #fdf8f0 !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Panels get a solid light surface */
+:root[data-theme="light"] .panel {
+  background: rgba(253, 248, 240, 0.90) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* Date inputs back to light color-scheme */
+:root[data-theme="light"] input[type="date"],
+:root[data-theme="light"] input[type="datetime-local"],
+:root[data-theme="light"] input[type="time"] {
+  color-scheme: light;
+}
+
+/* ─── LIGHT THEME — white surfaces, white text & gradients ─────────────────
+   Catches the high-volume cases that vanish on a light background:
+   solid bg-white, bg-white/N translucent fills, text-white (+ opacity variants),
+   white borders, and dark slate/blue gradient endpoints. */
+
+:root[data-theme="light"] .bg-white {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border);
+}
+
+:root[data-theme="light"] .bg-white\/2,
+:root[data-theme="light"] .bg-white\/3,
+:root[data-theme="light"] .bg-white\/5,
+:root[data-theme="light"] .bg-white\/8 {
+  background-color: rgba(15, 23, 42, 0.03) !important;
+}
+:root[data-theme="light"] .bg-white\/10,
+:root[data-theme="light"] .bg-white\/15,
+:root[data-theme="light"] .bg-white\/20 {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+}
+
+:root[data-theme="light"] .text-white { color: var(--lt-text) !important; }
+:root[data-theme="light"] .text-white\/75,
+:root[data-theme="light"] .text-white\/70 { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .text-white\/60,
+:root[data-theme="light"] .text-white\/50,
+:root[data-theme="light"] .text-white\/45,
+:root[data-theme="light"] .text-white\/40 { color: var(--lt-text-3) !important; }
+:root[data-theme="light"] .text-white\/30,
+:root[data-theme="light"] .text-white\/25,
+:root[data-theme="light"] .text-white\/20 { color: rgba(15, 23, 42, 0.35) !important; }
+
+:root[data-theme="light"] .border-white,
+:root[data-theme="light"] .border-white\/30,
+:root[data-theme="light"] .border-white\/25,
+:root[data-theme="light"] .border-white\/40,
+:root[data-theme="light"] .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--lt-border) !important;
+}
+
+:root[data-theme="light"] .ring-white\/10,
+:root[data-theme="light"] .ring-white\/20 {
+  --tw-ring-color: var(--lt-border) !important;
+}
+
+:root[data-theme="light"] .from-slate-950,
+:root[data-theme="light"] .from-slate-900,
+:root[data-theme="light"] .from-slate-800 {
+  --tw-gradient-from: var(--lt-surface-2) var(--tw-gradient-from-position) !important;
+}
+:root[data-theme="light"] .via-slate-900,
+:root[data-theme="light"] .via-slate-800 {
+  --tw-gradient-via: var(--lt-surface-2) var(--tw-gradient-via-position) !important;
+}
+:root[data-theme="light"] .to-slate-950,
+:root[data-theme="light"] .to-slate-900 {
+  --tw-gradient-to: var(--lt-surface-3) var(--tw-gradient-to-position) !important;
+}
+
+:root[data-theme="light"] ::placeholder {
+  color: var(--lt-text-3) !important;
+  opacity: 1;
+}
+
+:root[data-theme="light"] .text-white svg { color: inherit; }
+
+/* High-opacity white text + faint labels */
+:root[data-theme="light"] .text-white\/95,
+:root[data-theme="light"] .text-white\/90,
+:root[data-theme="light"] .text-white\/85,
+:root[data-theme="light"] .text-white\/80 {
+  color: var(--lt-text) !important;
+}
+
+:root[data-theme="light"] label.text-slate-400,
+:root[data-theme="light"] label.text-slate-500,
+:root[data-theme="light"] .uppercase.tracking-\[0\.18em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.16em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.12em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.08em\] {
+  color: var(--lt-text-2) !important;
+}
+
+:root[data-theme="light"] h3.uppercase {
+  color: var(--lt-text) !important;
+}
+
+:root[data-theme="light"] .group .text-white {
+  color: var(--lt-text-2) !important;
+}
+
+/* Arbitrary rgba(255,255,255,…) inline backgrounds */
+:root[data-theme="light"] .bg-\[rgba\(255\2c 255\2c 255\2c 0\.08\)\],
+:root[data-theme="light"] .bg-\[rgba\(255\2c 255\2c 255\2c 0\.12\)\] {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+:root[data-theme="light"] .border-\[rgba\(255\2c 255\2c 255\2c 0\.15\)\] {
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .hover\:bg-\[rgba\(255\2c 255\2c 255\2c 0\.12\)\]:hover {
+  background-color: #f7efdf !important;
+}
+
+:root[data-theme="light"] .bg-white\/10.text-white,
+:root[data-theme="light"] .bg-white\/10 .text-white {
+  color: var(--lt-text-2) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — COMPREHENSIVE SWEEP (attribute selectors)
+   Catches ALL opacity variants of each dark shade in one rule using [class*=]
+   so no variant slips through (bg-slate-950/80, /70, /95, etc.). This replaces
+   the need to enumerate every opacity. Scoped to [data-theme="light"].
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="light"] [class*="bg-slate-950"],
+:root[data-theme="light"] [class*="bg-slate-900"],
+:root[data-theme="light"] [class*="bg-slate-800"] {
+  background-color: var(--lt-surface) !important;
+}
+:root[data-theme="light"] [class*="bg-slate-700"],
+:root[data-theme="light"] [class*="bg-slate-600"] {
+  background-color: var(--lt-surface-2) !important;
+}
+:root[data-theme="light"] [class*="bg-blue-900"],
+:root[data-theme="light"] [class*="bg-blue-950"] {
+  background-color: var(--lt-surface-2) !important;
+}
+
+:root[data-theme="light"] [class*="text-white"] { color: var(--lt-text) !important; }
+:root[data-theme="light"] [class*="text-slate-100"],
+:root[data-theme="light"] [class*="text-slate-200"] { color: var(--lt-text) !important; }
+:root[data-theme="light"] [class*="text-slate-300"],
+:root[data-theme="light"] [class*="text-slate-400"] { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] [class*="text-slate-500"],
+:root[data-theme="light"] [class*="text-slate-600"] { color: var(--lt-text-3) !important; }
+
+/* Keep text that's meant to be dark on light chips dark */
+:root[data-theme="light"] [class*="text-slate-700"],
+:root[data-theme="light"] [class*="text-slate-800"],
+:root[data-theme="light"] [class*="text-slate-900"] { color: var(--lt-text) !important; }
+
+:root[data-theme="light"] [class*="border-white"] { border-color: var(--lt-border) !important; }
+
+:root[data-theme="light"] [class*="text-blue-3"],
+:root[data-theme="light"] [class*="text-blue-4"] { color: #2563eb !important; }
+:root[data-theme="light"] [class*="text-green-3"],
+:root[data-theme="light"] [class*="text-green-4"] { color: #16a34a !important; }
+:root[data-theme="light"] [class*="text-amber-3"],
+:root[data-theme="light"] [class*="text-amber-4"],
+:root[data-theme="light"] [class*="text-yellow-3"] { color: #d97706 !important; }
+:root[data-theme="light"] [class*="text-rose-3"],
+:root[data-theme="light"] [class*="text-rose-4"],
+:root[data-theme="light"] [class*="text-red-3"],
+:root[data-theme="light"] [class*="text-red-4"] { color: #dc2626 !important; }
+
+/* Inline-style dark backgrounds (some components use style={{background:"#1.."}}) */
+:root[data-theme="light"] [style*="background:#1"],
+:root[data-theme="light"] [style*="background: #1"],
+:root[data-theme="light"] [style*="background:rgb(2"],
+:root[data-theme="light"] [style*="background: rgb(2"],
+:root[data-theme="light"] [style*="background-color:#1"],
+:root[data-theme="light"] [style*="background-color: #1"],
+:root[data-theme="light"] [style*="background-color:rgb(2"],
+:root[data-theme="light"] [style*="background-color: rgb(2"] {
+  background-color: var(--lt-surface) !important;
+  background-image: none !important;
+}
+
+/* Keep white text on genuinely colored backgrounds (buttons, badges) */
+:root[data-theme="light"] [class*="bg-blue-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-blue-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-blue-7"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-green-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-green-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-red-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-red-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-rose-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-amber-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-emerald-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-violet-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-primary"][class*="text-white"],
+:root[data-theme="light"] .btn[class*="bg-blue"] {
+  color: #ffffff !important;
+}
+:root[data-theme="light"] [class*="bg-blue-5"],
+:root[data-theme="light"] [class*="bg-blue-6"],
+:root[data-theme="light"] [class*="bg-blue-7"] {
+  background-color: #2563eb !important;
+}
+
+/* Team Messenger chat bubbles */
+:root[data-theme="light"] .rounded-2xl[class*="bg-blue-500"] {
+  background-color: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e3a5f !important;
+}
+:root[data-theme="light"] .rounded-2xl[class*="bg-blue-500"] .text-slate-400 {
+  color: #3b6ea5 !important;
+}
+:root[data-theme="light"] .rounded-2xl[class*="bg-slate-950"] {
+  background-color: #f1f0ee !important;
+  border-color: #d6d3cd !important;
+  color: #1e293b !important;
+}
+:root[data-theme="light"] .rounded-2xl[class*="bg-slate-950"] .text-slate-400 {
+  color: #64748b !important;
+}
+:root[data-theme="light"] .rounded-2xl[class*="bg-white\/5"] {
+  background-color: #e8e6e1 !important;
+  border-color: #d1cec8 !important;
+  color: #475569 !important;
+}
+
+/* Inline ticket-number chips in Team Messenger */
+:root[data-theme="light"] a[class*="bg-blue-500"][class*="text-blue-300"],
+:root[data-theme="light"] span[class*="bg-blue-500"][class*="text-blue-300"] {
+  background-color: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
+:root[data-theme="light"] a[class*="bg-blue-500"][class*="text-blue-300"]:hover,
+:root[data-theme="light"] span[class*="bg-blue-500"][class*="text-blue-300"]:hover {
+  background-color: #bfdbfe !important;
+  color: #1e40af !important;
+}
+
+/* White logo on light background — wrap in a dark rounded pill so it stays visible */
+:root[data-theme="light"] .logo-img {
+  background-color: #1e293b !important;
+  border-radius: 10px !important;
+  padding: 5px !important;
+  box-sizing: content-box !important;
+  display: inline-block !important;
+}
+:root[data-theme="light"] header img,
+:root[data-theme="light"] header a > img {
+  background-color: #1e293b !important;
+  border-radius: 10px !important;
+  padding: 5px !important;
+  box-sizing: content-box !important;
+}
+
+/* App header background in light mode (uses arbitrary oklch background) */
+:root[data-theme="light"] header.sticky {
+  background-color: rgba(253, 248, 240, 0.85) !important;
+  border-bottom-color: rgba(15, 23, 42, 0.10) !important;
+}
+
+
+/* ─── Coverage map zip-code labels ─────────────────────────────────────────
+   Google Maps renders label text as a span via the className we pass in
+   the marker config. Give it a pill background so the 5-digit zip is
+   readable on top of the colored polygons. */
+.coverage-zip-label {
+  background: rgba(255, 255, 255, 0.92) !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  border: 1px solid rgba(15, 23, 42, 0.3) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  white-space: nowrap !important;
+  letter-spacing: 0.02em !important;
+}
+
+:root[data-theme="light"] .coverage-zip-label {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.5) !important;
+}

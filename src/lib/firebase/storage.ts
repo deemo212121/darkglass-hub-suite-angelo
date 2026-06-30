@@ -22,6 +22,10 @@ export interface TicketPhoto {
   url: string;        // download URL
   uploadedAt: string; // ISO timestamp from metadata
   size: number;       // bytes
+  /** Display name / email of whoever uploaded this file. */
+  uploadedBy?: string;
+  /** Visit number the photo is associated with (e.g. "1", "2"). Optional. */
+  visitNo?: string;
 }
 
 function sanitizeFileName(name: string): string {
@@ -29,12 +33,15 @@ function sanitizeFileName(name: string): string {
 }
 
 /**
- * Upload one photo for a ticket. Returns the stored photo info.
+ * Upload one photo for a ticket. Returns the stored photo info. Accepts
+ * optional metadata so we can stamp who uploaded the file and which visit
+ * it belongs to.
  */
 export async function uploadTicketPhoto(
   companyId: string,
   ticketNo: string,
-  file: File
+  file: File,
+  meta?: { uploadedBy?: string; visitNo?: string }
 ): Promise<TicketPhoto> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
@@ -43,17 +50,24 @@ export async function uploadTicketPhoto(
   const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
   const objectRef = ref(storage, `${folder}/${objectName}`);
 
+  const uploadedAt = new Date().toISOString();
+  const customMetadata: Record<string, string> = { uploadedAt };
+  if (meta?.uploadedBy) customMetadata.uploadedBy = meta.uploadedBy;
+  if (meta?.visitNo) customMetadata.visitNo = meta.visitNo;
+
   const snapshot = await uploadBytes(objectRef, file, {
     contentType: file.type || "application/octet-stream",
-    customMetadata: { uploadedAt: new Date().toISOString() },
+    customMetadata,
   });
   const url = await getDownloadURL(snapshot.ref);
   return {
     name: objectName,
     fullPath: snapshot.ref.fullPath,
     url,
-    uploadedAt: new Date().toISOString(),
+    uploadedAt,
     size: file.size,
+    uploadedBy: meta?.uploadedBy,
+    visitNo: meta?.visitNo,
   };
 }
 
@@ -83,6 +97,8 @@ export async function listTicketPhotos(
         url,
         uploadedAt: meta?.customMetadata?.uploadedAt ?? meta?.timeCreated ?? "",
         size: meta?.size ?? 0,
+        uploadedBy: meta?.customMetadata?.uploadedBy ?? undefined,
+        visitNo: meta?.customMetadata?.visitNo ?? undefined,
       } as TicketPhoto;
     })
   );

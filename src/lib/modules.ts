@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "parts-dashboard" | "truck-stock"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -249,6 +249,15 @@ const dashboardMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "parts-dashboard",
+      title: "Parts Dashboard",
+      description: "Parts operations overview — PO queue, collections, receives and distributor breakdown.",
+      custom: "parts-dashboard",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -469,10 +478,24 @@ const partsMod: ModuleDef = {
       }),
       custom: "return-pickup",
     },
+    {
+      slug: "reserved-part-list",
+      title: "Reserved Part List",
+      description: "Parts currently reserved for tickets.",
+      fields: [],
+      seed: () => ({}),
+      custom: "reserved-part-list-custom",
+    },
+    {
+      slug: "truck-stock",
+      title: "Truck Stock",
+      description: "Parts in-house per branch with cross-branch availability — checked by the Marcone Lookup button before placing a PO.",
+      fields: [],
+      seed: () => ({}),
+      custom: "truck-stock",
+    },
   ],
 };
-
-// --- Tickets ---
 const ticketsMod: ModuleDef = {
   slug: "tickets",
   label: "Tickets",
