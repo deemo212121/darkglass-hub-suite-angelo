@@ -355,20 +355,44 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     //   • every ticket scheduled FOR that day, AND
     //   • every pending ticket without a schedule date — so dispatch can see
     //     what's waiting and slot it onto a tech's route.
-    // Resolve the inclusive [rangeStart, rangeEnd] window. In day mode the
-    // start/end collapse to the single picked date; in week mode the end is
-    // mapDate + 6 days; in custom mode the user picks both ends explicitly.
+    // Resolve the inclusive [rangeStart, rangeEnd] window the map keeps
+    // pins for. Route lines only connect tickets that fall on `mapDate`
+    // exactly — the wider window just keeps off-day pins visible as
+    // muted context (matching dispatch's ER work-map UX).
+    //
+    //   - Day mode:    pick day → window = the same week (mapDate - 3 to
+    //                  mapDate + 3). Off-day pins muted, no route line.
+    //   - Week mode:   pick day → window = mapDate to mapDate + 6.
+    //   - Custom mode: user picks both ends.
     const rangeStart = mapDate;
     let rangeEnd = mapDate;
+    let rangeStartActual = mapDate;
     if (dateRangeMode === "week") {
       try {
         const start = new Date(mapDate + "T00:00:00");
         const end = new Date(start);
         end.setDate(start.getDate() + 6);
         rangeEnd = end.toISOString().slice(0, 10);
-      } catch { rangeEnd = mapDate; }
+        rangeStartActual = rangeStart;
+      } catch { rangeEnd = mapDate; rangeStartActual = rangeStart; }
     } else if (dateRangeMode === "custom") {
       rangeEnd = mapDateEnd && mapDateEnd >= mapDate ? mapDateEnd : mapDate;
+      rangeStartActual = rangeStart;
+    } else {
+      // Day mode: keep a ±3-day cushion around the picked day so the
+      // map still surfaces this-week tickets as faded pins (no route).
+      try {
+        const start = new Date(mapDate + "T00:00:00");
+        const earlier = new Date(start);
+        earlier.setDate(start.getDate() - 3);
+        const later = new Date(start);
+        later.setDate(start.getDate() + 3);
+        rangeStartActual = earlier.toISOString().slice(0, 10);
+        rangeEnd = later.toISOString().slice(0, 10);
+      } catch {
+        rangeStartActual = rangeStart;
+        rangeEnd = rangeStart;
+      }
     }
 
     const dateFiltered = filtered.filter((ticket) => {
@@ -384,16 +408,15 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         return isPendingStatus(ticket.status);
       }
 
-      // Helper: does ANY date the ticket is associated with fall in the
-      // requested window? A ticket appears on a day if its SP date is
-      // that day OR a CSR explicitly logged a visit for that day.
-      const inWindow = (d: string) => Boolean(d) && d >= rangeStart && d <= rangeEnd;
       const matchesExact = (d: string) => Boolean(d) && d === mapDate;
+      const inWindow = (d: string) =>
+        Boolean(d) && d >= rangeStartActual && d <= rangeEnd;
 
       const sourceDates = [ticketDate, ...csrDates].filter(Boolean);
+      // The toggle hides off-day pins when the user explicitly opts
+      // out. The default keeps them as muted context so dispatch still
+      // sees what else is in the week.
       if (!showOtherDayTickets) {
-        // Day mode: only show when one of the ticket's dates equals
-        // the selected day exactly.
         return sourceDates.some(matchesExact);
       }
       return sourceDates.some(inWindow);
@@ -812,20 +835,18 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                     className="ml-2 rounded-md bg-slate-900/85 border border-blue-400/55 px-2 py-1 text-xs text-white"
                   />
                 )}
-                {dateRangeMode !== "day" && (
-                  <label
-                    className="ml-3 inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none"
-                    title="Show tickets scheduled on other days in the window as faded pins (no number, no route line)."
-                  >
-                    <input
-                      type="checkbox"
-                      checked={showOtherDayTickets}
-                      onChange={(e) => setShowOtherDayTickets(e.target.checked)}
-                      className="h-3.5 w-3.5"
-                    />
-                    Tickets on other days
-                  </label>
-                )}
+                <label
+                  className="ml-3 inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none"
+                  title="Show tickets scheduled on other days in the window as faded pins (no number, no route line)."
+                >
+                  <input
+                    type="checkbox"
+                    checked={showOtherDayTickets}
+                    onChange={(e) => setShowOtherDayTickets(e.target.checked)}
+                    className="h-3.5 w-3.5"
+                  />
+                  Tickets on other days
+                </label>
               </div>
 
               <div className="color-legend">
