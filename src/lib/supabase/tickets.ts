@@ -628,23 +628,20 @@ async function getTicketId(ticketNo: string): Promise<string | null> {
  * Visits with a null/empty `schedule_date` are ignored.
  */
 /**
- * Bulk-fetch every CSR-added visit date for a set of tickets.
+ * Bulk-fetch CSR-added "extra route days" per ticket.
  *
- * Returns a `Map<ticket_id, Set<YYYY-MM-DD>>` covering all dates the
- * Visit Log has on file for each ticket — `SCHEDULE`, `RESCHEDULE`, and
- * `OSR` action types. Other non-scheduling actions are skipped so a
- * "CALL ATTEMPT" or "UPDATE INFO" row doesn't pollute the route plan.
+ * Returns a `Map<ticket_id, Set<YYYY-MM-DD>>` covering days the CSR has
+ * EXPLICITLY booked outside of the ServicePower schedule_date. Only
+ * `RESCHEDULE` and `OSR` visits count — a plain `SCHEDULE` visit is
+ * the act of recording the SP-issued date and is treated as "no extra
+ * day". This matches dispatch's rule:
  *
- * Used by the Work Map to drive an "extra appearance days" rule:
+ *   "Just because two tickets share a technician doesn't mean they're
+ *   on today's route — only same-day SP date OR a real CSR re-book
+ *   pulls a ticket onto a given day."
  *
- *   - A ticket always shows up on its ServicePower schedule_date.
- *   - It ALSO shows up on any visit-log date the CSR added for it,
- *     even when that date differs from the SP one.
- *   - Tickets whose SP date doesn't match the picked day but whose
- *     visit dates also don't match stay off the map entirely.
- *
- * This is what dispatch wanted: a Jul-3 ticket only appears on Jul 3
- * unless the CSR explicitly visit-logged it for Jul 1.
+ * Other action types (CALL ATTEMPT, UPDATE INFO, TRIAGE, CANCEL, etc.)
+ * are ignored so they can't pollute the route plan.
  */
 export async function getCsrVisitDatesByTicketIds(
   ticketIds: string[],
@@ -652,13 +649,13 @@ export async function getCsrVisitDatesByTicketIds(
   const out = new Map<string, Set<string>>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  const SCHEDULING_ACTIONS = ["SCHEDULE", "RESCHEDULE", "OSR"];
+  const RESCHEDULE_ACTIONS = ["RESCHEDULE", "OSR"];
   const { data, error } = await supabase
     .from("visits")
     .select("ticket_id, schedule_date, action_type")
     .in("ticket_id", uniq)
     .not("schedule_date", "is", null)
-    .in("action_type", SCHEDULING_ACTIONS);
+    .in("action_type", RESCHEDULE_ACTIONS);
   if (error) {
     console.error("getCsrVisitDatesByTicketIds error:", error.message);
     return out;
