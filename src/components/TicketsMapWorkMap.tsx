@@ -605,17 +605,22 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
             labelOrigin: new maps.Point(20, 10),
           };
         } else {
-          // Other-day stop in the window — faded circle, no number, no
-          // route line. Smaller too so today's badges read first.
-          labelText = "";
+          // Other-day stop in the window — same teardrop badge as today
+          // but labeled with just the technician initials (no order
+          // number) so it can't be mistaken for part of today's route.
+          // Bigger and bolder per dispatch's request — they should be
+          // readable from the same zoom level as today's pins.
+          labelText = initials;
           svgMarker = {
-            path: maps.SymbolPath.CIRCLE,
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
             fillColor: markerColor,
-            fillOpacity: 0.4,
+            fillOpacity: 0.75,
             strokeColor: "#ffffff",
-            strokeWeight: 1.5,
-            strokeOpacity: 0.6,
-            scale: 7,
+            strokeWeight: 2,
+            strokeOpacity: 0.85,
+            scale: 1.5,
+            anchor: new maps.Point(20, 22),
+            labelOrigin: new maps.Point(20, 10),
           };
         }
 
@@ -633,7 +638,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
             ? {
                 text: labelText,
                 color: "#ffffff",
-                fontSize: "13px",
+                fontSize: onDay ? "13px" : "12px",
                 fontWeight: "bold",
               }
             : undefined,
