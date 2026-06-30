@@ -1062,6 +1062,10 @@ function TicketDetailsPage() {
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
   // ServicePower Running Notes modal (next to Add Visit).
   const [isRunningNotesOpen, setIsRunningNotesOpen] = useState(false);
+  // Problem Description quick-view modal (sits next to Running Notes so
+  // dispatch can read the customer's reported issue without scrolling
+  // past the visit table to the Problem Description card below).
+  const [isProblemDescOpen, setIsProblemDescOpen] = useState(false);
   const [runningNotes, setRunningNotes] = useState<Array<{
     date: string; body: string; addedBy: string; isInternal: boolean;
   }>>([]);
@@ -5523,6 +5527,14 @@ function TicketDetailsPage() {
                 >
                   Running Notes
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setIsProblemDescOpen(true)}
+                  className="rounded-md border border-amber-400/40 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-200 transition hover:bg-amber-500/30"
+                  title="Quick view of the customer's Problem Description (read-only, synced from ServicePower)"
+                >
+                  Problem Description
+                </button>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                 {visitFormMode === "view" ? (
@@ -5955,6 +5967,37 @@ function TicketDetailsPage() {
                         </button>
                       </div>
                     </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {isProblemDescOpen ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                  <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-amber-400/30 bg-slate-900 p-5 text-white shadow-2xl">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
+                          ServicePower
+                        </p>
+                        <h3 className="text-xl font-bold text-white">Problem Description</h3>
+                        <p className="mt-1 text-sm text-slate-400">
+                          Work Order #{ticketNo}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsProblemDescOpen(false)}
+                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="mt-4 rounded-md border border-white/10 bg-slate-950/60 px-4 py-3 text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+                      {ticket?.problemDescription?.trim() || "No problem description on file for this work order."}
+                    </div>
+                    <p className="mt-3 text-[11px] text-slate-500">
+                      Read-only — synced from ServicePower. To edit the description, scroll down to the Problem Description card.
+                    </p>
                   </div>
                 </div>
               ) : null}
