@@ -694,6 +694,43 @@ export async function getLatestVisitScheduleByTicketIds(
   return out;
 }
 
+/**
+ * Bulk-fetch the latest technician name recorded in the Visit Log for
+ * a set of tickets. Used by the Work Map / planner views as a fallback
+ * when the ticket itself has no `technician` assigned — the CSR may
+ * have only set the technician inside a visit row, in which case both
+ * views should still attribute the work to the same person.
+ *
+ * Returns a `Map<ticket_id, technicianName>` for tickets that have at
+ * least one visit with a non-empty `technician`. Visits without a
+ * technician are skipped. Ordered newest-first so the most recent
+ * assignment wins.
+ */
+export async function getLatestVisitTechnicianByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("visits")
+    .select("ticket_id, technician, created_at")
+    .in("ticket_id", uniq)
+    .not("technician", "is", null)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("getLatestVisitTechnicianByTicketIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const tid = (row as any).ticket_id as string | null;
+    const tech = String((row as any).technician ?? "").trim();
+    if (!tid || !tech) continue;
+    if (!out.has(tid)) out.set(tid, tech);
+  }
+  return out;
+}
+
 /** Get all visits for a ticket (newest first). */
 export async function getTicketVisits(ticketNo: string): Promise<UIVisit[]> {
   const ticketId = await getTicketId(ticketNo);

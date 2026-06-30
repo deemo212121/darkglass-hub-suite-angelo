@@ -5,7 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
-import { getCompanyTickets, getCsrVisitDatesByTicketIds } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
@@ -157,19 +157,40 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           // WITHOUT overwriting the SP schedule_date. The per-day filter
           // surfaces a ticket on a given day when either:
           //   • the SP date equals that day, OR
-          //   • the CSR has visit-logged a SCHEDULE / RESCHEDULE / OSR
-          //     entry for that day.
+          //   • the CSR has visit-logged a RESCHEDULE / OSR entry for
+          //     that day.
           // This mirrors the dispatch rule "a Jul-3 SP ticket only shows
           // on Jul 1 if a CSR added it for Jul 1".
+          //
+          // We also overlay the latest visit-recorded technician onto
+          // tickets whose `technician` is blank. Plenty of tickets in
+          // production are auto-imported from ServicePower without a
+          // tech name, but the CSR records the actual assignment in a
+          // visit row. Without this overlay the Work Map renders those
+          // as "Unassigned" (UN1..UNn) while the daily-schedule planner
+          // attributes them correctly to e.g. Jordan Koetsier.
           try {
             const ids = scoped
               .map((t: any) => String(t?._id ?? "").trim())
               .filter(Boolean);
-            const csrMap = await getCsrVisitDatesByTicketIds(ids);
+            const [csrMap, techMap] = await Promise.all([
+              getCsrVisitDatesByTicketIds(ids),
+              getLatestVisitTechnicianByTicketIds(ids),
+            ]);
             for (const t of scoped as any[]) {
               const tid = String(t?._id ?? "").trim();
               const dates = tid ? csrMap.get(tid) : undefined;
               t.csrVisitDates = dates ? Array.from(dates) : [];
+
+              const currentTech = String(
+                (t.technician ?? t.technician_name ?? "") as string,
+              ).trim();
+              if (!currentTech || currentTech.toLowerCase() === "unassigned") {
+                const visitTech = tid ? techMap.get(tid) : "";
+                if (visitTech) {
+                  t.technician = visitTech;
+                }
+              }
             }
           } catch (visitErr) {
             console.warn("Work Map: visit date overlay skipped", visitErr);
