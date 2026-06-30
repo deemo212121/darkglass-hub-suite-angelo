@@ -627,35 +627,72 @@ async function getTicketId(ticketNo: string): Promise<string | null> {
  *
  * Visits with a null/empty `schedule_date` are ignored.
  */
-export async function getLatestVisitScheduleByTicketIds(
+/**
+ * Bulk-fetch every CSR-added visit date for a set of tickets.
+ *
+ * Returns a `Map<ticket_id, Set<YYYY-MM-DD>>` covering all dates the
+ * Visit Log has on file for each ticket — `SCHEDULE`, `RESCHEDULE`, and
+ * `OSR` action types. Other non-scheduling actions are skipped so a
+ * "CALL ATTEMPT" or "UPDATE INFO" row doesn't pollute the route plan.
+ *
+ * Used by the Work Map to drive an "extra appearance days" rule:
+ *
+ *   - A ticket always shows up on its ServicePower schedule_date.
+ *   - It ALSO shows up on any visit-log date the CSR added for it,
+ *     even when that date differs from the SP one.
+ *   - Tickets whose SP date doesn't match the picked day but whose
+ *     visit dates also don't match stay off the map entirely.
+ *
+ * This is what dispatch wanted: a Jul-3 ticket only appears on Jul 3
+ * unless the CSR explicitly visit-logged it for Jul 1.
+ */
+export async function getCsrVisitDatesByTicketIds(
   ticketIds: string[],
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
   const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
   if (uniq.length === 0) return out;
-  // Only RESCHEDULE / OSR visits should override the ticket's
-  // schedule_date. A plain "SCHEDULE" visit is just the initial record
-  // of the SP-issued date — overriding with it would move tickets back
-  // to their original day when SP later updates the schedule (the
-  // problem we hit when ticket pins disappeared from the Work Map).
-  // RESCHEDULE/OSR represent CSR-driven re-bookings and rightfully win.
-  const RESCHEDULE_ACTIONS = ["RESCHEDULE", "OSR"];
+  const SCHEDULING_ACTIONS = ["SCHEDULE", "RESCHEDULE", "OSR"];
   const { data, error } = await supabase
     .from("visits")
-    .select("ticket_id, schedule_date, action_type, created_at")
+    .select("ticket_id, schedule_date, action_type")
     .in("ticket_id", uniq)
     .not("schedule_date", "is", null)
-    .in("action_type", RESCHEDULE_ACTIONS)
-    .order("created_at", { ascending: false });
+    .in("action_type", SCHEDULING_ACTIONS);
   if (error) {
-    console.error("getLatestVisitScheduleByTicketIds error:", error.message);
+    console.error("getCsrVisitDatesByTicketIds error:", error.message);
     return out;
   }
   for (const row of data ?? []) {
     const tid = (row as any).ticket_id as string | null;
-    const sd = (row as any).schedule_date as string | null;
-    if (!tid || !sd) continue;
-    if (!out.has(tid)) out.set(tid, sd);
+    const raw = (row as any).schedule_date as string | null;
+    if (!tid || !raw) continue;
+    const ymd = String(raw).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) continue;
+    let set = out.get(tid);
+    if (!set) {
+      set = new Set<string>();
+      out.set(tid, set);
+    }
+    set.add(ymd);
+  }
+  return out;
+}
+
+/**
+ * Backwards-compatible single-date helper. Returns just the latest
+ * CSR-scheduled date per ticket. Some older callers still use this
+ * shape — they should switch to `getCsrVisitDatesByTicketIds` for the
+ * full set when they care about multi-day routing.
+ */
+export async function getLatestVisitScheduleByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const multi = await getCsrVisitDatesByTicketIds(ticketIds);
+  for (const [tid, set] of multi) {
+    const sorted = Array.from(set).sort();
+    if (sorted.length > 0) out.set(tid, sorted[sorted.length - 1]);
   }
   return out;
 }

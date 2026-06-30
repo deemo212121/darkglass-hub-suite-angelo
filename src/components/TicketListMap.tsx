@@ -19,7 +19,7 @@ import { ChevronLeft, MapPin } from "lucide-react";
 import { Footer } from "@/components/Footer";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
-import { getCompanyTickets, getLatestVisitScheduleByTicketIds } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getCsrVisitDatesByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import {
   getLocationManagementCoordinates,
@@ -148,24 +148,19 @@ export function TicketListMap() {
     (async () => {
       try {
         const rows = await getCompanyTickets();
-        // Overlay latest visit schedule date so a CSR-added reschedule wins
-        // over the original ServicePower date for map bucketing.
+        // Attach the set of CSR-added visit dates to each row without
+        // overwriting the SP schedule_date. The filter below treats a
+        // ticket as visible on a given day when its SP date OR any
+        // CSR-added Visit Log date matches.
         try {
           const ids = rows
             .map((t: any) => String(t?._id ?? "").trim())
             .filter(Boolean);
-          const visitMap = await getLatestVisitScheduleByTicketIds(ids);
+          const csrMap = await getCsrVisitDatesByTicketIds(ids);
           for (const t of rows as any[]) {
             const tid = String(t?._id ?? "").trim();
-            const visitDate = tid ? visitMap.get(tid) : "";
-            if (visitDate) {
-              t.spScheduleDate = t.schedule || t.schedule_date || "";
-              t.scheduleSource = "visit";
-              t.schedule = visitDate;
-              t.schedule_date = visitDate;
-            } else {
-              t.scheduleSource = (t.schedule || t.schedule_date) ? "sp" : "";
-            }
+            const dates = tid ? csrMap.get(tid) : undefined;
+            t.csrVisitDates = dates ? Array.from(dates) : [];
           }
         } catch (visitErr) {
           console.warn("TicketListMap: visit date overlay skipped", visitErr);
@@ -191,11 +186,19 @@ export function TicketListMap() {
       if (loc && norm(t.location) !== loc) return false;
       if (src && norm(t.ticketSource ?? t.ticket_source) !== src) return false;
       if (gp && statusGroupOf(t.status) !== gp) return false;
-      const iso = ticketDateIso(t.schedule ?? t.schedule_date);
-      if (!iso) return false; // no date → not on the weekly map
-      if (startDate && iso < startDate) return false;
-      if (endDate && iso > endDate) return false;
-      return true;
+      // Combine SP schedule_date with CSR-added Visit Log dates so a
+      // ticket appears on every day it's been booked for. SP-only dates
+      // stay primary, but a CSR-added day still surfaces the ticket
+      // without overwriting the original schedule.
+      const sp = ticketDateIso(t.schedule ?? t.schedule_date);
+      const csrDates: string[] = Array.isArray((t as any).csrVisitDates)
+        ? (t as any).csrVisitDates
+        : [];
+      const allDates = [sp, ...csrDates].filter(Boolean) as string[];
+      if (allDates.length === 0) return false;
+      const inRange = (d: string) =>
+        (!startDate || d >= startDate) && (!endDate || d <= endDate);
+      return allDates.some(inRange);
     });
   }, [tickets, repairStatus, location, source, group, startDate, endDate]);
 

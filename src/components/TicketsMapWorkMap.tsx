@@ -5,7 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
-import { getCompanyTickets, getLatestVisitScheduleByTicketIds } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getCsrVisitDatesByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
@@ -153,29 +153,23 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
             ? rows
             : rows.filter((t: any) => allowedLocations.includes(normalizeLocationName(t.location || t.customer_city || t.city || "")));
 
-          // Overlay the latest visit-level schedule date onto each ticket.
-          // The Work Map should bucket a ticket under the date the CSR last
-          // saved in the Visit Log when there is one, falling back to the
-          // ServicePower schedule date otherwise. Internal UUIDs (`_id`) are
-          // attached to each row by rowToTicket in src/lib/supabase/tickets.
+          // Attach the full set of CSR-added visit dates to each ticket
+          // WITHOUT overwriting the SP schedule_date. The per-day filter
+          // surfaces a ticket on a given day when either:
+          //   • the SP date equals that day, OR
+          //   • the CSR has visit-logged a SCHEDULE / RESCHEDULE / OSR
+          //     entry for that day.
+          // This mirrors the dispatch rule "a Jul-3 SP ticket only shows
+          // on Jul 1 if a CSR added it for Jul 1".
           try {
             const ids = scoped
               .map((t: any) => String(t?._id ?? "").trim())
               .filter(Boolean);
-            const visitMap = await getLatestVisitScheduleByTicketIds(ids);
+            const csrMap = await getCsrVisitDatesByTicketIds(ids);
             for (const t of scoped as any[]) {
               const tid = String(t?._id ?? "").trim();
-              const visitDate = tid ? visitMap.get(tid) : "";
-              if (visitDate) {
-                // Keep the SP-supplied schedule reachable so the side panel
-                // can label which source produced the date.
-                t.spScheduleDate = t.schedule || t.schedule_date || "";
-                t.scheduleSource = "visit";
-                t.schedule = visitDate;
-                t.schedule_date = visitDate;
-              } else {
-                t.scheduleSource = (t.schedule || t.schedule_date) ? "sp" : "";
-              }
+              const dates = tid ? csrMap.get(tid) : undefined;
+              t.csrVisitDates = dates ? Array.from(dates) : [];
             }
           } catch (visitErr) {
             console.warn("Work Map: visit date overlay skipped", visitErr);
@@ -358,15 +352,30 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     const dateFiltered = filtered.filter((ticket) => {
       const ticketDate = String(ticket.schedule || ticket.schedule_date || "").slice(0, 10);
-      if (ticketDate) {
-        // If "Tickets on Other Days" is turned off, only tickets scheduled
-        // exactly on the selected date stay. With it on, anything inside
-        // [rangeStart, rangeEnd] is visible (today as a numbered badge,
-        // other days as faded pins — see the marker render code).
-        if (!showOtherDayTickets) return ticketDate === mapDate;
-        return ticketDate >= rangeStart && ticketDate <= rangeEnd;
+      const csrDates: string[] = Array.isArray((ticket as any).csrVisitDates)
+        ? (ticket as any).csrVisitDates
+        : [];
+
+      // No SP date and no CSR-added dates → it's an unscheduled-but-
+      // pending ticket. Keep the legacy behavior of surfacing it so
+      // dispatch can slot it onto a route.
+      if (!ticketDate && csrDates.length === 0) {
+        return isPendingStatus(ticket.status);
       }
-      return isPendingStatus(ticket.status);
+
+      // Helper: does ANY date the ticket is associated with fall in the
+      // requested window? A ticket appears on a day if its SP date is
+      // that day OR a CSR explicitly logged a visit for that day.
+      const inWindow = (d: string) => Boolean(d) && d >= rangeStart && d <= rangeEnd;
+      const matchesExact = (d: string) => Boolean(d) && d === mapDate;
+
+      const sourceDates = [ticketDate, ...csrDates].filter(Boolean);
+      if (!showOtherDayTickets) {
+        // Day mode: only show when one of the ticket's dates equals
+        // the selected day exactly.
+        return sourceDates.some(matchesExact);
+      }
+      return sourceDates.some(inWindow);
     });
 
     // Apply filters based on current filter mode
@@ -503,10 +512,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       // technician route hierarchy (numbered badges + connecting lines).
       // Other-day tickets in the same window render as faded pins with
       // no number and no route line — matching the ER work-map UX.
+      // A ticket counts as "on today" when EITHER its SP schedule_date
+      // OR any CSR-added Visit Log date equals the selected day.
       const selectedDay = mapDate;
       const isOnSelectedDay = (t: any): boolean => {
-        const d = String(t?.schedule || t?.schedule_date || "").slice(0, 10);
-        return Boolean(d) && d === selectedDay;
+        const sp = String(t?.schedule || t?.schedule_date || "").slice(0, 10);
+        if (sp && sp === selectedDay) return true;
+        const csrDates: string[] = Array.isArray(t?.csrVisitDates) ? t.csrVisitDates : [];
+        return csrDates.some((d) => d === selectedDay);
       };
 
       // Group tickets by technician to determine hierarchy numbers — but
@@ -1127,41 +1140,43 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
                       <div className="detail-field">
                         <div className="detail-label">Schedule</div>
                         {(() => {
-                          // The tickets load step overlays the latest Visit
-                          // Log scheduleDate onto `schedule` / `schedule_date`
-                          // when one exists, so `selectedTicket.schedule` is
-                          // already the right value. We surface the source
-                          // ("from Visit Log" vs "from ServicePower") so
-                          // dispatch knows where the date came from. The
-                          // visits array on the in-memory mirror is also
-                          // honoured as a secondary signal in case the
-                          // Supabase overlay missed a row.
+                          // Show the SP-issued schedule date as the primary
+                          // value. If the CSR also added one or more visit
+                          // dates that include today, surface a small tag
+                          // so dispatch knows the ticket is on today's
+                          // route via the Visit Log (not the SP date).
                           const tinyTag = (label: string) => (
                             <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-400">
                               {label}
                             </span>
                           );
-                          const visitDateFromMemory = String(
-                            latestVisit?.scheduleDate ?? "",
-                          ).trim();
-                          const overlaySource = (selectedTicket as any).scheduleSource as
-                            | "visit"
-                            | "sp"
-                            | ""
-                            | undefined;
-                          const display = String(
+                          const sp = String(
                             selectedTicket.schedule ||
                               selectedTicket.schedule_date ||
-                              visitDateFromMemory ||
-                              mapDate ||
                               "",
-                          );
-                          const source =
-                            overlaySource === "visit" || visitDateFromMemory
-                              ? "from Visit Log"
-                              : overlaySource === "sp"
-                                ? "from ServicePower"
-                                : "";
+                          ).trim();
+                          const csrDates: string[] = Array.isArray(
+                            (selectedTicket as any).csrVisitDates,
+                          )
+                            ? (selectedTicket as any).csrVisitDates
+                            : [];
+                          const display = sp || (csrDates[0] ?? mapDate ?? "");
+                          // Tag rules:
+                          //   - SP date == picked day  → "from ServicePower".
+                          //   - CSR booked the picked day (and SP didn't)
+                          //                            → "added by CSR".
+                          //   - Otherwise plain "from ServicePower" when sp
+                          //     exists, else "from Visit Log".
+                          let source = "";
+                          if (sp && sp === mapDate) {
+                            source = "from ServicePower";
+                          } else if (csrDates.includes(mapDate)) {
+                            source = "added by CSR";
+                          } else if (sp) {
+                            source = "from ServicePower";
+                          } else if (csrDates.length > 0) {
+                            source = "from Visit Log";
+                          }
                           return (
                             <div className="detail-value">
                               <span className="schedule-box">
