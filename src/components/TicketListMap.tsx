@@ -19,7 +19,7 @@ import { ChevronLeft, MapPin } from "lucide-react";
 import { Footer } from "@/components/Footer";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
-import { getCompanyTickets, getCsrVisitDatesByTicketIds } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import {
   getLocationManagementCoordinates,
@@ -148,19 +148,36 @@ export function TicketListMap() {
     (async () => {
       try {
         const rows = await getCompanyTickets();
-        // Attach the set of CSR-added visit dates to each row without
-        // overwriting the SP schedule_date. The filter below treats a
-        // ticket as visible on a given day when its SP date OR any
-        // CSR-added Visit Log date matches.
+        // Attach the set of CSR-added visit dates AND the latest
+        // visit-recorded technician to each row, without overwriting
+        // the SP schedule_date. The filter below treats a ticket as
+        // visible on a given day when its SP date OR any CSR-added
+        // Visit Log date matches. The tech overlay keeps a ticket with
+        // no `technician` field attributed to whoever the CSR last
+        // logged on a visit — same rule used by the Work Map and the
+        // daily-schedule planner.
         try {
           const ids = rows
             .map((t: any) => String(t?._id ?? "").trim())
             .filter(Boolean);
-          const csrMap = await getCsrVisitDatesByTicketIds(ids);
+          const [csrMap, techMap] = await Promise.all([
+            getCsrVisitDatesByTicketIds(ids),
+            getLatestVisitTechnicianByTicketIds(ids),
+          ]);
           for (const t of rows as any[]) {
             const tid = String(t?._id ?? "").trim();
             const dates = tid ? csrMap.get(tid) : undefined;
             t.csrVisitDates = dates ? Array.from(dates) : [];
+
+            const currentTech = String(
+              (t.technician ?? (t as any).technician_name ?? "") as string,
+            ).trim();
+            if (!currentTech || currentTech.toLowerCase() === "unassigned") {
+              const visitTech = tid ? techMap.get(tid) : "";
+              if (visitTech) {
+                (t as any).technician = visitTech;
+              }
+            }
           }
         } catch (visitErr) {
           console.warn("TicketListMap: visit date overlay skipped", visitErr);

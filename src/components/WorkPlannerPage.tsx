@@ -6,7 +6,11 @@ import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocatio
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame, normalizeTimePeriod } from "@/lib/timeframes";
-import { getCompanyTickets, updateTicketAssignment } from "@/lib/supabase/tickets";
+import {
+  getCompanyTickets,
+  updateTicketAssignment,
+  getLatestVisitTechnicianByTicketIds,
+} from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import type { TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
@@ -271,6 +275,31 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     const load = async () => {
       try {
         const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
+        // Overlay the latest visit-recorded technician onto tickets
+        // whose `technician` field is blank — the CSR often sets the
+        // tech on a visit row before the ticket itself is updated, and
+        // without this overlay the planner falls back to its roster
+        // cycle and misattributes the work.
+        try {
+          const ids = rows
+            .map((t: any) => String(t?._id ?? "").trim())
+            .filter(Boolean);
+          if (ids.length > 0) {
+            const techMap = await getLatestVisitTechnicianByTicketIds(ids);
+            for (const t of rows as any[]) {
+              const tid = String(t?._id ?? "").trim();
+              const currentTech = String(
+                (t.technician ?? t.technician_name ?? "") as string,
+              ).trim();
+              if (!currentTech || currentTech.toLowerCase() === "unassigned") {
+                const visitTech = tid ? techMap.get(tid) : "";
+                if (visitTech) t.technician = visitTech;
+              }
+            }
+          }
+        } catch (visitErr) {
+          console.warn("Work Planner: tech overlay skipped", visitErr);
+        }
         if (!cancelled) setPlannerTickets(createPlannerTickets(rows));
       } catch (err) {
         console.error("Work Planner: failed to load tickets:", err);
