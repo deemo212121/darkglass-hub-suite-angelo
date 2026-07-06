@@ -4999,20 +4999,54 @@ function TicketDetailsPage() {
               <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <h4 className="font-semibold text-slate-300 text-sm">Customer</h4>
                 {!isEditingCustomerInfo ? (
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <div className="text-slate-500 font-semibold text-xs">Name</div>
-                      <div className="text-white font-semibold mt-1">{ticket.firstName} {ticket.lastName}</div>
+                  <>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <div className="text-slate-500 font-semibold text-xs">Name</div>
+                        <div className="text-white font-semibold mt-1">{ticket.firstName} {ticket.lastName}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500 font-semibold text-xs">Phone</div>
+                        <div className="text-white font-semibold mt-1">{ticket.homePhone || ticket.cellPhone || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500 font-semibold text-xs">Location</div>
+                        <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-slate-500 font-semibold text-xs">Phone</div>
-                      <div className="text-white font-semibold mt-1">{ticket.homePhone || ticket.cellPhone || "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-500 font-semibold text-xs">Location</div>
-                      <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
-                    </div>
-                  </div>
+                    {/* NSA-specific identifiers shown inside customer card */}
+                    {String(ticket.ticketSource || "").toUpperCase().includes("NSA") && (
+                      <div className="grid grid-cols-3 gap-4 text-sm mt-3 pt-3 border-t border-orange-500/20">
+                        <div>
+                          <div className="text-slate-500 font-semibold text-xs">Account No</div>
+                          <div className="text-orange-300 font-semibold mt-1">
+                            {ticket.accountNo || (() => {
+                              // Static route → NSA account code mapping
+                              const r = String(ticket.nsaRouteName || "").toUpperCase();
+                              if (r.includes("MEMPHIS"))    return "MEMPHISUAI";
+                              if (r.includes("JACKSON"))    return "JACKSONUAI";
+                              if (r.includes("NASHVILLE"))  return "NASHVILLEUAI";
+                              if (r.includes("ATLANTA"))    return "ATLANTAUAI";
+                              if (r.includes("BIRMINGHAM")) return "BIRMINGUAI";
+                              if (r.includes("KNOXVILLE"))  return "KNOXVILLEUAI";
+                              if (r.includes("LITTLE-ROCK") || r.includes("LITTLEROCK")) return "LTROCKUAI";
+                              if (r.includes("NEW-ORLEANS") || r.includes("NEWORLEANS")) return "NWORLEUAI";
+                              if (r.includes("TALLAHASSEE")) return "TALLAHAUAI";
+                              return "—";
+                            })()}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500 font-semibold text-xs">Case Number</div>
+                          <div className="text-white font-semibold mt-1">{ticket.nsaCaseNumber || ticket.redoTicketNo || "—"}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500 font-semibold text-xs">Master Code</div>
+                          <div className="text-white font-semibold mt-1">{ticket.nsaMasterCode || "—"}</div>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     {/* Name is intentionally read-only — only address fields
@@ -5522,7 +5556,21 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Account No</label>
-                      <div className="text-white mt-1">{ticket.accountNo || "—"}</div>
+                      <div className="text-white mt-1">
+                        {ticket.accountNo || (() => {
+                          const r = String(ticket.nsaRouteName || "").toUpperCase();
+                          if (r.includes("MEMPHIS"))    return "MEMPHISUAI";
+                          if (r.includes("JACKSON"))    return "JACKSONUAI";
+                          if (r.includes("NASHVILLE"))  return "NASHVILLEUAI";
+                          if (r.includes("ATLANTA"))    return "ATLANTAUAI";
+                          if (r.includes("BIRMINGHAM")) return "BIRMINGUAI";
+                          if (r.includes("KNOXVILLE"))  return "KNOXVILLEUAI";
+                          if (r.includes("LITTLE-ROCK") || r.includes("LITTLEROCK")) return "LTROCKUAI";
+                          if (r.includes("NEW-ORLEANS") || r.includes("NEWORLEANS")) return "NWORLEUAI";
+                          if (r.includes("TALLAHASSEE")) return "TALLAHAUAI";
+                          return "—";
+                        })()}
+                      </div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Case Number</label>
