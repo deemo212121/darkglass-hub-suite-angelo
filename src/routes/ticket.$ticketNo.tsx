@@ -5020,20 +5020,7 @@ function TicketDetailsPage() {
                         <div>
                           <div className="text-slate-500 font-semibold text-xs">Account No</div>
                           <div className="text-orange-300 font-semibold mt-1">
-                            {ticket.accountNo || (() => {
-                              // Static route → NSA account code mapping
-                              const r = String(ticket.nsaRouteName || "").toUpperCase();
-                              if (r.includes("MEMPHIS"))    return "MEMPHISUAI";
-                              if (r.includes("JACKSON"))    return "JACKSONUAI";
-                              if (r.includes("NASHVILLE"))  return "NASHVILLEUAI";
-                              if (r.includes("ATLANTA"))    return "ATLANTAUAI";
-                              if (r.includes("BIRMINGHAM")) return "BIRMINGUAI";
-                              if (r.includes("KNOXVILLE"))  return "KNOXVILLEUAI";
-                              if (r.includes("LITTLE-ROCK") || r.includes("LITTLEROCK")) return "LTROCKUAI";
-                              if (r.includes("NEW-ORLEANS") || r.includes("NEWORLEANS")) return "NWORLEUAI";
-                              if (r.includes("TALLAHASSEE")) return "TALLAHAUAI";
-                              return "—";
-                            })()}
+                            {ticket.accountNo || "MEMPHISUAI"}
                           </div>
                         </div>
                         <div>
@@ -5557,19 +5544,7 @@ function TicketDetailsPage() {
                     <div>
                       <label className="text-slate-500 font-semibold">Account No</label>
                       <div className="text-white mt-1">
-                        {ticket.accountNo || (() => {
-                          const r = String(ticket.nsaRouteName || "").toUpperCase();
-                          if (r.includes("MEMPHIS"))    return "MEMPHISUAI";
-                          if (r.includes("JACKSON"))    return "JACKSONUAI";
-                          if (r.includes("NASHVILLE"))  return "NASHVILLEUAI";
-                          if (r.includes("ATLANTA"))    return "ATLANTAUAI";
-                          if (r.includes("BIRMINGHAM")) return "BIRMINGUAI";
-                          if (r.includes("KNOXVILLE"))  return "KNOXVILLEUAI";
-                          if (r.includes("LITTLE-ROCK") || r.includes("LITTLEROCK")) return "LTROCKUAI";
-                          if (r.includes("NEW-ORLEANS") || r.includes("NEWORLEANS")) return "NWORLEUAI";
-                          if (r.includes("TALLAHASSEE")) return "TALLAHAUAI";
-                          return "—";
-                        })()}
+                        {ticket.accountNo || "MEMPHISUAI"}
                       </div>
                     </div>
                     <div>
