@@ -2,25 +2,25 @@
  * NSA Platform → Supabase Sync
  * ─────────────────────────────
  * Pulls dispatches from the NSA API and upserts them into Supabase `tickets`
- * using the same `upsertTicketFromServicePower` function that ServicePower
- * uses. This keeps ONE canonical ticket store regardless of the source.
+ * using the same `upsertTicketFromServicePower` function that ServicePower uses.
  *
- * Field mapping:
- *   NSA dispatchNumber     → tickets.ticket_no       (e.g. "AAN20260636059439")
- *   NSA caseNumber         → tickets.original_ticket_no  (NSA's case/ref #)
- *   NSA status             → mapped to AHS repair status
- *   NSA serviceClass       → tickets.product_type    (e.g. "Major Appliances")
- *   NSA brandName          → tickets.manufacturer
- *   NSA model              → tickets.model
- *   NSA serial             → tickets.serial
- *   NSA scheduleDate       → tickets.schedule_date
- *   NSA timeBlock          → tickets.time_slot       (A/P/D/E → readable)
- *   NSA customer* fields   → customers table
- *   ticket_source          → "NSA"
- *   claim_company          → "NSA"
+ * Field mapping (based on actual NSA API response):
+ *   NSA dispatchNumber        → tickets.ticket_no
+ *   NSA caseNumber            → tickets.original_ticket_no
+ *   NSA brand                 → tickets.manufacturer
+ *   NSA model                 → tickets.model
+ *   NSA serial                → tickets.serial
+ *   NSA version/modelVersion  → tickets.model_version
+ *   NSA productCategory       → tickets.product_type
+ *   NSA scheduleDate          → tickets.schedule_date
+ *   NSA timeSlot (A/P/D/E)    → tickets.time_slot
+ *   NSA firstName/lastName    → customers.first_name/last_name
+ *   NSA address1/city/etc     → customers.address/city/etc
+ *   NSA status                → mapped AHS repair status
+ *   ticket_source             → "NSA"
  */
 
-import { getNsaDispatches, nsaServiceClassLabel, type NsaDispatch } from "./nsaApi";
+import { getNsaDispatches, type NsaDispatch } from "./nsaApi";
 import { resolveBranchFromCustomer } from "./servicePowerSync";
 
 // ─── Status mapping ──────────────────────────────────────────────────────────
@@ -49,20 +49,18 @@ function mapNsaTimeBlock(code: string | undefined): string {
 
 // ─── Dispatch → Ticket shape ─────────────────────────────────────────────────
 function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
+  // Resolve AHS branch from customer zip/city/state
   const consumer = {
-    postcode: d.customerZip ?? "",
-    postcodeLevel3: d.customerCity ?? "",
-    postcodeLevel2: d.customerCity ?? "",
-    postcodeLevel1: d.customerState ?? "",
+    postcode: d.postalCode ?? "",
+    postcodeLevel3: d.city ?? "",
+    postcodeLevel2: d.city ?? "",
+    postcodeLevel1: d.stateProvince ?? "",
   };
-
   const resolvedBranch = resolveBranchFromCustomer(consumer);
 
-  // Split full name into first/last best-effort
-  const fullName = String(d.customerName ?? "").trim();
-  const nameParts = fullName.split(/\s+/);
-  const firstName = nameParts.slice(0, -1).join(" ") || fullName;
-  const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
+  const firstName = d.firstName ?? "";
+  const lastName = d.lastName ?? "";
+  const fullName = [firstName, lastName].filter(Boolean).join(" ");
 
   // Normalize schedule date to ISO yyyy-mm-dd
   const scheduleRaw = d.scheduleDate ?? "";
@@ -72,35 +70,67 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
       : scheduleRaw.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2")
     : "";
 
+  // Build pre-auth summary string
+  const preAuth = [
+    d.preAuthLabor != null ? `LABOR: ${d.preAuthLabor}` : "",
+    d.preAuthParts != null ? `PARTS: ${d.preAuthParts}` : "",
+    d.preAuthTotal != null ? `TOTAL: ${d.preAuthTotal}` : "",
+  ].filter(Boolean).join("  ");
+
+  // Coverage from estimateRules
+  const validCoverage = d.estimateRules?.validCoverageTypeCodes?.join(", ") ?? "";
+  const requiredCoverage = d.estimateRules?.requiredCoverageTypeCodes?.join(", ") ?? "";
+  const requiredPart = d.estimateRules?.requirePartsDetails ? "Y" : "N";
+
   return {
     ticketNo: d.dispatchNumber,
     ticketSource: "NSA",
     claimCompany: "NSA",
     account: "NSA",
     originalTicketNo: d.caseNumber ?? "",
-    manufacturer: d.brandName ?? d.brandCode ?? "",
+    // Product
+    manufacturer: d.brand ?? "",
     model: d.model ?? "",
     serial: d.serial ?? "",
-    productType: nsaServiceClassLabel(d.serviceClass) || d.productType ?? "",
+    productType: d.productCategory ?? "",
+    modelVersion: d.version ?? d.modelVersion ?? "",
+    // Schedule
     schedule,
-    timeSlot: mapNsaTimeBlock(d.timeBlock),
-    schedulePeriod: mapNsaTimeBlock(d.timeBlock),
+    timeSlot: mapNsaTimeBlock(d.timeSlot),
+    schedulePeriod: mapNsaTimeBlock(d.timeSlot),
+    // Status
     status: mapNsaStatus(d.status),
+    // Branch
     location: resolvedBranch,
+    // Customer
     customer: fullName,
     firstName,
     lastName,
-    phone: d.customerPhone ?? "",
-    secondPhone: "",
+    phone: d.homePhone ?? "",
+    secondPhone: d.cellPhone ?? "",
     email: "",
-    address: d.customerAddress ?? "",
-    address2: "",
-    city: d.customerCity ?? "",
-    state: d.customerState ?? "",
-    zip: d.customerZip ?? "",
+    address: d.address1 ?? "",
+    address2: d.address2 ?? "",
+    city: d.city ?? "",
+    state: d.stateProvince ?? "",
+    zip: d.postalCode ?? "",
+    // Notes
+    internalNote: d.complaint ?? d.notes ?? "",
+    problemDescription: d.complaint ?? "",
     warranty: "",
-    internalNote: "",
-    problemDescription: "",
+    // NSA-specific extras (surfaced on ticket detail page)
+    nsaStatus: d.status ?? "",
+    nsaRouteName: d.routeName ?? "",
+    nsaGroupName: d.groupName ?? "",
+    nsaDeductible: d.deductible ?? "",
+    nsaScheduleAck: d.customerScheduleAcknowledgedDate ?? "",
+    nsaSpecialInstructions: d.specialInstructions ?? "",
+    nsaValidCoverage: validCoverage,
+    nsaRequiredCoverage: requiredCoverage,
+    nsaRequiredPart: requiredPart,
+    nsaPreAuth: preAuth,
+    nsaCaseNumber: d.caseNumber ?? "",
+    nsaMasterCode: d.masterCode ?? "",
   };
 }
 
@@ -122,7 +152,7 @@ export interface NsaSyncResult {
  * @param options.endDate    ISO date (yyyy-mm-dd). Defaults to today.
  * @param options.status     NSA status filter (optional).
  * @param options.limit      Max dispatches to process (for testing).
- * @param options.skipDispatchNumbers  Set of dispatch numbers already in DB.
+ * @param options.skipDispatchNumbers  Dispatch numbers already in DB — skip them.
  */
 export async function syncNsaToSupabase(
   options: {
@@ -147,9 +177,7 @@ export async function syncNsaToSupabase(
   );
 
   const errors: string[] = [];
-  let added = 0;
-  let updated = 0;
-  let skipped = 0;
+  let added = 0, updated = 0, skipped = 0;
 
   let dispatches: NsaDispatch[];
   try {
@@ -162,10 +190,7 @@ export async function syncNsaToSupabase(
   } catch (err) {
     return {
       success: false,
-      added: 0,
-      updated: 0,
-      skipped: 0,
-      total: 0,
+      added: 0, updated: 0, skipped: 0, total: 0,
       errors: [err instanceof Error ? err.message : String(err)],
     };
   }
@@ -183,9 +208,7 @@ export async function syncNsaToSupabase(
       if (outcome === "added") added++;
       else updated++;
     } catch (err) {
-      errors.push(
-        `${dispatchNo}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      errors.push(`${dispatchNo}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

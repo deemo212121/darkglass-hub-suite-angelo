@@ -5396,7 +5396,22 @@ function TicketDetailsPage() {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <label className="text-slate-500 font-semibold">Account No</label>
-                    <div className="text-white mt-1">{ticket.accountNo || "—"}</div>
+                    <div className="text-white mt-1">
+                      {String(ticket.ticketSource || "").toUpperCase().includes("NSA") ? (
+                        <a
+                          href="https://nationalservicealliance.com/login.php"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-orange-300 hover:text-orange-200 hover:underline font-semibold"
+                          title="Open NSA Portal"
+                        >
+                          {ticket.accountNo || "NSA"}
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      ) : (
+                        ticket.accountNo || "—"
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Manufacture ID</label>
@@ -5408,7 +5423,22 @@ function TicketDetailsPage() {
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Ticket Source</label>
-                    <div className="text-white mt-1">{ticket.ticketSource || "—"}</div>
+                    <div className="text-white mt-1">
+                      {String(ticket.ticketSource || "").toUpperCase().includes("NSA") ? (
+                        <a
+                          href="https://nationalservicealliance.com/login.php"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-orange-300 hover:text-orange-200 hover:underline font-semibold"
+                          title="Open NSA Portal"
+                        >
+                          {ticket.ticketSource}
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      ) : (
+                        ticket.ticketSource || "—"
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Call Type</label>

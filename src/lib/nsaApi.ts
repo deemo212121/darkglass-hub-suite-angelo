@@ -39,28 +39,49 @@ async function nsaCall(action: string, params: Record<string, any> = {}): Promis
 export interface NsaDispatch {
   dispatchNumber: string;
   caseNumber?: string;
-  serial?: string;
+  masterCode?: string;
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  homePhone?: string;
+  cellPhone?: string;
+  workPhone?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  stateProvince?: string;
+  postalCode?: string;
+  countryCode?: string;
+  brand?: string;
   model?: string;
-  brandCode?: string;
-  brandName?: string;
-  productType?: string;
-  customerName?: string;
-  customerAddress?: string;
-  customerCity?: string;
-  customerState?: string;
-  customerZip?: string;
-  customerPhone?: string;
+  version?: string;         // modelVersion
+  serial?: string;
   scheduleDate?: string;
-  timeBlock?: string; // A=AM, P=PM, D=DAY, E=EVENING
+  timeSlot?: string;        // A/P/D/E
+  specialInstructions?: string;
+  notes?: string;
   status?: string;
-  serviceClass?: string; // MA=Major Appliances, CE=Consumer Electronics, etc.
-  // Part ordering rules
-  canOrderOwnParts?: boolean;
-  canOrderPartsThroughNSA?: boolean;
-  hasPartsBOM?: boolean;
-  partOrdersMustBeOnBOM?: boolean;
-  // Part IDs on this dispatch
-  partIDs?: string[];
+  routeName?: string;
+  groupName?: string;
+  deductible?: string;
+  complaint?: string;
+  productCategory?: string;
+  modelVersion?: string;
+  coverageExclusions?: string;
+  customerScheduleAcknowledgedDate?: string;
+  preAuthLabor?: number;
+  preAuthParts?: number;
+  preAuthTotal?: number;
+  partIDs?: number[];
+  hasPartBOM?: boolean;
+  sfCanOrderPartsThroughNSA?: boolean;
+  estimateRules?: {
+    validCoverageTypeCodes?: string[];
+    requiredCoverageTypeCodes?: string[];
+    requirePartsDetails?: boolean;
+  };
+  latitude?: string;
+  longitude?: string;
   [key: string]: any;
 }
 
