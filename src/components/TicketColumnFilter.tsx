@@ -94,11 +94,11 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
       </button>
       {open ? (
         <div
-          className="absolute left-0 top-full z-50 mt-1 w-60 rounded-md border border-white/15 bg-slate-900 p-2 text-xs text-slate-200 shadow-2xl"
+          className="absolute left-0 top-full z-50 mt-1 w-60 rounded-md border border-[var(--color-panel-border)] bg-[var(--color-card)] p-2 text-xs text-foreground shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {label ? (
-            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {label}
             </div>
           ) : null}
@@ -107,10 +107,10 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search…"
-            className="mb-1 w-full rounded border border-white/10 bg-slate-950 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="mb-1 w-full rounded border border-[var(--color-panel-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500"
             autoFocus
           />
-          <label className="flex items-center gap-2 rounded px-2 py-1 hover:bg-white/5 cursor-pointer border-b border-white/10 mb-1">
+          <label className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--color-secondary)] cursor-pointer border-b border-[var(--color-panel-border)] mb-1">
             <input
               type="checkbox"
               checked={allSelected}
@@ -121,7 +121,7 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
           </label>
           <div className="max-h-56 overflow-y-auto">
             {filteredOptions.length === 0 ? (
-              <div className="px-2 py-2 text-slate-500 italic">No matches</div>
+              <div className="px-2 py-2 text-muted-foreground italic">No matches</div>
             ) : (
               filteredOptions.map((opt) => {
                 const display = opt || EMPTY_LABEL;
@@ -129,7 +129,7 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
                 return (
                   <label
                     key={opt || "__empty__"}
-                    className="flex items-center gap-2 rounded px-2 py-1 hover:bg-white/5 cursor-pointer"
+                    className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--color-secondary)] cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -149,7 +149,7 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
             <button
               type="button"
               onClick={selectAll}
-              className="mt-1 w-full rounded border border-white/10 bg-slate-950 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5"
+              className="mt-1 w-full rounded border border-[var(--color-panel-border)] bg-[var(--color-background)] px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-foreground hover:bg-[var(--color-secondary)]"
             >
               Clear filter
             </button>

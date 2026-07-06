@@ -1,0 +1,259 @@
+════════════════════════════════════════════════════════════════════════
+GOOGLE MAPS PLATFORM — COST BREAKDOWN + PROJECTIONS
+Billing period: last 30 days (June 2026)
+Invoice total: ~$94.40 USD
+════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────
+1. USAGE (from Google Cloud Console → Enabled APIs)
+────────────────────────────────────────────────────────────────────────
+
+  API                             Requests
+  ---------------------------------------
+  Geocoding API                     28,266
+  Distance Matrix API                1,127
+  Maps JavaScript API                  428
+  Directions API                        24
+  Street View Static API                 2
+  Maps Static API                        2
+  ---------------------------------------
+  TOTAL                             29,849
+
+
+────────────────────────────────────────────────────────────────────────
+2. PRICING (Essentials tier, USD per 1,000 events)
+────────────────────────────────────────────────────────────────────────
+
+  Free tier: 10,000 requests/month per SKU.
+
+  Standard rates:
+    - Geocoding, Directions, Distance Matrix ..  $5.00 / 1,000
+    - Maps JavaScript, Street View Static  ....  $7.00 / 1,000
+    - Maps Static  ............................  $2.00 / 1,000
+
+  Volume discount:
+    - 0 to 10,000  .....................  free
+    - 10,001 to 100,000  ...............  standard rate
+    - 100,001+ .........................  $4.00 / 1,000 (Geocoding)
+
+
+────────────────────────────────────────────────────────────────────────
+3. CURRENT MONTH ACTUAL BREAKDOWN
+────────────────────────────────────────────────────────────────────────
+
+  API                     Usage   Free    Billable   Rate/1000    Cost
+  ---------------------------------------------------------------------
+  Geocoding API          28,266  10,000    18,266     $5.00     $91.33
+  Distance Matrix API     1,127  10,000         0     $5.00      $0.00
+  Maps JavaScript API       428  10,000         0     $7.00      $0.00
+  Directions API             24  10,000         0     $5.00      $0.00
+  Street View Static          2  10,000         0     $7.00      $0.00
+  Maps Static API             2  10,000         0     $2.00      $0.00
+  ---------------------------------------------------------------------
+  Maps subtotal                                                 $91.33
+  Cloud Logging (~1 GiB over 100 GiB free)                     ~ $3.07
+  ---------------------------------------------------------------------
+  ACTUAL INVOICE                                                $94.40
+
+  Geocoding is 100% of the Maps cost.
+
+
+────────────────────────────────────────────────────────────────────────
+4. WHY GEOCODING IS SO HIGH
+────────────────────────────────────────────────────────────────────────
+
+  28,266 geocode calls did NOT come from ticket creation. They came
+  from three specific code paths that geocode on every render:
+
+  A. Mobile Tech App route view  (src/components/mobile/MobileTechApp.tsx)
+     Every stop on a tech route is geocoded fresh on every render.
+     Route re-renders on: view change, tech selection, ticket-list
+     refresh polling, chat auto-refresh, nav mount/unmount.
+     No persistent cache — same address is geocoded 20+ times a day.
+
+  B. Location Management coverage map  (LocationManagementPage.tsx)
+     Every unique ZIP in a branch is geocoded when the coverage tab
+     is opened. In-memory cache only; every fresh page load re-hits.
+
+  C. Ticket detail distance fallback  (ticket.$ticketNo.tsx)
+     One geocode per ticket page open when Distance Matrix can't
+     resolve the office↔customer distance. Low volume.
+
+  The bill is driven by user behavior and code, not ticket count.
+  A tech opening their route 30 times a day generates 20 × 30 = 600
+  geocode calls whether the underlying ticket set has 50 or 5,000
+  records in it.
+
+
+────────────────────────────────────────────────────────────────────────
+5. HOW USAGE SCALES — HONEST DRIVERS
+────────────────────────────────────────────────────────────────────────
+
+  Geocoding volume scales with:
+    - Number of active techs opening the mobile route view daily
+    - Number of stops per tech per day
+    - How often each tech refreshes the app during their shift
+    - Number of CSRs/dispatchers opening the coverage map
+
+  Geocoding does NOT scale linearly with ticket count. It scales
+  with WORK-DAYS-PER-USER × MAP-INTERACTIONS-PER-DAY.
+
+  Rough envelope from June's 28,266 calls:
+    - If we had ~10 techs each opening route 20× / day × 22 workdays
+      × 6 stops/route = ~26,400 calls. That's within noise of the
+      actual number.
+
+  So the real driver is TECH HEADCOUNT × ROUTE-VIEW FREQUENCY, not
+  ticket volume.
+
+
+────────────────────────────────────────────────────────────────────────
+6. PROJECTION SCENARIOS
+────────────────────────────────────────────────────────────────────────
+
+  Rather than pretend we can predict from ticket volume, here are
+  three usage-based scenarios anchored to Geocoding call volume:
+
+  A. Current pace continues  (~28k geocodes/month)
+       Baseline invoice: $91 / month
+
+  B. Moderate growth  (~50k geocodes/month)
+       Extra 22k billable × $5.00 / 1000 = $110
+       Plus current $91 → invoice: ~$200 / month
+       Trigger: doubling of active techs, or techs open route
+       more frequently, or coverage-map usage picks up.
+
+  C. Heavy growth  (~100k geocodes/month)
+       90k billable × $5.00 / 1000 = $450
+       Plus other SKUs still under free tier → invoice: ~$450
+       Trigger: 30+ active techs, high refresh rate, coverage
+       maps opened daily by multiple CSRs.
+
+
+────────────────────────────────────────────────────────────────────────
+7. PROJECTION WITH REALISTIC 40% REDUCTION
+────────────────────────────────────────────────────────────────────────
+
+  Applying only Phase 1 (Supabase geocode cache + bundled ZIP
+  centroids + Cloud Console quota cap). This is 1–2 days of work.
+
+  Why 40%, not 80%:
+    - Address strings vary (apartment #, spelling drift) so
+      strict-key cache hit rate is realistically 45–60%.
+    - Mobile route rebuilds still fire on ticket-list refresh
+      polling; only part of that hits the cache.
+    - ZIP centroid bundling gets 100% cache hit for its slice
+      but that's the smallest slice.
+
+  Applied to the three scenarios above:
+
+  Scenario         Before  →  After (~40% off)
+  ----------------------------------------------
+  A. Current       $91     →  $35
+  B. Moderate      $200    →  $115
+  C. Heavy         $450    →  $265
+
+
+────────────────────────────────────────────────────────────────────────
+8. PROJECTION WITH ALL OPTIMIZATIONS (aspirational 80%)
+────────────────────────────────────────────────────────────────────────
+
+  Ceiling scenario — Phase 1 + Phase 2 (customer_lat/lng on ticket
+  row + Directions cache + Maps JS load consolidation). Multiple
+  sprints of work.
+
+  DO NOT commit to these numbers publicly. Stretch goal only.
+
+  Scenario         Before  →  After (~80% off)
+  ----------------------------------------------
+  A. Current       $91     →  $0
+  B. Moderate      $200    →  $30
+  C. Heavy         $450    →  $85
+
+
+────────────────────────────────────────────────────────────────────────
+9. SIDE-BY-SIDE SUMMARY
+────────────────────────────────────────────────────────────────────────
+
+                          No changes    40% target    All optimizations
+                          ----------    ----------    -----------------
+  Current pace (~28k)         $91          $35              $0
+  Moderate growth (~50k)     $200         $115             $30
+  Heavy growth (~100k)       $450         $265             $85
+
+
+────────────────────────────────────────────────────────────────────────
+10. RECOMMENDED PLAN — PHASE 1 (target: 40% reduction)
+────────────────────────────────────────────────────────────────────────
+
+  Ship these three and stop:
+
+  1. Supabase geocode_cache table
+       CREATE TABLE geocode_cache (
+         address_hash TEXT PRIMARY KEY,
+         lat NUMERIC NOT NULL,
+         lng NUMERIC NOT NULL,
+         cached_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       );
+
+     - Every geocode call checks Supabase first.
+     - Address hash is a lowercase-trim-normalized version so
+       "123 Main St." and "123 main st" hit the same key.
+     - Expire nothing (addresses don't move).
+
+  2. Bundled ZIP centroids in src/lib/zipCoverage.ts
+     - Static JSON — no runtime geocode needed for LocationManagement
+       coverage-map ZIP labels.
+
+  3. Cloud Console daily quota cap on Geocoding
+     - APIs & Services → Enabled APIs → Geocoding API → Quotas
+     - Cap at 700/day.
+     - Errors gracefully instead of runaway billing.
+
+  1–2 days of engineering work total. Expected result at current
+  usage pace: bill drops from $94 to ~$35–$40/month.
+
+
+────────────────────────────────────────────────────────────────────────
+11. PHASE 2 (if usage grows enough to breach free tier again)
+────────────────────────────────────────────────────────────────────────
+
+  4. customer_lat / customer_lng columns on the tickets row
+     - Geocode once at ticket write / SP sync time; every future
+       map render reads free from Supabase.
+
+  5. Directions result cache keyed by (tech, stops-hash, dateISO)
+     - Currently Directions is under free tier, but this becomes
+       relevant if mobile-tech usage doubles.
+
+  6. Maps JavaScript SDK load consolidation
+     - Share one Map instance across Work Map / Work Planner /
+       Ticket List Map / Route pages.
+     - Relevant when concurrent user count grows enough to push
+       Maps JS over 10,000/month.
+
+
+────────────────────────────────────────────────────────────────────────
+12. HONEST RISK CALLOUTS
+────────────────────────────────────────────────────────────────────────
+
+  - The projections above are based on GEOCODE CALL VOLUME as the
+    driver, not ticket count. I don't have Supabase read access
+    from this session so I can't quote actual DB row counts.
+
+  - Address normalization is trickier than it looks. Real
+    cache-hit rate depends on how consistent the source data is.
+
+  - If active tech count doubles AND concurrent CSR map usage
+    picks up, Maps JS itself can breach the free tier. That's
+    another $30–$60/month on top of the Geocoding numbers.
+
+  - Google can and does change free-tier sizes. The March 2025
+    cut was a 90% reduction of the previous $200 credit. Budget
+    with a 30% headroom.
+
+
+════════════════════════════════════════════════════════════════════════
+Prepared for AH Solutions internal cost review.
+Sources: Google Cloud Console usage report + AH Solutions code audit.
+════════════════════════════════════════════════════════════════════════

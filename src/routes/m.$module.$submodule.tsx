@@ -67,6 +67,7 @@ import { TodoListPage } from "@/components/TodoListPage";
 import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
 import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
+import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
@@ -340,7 +341,7 @@ function SubModule() {
         : sub.custom === "part-receive"
         ? <PartReceive mod={mod} sub={sub} />
         : sub.custom === "part-return"
-        ? <PartReturnPage mod={mod} sub={sub} />
+        ? <PartReturn mod={mod} sub={sub} />
         : sub.custom === "return-pickup"
         ? <ReturnPickupPage />
         : sub.custom === "repair-statuses"
@@ -381,6 +382,8 @@ function SubModule() {
         ? <AccountManagementPage mod={mod} sub={sub} />
         : sub.custom === "location-management"
         ? <LocationManagementPage mod={mod} sub={sub} />
+        : (sub as any).custom === "add-branch"
+        ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
       <Footer />
     </>

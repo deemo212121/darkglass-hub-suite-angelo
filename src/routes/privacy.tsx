@@ -42,7 +42,7 @@ function Choice({ label, value, onChange, options }: { label: string; value: str
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex items-center gap-3 rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] px-3 py-2.5 cursor-pointer">
+    <label className="flex items-center gap-3 rounded-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-3 py-2.5 cursor-pointer">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="text-sm font-medium">{label}</span>
     </label>

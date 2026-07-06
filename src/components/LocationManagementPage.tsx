@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
+import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
 import {
   getLocations as sbGetLocations,
   upsertLocation as sbUpsertLocation,
@@ -1241,7 +1242,18 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       if (coverageGeocodeCacheRef.current.has(zipCode)) {
         return coverageGeocodeCacheRef.current.get(zipCode) ?? null;
       }
+      // Check Supabase persistent cache first — free and instant
+      const addr = `${zipCode}, USA`;
+      const cached = await lookupGeocode(addr);
+      if (cached) {
+        const point: MapZipGeometry = { center: cached, viewport: null };
+        coverageGeocodeCacheRef.current.set(zipCode, point);
+        return point;
+      }
+      // Miss — call Google Geocoding API
       const point = await geocodeZip(zipCode);
+      // Persist to Supabase so we never pay for this zip again
+      if (point) void storeGeocode(addr, point.center);
       coverageGeocodeCacheRef.current.set(zipCode, point);
       return point;
     };

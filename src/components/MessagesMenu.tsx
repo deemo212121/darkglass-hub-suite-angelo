@@ -258,7 +258,7 @@ export function MessagesMenu() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="relative grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
+          className="relative grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground transition-colors hover:bg-[var(--color-secondary)] hover:text-foreground"
           aria-label="Messages"
           title={unreadTotal > 0 ? `Messages (${unreadTotal} unread)` : "Messages"}
         >
@@ -273,7 +273,7 @@ export function MessagesMenu() {
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="z-[110] w-[24rem] rounded-xl border border-[var(--color-panel-border)] bg-[oklch(0.20_0.04_260/0.98)] p-1.5 backdrop-blur-xl shadow-2xl"
+        className="z-[110] w-[24rem] rounded-xl border border-[var(--color-panel-border)] bg-[var(--color-card)] p-1.5 backdrop-blur-xl shadow-2xl"
       >
         <DropdownMenuLabel className="px-2 py-2">
           <div className="flex items-center justify-between gap-3">

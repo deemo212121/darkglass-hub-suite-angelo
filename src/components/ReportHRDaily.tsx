@@ -1,15 +1,19 @@
-import { useState, useMemo } from "react";
+﻿import { useState, useMemo, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Plus, Trash2, Clock, AlertCircle, ArrowUpDown } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LineChart, Line } from "recharts";
 import { hrReportData } from "@/lib/reportData";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { getCompanyTimecardWarnings } from "@/lib/supabase/timecards";
 
 const ALL_DATES=Object.keys(hrReportData).sort();
 const fmtDate=(s:string)=>{const c=s.trim();return c.length===2?`5/${c}/26`:`${c.slice(0,-2)}/${c.slice(-2)}/26`;};
 const ALL_US_BRANCHES = LOCATIONS_DATA.filter(l => !l.isPhilippines).map(l => l.location).sort();
 const ALL_PH_BRANCHES = LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location).sort();
+// Set of Philippines branch names — used to derive Employee.country from assigned_branch
+const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location));
 
 interface InterviewCandidate {
   id: string;
@@ -67,10 +71,8 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
 
   // Employee management state
   const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [employees, setEmployees] = useState<Employee[]>([
-    { id: "e1", name: "Alex Chen", email: "alex.chen@company.com", position: "Tech Manager", branch: "Atlanta", country: "US", birthday: "1990-03-15", address: "123 Main St, Atlanta, GA 30301", ssn: "123-45-6789", startDate: "2024-01-10", status: "active", warningCount: 0, inTraining: false },
-    { id: "e2", name: "Maria Santos", email: "maria.santos@company.com", position: "CSR", branch: "Manila", country: "PH", birthday: "1992-07-22", address: "456 Business Ave, Manila, PH", startDate: "2023-06-20", status: "active", warningCount: 1, inTraining: true },
-  ]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
 
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: Employee["status"] } | null>(null);
@@ -99,6 +101,52 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
 
   // Calculate today's date
   const today = new Date().toISOString().slice(0, 10);
+
+  // Load real employee data from Supabase + timecard warnings for current month.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setEmployeesLoading(true);
+      try {
+        const [profiles, tcWarnings] = await Promise.all([
+          getCompanyUsers(),
+          getCompanyTimecardWarnings(new Date().getFullYear(), new Date().getMonth()),
+        ]);
+        if (cancelled) return;
+        // Build warning lookup by profile id
+        const warnMap = new Map<string, number>();
+        tcWarnings.forEach(w => warnMap.set(w.profileId, w.totalWarnings));
+        // Map ProfileRow → Employee shape the existing table uses
+        const mapped: Employee[] = profiles.map(p => ({
+          id: p.id,
+          name: p.display_name || p.email,
+          email: p.email,
+          position: p.role,
+          branch: p.assigned_branch || "",
+          country: PH_BRANCH_NAMES.has(p.assigned_branch || "") ? "PH" : "US",
+          birthday: (p as any).employee_info?.birthDate || "",
+          address: [
+            (p as any).employee_info?.address1,
+            (p as any).employee_info?.city,
+            (p as any).employee_info?.state,
+          ].filter(Boolean).join(", "),
+          ssn: (p as any).employee_info?.employeeSsn || undefined,
+          startDate: (p as any).employee_info?.hireDate || p.created_at?.slice(0, 10) || "",
+          terminationDate: (p as any).employee_info?.terminateDate || undefined,
+          terminationReason: (p as any).employee_info?.employeeNote || undefined,
+          status: p.is_active ? "active" : "inactive",
+          warningCount: warnMap.get(p.id) || 0,
+          inTraining: false,
+        }));
+        setEmployees(mapped);
+      } catch (err) {
+        console.error("ReportHRDaily load error:", err);
+      } finally {
+        if (!cancelled) setEmployeesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   
   // Get today's interviews
   const todaysInterviews = useMemo(() => {
@@ -292,7 +340,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <h2 className="text-sm font-bold text-amber-300 mb-2">📅 Today's Scheduled Interviews</h2>
+              <h2 className="text-sm font-bold text-amber-300 mb-2">≡ƒôà Today's Scheduled Interviews</h2>
               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
                 {todaysInterviews.map(candidate => (
                   <div key={candidate.id} className="bg-slate-900/50 border border-amber-400/30 rounded p-1.5 text-xs">
@@ -323,7 +371,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <div className="xl:col-span-3">
           <div className="grid grid-cols-2 gap-2">
             {[["Scheduled",totalScheduled,"text-blue-300"],["Hired",totalHired,"text-green-300"],["TC Warnings",totalTCW,"text-yellow-300"],["Emp Errors",totalEE,"text-red-300"],["Candidates",scheduledCount,"text-blue-400"],["Hired Candidates",hiredCount,"text-green-400"]].map(([l,v,c],idx)=>(
-              <div key={`metric-${idx}`} className="panel p-3 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{l}</p><p className={`text-xl font-bold ${c}`}>{v||'—'}</p></div>
+              <div key={`metric-${idx}`} className="panel p-3 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{l}</p><p className={`text-xl font-bold ${c}`}>{v||'ΓÇö'}</p></div>
             ))}
           </div>
         </div>
@@ -332,7 +380,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <div className="xl:col-span-9 grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Interview bar */}
           <div className="panel p-3">
-            <p className="text-xs font-semibold mb-3">Interviews — Scheduled vs Hired</p>
+            <p className="text-xs font-semibold mb-3">Interviews ΓÇö Scheduled vs Hired</p>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={interviewBarData} margin={{left:-10}}>
                 <XAxis dataKey="name" tick={{fill:"#94a3b8",fontSize:9}} angle={-30} textAnchor="end" height={45}/>
@@ -346,7 +394,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           </div>
           {/* Trend line */}
           <div className="panel p-3">
-            <p className="text-xs font-semibold mb-3">Trend — Last 10 Days</p>
+            <p className="text-xs font-semibold mb-3">Trend ΓÇö Last 10 Days</p>
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={trendData} margin={{left:-10}}>
                 <XAxis dataKey="date" tick={{fill:"#94a3b8",fontSize:9}}/>
@@ -381,12 +429,12 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <div className="panel p-0 overflow-hidden">
           <div className="px-3 py-2 border-b border-white/10 font-semibold text-xs flex justify-between"><span>Interview Report</span><span className="text-muted-foreground">{interviews.length} branches</span></div>
           <div className="overflow-y-auto max-h-60"><table className="w-full text-xs"><thead><tr className="border-b border-white/10 bg-white/5">{["Branch/Dept","Scheduled","Staff Need","Hired"].map(h=><th key={h} className="px-3 py-1.5 text-left text-xs text-muted-foreground uppercase">{h}</th>)}</tr></thead>
-          <tbody>{interviews.length===0?<tr><td colSpan={4} className="px-3 py-6 text-center text-muted-foreground text-xs">No data.</td></tr>:interviews.map((r:any,i:number)=><tr key={i} className="border-b border-white/5 hover:bg-white/5"><td className="px-3 py-2 font-medium">{r.branch}</td><td className="px-3 py-2 text-center text-blue-400">{r.scheduled??'—'}</td><td className="px-3 py-2 text-muted-foreground">{r.staffNeed||'—'}</td><td className="px-3 py-2 text-center text-green-400 font-semibold">{r.hired??'—'}</td></tr>)}</tbody></table></div>
+          <tbody>{interviews.length===0?<tr><td colSpan={4} className="px-3 py-6 text-center text-muted-foreground text-xs">No data.</td></tr>:interviews.map((r:any,i:number)=><tr key={i} className="border-b border-white/5 hover:bg-white/5"><td className="px-3 py-2 font-medium">{r.branch}</td><td className="px-3 py-2 text-center text-blue-400">{r.scheduled??'ΓÇö'}</td><td className="px-3 py-2 text-muted-foreground">{r.staffNeed||'ΓÇö'}</td><td className="px-3 py-2 text-center text-green-400 font-semibold">{r.hired??'ΓÇö'}</td></tr>)}</tbody></table></div>
         </div>
         <div className="panel p-0 overflow-hidden">
           <div className="px-3 py-2 border-b border-white/10 font-semibold text-xs flex justify-between"><span>Warning Report</span><span className="text-muted-foreground">{warnings.length} branches</span></div>
           <div className="overflow-y-auto max-h-60"><table className="w-full text-xs"><thead><tr className="border-b border-white/10 bg-white/5">{["Branch/Dept","Timecard","Employee"].map(h=><th key={h} className="px-3 py-1.5 text-left text-xs text-muted-foreground uppercase">{h}</th>)}</tr></thead>
-          <tbody>{warnings.length===0?<tr><td colSpan={3} className="px-3 py-6 text-center text-muted-foreground text-xs">No warnings.</td></tr>:warnings.map((r:any,i:number)=><tr key={i} className="border-b border-white/5 hover:bg-white/5"><td className="px-3 py-2 font-medium">{r.branch}</td><td className="px-3 py-2 text-center text-yellow-400 font-semibold">{r.timecardWarning??'—'}</td><td className="px-3 py-2 text-center text-red-400 font-semibold">{r.employeeError??'—'}</td></tr>)}</tbody></table></div>
+          <tbody>{warnings.length===0?<tr><td colSpan={3} className="px-3 py-6 text-center text-muted-foreground text-xs">No warnings.</td></tr>:warnings.map((r:any,i:number)=><tr key={i} className="border-b border-white/5 hover:bg-white/5"><td className="px-3 py-2 font-medium">{r.branch}</td><td className="px-3 py-2 text-center text-yellow-400 font-semibold">{r.timecardWarning??'ΓÇö'}</td><td className="px-3 py-2 text-center text-red-400 font-semibold">{r.employeeError??'ΓÇö'}</td></tr>)}</tbody></table></div>
         </div>
       </div>
 
@@ -571,7 +619,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
             </thead>
             <tbody>
               {filteredEmployees.length === 0 ? (
-                <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground text-xs">No employees found.</td></tr>
+                <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : "No employees found."}</td></tr>
               ) : (
                 filteredEmployees.map((employee) => (
                   <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
@@ -585,7 +633,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                       {employee.inTraining ? (
                         <span className="bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded text-xs font-semibold">In Training</span>
                       ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
+                        <span className="text-muted-foreground text-xs">ΓÇö</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground text-xs truncate max-w-xs">{employee.address}</td>
@@ -593,7 +641,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                       {employee.warningCount > 0 ? (
                         <span className="bg-red-500/20 text-red-300 px-2 py-1 rounded text-xs font-semibold">{employee.warningCount}</span>
                       ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
+                        <span className="text-muted-foreground text-xs">ΓÇö</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground text-xs">
@@ -603,7 +651,7 @@ export function ReportHRDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                           <div className="text-xs text-yellow-300">{employee.terminationReason || "N/A"}</div>
                         </div>
                       )}
-                      {!employee.terminationDate && <span>—</span>}
+                      {!employee.terminationDate && <span>ΓÇö</span>}
                     </td>
                     <td className="px-3 py-2">
                       <select value={employee.status} onChange={(e) => {

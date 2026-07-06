@@ -10,7 +10,11 @@ import {
   REPAIR_STATUS_OPTIONS, 
   type Ticket 
 } from "@/lib/ticketData";
-import { getCompanyTickets, backfillTicketLocations } from "@/lib/supabase/tickets";
+import {
+  getCompanyTickets,
+  backfillTicketLocations,
+  getPartOrderStateByTicketIds,
+} from "@/lib/supabase/tickets";
 import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
@@ -308,17 +312,43 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
 
+  // Overlay each ticket's derived "Part Order" state (from visits +
+  // parts tables) onto the row. Runs in a single bulk pass so the
+  // Ticket List column can show "Not Diagnosed / Part Not Needed /
+  // Part Ordered / Partially Ordered" without extra round-trips per
+  // ticket. Errors are logged and swallowed — the column just falls
+  // back to whatever was stored on tickets.part_order.
+  const overlayPartOrderState = async (rows: TicketItem[]): Promise<TicketItem[]> => {
+    try {
+      const ids = rows
+        .map((t: any) => String(t?._id ?? "").trim())
+        .filter(Boolean);
+      if (ids.length === 0) return rows;
+      const stateMap = await getPartOrderStateByTicketIds(ids);
+      for (const t of rows as any[]) {
+        const tid = String(t?._id ?? "").trim();
+        const derived = tid ? stateMap.get(tid) : undefined;
+        if (derived) t.partOrder = derived;
+      }
+    } catch (err) {
+      console.warn("Ticket List: part-order overlay skipped:", err);
+    }
+    return rows;
+  };
+
   const reloadTickets = useCallback(async () => {
     try {
       setTicketsLoading(true);
       const rows = await getCompanyTickets();
-      setTickets(rows as TicketItem[]);
+      const enriched = await overlayPartOrderState(rows as TicketItem[]);
+      setTickets(enriched);
     } catch (err) {
       console.error("Failed to load tickets:", err);
       setTickets([]);
     } finally {
       setTicketsLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -337,7 +367,8 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           console.warn("Portal request sync skipped:", e);
         }
         const rows = await getCompanyTickets();
-        if (!cancelled) setTickets(rows as TicketItem[]);
+        const enriched = await overlayPartOrderState(rows as TicketItem[]);
+        if (!cancelled) setTickets(enriched);
       } catch (err) {
         console.error("Failed to load tickets:", err);
         if (!cancelled) setTickets([]);
@@ -347,6 +378,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     };
     load();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // One-time per-session backfill: re-resolve ticket.location for any row

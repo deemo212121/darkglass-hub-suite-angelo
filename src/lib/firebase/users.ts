@@ -27,6 +27,7 @@ export type UserRole =
   | "MANAGER"       // Can manage tickets, employees, reports
   | "CSR"           // Customer Service Rep, ticket management
   | "TECHNICIAN"    // Field technician
+  | "TECHNICIAN_MANAGER" // Field technician manager (supervises techs)
   | "DISPATCHER"    // Dispatch management
   | "HR"            // HR and payroll access
   | "IT"            // IT support

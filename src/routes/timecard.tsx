@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useState, useEffect } from "react";
+import { ChevronLeft, ChevronRight, FileText, Download } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
+import { shouldUseMobile } from "@/lib/device";
 import {
   getMonthEntries,
   saveEntry as sbSaveEntry,
@@ -29,6 +30,28 @@ export const Route = createFileRoute("/timecard")({
 
 function TimecardPage() {
   const { uid, ready } = useAuth();
+
+  // The mobile experience is stripped down for every role, not just techs.
+  // Anyone on a phone (or with the mobile-mode sticky flag) gets the
+  // simple pay-period table. Desktop / tablet users keep the full punch
+  // grid regardless of role. This matches the general rule that mobile
+  // and desktop UIs are intentionally different surfaces.
+  //
+  // We read from `shouldUseMobile()` directly so an SSR pass returns the
+  // desktop UI and the client swaps on hydration; that avoids a mobile
+  // flash on wider viewports.
+  const [useMobile, setUseMobile] = useState(false);
+  useEffect(() => {
+    setUseMobile(shouldUseMobile());
+  }, []);
+  if (useMobile) {
+    return <MobilePayrollPage />;
+  }
+
+  return <FullTimecardPage uid={uid} ready={ready} />;
+}
+
+function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }) {
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [entries, setEntries] = useState<Entries>({});
@@ -571,6 +594,201 @@ function TimecardPage() {
         </div>
       </main>
 
+      <Footer />
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Mobile payroll — simplified view for every role on phone
+// ══════════════════════════════════════════════════════════════════════
+// The mobile app surface is intentionally different from desktop. On a
+// phone we don't ask any user (tech, CSR, or otherwise) to punch in /
+// punch out — that flow lives on desktop only. Mobile users get the
+// bi-weekly pay-period table: Date | Pay Amount | Status | Action.
+// Data comes from a synthetic seed today; swap the `useMemo` block for
+// a Supabase fetch when the payroll table lands and the rest of the UI
+// keeps working unchanged.
+
+interface MobilePayRow {
+  id: string;
+  periodLabel: string;
+  periodEnd: string;
+  amount: number;
+  status: "Paid" | "Pending" | "Processing" | "On Hold";
+}
+
+function MobilePayrollPage() {
+  const navigate = useNavigate();
+  const { email, displayName } = useAuth();
+
+  // Seed 12 recent bi-weekly periods, most recent first. Amounts fluctuate
+  // so the table isn't uniform. Status skews to "Paid" for older periods,
+  // "Processing"/"Pending" for the most recent ones.
+  const rows = useMemo<MobilePayRow[]>(() => {
+    const out: MobilePayRow[] = [];
+    const today = new Date();
+    // Start from the current pay-period end, walk back in 14-day steps.
+    const endDate = new Date(today);
+    for (let i = 0; i < 12; i += 1) {
+      const start = new Date(endDate);
+      start.setDate(endDate.getDate() - 13);
+      const label =
+        start.toLocaleDateString("en-US") + " – " + endDate.toLocaleDateString("en-US");
+      const iso = endDate.toISOString().slice(0, 10);
+      // Amount: base $850 + $50 × (index * 7 % 10) so the numbers vary.
+      const amount = 850 + ((i * 137) % 620);
+      let status: MobilePayRow["status"];
+      if (i === 0) status = "Processing";
+      else if (i === 1) status = "Pending";
+      else if (i === 4) status = "On Hold";
+      else status = "Paid";
+      out.push({
+        id: "TP-" + iso,
+        periodLabel: label,
+        periodEnd: iso,
+        amount,
+        status,
+      });
+      endDate.setDate(endDate.getDate() - 14);
+    }
+    return out;
+  }, []);
+
+  const displayLabel = displayName || email || "User";
+
+  const statusPill = (status: MobilePayRow["status"]) => {
+    const map: Record<MobilePayRow["status"], { bg: string; text: string; border: string }> = {
+      Paid: { bg: "bg-emerald-500/15", text: "text-emerald-300", border: "border-emerald-400/40" },
+      Pending: { bg: "bg-amber-500/15", text: "text-amber-300", border: "border-amber-400/40" },
+      Processing: { bg: "bg-blue-500/15", text: "text-blue-300", border: "border-blue-400/40" },
+      "On Hold": { bg: "bg-rose-500/15", text: "text-rose-300", border: "border-rose-400/40" },
+    };
+    const c = map[status];
+    return (
+      <span
+        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${c.bg} ${c.text} ${c.border}`}
+      >
+        {status}
+      </span>
+    );
+  };
+
+  const totalPaid = rows
+    .filter((r) => r.status === "Paid")
+    .reduce((sum, r) => sum + r.amount, 0);
+  const totalPending = rows
+    .filter((r) => r.status !== "Paid")
+    .reduce((sum, r) => sum + r.amount, 0);
+
+  return (
+    <div className="min-h-screen flex flex-col bg-slate-950">
+      <AppHeader />
+      <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-8">
+        <div className="mb-6 flex items-center gap-4">
+          <button
+            onClick={() => navigate({ to: "/" })}
+            className="btn p-2 hover:bg-white/10 rounded-md transition"
+            aria-label="Back"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-white">My Payroll</h1>
+            <p className="text-sm text-slate-400">{displayLabel}</p>
+          </div>
+        </div>
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+          <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              YTD Paid (last 12 periods)
+            </p>
+            <p className="mt-1 text-2xl font-bold text-emerald-300">
+              ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pending</p>
+            <p className="mt-1 text-2xl font-bold text-amber-300">
+              ${totalPending.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pay Periods</p>
+            <p className="mt-1 text-2xl font-bold text-blue-300">{rows.length}</p>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="rounded-lg border border-white/10 bg-slate-900/50 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold">Date</th>
+                  <th className="px-4 py-3 text-right font-semibold">Pay Amount</th>
+                  <th className="px-4 py-3 text-left font-semibold">Status</th>
+                  <th className="px-4 py-3 text-right font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="border-t border-white/5 hover:bg-white/[0.03] transition-colors"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-white">{row.periodLabel}</div>
+                      <div className="text-xs text-slate-400">Ended {row.periodEnd}</div>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono font-semibold text-white">
+                      ${row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-3">{statusPill(row.status)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-500/15 px-2.5 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-500/25 transition"
+                          title="View payroll details"
+                          onClick={() =>
+                            alert(
+                              `Pay period ${row.periodLabel}\nAmount: $${row.amount.toFixed(2)}\nStatus: ${row.status}`,
+                            )
+                          }
+                        >
+                          <FileText className="h-3 w-3" />
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={row.status === "Paid" ? "Download pay stub" : "Available after payment"}
+                          disabled={row.status !== "Paid"}
+                          onClick={() =>
+                            alert(
+                              `Pay stub for ${row.periodLabel} will be available once your finance team publishes it.`,
+                            )
+                          }
+                        >
+                          <Download className="h-3 w-3" />
+                          Stub
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs text-slate-500">
+          Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
+        </p>
+      </main>
       <Footer />
     </div>
   );

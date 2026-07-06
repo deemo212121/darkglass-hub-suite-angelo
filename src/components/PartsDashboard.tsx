@@ -284,7 +284,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 <XAxis dataKey="month" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis yAxisId="l" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis yAxisId="r" orientation="right" tick={{ fill: "#94a3b8", fontSize: 10 }} tickFormatter={(v: number) => `$${(v/1000).toFixed(0)}k`} />
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }}
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(v: number, n: string) => n === "Spend ($)" ? [`$${v.toLocaleString()}`, n] : [v.toLocaleString(), n]} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
                 <Bar yAxisId="l" dataKey="lines" fill="#3b82f6" radius={[4, 4, 0, 0]} name="PO Lines" />
@@ -301,7 +301,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 <Pie data={distBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
                   {distBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -315,7 +315,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <BarChart data={branchData} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={52} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }}
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(v: number, n: string) => n === "Spend ($)" ? [`$${v.toLocaleString()}`, n] : [v.toLocaleString(), n]} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
                 <Bar dataKey="lines" fill="#3b82f6" radius={[4, 4, 0, 0]} name="PO Lines" />
@@ -365,7 +365,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <BarChart data={statusBreakdown} layout="vertical" margin={{ left: 20 }}>
                 <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={110} />
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                   {statusBreakdown.map((s, i) => <Cell key={i} fill={s.color} />)}
                 </Bar>
@@ -381,7 +381,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 <Pie data={brandBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={42} outerRadius={72} paddingAngle={2}>
                   {brandBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Pie>
-                <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6 }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                 <Legend wrapperStyle={{ fontSize: 10, color: "#94a3b8" }} />
               </PieChart>
             </ResponsiveContainer>
@@ -490,7 +490,10 @@ const REPAIR_STATUSES = ["CL-Need Cancel","CL-Parts Back Ordered","CL-Ready to C
 const WARRANTY_TYPES_LIST = ["Concession LP","Concession L","Concession P","In warranty","Labor only Wty","Out-of-warranty","Part only Wty","Special Part 5 year","Unknown","Ext Wty","Ext Labor Wty","Ext Part Wty"];
 const SHIP_OPTIONS = ["(Ship Method)","FedEx Ground","FedEx Priority","FedEx Standard Overnight","FedEx Second Day","FedEx Ground Residential","FedEx SmartPost","FedEx Next Day Early AM","FedEx Next Day Air Saturday","UPS Ground","UPS Ground Residential","UPS Next Day Air","UPS 2nd Day","UPS Saver","UPS Early A.M.","UPS SurePost","LTL","Will Call"];
 const TODAY = new Date().toISOString().slice(0, 10);
-const DROP_STYLE: React.CSSProperties = { background: "rgb(15,20,40)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, boxShadow: "0 8px 32px rgba(0,0,0,0.6)", zIndex: 999999, position: "fixed", maxHeight: 280, overflowY: "auto" };
+const DROP_STYLE: React.CSSProperties = { background: "var(--color-card)", color: "var(--color-foreground)", border: "1px solid var(--color-panel-border)", borderRadius: 6, boxShadow: "0 8px 32px rgba(0,0,0,0.6)", zIndex: 999999, position: "fixed", maxHeight: 280, overflowY: "auto" };
+// Shared recharts <Tooltip contentStyle={...}> — uses CSS variables so it
+// flips with the app theme instead of staying dark navy on cream.
+const CHART_TOOLTIP_STYLE: React.CSSProperties = { background: "var(--color-card)", color: "var(--color-foreground)", border: "1px solid var(--color-panel-border)", borderRadius: 6 };
 
 function useDropdown(open: boolean) {
   const triggerRef = useRef<HTMLButtonElement>(null);

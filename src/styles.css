@@ -1663,11 +1663,14 @@
 
 /* ============================================================
    Mobile Technician App (phone-only experience)
-   Uses Admin Hub Solutions brand: blue gradient + gold coin.
+   Instagram-style layout: fixed top header + content area + bottom nav.
+   Uses Admin Hub Solutions brand: blue gradient + white cards.
    ============================================================ */
 .mtech {
   --mt-blue: #5b7eff;
   --mt-blue-dark: #4c5ac0;
+  --mt-header-h: 52px;
+  --mt-bottom-h: 52px;
   min-height: 100vh;
   background:
     radial-gradient(1200px 600px at 10% -10%, oklch(0.35 0.15 260 / 0.5), transparent 60%),
@@ -1675,11 +1678,199 @@
     linear-gradient(180deg, oklch(0.16 0.04 260) 0%, oklch(0.12 0.03 265) 100%);
   background-attachment: fixed;
   color: #0f172a;
-  display: flex;
-  flex-direction: column;
+  /* All children (header, content area, bottom nav) are position:fixed
+     so the root just provides the background canvas. No flex needed. */
   font-family: Inter, system-ui, sans-serif;
+  position: relative;
 }
 
+/* ── Top header ─────────────────────────────────────────────────────── */
+.mtech-app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  height: var(--mt-header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.1), 0 2px 14px rgba(0,0,0,0.3);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.mtech-app-header-left {
+  display: flex;
+  align-items: center;
+  width: 56px;
+}
+.mtech-app-header-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.mtech-app-header-back {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  width: 34px;
+  height: 34px;
+  font-size: 1.4rem;
+  font-weight: 800;
+  cursor: pointer;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.mtech-app-header-title {
+  flex: 1;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.mtech-app-header-right {
+  position: relative;
+  width: 56px;
+  display: flex;
+  justify-content: flex-end;
+}
+.mtech-app-profile-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease;
+}
+.mtech-app-profile-btn:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+.mtech-app-profile-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 50;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  min-width: 180px;
+  overflow: hidden;
+  animation: mtechSideFade 0.12s ease-out;
+}
+.mtech-app-profile-name {
+  padding: 0.75rem 1rem 0.5rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+.mtech-app-profile-divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 0 0.75rem;
+}
+.mtech-app-profile-logout {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  background: none;
+  color: #dc2626;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-app-profile-logout:hover {
+  background: #fef2f2;
+}
+
+/* ── Scrollable content area (between header and bottom nav) ─────────── */
+.mtech-content {
+  position: fixed;
+  top: var(--mt-header-h);
+  left: 0;
+  right: 0;
+  bottom: var(--mt-bottom-h);
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Normal block scrolling container — no flex needed */
+  background: transparent;
+}
+
+/* ── Bottom navigation bar ───────────────────────────────────────────── */
+.mtech-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  height: var(--mt-bottom-h);
+  display: flex;
+  align-items: stretch;
+  background: #fff;
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -1px 8px rgba(0, 0, 0, 0.07);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.mtech-bottom-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  cursor: pointer;
+  padding: 0.3rem 0.2rem;
+  transition: color 0.15s ease;
+  font-family: inherit;
+  position: relative;
+}
+.mtech-bottom-tab-active {
+  color: var(--mt-blue-dark);
+}
+.mtech-bottom-tab-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 25%;
+  right: 25%;
+  height: 2px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, var(--mt-blue), var(--mt-blue-dark));
+}
+.mtech-bottom-tab-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+}
+.mtech-bottom-tab-label {
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+/* ── Legacy topbar styles kept for any remaining references ──────────── */
+/* (safe to remove in a future cleanup; they're no longer rendered)     */
 .mtech-topbar {
   position: sticky;
   top: 0;
@@ -1816,18 +2007,31 @@
 .mtech-searchbar input {
   width: 100%;
   padding: 0.6rem 0.8rem;
-  border-radius: 8px;
-  border: none;
+  border-radius: 22px;
+  border: 1.5px solid #e2e8f0;
   font-size: 0.9rem;
+  background: #fff;
+  color: #1f2937;
+  font-family: inherit;
+  outline: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.15s ease;
+}
+.mtech-searchbar input::placeholder {
+  color: #94a3b8;
+}
+.mtech-searchbar input:focus {
+  border-color: var(--mt-blue);
+  box-shadow: 0 0 0 2px rgba(91, 126, 255, 0.15);
 }
 
 .mtech-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.8rem 0.8rem 5rem;
+  /* Inside .mtech-content which already scrolls — just be a block.
+     padding-bottom gives breathing room above the bottom nav. */
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem 1.25rem;
 }
 .mtech-empty {
   text-align: center;
@@ -1863,89 +2067,172 @@
   place-items: center;
 }
 
-/* Ticket cards */
+/* Ticket cards — clean two-column: left accent strip + content */
 .mtech-ticket-card {
   display: flex;
   align-items: stretch;
   background: #fff;
   border: none;
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.09);
   cursor: pointer;
   text-align: left;
+  width: 100%;
+  min-height: 80px;          /* prevent collapse to zero height */
+  font-family: inherit;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
 }
-.mtech-ticket-rail {
-  width: 92px;
+.mtech-ticket-card:active {
+  transform: scale(0.985);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+
+/* 4px colored left accent strip */
+.mtech-ticket-accent {
+  width: 4px;
+  min-height: 100%;          /* stretch to full card height */
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.15rem;
-  padding: 0.5rem 0.3rem;
-  color: #fff;
+  align-self: stretch;
 }
-.mtech-ticket-rail.tone-blue { background: linear-gradient(135deg, #5b7eff, #4c5ac0); }
-.mtech-ticket-rail.tone-green { background: #16a34a; }
-.mtech-ticket-rail.tone-amber { background: #d97706; }
-.mtech-ticket-rail.tone-red { background: #dc2626; }
-.mtech-rail-num {
-  background: rgba(255, 255, 255, 0.95);
-  color: #1f2937;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  font-size: 0.8rem;
-}
-.mtech-rail-loc { font-weight: 700; font-size: 0.78rem; }
-.mtech-rail-days { font-size: 0.68rem; opacity: 0.95; }
-.mtech-rail-wty {
-  font-size: 0.62rem;
-  font-weight: 700;
-  background: rgba(0, 0, 0, 0.25);
-  border-radius: 4px;
-  padding: 1px 5px;
-}
-.mtech-rail-claim { font-size: 0.6rem; text-align: center; opacity: 0.95; }
+.mtech-ticket-accent.tone-blue  { background: linear-gradient(180deg, #5b7eff, #4c5ac0); }
+.mtech-ticket-accent.tone-green { background: #16a34a; }
+.mtech-ticket-accent.tone-amber { background: #d97706; }
+.mtech-ticket-accent.tone-red   { background: #dc2626; }
 
 .mtech-ticket-body {
-  flex: 1;
-  padding: 0.6rem 0.7rem;
+  flex: 1 1 0%;              /* explicit flex-basis so it doesn't collapse */
+  min-width: 0;
+  padding: 0.75rem 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.18rem;
-  min-width: 0;
+  gap: 0.22rem;
+  overflow: hidden;
 }
-.mtech-ticket-no { font-weight: 800; color: #b91c1c; font-size: 1rem; }
-.mtech-ticket-status { font-weight: 700; color: #b45309; font-size: 0.82rem; }
-.mtech-ticket-cust,
-.mtech-ticket-when,
-.mtech-ticket-model {
-  font-size: 0.8rem;
+
+/* Top row: ticket number + days-open badge */
+.mtech-ticket-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.mtech-ticket-no {
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--mt-blue-dark);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.mtech-ticket-tone-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+}
+.mtech-ticket-tone-badge.tone-blue  { background: #dbeafe; color: #1e40af; }
+.mtech-ticket-tone-badge.tone-green { background: #dcfce7; color: #15803d; }
+.mtech-ticket-tone-badge.tone-amber { background: #fef3c7; color: #92400e; }
+.mtech-ticket-tone-badge.tone-red   { background: #fee2e2; color: #b91c1c; }
+
+/* Customer name */
+.mtech-ticket-customer {
+  font-weight: 700;
+  font-size: 0.92rem;
   color: #1f2937;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-ticket-product { color: #2563eb; font-weight: 600; }
-.mtech-ticket-chev {
-  align-self: center;
-  font-size: 1.8rem;
-  color: var(--mt-blue);
-  padding: 0 0.6rem;
+
+/* Meta chips row: location, warranty, city */
+.mtech-ticket-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+.mtech-ticket-meta-chip {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* Status line */
+.mtech-ticket-status-line {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Schedule + model */
+.mtech-ticket-sched {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Chevron on the right */
+.mtech-ticket-chev-icon {
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  color: #cbd5e1;
+  flex-shrink: 0;
 }
 
 /* Route map */
+.mtech-route { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.mtech-map-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+.mtech-map-wrap.expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #0f172a;
+}
 .mtech-map {
   flex: 1 1 auto;
   min-height: 240px;
   background: #e5e7eb;
 }
+.mtech-map-wrap.expanded .mtech-map { min-height: 100vh; }
 .mtech-map > div { width: 100%; height: 100%; }
+
+/* Expand / collapse pill floating over the map */
+.mtech-map-expand {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  z-index: 5;
+  padding: 0.35rem 0.7rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.85);
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+}
+.mtech-map-expand:hover { background: rgba(30, 41, 59, 0.9); }
+.mtech-map-wrap.expanded .mtech-map-expand {
+  top: env(safe-area-inset-top, 0.55rem);
+  right: env(safe-area-inset-right, 0.6rem);
+}
 
 .mtech-nav-btn {
   margin: 0.6rem 0.8rem 0;
@@ -2300,6 +2587,265 @@
   font-size: 0.8rem;
   color: #475569;
   margin-bottom: 0.3rem;
+}
+
+/* Mobile-tech visit edit form (inline within a visit card). */
+.mtech-visit-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed rgba(99, 102, 241, 0.25);
+}
+.mtech-visit-edit-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #4c5ac0;
+  margin-top: 0.25rem;
+}
+.mtech-visit-edit-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 0.45rem;
+  background: #ffffff;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: #0f172a;
+}
+.mtech-visit-edit-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+.mtech-visit-edit-actions,
+.mtech-visit-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+.mtech-btn {
+  appearance: none;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: #ffffff;
+  color: #4c5ac0;
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.mtech-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.mtech-btn-primary {
+  background: #4f46e5;
+  border-color: #4338ca;
+  color: #ffffff;
+}
+.mtech-btn-primary:hover:not(:disabled) {
+  background: #4338ca;
+}
+.mtech-btn:not(.mtech-btn-primary):hover:not(:disabled) {
+  background: #eef2ff;
+}
+
+/* Mobile-tech parts panel. Read-only rows with a single editable
+   status dropdown. */
+.mtech-part-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.4rem; }
+.mtech-part {
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+.mtech-part-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.15rem;
+}
+.mtech-part-no {
+  font-weight: 800;
+  color: #1e293b;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+.mtech-part-dist {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #4c5ac0;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.mtech-part-desc {
+  font-size: 0.82rem;
+  color: #475569;
+  margin-bottom: 0.4rem;
+}
+.mtech-part-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.35rem 0 0.55rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.4rem;
+  background: rgba(79, 70, 229, 0.06);
+}
+.mtech-part-status-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #4c5ac0;
+}
+.mtech-part-status-input {
+  flex: 1;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 0.4rem;
+  background: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.mtech-part-status-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+.mtech-part-saving {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+.mtech-part-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.mtech-parts-hint {
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* Mobile-tech chat view: contact picker + open thread. */
+.mtech-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  height: 100%;
+  min-height: 0;
+}
+.mtech-chat-picker-head { display: flex; flex-direction: column; gap: 0.25rem; }
+.mtech-chat-picker-title { font-weight: 800; color: #1e293b; font-size: 1rem; }
+.mtech-chat-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.mtech-chat-filters .mtech-part-status-input { flex: 1; }
+.mtech-chat-contacts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+.mtech-chat-contact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 0.5rem;
+  background: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.mtech-chat-contact:hover { background: #eef2ff; border-color: rgba(99, 102, 241, 0.4); }
+.mtech-chat-contact-name { font-weight: 700; color: #1e293b; }
+.mtech-chat-contact-role {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #4c5ac0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mtech-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.18);
+}
+.mtech-chat-title-name { font-weight: 800; color: #1e293b; }
+.mtech-chat-title-role {
+  font-size: 0.72rem;
+  color: #4c5ac0;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mtech-chat-messages {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.3rem 0.15rem;
+}
+.mtech-chat-msg {
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.6rem;
+  max-width: 82%;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+.mtech-chat-msg.mine {
+  align-self: flex-end;
+  background: #4f46e5;
+  color: #ffffff;
+}
+.mtech-chat-msg.theirs {
+  align-self: flex-start;
+  background: #eef2ff;
+  color: #1e293b;
+}
+.mtech-chat-msg-body { font-size: 0.9rem; line-height: 1.35; }
+.mtech-chat-msg-meta { font-size: 0.68rem; margin-top: 0.15rem; opacity: 0.75; }
+.mtech-chat-composer {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(99, 102, 241, 0.18);
+}
+.mtech-chat-composer-input {
+  flex: 1;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 0.5rem;
+  background: #ffffff;
+  font-size: 0.9rem;
+}
+.mtech-chat-composer-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+.mtech-subbar-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
 }
 
 
@@ -2704,4 +3250,2176 @@
   background: rgba(15, 23, 42, 0.92) !important;
   color: #ffffff !important;
   border-color: rgba(15, 23, 42, 0.5) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   Merged from Parts/styles1.css — Part Transaction density + light-mode
+   color gap-fills. The rest of Parts/styles1.css was already integrated
+   here; only these blocks were new. ────────────────────────────────────── */
+
+/* ── Part Transaction — compact density so all columns fit without side-scroll ── */
+.pt-compact { font-size: 11px !important; line-height: 1.25 !important; }
+.pt-compact th,
+.pt-compact td { padding: 2px 4px !important; }
+.pt-compact input,
+.pt-compact select,
+.pt-compact textarea {
+  padding: 2px 4px !important;
+  font-size: 11px !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: auto !important;
+}
+/* Date inputs are the widest offenders — cap them */
+.pt-compact input[type="date"] { max-width: 118px !important; }
+/* Numeric-ish short fields stay tight */
+.pt-compact input[placeholder="1"],
+.pt-compact input[placeholder="RA #"],
+.pt-compact input[placeholder*="Track"] { max-width: 90px !important; }
+/* Kill any hardcoded min-widths on inner cells that fight the compaction */
+.pt-compact [class*="min-w-"] { min-width: 0 !important; }
+
+/* ── Blue-tinted action buttons (Copy icon, Add Visit, View Log) — pale
+   blue-200 on faint fills was near-invisible on light. Boost contrast. */
+:root[data-theme="light"] .text-blue-200 { color: #1e3a8a !important; }
+:root[data-theme="light"] .bg-blue-500\/15,
+:root[data-theme="light"] .bg-blue-500\/20,
+:root[data-theme="light"] .bg-blue-500\/25 { background-color: rgba(37, 99, 235, 0.20) !important; }
+:root[data-theme="light"] .border-blue-400\/40,
+:root[data-theme="light"] .border-blue-500\/30 { border-color: rgba(30, 58, 138, 0.5) !important; }
+
+/* ── Truck Stock (and similar) — light-mode readability for sky/emerald/amber
+   tints + /10-opacity fills that weren't previously covered. */
+:root[data-theme="light"] .text-emerald-100 { color: #047857 !important; }
+:root[data-theme="light"] .text-sky-100,
+:root[data-theme="light"] .text-sky-200,
+:root[data-theme="light"] .text-sky-300 { color: #0369a1 !important; }
+:root[data-theme="light"] .bg-sky-500\/10,
+:root[data-theme="light"] .bg-sky-500\/15,
+:root[data-theme="light"] .bg-sky-500\/20 { background-color: rgba(2, 132, 199, 0.14) !important; }
+:root[data-theme="light"] .border-sky-400\/30,
+:root[data-theme="light"] .border-sky-400\/40 { border-color: rgba(3, 105, 161, 0.5) !important; }
+:root[data-theme="light"] .bg-emerald-500\/10 { background-color: rgba(16, 185, 129, 0.14) !important; }
+:root[data-theme="light"] .bg-amber-500\/10,
+:root[data-theme="light"] .bg-amber-500\/15 { background-color: rgba(217, 119, 6, 0.14) !important; }
+:root[data-theme="light"] .text-amber-100 { color: #b45309 !important; }
+:root[data-theme="light"] .border-amber-400\/40 { border-color: rgba(180, 83, 9, 0.5) !important; }
+:root[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(37, 99, 235, 0.12) !important; }
+
+/* ── Native date/time calendar icon: dark theme inverts it to white; light
+   mode should show it dark. Clear the invert filter. */
+:root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none !important;
+  opacity: 0.85 !important;
+}
+
+/* ── Color families used across the app that had no light-mode mapping;
+   their pale 100–300 shades were near-white and vanished on light surfaces. */
+:root[data-theme="light"] .text-orange-100,
+:root[data-theme="light"] .text-orange-200,
+:root[data-theme="light"] .text-orange-300 { color: #c2410c !important; }
+:root[data-theme="light"] .text-rose-100,
+:root[data-theme="light"] .text-rose-200,
+:root[data-theme="light"] .text-rose-300 { color: #be123c !important; }
+:root[data-theme="light"] .text-violet-100,
+:root[data-theme="light"] .text-violet-200,
+:root[data-theme="light"] .text-violet-300 { color: #6d28d9 !important; }
+:root[data-theme="light"] .text-teal-100,
+:root[data-theme="light"] .text-teal-200,
+:root[data-theme="light"] .text-teal-300 { color: #0f766e !important; }
+:root[data-theme="light"] .text-indigo-100,
+:root[data-theme="light"] .text-indigo-200,
+:root[data-theme="light"] .text-indigo-300 { color: #4338ca !important; }
+:root[data-theme="light"] .text-pink-100,
+:root[data-theme="light"] .text-pink-200,
+:root[data-theme="light"] .text-pink-300 { color: #be185d !important; }
+:root[data-theme="light"] .text-lime-100,
+:root[data-theme="light"] .text-lime-200,
+:root[data-theme="light"] .text-lime-300 { color: #4d7c0f !important; }
+:root[data-theme="light"] .text-fuchsia-100,
+:root[data-theme="light"] .text-fuchsia-200,
+:root[data-theme="light"] .text-fuchsia-300 { color: #a21caf !important; }
+:root[data-theme="light"] .text-red-100,
+:root[data-theme="light"] .text-red-200,
+:root[data-theme="light"] .text-red-300 { color: #b91c1c !important; }
+:root[data-theme="light"] .text-yellow-100,
+:root[data-theme="light"] .text-yellow-200,
+:root[data-theme="light"] .text-yellow-300 { color: #a16207 !important; }
+
+/* Matching translucent fills for those families so pill/chip backgrounds
+   stay subtle-but-visible in light mode. */
+:root[data-theme="light"] .bg-orange-500\/10,
+:root[data-theme="light"] .bg-orange-500\/15,
+:root[data-theme="light"] .bg-orange-500\/20 { background-color: rgba(194, 65, 12, 0.12) !important; }
+:root[data-theme="light"] .bg-rose-500\/10,
+:root[data-theme="light"] .bg-rose-500\/15,
+:root[data-theme="light"] .bg-rose-500\/20 { background-color: rgba(190, 18, 60, 0.12) !important; }
+:root[data-theme="light"] .bg-violet-500\/10,
+:root[data-theme="light"] .bg-violet-500\/15,
+:root[data-theme="light"] .bg-violet-500\/20 { background-color: rgba(109, 40, 217, 0.12) !important; }
+:root[data-theme="light"] .bg-teal-500\/10,
+:root[data-theme="light"] .bg-teal-500\/15,
+:root[data-theme="light"] .bg-teal-500\/20 { background-color: rgba(15, 118, 110, 0.12) !important; }
+:root[data-theme="light"] .bg-indigo-500\/10,
+:root[data-theme="light"] .bg-indigo-500\/15,
+:root[data-theme="light"] .bg-indigo-500\/20 { background-color: rgba(67, 56, 202, 0.12) !important; }
+
+/* ── Repair Statuses page: its scoped <style> hardcodes white/light-gray
+   header text (title, subtitle, back button, "records found", notes) for
+   a dark bg, so they were invisible on the light gradient. Override. */
+:root[data-theme="light"] .repair-title { color: var(--lt-text) !important; }
+:root[data-theme="light"] .repair-subtitle,
+:root[data-theme="light"] .notes { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .result-info { color: #1d4ed8 !important; }
+:root[data-theme="light"] .back-btn {
+  color: var(--lt-text) !important;
+  background: rgba(15, 23, 42, 0.06) !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — visibility gap-fills for the -400 shade family and the
+   translucent-white text utilities. These are used across the app as
+   "primary tint" colors for callouts and labels; without an override they
+   stay washed-out pastel on the cream light-mode background. Bumping each
+   family to the -700 shade keeps the color identity while giving usable
+   contrast on light surfaces.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="light"] .text-emerald-400,
+:root[data-theme="light"] .text-emerald-500 { color: #047857 !important; }
+
+:root[data-theme="light"] .text-cyan-400,
+:root[data-theme="light"] .text-cyan-500 { color: #0e7490 !important; }
+
+:root[data-theme="light"] .text-purple-400,
+:root[data-theme="light"] .text-purple-500 { color: #6d28d9 !important; }
+
+:root[data-theme="light"] .text-amber-400,
+:root[data-theme="light"] .text-amber-500 { color: #b45309 !important; }
+
+:root[data-theme="light"] .text-orange-400,
+:root[data-theme="light"] .text-orange-500 { color: #c2410c !important; }
+
+:root[data-theme="light"] .text-yellow-400,
+:root[data-theme="light"] .text-yellow-500 { color: #a16207 !important; }
+
+:root[data-theme="light"] .text-rose-400,
+:root[data-theme="light"] .text-rose-500 { color: #be123c !important; }
+
+:root[data-theme="light"] .text-pink-400,
+:root[data-theme="light"] .text-pink-500 { color: #be185d !important; }
+
+:root[data-theme="light"] .text-lime-400 { color: #4d7c0f !important; }
+
+:root[data-theme="light"] .text-fuchsia-400,
+:root[data-theme="light"] .text-fuchsia-500 { color: #a21caf !important; }
+
+:root[data-theme="light"] .text-violet-400,
+:root[data-theme="light"] .text-violet-500 { color: #6d28d9 !important; }
+
+:root[data-theme="light"] .text-sky-400,
+:root[data-theme="light"] .text-sky-500 { color: #0369a1 !important; }
+
+:root[data-theme="light"] .text-indigo-400,
+:root[data-theme="light"] .text-indigo-500 { color: #4338ca !important; }
+
+:root[data-theme="light"] .text-teal-400,
+:root[data-theme="light"] .text-teal-500 { color: #0f766e !important; }
+
+:root[data-theme="light"] .text-blue-300,
+:root[data-theme="light"] .text-blue-400 { color: #1d4ed8 !important; }
+
+/* Translucent white text — near-invisible on cream in light mode. Reroute
+   through the same graded ink used elsewhere so it stays legible without
+   losing the hierarchy the opacity level was signalling. */
+:root[data-theme="light"] .text-white\/95,
+:root[data-theme="light"] .text-white\/90 { color: var(--lt-text) !important; }
+:root[data-theme="light"] .text-white\/70,
+:root[data-theme="light"] .text-white\/65,
+:root[data-theme="light"] .text-white\/60 { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .text-white\/55,
+:root[data-theme="light"] .text-white\/50,
+:root[data-theme="light"] .text-white\/45,
+:root[data-theme="light"] .text-white\/40,
+:root[data-theme="light"] .text-white\/35,
+:root[data-theme="light"] .text-white\/30 { color: var(--lt-text-3) !important; }
+
+/* Placeholder-style muted text (used with the `text-foreground/60` pattern in
+   some components) — the CSS variable is oklch white in dark mode, so 60%
+   opacity is unreadable in light mode where the foreground is already dark
+   navy. Force a graded ink. */
+:root[data-theme="light"] .text-foreground\/90 { color: var(--lt-text) !important; }
+:root[data-theme="light"] .text-foreground\/70,
+:root[data-theme="light"] .text-foreground\/60 { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .text-foreground\/50,
+:root[data-theme="light"] .text-foreground\/45,
+:root[data-theme="light"] .text-foreground\/40 { color: var(--lt-text-3) !important; }
+
+/* Hover states — the -300/-200 shades on hover also disappear on light.
+   Keep the hover-tint identity but bump to a legible tone. */
+:root[data-theme="light"] .hover\:text-white:hover,
+:root[data-theme="light"] .hover\:text-slate-100:hover,
+:root[data-theme="light"] .hover\:text-slate-200:hover { color: var(--lt-text) !important; }
+:root[data-theme="light"] .hover\:text-blue-200:hover,
+:root[data-theme="light"] .hover\:text-blue-300:hover { color: #1d4ed8 !important; }
+:root[data-theme="light"] .hover\:text-emerald-200:hover,
+:root[data-theme="light"] .hover\:text-emerald-300:hover { color: #047857 !important; }
+:root[data-theme="light"] .hover\:text-amber-200:hover,
+:root[data-theme="light"] .hover\:text-amber-300:hover { color: #b45309 !important; }
+:root[data-theme="light"] .hover\:text-rose-200:hover,
+:root[data-theme="light"] .hover\:text-rose-300:hover { color: #be123c !important; }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — button contrast gap-fills
+   ════════════════════════════════════════════════════════════════════════
+
+   The existing button/badge allowlist only covered white text on solid
+   blue/green/red/rose/amber/emerald/violet backgrounds. The app also uses
+   sky, teal, cyan, fuchsia, purple, orange, yellow, pink, and indigo for
+   button fills, plus a common "translucent tint" pattern (bg-*-500/20 with
+   text-*-100/200) that wasn't legible on light surfaces.
+
+   Rules below:
+   1. Add every solid Tailwind color family to the keep-white-text allowlist
+      so any <button className="bg-X-500 text-white"> stays legible.
+   2. Force a saturated dark ink for text inside translucent tint buttons
+      (bg-X-500/20 + text-X-100/200/300) so labels don't wash out.
+   3. Force the primary/foreground pair (Shadcn defaults) to a legible
+      dark-navy-on-primary combo.
+   4. `.btn`, `.btn-primary`, `.btn-danger` (our own classes) get explicit
+      light-mode ink so text stays readable even outside Tailwind utilities.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* 1. Keep white text on ALL solid-colored button backgrounds */
+:root[data-theme="light"] [class*="bg-sky-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-sky-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-sky-7"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-teal-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-teal-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-cyan-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-cyan-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-indigo-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-indigo-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-purple-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-purple-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-fuchsia-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-fuchsia-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-pink-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-pink-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-orange-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-orange-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-yellow-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-yellow-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-lime-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-lime-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-violet-6"][class*="text-white"] {
+  color: #ffffff !important;
+}
+
+/* Also apply the same protection for text-slate-100/text-slate-200 that
+   many components use as a "near-white" label on a colored button. */
+:root[data-theme="light"] button[class*="bg-blue-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-blue-6"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-emerald-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-emerald-6"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-sky-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-indigo-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-violet-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-purple-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-rose-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-amber-5"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-blue-5"][class*="text-slate-200"],
+:root[data-theme="light"] button[class*="bg-emerald-5"][class*="text-slate-200"] {
+  color: #ffffff !important;
+}
+
+/* 2. Translucent tint buttons (bg-X-500/20 patterns): keep the pill fill
+      subtle, but force the text to the family's dark shade so labels are
+      readable instead of pastel-on-cream. */
+:root[data-theme="light"] button[class*="bg-blue-500/"][class*="text-blue-100"],
+:root[data-theme="light"] button[class*="bg-blue-500/"][class*="text-blue-200"],
+:root[data-theme="light"] button[class*="bg-blue-500/"][class*="text-blue-300"],
+:root[data-theme="light"] a[class*="bg-blue-500/"][class*="text-blue-100"],
+:root[data-theme="light"] a[class*="bg-blue-500/"][class*="text-blue-200"],
+:root[data-theme="light"] a[class*="bg-blue-500/"][class*="text-blue-300"] {
+  color: #1d4ed8 !important;
+}
+
+:root[data-theme="light"] button[class*="bg-emerald-500/"][class*="text-emerald-100"],
+:root[data-theme="light"] button[class*="bg-emerald-500/"][class*="text-emerald-200"],
+:root[data-theme="light"] button[class*="bg-emerald-500/"][class*="text-emerald-300"],
+:root[data-theme="light"] a[class*="bg-emerald-500/"][class*="text-emerald-100"],
+:root[data-theme="light"] a[class*="bg-emerald-500/"][class*="text-emerald-200"],
+:root[data-theme="light"] a[class*="bg-emerald-500/"][class*="text-emerald-300"] {
+  color: #047857 !important;
+}
+
+:root[data-theme="light"] button[class*="bg-amber-500/"][class*="text-amber-100"],
+:root[data-theme="light"] button[class*="bg-amber-500/"][class*="text-amber-200"],
+:root[data-theme="light"] button[class*="bg-amber-500/"][class*="text-amber-300"] {
+  color: #b45309 !important;
+}
+
+:root[data-theme="light"] button[class*="bg-rose-500/"][class*="text-rose-100"],
+:root[data-theme="light"] button[class*="bg-rose-500/"][class*="text-rose-200"],
+:root[data-theme="light"] button[class*="bg-rose-500/"][class*="text-rose-300"],
+:root[data-theme="light"] button[class*="bg-red-500/"][class*="text-red-100"],
+:root[data-theme="light"] button[class*="bg-red-500/"][class*="text-red-200"],
+:root[data-theme="light"] button[class*="bg-red-500/"][class*="text-red-300"] {
+  color: #be123c !important;
+}
+
+:root[data-theme="light"] button[class*="bg-sky-500/"][class*="text-sky-100"],
+:root[data-theme="light"] button[class*="bg-sky-500/"][class*="text-sky-200"],
+:root[data-theme="light"] button[class*="bg-sky-500/"][class*="text-sky-300"] {
+  color: #0369a1 !important;
+}
+
+:root[data-theme="light"] button[class*="bg-purple-500/"][class*="text-purple-100"],
+:root[data-theme="light"] button[class*="bg-purple-500/"][class*="text-purple-200"],
+:root[data-theme="light"] button[class*="bg-purple-500/"][class*="text-purple-300"],
+:root[data-theme="light"] button[class*="bg-violet-500/"][class*="text-violet-100"],
+:root[data-theme="light"] button[class*="bg-violet-500/"][class*="text-violet-200"],
+:root[data-theme="light"] button[class*="bg-violet-500/"][class*="text-violet-300"] {
+  color: #6d28d9 !important;
+}
+
+:root[data-theme="light"] button[class*="bg-indigo-500/"][class*="text-indigo-100"],
+:root[data-theme="light"] button[class*="bg-indigo-500/"][class*="text-indigo-200"],
+:root[data-theme="light"] button[class*="bg-indigo-500/"][class*="text-indigo-300"] {
+  color: #4338ca !important;
+}
+
+:root[data-theme="light"] button[class*="bg-teal-500/"][class*="text-teal-100"],
+:root[data-theme="light"] button[class*="bg-teal-500/"][class*="text-teal-200"],
+:root[data-theme="light"] button[class*="bg-teal-500/"][class*="text-teal-300"] {
+  color: #0f766e !important;
+}
+
+:root[data-theme="light"] button[class*="bg-orange-500/"][class*="text-orange-100"],
+:root[data-theme="light"] button[class*="bg-orange-500/"][class*="text-orange-200"],
+:root[data-theme="light"] button[class*="bg-orange-500/"][class*="text-orange-300"] {
+  color: #c2410c !important;
+}
+
+:root[data-theme="light"] button[class*="bg-yellow-500/"][class*="text-yellow-100"],
+:root[data-theme="light"] button[class*="bg-yellow-500/"][class*="text-yellow-200"],
+:root[data-theme="light"] button[class*="bg-yellow-500/"][class*="text-yellow-300"] {
+  color: #a16207 !important;
+}
+
+/* 3. Shadcn/Radix primary button (uses --primary-foreground = near-white
+      by default; force explicit white for solid primary on light bg). */
+:root[data-theme="light"] .bg-primary,
+:root[data-theme="light"] [class*="bg-primary"] {
+  color: #ffffff !important;
+}
+:root[data-theme="light"] .bg-primary *,
+:root[data-theme="light"] [class*="bg-primary"] * {
+  color: inherit;
+}
+:root[data-theme="light"] .text-primary-foreground {
+  color: #ffffff !important;
+}
+
+/* 4. Our own .btn utility classes */
+:root[data-theme="light"] .btn {
+  color: var(--lt-text) !important;
+  background: rgba(15, 23, 42, 0.05) !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+}
+:root[data-theme="light"] .btn:hover {
+  background: rgba(15, 23, 42, 0.1) !important;
+}
+:root[data-theme="light"] .btn-primary,
+:root[data-theme="light"] .btn.btn-primary {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0) !important;
+  border-color: transparent !important;
+}
+:root[data-theme="light"] .btn-danger,
+:root[data-theme="light"] .btn.btn-danger {
+  color: #b91c1c !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+
+/* 5. Native <button> with slate/white backgrounds — a lot of components
+      use `bg-white/10` or `bg-slate-800` for secondary buttons. Force ink
+      color so labels are visible on the now-light fill. */
+:root[data-theme="light"] button[class*="bg-white/"][class*="text-white"],
+:root[data-theme="light"] button[class*="bg-slate-8"][class*="text-white"],
+:root[data-theme="light"] button[class*="bg-slate-9"][class*="text-white"],
+:root[data-theme="light"] button[class*="bg-slate-8"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-slate-9"][class*="text-slate-100"],
+:root[data-theme="light"] button[class*="bg-slate-8"][class*="text-slate-200"],
+:root[data-theme="light"] button[class*="bg-slate-9"][class*="text-slate-200"] {
+  color: var(--lt-text) !important;
+}
+
+/* 6. Icon inside colored buttons — <svg> often inherits color, but
+      lucide icons sometimes have an explicit stroke. Force inheritance
+      so the icon flips with the label color. */
+:root[data-theme="light"] button svg,
+:root[data-theme="light"] a[role="button"] svg {
+  color: currentColor;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — translucent-fill toolbar buttons (bg-*-600/N pattern)
+
+   Buttons like "View Log", "Sync Parts from Notes", "Truck Stock",
+   "Submit POs", "Update (N)" on the Part Transaction toolbar use
+   bg-blue-600/20, bg-purple-600/20, bg-emerald-600/20, bg-green-600/20,
+   text-*-200. On light mode:
+   1. The 20% tint on our cream background is nearly invisible
+      (button "disappears" into the surface).
+   2. The pale -200 text on that pale fill has almost no contrast.
+
+   Fix:
+   - Boost the pill fill to a solid pastel that reads on cream.
+   - Force text to the family's saturated dark shade.
+   - Also lock the border to the family's saturated shade for a crisp edge.
+
+   Rules target bg-*-600/N and bg-*-700/N since -500/N was already covered.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Blue family (View Log, Update) */
+:root[data-theme="light"] button[class*="bg-blue-600/"],
+:root[data-theme="light"] button[class*="bg-blue-700/"] {
+  background-color: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e40af !important;
+}
+:root[data-theme="light"] button[class*="bg-blue-600/"]:hover:not(:disabled),
+:root[data-theme="light"] button[class*="bg-blue-700/"]:hover:not(:disabled) {
+  background-color: #bfdbfe !important;
+  border-color: #60a5fa !important;
+}
+
+/* Purple family (Sync Parts from Notes) */
+:root[data-theme="light"] button[class*="bg-purple-600/"],
+:root[data-theme="light"] button[class*="bg-purple-700/"] {
+  background-color: #ede9fe !important;
+  border-color: #c4b5fd !important;
+  color: #5b21b6 !important;
+}
+:root[data-theme="light"] button[class*="bg-purple-600/"]:hover:not(:disabled),
+:root[data-theme="light"] button[class*="bg-purple-700/"]:hover:not(:disabled) {
+  background-color: #ddd6fe !important;
+  border-color: #a78bfa !important;
+}
+
+/* Emerald family (Truck Stock) */
+:root[data-theme="light"] button[class*="bg-emerald-600/"],
+:root[data-theme="light"] button[class*="bg-emerald-700/"] {
+  background-color: #d1fae5 !important;
+  border-color: #6ee7b7 !important;
+  color: #065f46 !important;
+}
+:root[data-theme="light"] button[class*="bg-emerald-600/"]:hover:not(:disabled),
+:root[data-theme="light"] button[class*="bg-emerald-700/"]:hover:not(:disabled) {
+  background-color: #a7f3d0 !important;
+  border-color: #34d399 !important;
+}
+
+/* Green family (Submit POs) */
+:root[data-theme="light"] button[class*="bg-green-600/"],
+:root[data-theme="light"] button[class*="bg-green-700/"] {
+  background-color: #dcfce7 !important;
+  border-color: #86efac !important;
+  color: #166534 !important;
+}
+:root[data-theme="light"] button[class*="bg-green-600/"]:hover:not(:disabled),
+:root[data-theme="light"] button[class*="bg-green-700/"]:hover:not(:disabled) {
+  background-color: #bbf7d0 !important;
+  border-color: #4ade80 !important;
+}
+
+/* Amber, orange, yellow, rose, red, sky, teal, cyan, indigo, violet,
+   fuchsia, pink, lime — same treatment for full coverage across the app. */
+:root[data-theme="light"] button[class*="bg-amber-600/"],
+:root[data-theme="light"] button[class*="bg-amber-700/"] {
+  background-color: #fef3c7 !important;
+  border-color: #fcd34d !important;
+  color: #92400e !important;
+}
+:root[data-theme="light"] button[class*="bg-orange-600/"],
+:root[data-theme="light"] button[class*="bg-orange-700/"] {
+  background-color: #ffedd5 !important;
+  border-color: #fdba74 !important;
+  color: #9a3412 !important;
+}
+:root[data-theme="light"] button[class*="bg-yellow-600/"],
+:root[data-theme="light"] button[class*="bg-yellow-700/"] {
+  background-color: #fef9c3 !important;
+  border-color: #fde047 !important;
+  color: #854d0e !important;
+}
+:root[data-theme="light"] button[class*="bg-rose-600/"],
+:root[data-theme="light"] button[class*="bg-rose-700/"] {
+  background-color: #ffe4e6 !important;
+  border-color: #fda4af !important;
+  color: #9f1239 !important;
+}
+:root[data-theme="light"] button[class*="bg-red-600/"],
+:root[data-theme="light"] button[class*="bg-red-700/"] {
+  background-color: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #991b1b !important;
+}
+:root[data-theme="light"] button[class*="bg-sky-600/"],
+:root[data-theme="light"] button[class*="bg-sky-700/"] {
+  background-color: #e0f2fe !important;
+  border-color: #7dd3fc !important;
+  color: #0c4a6e !important;
+}
+:root[data-theme="light"] button[class*="bg-teal-600/"],
+:root[data-theme="light"] button[class*="bg-teal-700/"] {
+  background-color: #ccfbf1 !important;
+  border-color: #5eead4 !important;
+  color: #115e59 !important;
+}
+:root[data-theme="light"] button[class*="bg-cyan-600/"],
+:root[data-theme="light"] button[class*="bg-cyan-700/"] {
+  background-color: #cffafe !important;
+  border-color: #67e8f9 !important;
+  color: #155e75 !important;
+}
+:root[data-theme="light"] button[class*="bg-indigo-600/"],
+:root[data-theme="light"] button[class*="bg-indigo-700/"] {
+  background-color: #e0e7ff !important;
+  border-color: #a5b4fc !important;
+  color: #3730a3 !important;
+}
+:root[data-theme="light"] button[class*="bg-violet-600/"],
+:root[data-theme="light"] button[class*="bg-violet-700/"] {
+  background-color: #ede9fe !important;
+  border-color: #c4b5fd !important;
+  color: #5b21b6 !important;
+}
+:root[data-theme="light"] button[class*="bg-fuchsia-600/"],
+:root[data-theme="light"] button[class*="bg-fuchsia-700/"] {
+  background-color: #fae8ff !important;
+  border-color: #f0abfc !important;
+  color: #86198f !important;
+}
+:root[data-theme="light"] button[class*="bg-pink-600/"],
+:root[data-theme="light"] button[class*="bg-pink-700/"] {
+  background-color: #fce7f3 !important;
+  border-color: #f9a8d4 !important;
+  color: #9d174d !important;
+}
+
+/* Same treatment for bg-*-500/N (already existed for text color, but
+   let's also lock the fill/border so it stands out on cream). */
+:root[data-theme="light"] button[class*="bg-blue-500/"] {
+  background-color: #dbeafe !important;
+  border-color: #93c5fd !important;
+}
+:root[data-theme="light"] button[class*="bg-purple-500/"] {
+  background-color: #ede9fe !important;
+  border-color: #c4b5fd !important;
+}
+:root[data-theme="light"] button[class*="bg-emerald-500/"] {
+  background-color: #d1fae5 !important;
+  border-color: #6ee7b7 !important;
+}
+:root[data-theme="light"] button[class*="bg-green-500/"] {
+  background-color: #dcfce7 !important;
+  border-color: #86efac !important;
+}
+:root[data-theme="light"] button[class*="bg-amber-500/"] {
+  background-color: #fef3c7 !important;
+  border-color: #fcd34d !important;
+}
+:root[data-theme="light"] button[class*="bg-rose-500/"],
+:root[data-theme="light"] button[class*="bg-red-500/"] {
+  background-color: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+}
+
+/* Disabled toolbar state — bg-slate-800 + text-slate-500 was near-black on
+   dark, but on light mode the fill flipped to something visible while the
+   text-slate-500 stayed midgray. Give it a proper disabled look. */
+:root[data-theme="light"] button[class*="bg-slate-800"][class*="text-slate-500"] {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+}
+:root[data-theme="light"] button:disabled {
+  opacity: 0.65 !important;
+}
+
+/* Colored callout / banner backgrounds — same idea but for non-button
+   containers (info banners, status pills, section highlights). Bump the
+   translucent fill to a legible pastel and ensure text below is dark. */
+:root[data-theme="light"] div[class*="bg-blue-500/1"],
+:root[data-theme="light"] div[class*="bg-blue-600/1"] {
+  background-color: #dbeafe !important;
+}
+:root[data-theme="light"] div[class*="bg-emerald-500/1"],
+:root[data-theme="light"] div[class*="bg-emerald-600/1"] {
+  background-color: #d1fae5 !important;
+}
+:root[data-theme="light"] div[class*="bg-amber-500/1"],
+:root[data-theme="light"] div[class*="bg-amber-600/1"] {
+  background-color: #fef3c7 !important;
+}
+:root[data-theme="light"] div[class*="bg-rose-500/1"],
+:root[data-theme="light"] div[class*="bg-red-500/1"] {
+  background-color: #fee2e2 !important;
+}
+:root[data-theme="light"] div[class*="bg-purple-500/1"],
+:root[data-theme="light"] div[class*="bg-purple-600/1"],
+:root[data-theme="light"] div[class*="bg-violet-500/1"] {
+  background-color: #ede9fe !important;
+}
+:root[data-theme="light"] div[class*="bg-orange-500/1"],
+:root[data-theme="light"] div[class*="bg-orange-600/1"] {
+  background-color: #ffedd5 !important;
+}
+:root[data-theme="light"] div[class*="bg-yellow-500/1"] {
+  background-color: #fef9c3 !important;
+}
+:root[data-theme="light"] div[class*="bg-sky-500/1"],
+:root[data-theme="light"] div[class*="bg-sky-600/1"] {
+  background-color: #e0f2fe !important;
+}
+:root[data-theme="light"] div[class*="bg-teal-500/1"] {
+  background-color: #ccfbf1 !important;
+}
+:root[data-theme="light"] div[class*="bg-indigo-500/1"],
+:root[data-theme="light"] div[class*="bg-indigo-600/1"] {
+  background-color: #e0e7ff !important;
+}
+:root[data-theme="light"] div[class*="bg-fuchsia-500/1"] {
+  background-color: #fae8ff !important;
+}
+:root[data-theme="light"] div[class*="bg-pink-500/1"] {
+  background-color: #fce7f3 !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — colored pill chips (<span> elements)
+
+   The generic bg-*-500/1N rules earlier only targeted <div> containers.
+   Chips using <span> (e.g. Truck Stock "Atlanta · 3", ticket-number links,
+   status pills) still showed pale tint on pale text.
+
+   Force a solid pastel fill and dark ink on every <span> that uses the
+   translucent-color-tint pattern so chips read clearly on cream.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Emerald (Truck Stock branch chips) */
+:root[data-theme="light"] span[class*="bg-emerald-500/"],
+:root[data-theme="light"] span[class*="bg-emerald-600/"] {
+  background-color: #d1fae5 !important;
+  border-color: #34d399 !important;
+  color: #065f46 !important;
+}
+
+/* Blue */
+:root[data-theme="light"] span[class*="bg-blue-500/"],
+:root[data-theme="light"] span[class*="bg-blue-600/"] {
+  background-color: #dbeafe !important;
+  border-color: #60a5fa !important;
+  color: #1e40af !important;
+}
+
+/* Amber / warning */
+:root[data-theme="light"] span[class*="bg-amber-500/"],
+:root[data-theme="light"] span[class*="bg-amber-600/"] {
+  background-color: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+  color: #92400e !important;
+}
+
+/* Rose / red / danger */
+:root[data-theme="light"] span[class*="bg-rose-500/"],
+:root[data-theme="light"] span[class*="bg-rose-600/"],
+:root[data-theme="light"] span[class*="bg-red-500/"],
+:root[data-theme="light"] span[class*="bg-red-600/"] {
+  background-color: #fee2e2 !important;
+  border-color: #f87171 !important;
+  color: #991b1b !important;
+}
+
+/* Purple / violet */
+:root[data-theme="light"] span[class*="bg-purple-500/"],
+:root[data-theme="light"] span[class*="bg-purple-600/"],
+:root[data-theme="light"] span[class*="bg-violet-500/"],
+:root[data-theme="light"] span[class*="bg-violet-600/"] {
+  background-color: #ede9fe !important;
+  border-color: #a78bfa !important;
+  color: #5b21b6 !important;
+}
+
+/* Sky */
+:root[data-theme="light"] span[class*="bg-sky-500/"],
+:root[data-theme="light"] span[class*="bg-sky-600/"] {
+  background-color: #e0f2fe !important;
+  border-color: #38bdf8 !important;
+  color: #0c4a6e !important;
+}
+
+/* Orange */
+:root[data-theme="light"] span[class*="bg-orange-500/"],
+:root[data-theme="light"] span[class*="bg-orange-600/"] {
+  background-color: #ffedd5 !important;
+  border-color: #fb923c !important;
+  color: #9a3412 !important;
+}
+
+/* Yellow */
+:root[data-theme="light"] span[class*="bg-yellow-500/"] {
+  background-color: #fef9c3 !important;
+  border-color: #facc15 !important;
+  color: #854d0e !important;
+}
+
+/* Teal */
+:root[data-theme="light"] span[class*="bg-teal-500/"],
+:root[data-theme="light"] span[class*="bg-teal-600/"] {
+  background-color: #ccfbf1 !important;
+  border-color: #2dd4bf !important;
+  color: #115e59 !important;
+}
+
+/* Cyan */
+:root[data-theme="light"] span[class*="bg-cyan-500/"],
+:root[data-theme="light"] span[class*="bg-cyan-600/"] {
+  background-color: #cffafe !important;
+  border-color: #22d3ee !important;
+  color: #155e75 !important;
+}
+
+/* Indigo */
+:root[data-theme="light"] span[class*="bg-indigo-500/"],
+:root[data-theme="light"] span[class*="bg-indigo-600/"] {
+  background-color: #e0e7ff !important;
+  border-color: #818cf8 !important;
+  color: #3730a3 !important;
+}
+
+/* Fuchsia */
+:root[data-theme="light"] span[class*="bg-fuchsia-500/"],
+:root[data-theme="light"] span[class*="bg-fuchsia-600/"] {
+  background-color: #fae8ff !important;
+  border-color: #e879f9 !important;
+  color: #86198f !important;
+}
+
+/* Pink */
+:root[data-theme="light"] span[class*="bg-pink-500/"],
+:root[data-theme="light"] span[class*="bg-pink-600/"] {
+  background-color: #fce7f3 !important;
+  border-color: #f472b6 !important;
+  color: #9d174d !important;
+}
+
+/* Green (Submit POs count chips, etc.) */
+:root[data-theme="light"] span[class*="bg-green-500/"],
+:root[data-theme="light"] span[class*="bg-green-600/"] {
+  background-color: #dcfce7 !important;
+  border-color: #4ade80 !important;
+  color: #166534 !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — native <select> button + option list
+
+   Two problems:
+   1. `select.glass-input` had a hardcoded rgba(15,23,42,0.96) navy button
+      background that made the closed dropdown look dark on the cream page.
+   2. `select.glass-input option` and `.form-select option` had hardcoded
+      dark-slate option bg + white text — the dropdown popup stayed dark
+      even in light mode.
+
+   Native <option> elements are constrained by the browser (Chrome, Edge,
+   and Firefox on Windows honor background + color; Safari less so). This
+   override covers the common cases.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Closed-state background of the select button in light mode */
+:root[data-theme="light"] select.glass-input,
+:root[data-theme="light"] button.glass-input {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .glass-input::placeholder {
+  color: var(--lt-text-3) !important;
+}
+
+/* Native <option> popup — try to force light styling on all our selects */
+:root[data-theme="light"] select.glass-input option,
+:root[data-theme="light"] .form-select option,
+:root[data-theme="light"] select option {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Ticket-list header column-filter popup + any other z-50 dropdown that
+   still has bg-slate-900 baked in as a Tailwind arbitrary class. Force
+   the whole "dropdown-shaped" container to switch. */
+:root[data-theme="light"] .absolute.z-50[class*="bg-slate-9"],
+:root[data-theme="light"] .fixed.z-50[class*="bg-slate-9"],
+:root[data-theme="light"] [class*="absolute"][class*="bg-slate-950"],
+:root[data-theme="light"] [class*="absolute"][class*="bg-slate-900"] {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — Part Return Status page (scoped <style> overrides)
+
+   PartReturnStatus.tsx has a large in-component <style>{`...`}</style>
+   block with hardcoded dark colors: dark navy select/input fills, white
+   text on rgba(17,24,39,0.95) selects, dark `.btn`, dark `.tab-btn`,
+   dark table header (#1f2937), etc. None of them respect the light
+   theme cascade.
+
+   These scoped rules mirror the classes used inside that file and flip
+   only the color-carrying properties (background, border, text). Layout,
+   padding, sizing stays the same.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Filters panel: form field label + input/select colors */
+:root[data-theme="light"] .field label {
+  color: var(--lt-text-2) !important;
+}
+:root[data-theme="light"] .field input,
+:root[data-theme="light"] .field select,
+:root[data-theme="light"] .date-range input,
+:root[data-theme="light"] .search-input {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .date-range span {
+  color: var(--lt-text-2) !important;
+}
+
+/* Native <option> popup for these selects — override the dark navy
+   the scoped stylesheet doesn't touch. */
+:root[data-theme="light"] .field select option {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Buttons used inside PartReturnStatus (scoped .btn / .btn-primary) */
+:root[data-theme="light"] .btn {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .btn.primary,
+:root[data-theme="light"] .btn-primary {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+
+/* Tab bar */
+:root[data-theme="light"] .tab-btn {
+  background: var(--lt-surface-2) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .tab-btn.active {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+
+/* Meta row + result count */
+:root[data-theme="light"] .result-info {
+  color: #1d4ed8 !important;
+}
+
+/* Table header — scoped rule sets bg: #1f2937 / color: #f8fafc. That's
+   fine on dark, but on light we want a light header for consistency. */
+:root[data-theme="light"] .return-table th {
+  background: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .return-table td {
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .return-table tbody tr:nth-child(even) {
+  background: var(--lt-surface-2) !important;
+}
+:root[data-theme="light"] .return-table tbody tr.totals-row {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .return-table tbody tr.no-data td {
+  color: var(--lt-text-3) !important;
+}
+
+/* Inputs inside table cells */
+:root[data-theme="light"] .table-input,
+:root[data-theme="light"] .table-select {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — PartManagementPage / NeedClaimList portal dropdowns
+
+   These pages ship a portal-rendered multi-select popup. The container
+   is now theme-aware (DROPDOWN_STYLE uses CSS vars) but the *inner*
+   pieces still use Tailwind slate utilities: sticky search header
+   (bg-slate-900), search input (bg-slate-800 border-slate-600), item
+   rows (text-white with hover:bg-white/5), empty-state (text-slate-500).
+
+   The rules below force them to the light palette so the entire popup
+   flips cleanly in light mode.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Sticky search header inside the portal popup */
+:root[data-theme="light"] [style*="var(--color-card)"] .bg-slate-900,
+:root[data-theme="light"] [style*="var(--color-card)"] .sticky.bg-slate-900 {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* Search input inside the popup */
+:root[data-theme="light"] [style*="var(--color-card)"] input.bg-slate-800 {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Item rows and their labels */
+:root[data-theme="light"] [style*="var(--color-card)"] label.text-white,
+:root[data-theme="light"] [style*="var(--color-card)"] label {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] [style*="var(--color-card)"] label:hover {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* Empty state */
+:root[data-theme="light"] [style*="var(--color-card)"] .text-slate-500 {
+  color: var(--lt-text-3) !important;
+}
+
+/* ── Also the closed trigger button + surrounding filter selects/inputs
+   on PartManagementPage. They use bg-slate-800 border-slate-600 text-white
+   which the generic rules didn't cover cleanly. ────────────────────────── */
+:root[data-theme="light"] button.bg-slate-800,
+:root[data-theme="light"] select.bg-slate-800,
+:root[data-theme="light"] input.bg-slate-800 {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] button.bg-slate-800 .text-slate-400 {
+  color: var(--lt-text-3) !important;
+}
+
+/* Native <option> popup for those page-level selects */
+:root[data-theme="light"] select.bg-slate-800 option {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — Parts module scoped-style pages
+
+   Every Parts page below has an in-component <style>{`...`}</style> block
+   with the same anti-pattern: dark rgba fills, white text, blue-tinted
+   labels. None of them respect data-theme=light. Rather than write
+   per-class rules for each file, this block covers the *common class
+   names* those style blocks share.
+
+   Files targeted:
+     PartFootprintPage.tsx  (.fp-panel, .field, .search-input, .result-info)
+     PartHistoryPage.tsx   (.history-panel, .page-title, .section-title,
+                             .record-count, .meta-row, .search-inline)
+     PartOrder.tsx          (.form-group, .form-section-title, .info-banner)
+     PartReceive.tsx        (.form-group, .form-section-title, .date-range)
+     PoStatusPage.tsx       (.status-panel, .status-controls, .control-group,
+                             .status-meta, .table-wrap)
+     ReturnPickupPage.tsx   (.panel, .field, .btn, .btn.primary)
+     PartPickupPage.tsx     (.pickup-panel, .field, .toggle-row, .actions-row,
+                             .meta-row, .search-row, .input-label)
+     PartCollectionPage.tsx (.collection-panel, .field, .date-range,
+                             .collection-status-row, .collection-search-row)
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Common panel-shell class names — all use the same rgba(255,255,255,0.08)
+   glass background baked into their scoped <style>. Flip to a light card
+   surface in light mode. */
+:root[data-theme="light"] .fp-panel,
+:root[data-theme="light"] .history-panel,
+:root[data-theme="light"] .status-panel,
+:root[data-theme="light"] .pickup-panel,
+:root[data-theme="light"] .collection-panel {
+  background: var(--color-card) !important;
+  border-color: var(--color-panel-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Page titles + section headings — those files hardcode #dbeafe / #bfdbfe */
+:root[data-theme="light"] .page-title,
+:root[data-theme="light"] .section-title {
+  color: #1d4ed8 !important;
+}
+
+/* Result / record counters — same #bfdbfe pale-blue */
+:root[data-theme="light"] .record-count,
+:root[data-theme="light"] .status-meta {
+  color: var(--lt-text-2) !important;
+}
+:root[data-theme="light"] .status-meta a,
+:root[data-theme="light"] .status-meta strong {
+  color: var(--lt-text) !important;
+}
+
+/* Form section titles (blue #64b5f6 on dark) */
+:root[data-theme="light"] .form-section-title {
+  color: #1d4ed8 !important;
+}
+
+/* Form group label — hardcoded #e5e7eb */
+:root[data-theme="light"] .form-group label {
+  color: var(--lt-text-2) !important;
+}
+
+/* Form-group inputs / selects */
+:root[data-theme="light"] .form-group input,
+:root[data-theme="light"] .form-group select,
+:root[data-theme="light"] .form-group textarea {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .form-group select option {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Status controls (PoStatusPage) */
+:root[data-theme="light"] .control-group label {
+  color: var(--lt-text-2) !important;
+}
+:root[data-theme="light"] .control-group input,
+:root[data-theme="light"] .control-group select {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .control-group select option {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Date range separator (was #dbeafe / #64748b depending on file) */
+:root[data-theme="light"] .date-range span,
+:root[data-theme="light"] .date-range-row span,
+:root[data-theme="light"] .date-range-sep {
+  color: var(--lt-text-2) !important;
+}
+
+/* Input labels + toggle rows */
+:root[data-theme="light"] .input-label {
+  color: #1d4ed8 !important;
+}
+:root[data-theme="light"] .toggle-row label,
+:root[data-theme="light"] .checkbox-item label {
+  color: var(--lt-text) !important;
+}
+
+/* Info banner (blue-tinted callout) */
+:root[data-theme="light"] .info-banner {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e40af !important;
+}
+
+/* Table wrap in Po Status */
+:root[data-theme="light"] .table-wrap {
+  color: var(--lt-text) !important;
+}
+
+/* ── Section-level fixes for TruckStockBatchModal & MarconePartsOrderModal
+   ─ heavy Tailwind slate usage. The existing generic overrides catch most
+   of it, but re-emphasize the modal container to make sure the dialog
+   flips cleanly. ────────────────────────────────────────────────────── */
+:root[data-theme="light"] .bg-slate-900\/95,
+:root[data-theme="light"] .bg-slate-900\/90,
+:root[data-theme="light"] .bg-slate-900\/80 {
+  background-color: var(--color-card) !important;
+}
+:root[data-theme="light"] .bg-slate-950\/95,
+:root[data-theme="light"] .bg-slate-950\/90,
+:root[data-theme="light"] .bg-slate-950\/80 {
+  background-color: var(--color-background) !important;
+}
+
+/* Recharts tooltip container — some rechart internals target their
+   own class name. Cover both the CSS-var contentStyle and any residual
+   .recharts-default-tooltip. */
+:root[data-theme="light"] .recharts-default-tooltip,
+:root[data-theme="light"] .recharts-tooltip-wrapper > div {
+  background: var(--color-card) !important;
+  color: var(--color-foreground) !important;
+  border: 1px solid var(--color-panel-border) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — Parts module table headers (scoped-style pages)
+
+   Every scoped-style Parts page uses one of these class-named tables and
+   hardcodes the header to a dark bg. The rules below flip them to a light
+   header in light mode so column labels are readable.
+
+   Tables: history-table, fp-table, pickup-table, collection-table,
+           status-table, data-table (in ReturnPickupPage).
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Main header row backgrounds */
+:root[data-theme="light"] .history-table thead th,
+:root[data-theme="light"] .pickup-table th,
+:root[data-theme="light"] .collection-table th {
+  background: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* Subhead rows (PartHistoryPage has a 2-row header) */
+:root[data-theme="light"] .history-table thead tr.subhead th {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text-2) !important;
+}
+
+/* Footprint page uses a dark blue header specifically */
+:root[data-theme="light"] .fp-table thead tr {
+  background: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .fp-table th {
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* Row hover states */
+:root[data-theme="light"] .fp-table tbody tr:hover {
+  background: #eff6ff !important;
+}
+
+/* Zebra striping — the scoped rules use #f9fafb which is already light,
+   but color: #f9fafb text is invisible if it leaks anywhere. Force. */
+:root[data-theme="light"] .history-table tbody tr,
+:root[data-theme="light"] .pickup-table tbody tr,
+:root[data-theme="light"] .collection-table tbody tr {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .history-table td,
+:root[data-theme="light"] .pickup-table td,
+:root[data-theme="light"] .collection-table td,
+:root[data-theme="light"] .fp-table td {
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* No-records / empty-state text */
+:root[data-theme="light"] .no-records {
+  color: var(--lt-text-3) !important;
+}
+
+/* Native select <option> popup — some pages hardcode #111827 background */
+:root[data-theme="light"] .control-group select option {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* .table-wrap on scoped-style pages hardcodes border rgba(255,255,255,0.2).
+   Not visible on white bg — override to a light-mode compatible border. */
+:root[data-theme="light"] .table-wrap {
+  border-color: var(--lt-border) !important;
+}
+
+/* History summary panel (bottom of PartHistoryPage) — hardcoded #94a3b8 */
+:root[data-theme="light"] .history-summary-panel {
+  color: var(--lt-text-2) !important;
+}
+
+/* Footer copy text */
+:root[data-theme="light"] .footer-copy {
+  color: var(--lt-text-3) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — Parts module "search in result" inputs
+
+   Every Parts scoped-style page uses one of these class names for the
+   "search in result" filter box + related scan/invoice inputs:
+     .search-input
+     .search-inline input
+     .scan-input
+     .invoice-input
+   Each is baked to rgba(17,24,39,0.95) with white text via the scoped
+   <style>{`...`}</style> block. Flip them in light mode.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="light"] .search-input,
+:root[data-theme="light"] .search-inline input,
+:root[data-theme="light"] .scan-input,
+:root[data-theme="light"] .invoice-input,
+:root[data-theme="light"] input.search-input,
+:root[data-theme="light"] input.scan-input,
+:root[data-theme="light"] input.invoice-input {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+:root[data-theme="light"] .search-input::placeholder,
+:root[data-theme="light"] .search-inline input::placeholder,
+:root[data-theme="light"] .scan-input::placeholder,
+:root[data-theme="light"] .invoice-input::placeholder {
+  color: var(--lt-text-3) !important;
+}
+
+:root[data-theme="light"] .search-input:focus,
+:root[data-theme="light"] .search-inline input:focus,
+:root[data-theme="light"] .scan-input:focus,
+:root[data-theme="light"] .invoice-input:focus {
+  border-color: #60a5fa !important;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18) !important;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE TECH APP — company badge → side navigation drawer
+
+   The company label in the mobile top-bar is now a button. Tapping it
+   opens a slide-in sidebar with quick links to Home, Tickets, Payroll,
+   Tech Sheets, Part Pickup, plus a "Switch to Desktop" toggle.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.mtech-company-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.15rem 0.35rem;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  border-radius: 0.35rem;
+  transition: background 0.12s ease;
+}
+.mtech-company-btn:hover,
+.mtech-company-btn:focus-visible {
+  background: rgba(148, 163, 184, 0.15);
+  outline: none;
+}
+
+/* Left slot in the topbar — holds back button + hamburger together on
+   views where both are needed. On the root view only the company-badge
+   button is shown (no back arrow), so .mtech-topbar-left can just be
+   a flex wrapper that keeps them aligned. */
+.mtech-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* Hamburger icon shown alongside the back arrow so nav is reachable
+   from every view, not just from the roster/ticket root. */
+.mtech-topbar-hamburger {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.18);
+  border: none;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  font-size: 1rem;
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background 0.12s ease;
+}
+.mtech-topbar-hamburger:hover,
+.mtech-topbar-hamburger:focus-visible {
+  background: rgba(255, 255, 255, 0.28);
+  outline: none;
+}
+
+.mtech-sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 60;
+  animation: mtechSideFade 0.15s ease-out;
+}
+:root[data-theme="light"] .mtech-sidebar-overlay {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.mtech-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 61;
+  width: min(80vw, 280px);
+  background: var(--color-card);
+  color: var(--color-foreground);
+  border-right: 1px solid var(--color-panel-border);
+  box-shadow: 6px 0 24px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  animation: mtechSideSlide 0.2s ease-out;
+}
+
+@keyframes mtechSideFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes mtechSideSlide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+.mtech-sidebar-head {
+  padding: 1rem 1.1rem 0.85rem;
+  border-bottom: 1px solid var(--color-panel-border);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(99, 102, 241, 0.08));
+}
+:root[data-theme="light"] .mtech-sidebar-head {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.10), rgba(99, 102, 241, 0.05));
+}
+
+.mtech-sidebar-company {
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+}
+.mtech-sidebar-user {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  opacity: 0.72;
+}
+
+.mtech-sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.35rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.mtech-sidebar-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.mtech-sidebar-item:hover,
+.mtech-sidebar-item:focus-visible {
+  background: rgba(59, 130, 246, 0.12);
+  outline: none;
+}
+.mtech-sidebar-item-icon {
+  font-size: 1.05rem;
+  width: 1.3rem;
+  text-align: center;
+}
+.mtech-sidebar-item-label {
+  flex: 1;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.mtech-sidebar-divider {
+  height: 1px;
+  margin: 0.5rem 0.4rem;
+  background: var(--color-panel-border);
+}
+.mtech-sidebar-item-primary {
+  background: rgba(59, 130, 246, 0.14);
+}
+.mtech-sidebar-item-primary:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+/* Complete button on the Repair-tab visit-edit form. Uses emerald to
+   signal a terminal state distinct from the plain Save action. Only
+   shown when Cause of Failure + Repair Notes are filled AND
+   Non-Completion Reason is empty. */
+.mtech-btn-complete {
+  background: #059669;
+  border-color: #047857;
+  color: #ffffff;
+}
+.mtech-btn-complete:hover:not(:disabled) {
+  background: #047857;
+}
+:root[data-theme="light"] .mtech-btn-complete {
+  background: #10b981;
+  border-color: #059669;
+}
+
+/* Small inline note that explains why the Complete button is missing
+   when a Non-Completion Reason is present. */
+.mtech-visit-edit-note {
+  margin-top: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.4rem;
+  background: rgba(251, 146, 60, 0.14);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  color: #9a3412;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+:root[data-theme="light"] .mtech-visit-edit-note {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fed7aa;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE TECH APP — Home / Payroll / Stub views (sidebar destinations)
+
+   Follows the existing mobile app color scheme:
+   • Deep navy gradient background on .mtech (already set)
+   • White (#fff) cards with shadow for all content
+   • Blue gradient accent (var(--mt-blue) / var(--mt-blue-dark))
+   • Dark ink (#1f2937 / #64748b) for text on white cards
+   • All colours are internal to .mtech so the desktop is unaffected
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Active sidebar item — uses brand blue on the navy sidebar */
+.mtech-sidebar-item-active {
+  background: rgba(91, 126, 255, 0.25);
+  color: #fff;
+  font-weight: 800;
+}
+
+/* ── Home view ─────────────────────────────────────────────────────────── */
+.mtech-home {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Greeting banner — same gradient as topbar */
+.mtech-home-greeting {
+  padding: 1rem 1.15rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #5b7eff, #4c5ac0);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.mtech-home-hi {
+  font-size: 0.82rem;
+  opacity: 0.85;
+}
+.mtech-home-name {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin-top: 0.12rem;
+}
+
+/* Stat card — white, same as roster/ticket cards */
+.mtech-home-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+.mtech-home-stat {
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mtech-home-stat-value {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+  line-height: 1;
+}
+.mtech-home-stat-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
+/* 2×2 shortcut tile grid — white cards */
+.mtech-home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.7rem;
+}
+.mtech-home-tile {
+  appearance: none;
+  border: none;
+  background: #fff;
+  color: #1f2937;
+  padding: 1.1rem 0.75rem 1rem;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  font-family: inherit;
+}
+.mtech-home-tile:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.mtech-home-tile-icon {
+  font-size: 1.85rem;
+}
+.mtech-home-tile-label {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--mt-blue-dark);
+}
+
+/* ── Payroll view ──────────────────────────────────────────────────────── */
+.mtech-payroll {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+/* Heading (white card) */
+.mtech-payroll-heading {
+  padding: 0.85rem 1.05rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-payroll-name {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-payroll-sub {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+/* Summary cards — two side by side, white */
+.mtech-payroll-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+.mtech-payroll-card {
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-payroll-card-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: #64748b;
+}
+.mtech-payroll-card-value {
+  margin-top: 0.25rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #1f2937;
+}
+.mtech-payroll-card-value.paid { color: #16a34a; }
+.mtech-payroll-card-value.pending { color: #d97706; }
+
+/* Per-period row cards — white */
+.mtech-payroll-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mtech-payroll-row {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+.mtech-payroll-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.65rem 0.85rem 0.4rem;
+}
+.mtech-payroll-row-date {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #1f2937;
+}
+
+/* Status pills (on white card — use saturated solid colours) */
+.mtech-payroll-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.mtech-payroll-status-paid {
+  background: #dcfce7;
+  color: #15803d;
+}
+.mtech-payroll-status-pending {
+  background: #fef9c3;
+  color: #a16207;
+}
+.mtech-payroll-status-processing {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.mtech-payroll-status-on-hold {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.mtech-payroll-row-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.85rem 0.7rem;
+  gap: 0.6rem;
+  border-top: 1px solid #f1f5f9;
+}
+.mtech-payroll-row-amount {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-payroll-row-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* Action buttons — style matches existing mtech-btn pattern */
+.mtech-payroll-action {
+  appearance: none;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: 1.5px solid var(--mt-blue);
+  background: #fff;
+  color: var(--mt-blue-dark);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s ease;
+}
+.mtech-payroll-action:hover:not(:disabled) {
+  background: #eef2ff;
+}
+.mtech-payroll-action-secondary {
+  border-color: #16a34a;
+  color: #16a34a;
+}
+.mtech-payroll-action-secondary:hover:not(:disabled) {
+  background: #f0fdf4;
+}
+.mtech-payroll-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Footer note */
+.mtech-payroll-note {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.65);
+  text-align: center;
+  padding: 0 0.5rem;
+}
+
+/* ── Stub view ─────────────────────────────────────────────────────────── */
+.mtech-stub {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+}
+.mtech-stub-icon {
+  font-size: 3.5rem;
+  margin-bottom: 0.85rem;
+}
+.mtech-stub-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 0.6rem;
+}
+.mtech-stub-message {
+  font-size: 0.87rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 30ch;
+  margin: 0 auto;
+}
+
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE — Messenger-style Chat + SVG bottom nav icons
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Bottom nav SVG icon sizing ─────────────────────────────────────── */
+.mtech-bottom-tab-svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.75;
+  display: block;
+}
+/* Keep the icon slot size consistent whether it's an SVG or text */
+.mtech-bottom-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+}
+
+/* ── Home tile SVG icons ─────────────────────────────────────────────── */
+.mtech-home-tile-svg {
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.5;
+  color: var(--mt-blue-dark);
+  display: block;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Messenger-style Chat UI
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Shared wrapper — fills the content area */
+.mtech-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #f8fafc;
+}
+
+/* ── Inbox (contact list) ─────────────────────────────────────────────── */
+.mtech-chat-inbox {
+  overflow-y: auto;
+}
+
+.mtech-chat-inbox-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.85rem 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.mtech-chat-inbox-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #1f2937;
+}
+
+/* Full-width search bar */
+.mtech-chat-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.mtech-chat-search-icon {
+  position: absolute;
+  left: 0.75rem;
+  width: 16px;
+  height: 16px;
+  color: #94a3b8;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.mtech-chat-search-input {
+  width: 100%;
+  padding: 0.6rem 2.2rem 0.6rem 2.25rem;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 22px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  background: #f8fafc;
+  color: #1f2937;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.mtech-chat-search-input::placeholder {
+  color: #94a3b8;
+}
+.mtech-chat-search-input:focus {
+  border-color: var(--mt-blue);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(91, 126, 255, 0.15);
+}
+.mtech-chat-search-clear {
+  position: absolute;
+  right: 0.6rem;
+  background: #e2e8f0;
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #64748b;
+  cursor: pointer;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+/* Role filter pills — horizontal scroll row */
+.mtech-chat-role-pills {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  scrollbar-width: none;
+}
+.mtech-chat-role-pills::-webkit-scrollbar { display: none; }
+.mtech-chat-role-pill {
+  appearance: none;
+  border: 1.5px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  border-radius: 999px;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+.mtech-chat-role-pill.active {
+  border-color: var(--mt-blue);
+  background: var(--mt-blue);
+  color: #fff;
+}
+
+/* Status / empty text */
+.mtech-chat-status {
+  text-align: center;
+  color: #64748b;
+  font-size: 0.85rem;
+  padding: 1.5rem 1rem;
+}
+.mtech-chat-status-err { color: #dc2626; }
+
+/* Contact rows — WhatsApp/Messenger-style */
+.mtech-chat-contact-list {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.mtech-chat-contact-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.8rem 1rem;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-bottom: 1px solid #f1f5f9;
+  font-family: inherit;
+}
+.mtech-chat-contact-row:last-child {
+  border-bottom: none;
+}
+.mtech-chat-contact-row:active,
+.mtech-chat-contact-row:hover {
+  background: #f8fafc;
+}
+
+.mtech-chat-contact-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.mtech-chat-contact-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.mtech-chat-contact-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtech-chat-contact-role-label {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.mtech-chat-contact-chev {
+  color: #cbd5e1;
+  flex-shrink: 0;
+}
+
+/* ── Thread view ──────────────────────────────────────────────────────── */
+.mtech-chat-thread {
+  overflow: hidden;
+}
+
+.mtech-chat-thread-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.mtech-chat-back-btn {
+  background: none;
+  border: none;
+  padding: 0.3rem;
+  cursor: pointer;
+  color: var(--mt-blue-dark);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: background 0.12s ease;
+}
+.mtech-chat-back-btn:hover {
+  background: #f1f5f9;
+}
+
+.mtech-chat-thread-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.mtech-chat-thread-info {
+  flex: 1;
+  min-width: 0;
+}
+.mtech-chat-thread-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #1f2937;
+}
+.mtech-chat-thread-role {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+/* Message bubbles area */
+.mtech-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.85rem 0.85rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  background: #f8fafc;
+}
+
+/* Each row (avatar + bubble) */
+.mtech-msg-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem;
+}
+.mtech-msg-row.mine {
+  flex-direction: row-reverse;
+}
+
+.mtech-msg-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.mtech-msg-bubble-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 72%;
+}
+.mtech-msg-row.mine .mtech-msg-bubble-wrap {
+  align-items: flex-end;
+}
+
+.mtech-msg-bubble {
+  padding: 0.55rem 0.85rem;
+  border-radius: 18px;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.mtech-msg-bubble.theirs {
+  background: #fff;
+  color: #1f2937;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.07);
+}
+.mtech-msg-bubble.mine {
+  background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.mtech-msg-time {
+  font-size: 0.65rem;
+  color: #94a3b8;
+  padding: 0 0.25rem;
+}
+.mtech-msg-time.mine {
+  text-align: right;
+}
+
+/* Composer bar */
+.mtech-chat-composer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: #fff;
+  border-top: 1px solid #e2e8f0;
+  /* Give it a bit of space from the bottom nav */
+  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0));
+}
+
+.mtech-chat-composer-input {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-family: inherit;
+  background: #f8fafc;
+  color: #1f2937;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.mtech-chat-composer-input:focus {
+  border-color: var(--mt-blue);
+  background: #fff;
+}
+.mtech-chat-composer-input::placeholder {
+  color: #94a3b8;
+}
+
+.mtech-chat-send-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--mt-blue), var(--mt-blue-dark));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+.mtech-chat-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mtech-chat-send-btn:not(:disabled):active {
+  transform: scale(0.93);
 }

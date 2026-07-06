@@ -34,7 +34,7 @@ const REGULAR_PARTS = [
   {id:5,ticketNo:"TK-2026-1004",uniqueId:"UID-10004",partNo:"LG123-456",description:"Door Seal",invoiceDate:"2026-04-18",returnQty:1,coreValue:0,partStatus:"Used",scheduleDate:"05/26/2026",technician:"Nelson Ogutu",coreRA:"RA-0005"},
 ];
 
-const DROP_STYLE: React.CSSProperties = { background:"rgb(22,28,52)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:6, boxShadow:"0 8px 32px rgba(0,0,0,0.5)", zIndex:999999, position:"fixed", maxHeight:260, overflowY:"auto" };
+const DROP_STYLE: React.CSSProperties = { background:"var(--color-card)", color:"var(--color-foreground)", border:"1px solid var(--color-panel-border)", borderRadius:6, boxShadow:"0 8px 32px rgba(0,0,0,0.5)", zIndex:999999, position:"fixed", maxHeight:260, overflowY:"auto" };
 const Chevron = ({open}:{open:boolean}) => <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
 
 function usePortalPos(open: boolean) {

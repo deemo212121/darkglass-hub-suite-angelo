@@ -45,6 +45,7 @@ const USER_TYPES: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
   { value: "TECHNICIAN", label: "Technician" },
+  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
   { value: "CLAIMS", label: "Claims" },
   { value: "HR", label: "HR" },
   { value: "IT", label: "IT" },

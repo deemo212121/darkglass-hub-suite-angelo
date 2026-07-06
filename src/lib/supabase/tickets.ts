@@ -12,7 +12,7 @@
 
 import { supabase } from "./client";
 import type { Ticket } from "@/lib/ticketData";
-import { mapSource } from "@/lib/mfgSource";
+import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -96,12 +96,29 @@ function sanitizeLocation(raw: string): string {
 // Re-resolve a stored ticket_source value through the MfgId map. Rows synced
 // before a code was mapped will have raw codes like "I990" persisted; this
 // keeps the UI display consistent without forcing a re-sync.
-function resolveSource(raw: string): string {
+//
+// Also applies the ticket-number-prefix override so historical rows that
+// were saved with a stale Work Order Source (e.g. an Electrolux ticket
+// stored as "ASSURANT SOLUTIONS" because SP filed it under Assurant's
+// MfgId) self-correct on read without needing an SP re-sync.
+//
+// Skipped when the row was manually edited (source_edited_by_user = true)
+// so an admin's correction is honored above every automatic rule.
+function resolveSource(
+  raw: string,
+  ticketNo?: string | null,
+  sourceEditedByUser?: boolean,
+): string {
   const v = String(raw || "").trim();
+  if (sourceEditedByUser) return v;
+  // Ticket-number prefix override wins (e.g. numbers starting with
+  // "1007" are Electrolux even when SP tagged them Assurant).
+  const byTicket = mapSourceFromTicketNumber(ticketNo);
+  if (byTicket) return byTicket;
   if (!v) return "";
   // If the value looks like a code (e.g. "I990", "K100"), try mapping it.
   if (/^[A-Z]\d{2,4}$/.test(v.toUpperCase())) {
-    return mapSource(v) || v;
+    return mapSource(v, null, ticketNo) || v;
   }
   return v;
 }
@@ -113,7 +130,11 @@ function rowToTicket(row: any): Ticket {
   const c = row.customer ?? {};
   return {
     ticketNo: row.ticket_no,
-    ticketSource: resolveSource(row.ticket_source ?? ""),
+    ticketSource: resolveSource(
+      row.ticket_source ?? "",
+      row.ticket_no ?? "",
+      Boolean(row.source_edited_by_user),
+    ),
     warranty: row.warranty ?? "",
     manufacturer: row.manufacturer ?? "",
     customer: c.full_name ?? "",
@@ -628,6 +649,96 @@ async function getTicketId(ticketNo: string): Promise<string | null> {
  * Visits with a null/empty `schedule_date` are ignored.
  */
 /**
+ * Bulk-fetch the derived "Part Order" state per ticket for the
+ * Ticket List column. Runs two lightweight queries against `visits`
+ * and `parts` and reduces them to one of four labels:
+ *
+ *   • "Not Diagnosed"     — no visit has cause_of_failure filled yet
+ *   • "Part Not Needed"   — diagnosed but the ticket has zero parts logged
+ *   • "Part Ordered"      — diagnosed, every part row is past Need PO
+ *   • "Partially Ordered" — diagnosed, some parts past Need PO, some still at it
+ *
+ * Returns a `Map<ticket_id, label>` for the requested ticket UUIDs.
+ */
+export type PartOrderState =
+  | "Not Diagnosed"
+  | "Part Not Needed"
+  | "Part Ordered"
+  | "Partially Ordered";
+
+export async function getPartOrderStateByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, PartOrderState>> {
+  const out = new Map<string, PartOrderState>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+
+  // 1. Diagnosed set — every ticket that has at least one visit with a
+  //    non-empty cause_of_failure.
+  const diagnosed = new Set<string>();
+  {
+    const { data, error } = await supabase
+      .from("visits")
+      .select("ticket_id, cause_of_failure")
+      .in("ticket_id", uniq)
+      .not("cause_of_failure", "is", null);
+    if (error) {
+      console.error("getPartOrderStateByTicketIds visits error:", error.message);
+    } else {
+      for (const row of data ?? []) {
+        const tid = (row as any).ticket_id as string | null;
+        const cf = String((row as any).cause_of_failure ?? "").trim();
+        if (tid && cf) diagnosed.add(tid);
+      }
+    }
+  }
+
+  // 2. Parts per ticket, with each row's status. Statuses that count as
+  //    "still needs a PO" — anything else is considered "past ordering".
+  const needsPo = new Set(["", "need po"]);
+  const partsByTicket = new Map<string, { total: number; needPo: number }>();
+  {
+    const { data, error } = await supabase
+      .from("parts")
+      .select("ticket_id, status")
+      .in("ticket_id", uniq);
+    if (error) {
+      console.error("getPartOrderStateByTicketIds parts error:", error.message);
+    } else {
+      for (const row of data ?? []) {
+        const tid = (row as any).ticket_id as string | null;
+        if (!tid) continue;
+        const statusRaw = String((row as any).status ?? "").trim().toLowerCase();
+        const bucket = partsByTicket.get(tid) ?? { total: 0, needPo: 0 };
+        bucket.total += 1;
+        if (needsPo.has(statusRaw)) bucket.needPo += 1;
+        partsByTicket.set(tid, bucket);
+      }
+    }
+  }
+
+  for (const tid of uniq) {
+    if (!diagnosed.has(tid)) {
+      out.set(tid, "Not Diagnosed");
+      continue;
+    }
+    const parts = partsByTicket.get(tid);
+    if (!parts || parts.total === 0) {
+      out.set(tid, "Part Not Needed");
+      continue;
+    }
+    if (parts.needPo === 0) out.set(tid, "Part Ordered");
+    else if (parts.needPo < parts.total) out.set(tid, "Partially Ordered");
+    else out.set(tid, "Not Diagnosed");
+    // The last branch fires when a ticket is diagnosed but no part has
+    // moved past Need PO yet. Treated as "not yet ordered" to match the
+    // spec's 4-value list.
+  }
+
+  return out;
+}
+
+/**
  * Bulk-fetch CSR-added "extra route days" per ticket.
  *
  * Returns a `Map<ticket_id, Set<YYYY-MM-DD>>` covering days the CSR has
@@ -1078,7 +1189,7 @@ async function upsertTicketFromServicePowerImpl(
   // lookup throw — we just take the first row and update it.
   const { data: existingRows, error: findErr } = await supabase
     .from("tickets")
-    .select("id, customer_id, status, product_edited_by_user, schedule_date, time_slot")
+    .select("id, customer_id, status, product_edited_by_user, source_edited_by_user, schedule_date, time_slot")
     .eq("ticket_no", input.ticketNo)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -1131,6 +1242,17 @@ async function upsertTicketFromServicePowerImpl(
       delete ticketPayload.warranty;
       delete ticketPayload.claim_company;
       delete ticketPayload.original_ticket_no;
+    }
+    // Honor the ticket-source lock flag. When an admin corrects a
+    // mis-classified Work Order Source (e.g. an Electrolux ticket SP
+    // filed under Assurant's MfgId), the correction is stored with
+    // source_edited_by_user = true. SP must not overwrite the Work
+    // Order Source / claim company / account on re-sync from that
+    // point on.
+    if ((existing as any).source_edited_by_user) {
+      delete ticketPayload.ticket_source;
+      delete ticketPayload.account;
+      delete ticketPayload.claim_company;
     }
     // Update the linked customer (or create one if missing). If a user has
     // manually edited any customer field (Edit Customer Info → Save), the

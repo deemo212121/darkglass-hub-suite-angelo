@@ -33,7 +33,7 @@ const DEFAULTS: Settings = {
 
 function Toggle({ label, desc, checked, onChange }: { label: string; desc?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex items-start gap-3 rounded-lg border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.03)] px-3 py-2.5 cursor-pointer">
+    <label className="flex items-start gap-3 rounded-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-3 py-2.5 cursor-pointer">
       <input type="checkbox" className="mt-1" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="flex-1">
         <span className="block text-sm font-medium">{label}</span>

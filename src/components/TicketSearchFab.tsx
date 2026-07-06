@@ -73,15 +73,15 @@ export function TicketSearchFab() {
       <button
         type="button"
         onClick={() => setSearchOpen(true)}
-        className="fixed bottom-16 right-5 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.18_0.04_260/0.9)] text-foreground shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition-transform hover:scale-105 hover:bg-[oklch(0.22_0.04_260/0.95)] focus:outline-none"
+        className="fixed bottom-16 right-5 z-50 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-card)] text-foreground shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md transition-transform hover:scale-105 hover:bg-[var(--color-secondary)] focus:outline-none"
         aria-label="Search tickets"
       >
-        <Search className="h-5 w-5 text-white" />
+        <Search className="h-5 w-5" />
       </button>
 
       {/* Ticket search dialog */}
       <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
-        <DialogContent className="sm:max-w-sm border border-[var(--color-panel-border)] bg-[oklch(0.18_0.03_260/0.98)] text-foreground">
+        <DialogContent className="sm:max-w-sm border border-[var(--color-panel-border)] bg-[var(--color-card)] text-foreground">
           <DialogHeader className="text-left">
             <DialogTitle className="font-display text-lg">Search ticket</DialogTitle>
             <DialogDescription>Type a ticket number, customer name, zip code, or status.</DialogDescription>

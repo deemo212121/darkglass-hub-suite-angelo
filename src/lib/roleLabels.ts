@@ -12,6 +12,7 @@ export const ROLE_LABELS: Record<string, string> = {
   MANAGER: "Manager",
   CSR: "CSR",
   TECHNICIAN: "Technician",
+  TECHNICIAN_MANAGER: "Tech Manager",
   DISPATCHER: "Dispatcher",
   HR: "HR",
   IT: "IT",

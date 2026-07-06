@@ -21,6 +21,7 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
+import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
 import {
   getLocationManagementCoordinates,
   getLocationManagementZoomAddress,
@@ -269,13 +270,19 @@ export function TicketListMap() {
 
     const geocoder = new maps.Geocoder();
     const cache = new Map<string, { lat: number; lng: number } | null>();
-    const geocode = (q: string) => new Promise<{ lat: number; lng: number } | null>((resolve) => {
+    const geocode = (q: string) => new Promise<{ lat: number; lng: number } | null>(async (resolve) => {
+      // Layer 1: in-memory cache (free, instant — avoids duplicate calls in same render)
       if (cache.has(q)) { resolve(cache.get(q)!); return; }
+      // Layer 2: Supabase DB cache (free — only pay Google once per unique address ever)
+      const dbHit = await lookupGeocode(q);
+      if (dbHit) { cache.set(q, dbHit); resolve(dbHit); return; }
+      // Layer 3: Google Geocoding API (costs money — store result after)
       geocoder.geocode({ address: q }, (results: any, status: string) => {
         if (status === "OK" && results?.[0]) {
           const pos = results[0].geometry.location;
           const out = { lat: pos.lat(), lng: pos.lng() };
           cache.set(q, out);
+          void storeGeocode(q, out); // fire-and-forget — persist for next time
           resolve(out);
         } else {
           cache.set(q, null);

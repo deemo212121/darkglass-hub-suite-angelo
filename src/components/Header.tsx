@@ -57,7 +57,7 @@ export function AppHeader() {
   }, [email]);
 
   return (
-    <header className="sticky top-0 z-30 backdrop-blur-md bg-[oklch(0.16_0.04_260/0.7)] border-b border-[var(--color-panel-border)]">
+    <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--color-background)]/70 border-b border-[var(--color-panel-border)]">
       <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
         <Link to="/home" className="flex items-center gap-3">
           <img src={logo} alt="Admin Hub Solutions" className="logo-img h-9 w-9 object-contain" />
@@ -71,7 +71,7 @@ export function AppHeader() {
             <button
               type="button"
               onClick={toggleTheme}
-              className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
+              className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground transition-colors hover:bg-[var(--color-secondary)] hover:text-foreground"
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               aria-label="Toggle theme"
             >
@@ -85,7 +85,7 @@ export function AppHeader() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="group flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] hover:bg-[oklch(0.98_0.005_250/0.1)] transition-colors cursor-pointer"
+                  className="group flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[var(--color-panel)] hover:bg-[var(--color-secondary)] transition-colors cursor-pointer"
                   aria-label="Account menu"
                 >
                   <span className="grid place-items-center h-8 w-8 rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">
@@ -105,7 +105,7 @@ export function AppHeader() {
               <DropdownMenuContent
                 align="end"
                 sideOffset={8}
-                className="z-[100] w-64 p-1.5 rounded-xl border border-[var(--color-panel-border)] bg-[oklch(0.20_0.04_260/0.98)] backdrop-blur-xl shadow-2xl"
+                className="z-[100] w-64 p-1.5 rounded-xl border border-[var(--color-panel-border)] bg-[var(--color-card)] backdrop-blur-xl shadow-2xl"
               >
                 <DropdownMenuLabel className="px-2 py-2">
                   <div className="flex items-center gap-2.5">

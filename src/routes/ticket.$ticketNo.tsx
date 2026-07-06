@@ -7,6 +7,7 @@ import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeD
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
@@ -1062,10 +1063,6 @@ function TicketDetailsPage() {
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
   // ServicePower Running Notes modal (next to Add Visit).
   const [isRunningNotesOpen, setIsRunningNotesOpen] = useState(false);
-  // Problem Description quick-view modal (sits next to Running Notes so
-  // dispatch can read the customer's reported issue without scrolling
-  // past the visit table to the Problem Description card below).
-  const [isProblemDescOpen, setIsProblemDescOpen] = useState(false);
   const [runningNotes, setRunningNotes] = useState<Array<{
     date: string; body: string; addedBy: string; isInternal: boolean;
   }>>([]);
@@ -1225,6 +1222,15 @@ function TicketDetailsPage() {
   // Edit mode state for schedule information
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
+
+  // Inline edit state for the Redo Ticket # input on the Visit Log
+  // sidebar. Persists to tickets.original_ticket_no via the same
+  // updateTicketFields path used by the Product Info edit form. Stored
+  // separately from the Product Info draft so a quick redo-number edit
+  // doesn't force the user into the full product-info modal.
+  const [editingRedoTicket, setEditingRedoTicket] = useState(false);
+  const [redoTicketDraft, setRedoTicketDraft] = useState("");
+  const [savingRedoTicket, setSavingRedoTicket] = useState(false);
 
   useEffect(() => {
     // Load audit entries from localStorage
@@ -2266,6 +2272,53 @@ function TicketDetailsPage() {
   const cancelEditingScheduleInfo = () => {
     setIsEditingScheduleInfo(false);
     setEditedScheduleInfo({});
+  };
+
+  // Start editing the Redo Ticket # inline. Seeds the draft with the
+  // value currently on the ticket so the user can append/replace.
+  const startEditingRedoTicket = () => {
+    setRedoTicketDraft(String(ticket?.redoTicketNo ?? ""));
+    setEditingRedoTicket(true);
+  };
+
+  const cancelEditingRedoTicket = () => {
+    setEditingRedoTicket(false);
+    setRedoTicketDraft("");
+  };
+
+  // Persist the Redo Ticket # to Supabase (tickets.original_ticket_no
+  // via updateTicketFields), update the in-memory ticket so the UI
+  // reflects the change without a reload, append an audit entry.
+  const saveRedoTicket = async () => {
+    if (!ticket) return;
+    const next = redoTicketDraft.trim();
+    const prev = String(ticket.redoTicketNo ?? "");
+    if (next === prev) {
+      setEditingRedoTicket(false);
+      return;
+    }
+    setSavingRedoTicket(true);
+    try {
+      await sbUpdateTicketFields(ticketNo, { originalTicketNo: next });
+      // Reflect change locally so the field re-renders immediately.
+      (ticket as any).redoTicketNo = next;
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Updated Redo Ticket #",
+        field: "Redo Ticket #",
+        before: prev || "NONE",
+        after: next || "NONE",
+      });
+      setEditingRedoTicket(false);
+      setRedoTicketDraft("");
+    } catch (err) {
+      console.error("Failed to save Redo Ticket #", err);
+      alert(
+        `Failed to save Redo Ticket #: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setSavingRedoTicket(false);
+    }
   };
 
   const addVisitLogEntry = async () => {
@@ -3493,6 +3546,75 @@ function TicketDetailsPage() {
     return () => { cancelled = true; };
   }, [authReady, uid]);
 
+  // Merged technician list for the Add Visit / Edit Schedule
+  // dropdowns. Combines the canonical ALL_TECHNICIANS constant with
+  // every Supabase profile that has TECHNICIAN as primary role OR in
+  // extra_roles — so multi-role users like Daven Hodge (BizOps + Tech)
+  // show up in the technician picker. De-duplicated, sorted
+  // alphabetically. Falls back to the static list when the fetch
+  // hasn't completed yet.
+  const [companyTechUsers, setCompanyTechUsers] = useState<string[]>([]);
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCompanyUsers } = await import("@/lib/supabase/users");
+        const rows = await getCompanyUsers();
+        if (cancelled) return;
+        const names = new Set<string>();
+        for (const u of rows as any[]) {
+          const primary = String(u?.role ?? "").toUpperCase();
+          const extras = ((u?.extra_roles as string[] | null | undefined) ?? []).map((r) =>
+            String(r ?? "").toUpperCase(),
+          );
+          if (primary === "TECHNICIAN" || extras.includes("TECHNICIAN")) {
+            const name = String(u?.display_name || u?.username || u?.email || "").trim();
+            if (name) names.add(name);
+          }
+        }
+        setCompanyTechUsers(Array.from(names));
+      } catch (err) {
+        console.warn("technician user list load failed:", err);
+        if (!cancelled) setCompanyTechUsers([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady]);
+  const technicianOptions = useMemo(() => {
+    // De-duplicate across the canonical roster + Supabase-driven names.
+    // The key is aggressive enough to collapse common variants of the
+    // same person (case, whitespace, middle initials, email local part,
+    // trailing "(Tech)" markers) so a user listed in both sources — or
+    // as "Daven Hodge" and "Daven J Hodge" — renders once. We keep the
+    // longer/more-formal string (usually the display_name) as the
+    // canonical label.
+    const canonicalKey = (n: string) =>
+      String(n || "")
+        .toLowerCase()
+        .replace(/@.*$/g, "") // drop email domain
+        .replace(/\(.*?\)/g, "") // drop parenthetical tags
+        .replace(/[^a-z\s]/g, " ") // strip punctuation
+        .replace(/\b[a-z]\b/g, "") // strip single-letter middle initials
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const chosen = new Map<string, string>();
+    const add = (raw: string) => {
+      const t = String(raw || "").trim();
+      if (!t) return;
+      const key = canonicalKey(t);
+      if (!key) return;
+      const existing = chosen.get(key);
+      if (!existing || t.length > existing.length) {
+        chosen.set(key, t);
+      }
+    };
+    for (const n of ALL_TECHNICIANS) add(n);
+    for (const n of companyTechUsers) add(n);
+    return Array.from(chosen.values()).sort((a, b) => a.localeCompare(b));
+  }, [companyTechUsers]);
+
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
     if (PART_LOCK_BYPASS_ROLES.has(primary)) return true;
@@ -3529,6 +3651,10 @@ function TicketDetailsPage() {
     [],
   );
   const canSeeClaimTransaction = useMemo(() => {
+    // OFFLINE DEMO MODE: no role backend, so surface the Claim Transaction
+    // section for every demo account (matches the collaborator's layout where
+    // it sits right below Part Transaction).
+    if (!isFirebaseReady()) return true;
     if (isNaveen) return true;
     const primary = String(currentUserRole || "").toUpperCase();
     if (CLAIM_VIEW_ROLES.has(primary)) return true;
@@ -3536,6 +3662,33 @@ function TicketDetailsPage() {
       CLAIM_VIEW_ROLES.has(String(r).toUpperCase()),
     );
   }, [currentUserRole, currentUserExtraRoles, CLAIM_VIEW_ROLES, isNaveen]);
+
+  // CSR-only accounts (agents, team leaders, CSR managers) should see
+  // the Part Transaction table but not the write-side toolbar (View
+  // Log / Sync Parts from Notes / Truck Stock / Submit POs / Update).
+  // Anyone with a Parts / Claims / Manager / Admin / Branch role — or
+  // a mixed CSR + one of those in extra_roles — still sees the buttons.
+  const CSR_ONLY_ROLES = useMemo(
+    () => new Set([
+      "CSR",
+      "CSR_AGENT",
+      "CSR_TEAM_LEADER",
+      "CSR_MANAGER",
+    ]),
+    [],
+  );
+  const canUsePartToolbar = useMemo(() => {
+    if (isNaveen) return true;
+    const primary = String(currentUserRole || "").toUpperCase();
+    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
+    // If they hold ANY non-CSR role we consider valid for parts, allow it.
+    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r))) return true;
+    // If the user is *only* a CSR-family role, hide the toolbar.
+    if (allRoles.every((r) => CSR_ONLY_ROLES.has(r) || !r)) return false;
+    // Everyone else (Technician, Triage, Dispatcher, etc.) also loses
+    // the toolbar per current business rule.
+    return false;
+  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, CSR_ONLY_ROLES]);
 
   const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
     if (!currentCompanyId) return;
@@ -4507,7 +4660,7 @@ function TicketDetailsPage() {
           tracking sub-section anchors into view. */}
       <TicketSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 bg-slate-950 py-6">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-[1600px] mx-auto px-6">
           <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
             <div className="mb-4 flex items-center gap-4">
               <label htmlFor="ticket-selector" className="text-slate-400 font-semibold whitespace-nowrap">Select Ticket:</label>
@@ -4703,7 +4856,7 @@ function TicketDetailsPage() {
         </div>
 
         {/* Content */}
-        <div className="max-w-6xl mx-auto px-6 py-6">
+        <div className="max-w-[1600px] mx-auto px-6 py-6">
         {!ticket ? (
           <div className="rounded-lg border border-white/10 bg-slate-900/50 p-6 text-slate-300">
             <p className="text-lg font-semibold text-white">Ticket not found</p>
@@ -5314,7 +5467,7 @@ function TicketDetailsPage() {
                         className="glass-input w-full mt-1"
                       >
                         <option value="">Not assigned</option>
-                        {ALL_TECHNICIANS.map((tech) => (
+                        {technicianOptions.map((tech) => (
                           <option key={tech} value={tech}>
                             {tech}
                           </option>
@@ -5511,8 +5664,49 @@ function TicketDetailsPage() {
                   <button className="text-blue-400 hover:text-blue-300 font-semibold">Open Chat</button>
                 </div>
                 <div>
-                  <label className="text-slate-500 font-semibold">Redo Ticket #</label>
-                  <div className="text-white mt-1">NONE</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-slate-500 font-semibold">Redo Ticket #</label>
+                    {!editingRedoTicket && (
+                      <button
+                        type="button"
+                        onClick={startEditingRedoTicket}
+                        className="rounded-md border border-blue-400/40 bg-blue-500/20 px-2 py-0.5 text-[11px] font-semibold text-blue-200 transition hover:bg-blue-500/30"
+                        title="Update the linked redo ticket number"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                  {editingRedoTicket ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={redoTicketDraft}
+                        onChange={(e) => setRedoTicketDraft(e.target.value)}
+                        placeholder="e.g. 015789584139"
+                        className="flex-1 rounded-md border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveRedoTicket()}
+                        disabled={savingRedoTicket}
+                        className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                      >
+                        {savingRedoTicket ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEditingRedoTicket}
+                        disabled={savingRedoTicket}
+                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-200/40 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-white mt-1">{ticket?.redoTicketNo?.trim() || "NONE"}</div>
+                  )}
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -5527,14 +5721,15 @@ function TicketDetailsPage() {
                 >
                   Running Notes
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setIsProblemDescOpen(true)}
-                  className="rounded-md border border-amber-400/40 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-200 transition hover:bg-amber-500/30"
-                  title="Quick view of the customer's Problem Description (read-only, synced from ServicePower)"
-                >
+              </div>
+              <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
                   Problem Description
-                </button>
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
+                  {ticket?.problemDescription?.trim() ||
+                    "No problem description on file for this work order."}
+                </div>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                 {visitFormMode === "view" ? (
@@ -5700,7 +5895,7 @@ function TicketDetailsPage() {
                           <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Technician</label>
                           <select id="visit-technician-modal" value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
-                            {ALL_TECHNICIANS.map((technician) => (
+                            {technicianOptions.map((technician) => (
                               <option key={technician} value={technician}>{technician}</option>
                             ))}
                           </select>
@@ -5971,37 +6166,6 @@ function TicketDetailsPage() {
                 </div>
               ) : null}
 
-              {isProblemDescOpen ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
-                  <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-amber-400/30 bg-slate-900 p-5 text-white shadow-2xl">
-                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
-                          ServicePower
-                        </p>
-                        <h3 className="text-xl font-bold text-white">Problem Description</h3>
-                        <p className="mt-1 text-sm text-slate-400">
-                          Work Order #{ticketNo}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsProblemDescOpen(false)}
-                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
-                      >
-                        Close
-                      </button>
-                    </div>
-                    <div className="mt-4 rounded-md border border-white/10 bg-slate-950/60 px-4 py-3 text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
-                      {ticket?.problemDescription?.trim() || "No problem description on file for this work order."}
-                    </div>
-                    <p className="mt-3 text-[11px] text-slate-500">
-                      Read-only — synced from ServicePower. To edit the description, scroll down to the Problem Description card.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
             </div>
 
             {viewingVisitEntry ? (
@@ -6174,6 +6338,7 @@ function TicketDetailsPage() {
                     </span>
                   ) : null}
                 </div>
+                {canUsePartToolbar && (
                 <div className="flex items-center gap-2">
                   <button 
                     type="button"
@@ -6259,6 +6424,7 @@ function TicketDetailsPage() {
                       is now manual-refresh only via the per-row Refresh
                       button. */}
                 </div>
+                )}
               </div>
               {partsEditDisabled ? (
                 <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -6268,7 +6434,7 @@ function TicketDetailsPage() {
               ) : null}
 
               <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-xs" style={{ minWidth: "1700px" }}>
+                <table className="w-full text-xs pt-compact" style={{ minWidth: "1180px" }}>
                   {/* Two-row header */}
                   <thead>
                     <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
@@ -6556,7 +6722,7 @@ function TicketDetailsPage() {
                 rows={2}
               />
               <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-xs" style={{ minWidth: "1900px" }}>
+                <table className="w-full text-xs pt-compact" style={{ minWidth: "1400px" }}>
                   {/* Two-row header — mirrors Part Transaction layout */}
                   <thead>
                     <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
@@ -7288,7 +7454,7 @@ function TicketDetailsPage() {
                           className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                         >
                           <option value="">Select technician</option>
-                          {ALL_TECHNICIANS.map((technician) => (
+                          {technicianOptions.map((technician) => (
                             <option key={technician} value={technician}>
                               {technician}
                             </option>

@@ -123,8 +123,9 @@ function defaultFilterOptions(rows: ManagementRow[]) {
 // the trigger's bounding rect on open + during scroll/resize so the
 // popup follows it.
 const DROPDOWN_STYLE: React.CSSProperties = {
-  background: "rgb(15,23,42)",
-  border: "1px solid rgba(255,255,255,0.15)",
+  background: "var(--color-card)",
+  color: "var(--color-foreground)",
+  border: "1px solid var(--color-panel-border)",
   borderRadius: 6,
   boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
   zIndex: 999999,

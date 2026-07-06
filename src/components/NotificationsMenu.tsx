@@ -113,7 +113,7 @@ export function NotificationsMenu() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="relative grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[oklch(0.98_0.005_250/0.05)] text-muted-foreground transition-colors hover:bg-[oklch(0.98_0.005_250/0.1)] hover:text-foreground"
+          className="relative grid h-9 w-9 place-items-center rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground transition-colors hover:bg-[var(--color-secondary)] hover:text-foreground"
           aria-label="Notifications"
         >
           <Bell className="h-4 w-4" />

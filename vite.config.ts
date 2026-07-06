@@ -59,6 +59,10 @@ const SERVER_DEFINE = {
   "globalThis.__MARCONE_PROD_CLIENT_SECRET__": JSON.stringify(
     rootEnv.VITE_MARCONE_PROD_CLIENT_SECRET ?? ""
   ),
+  // NSA Platform credentials (SERVER ONLY — never exposed to browser).
+  "globalThis.__NSA_BASE_URL__": JSON.stringify(rootEnv.NSA_BASE_URL ?? "https://api.nsaweb.com"),
+  "globalThis.__NSA_API_KEY__": JSON.stringify(rootEnv.NSA_API_KEY ?? ""),
+  "globalThis.__NSA_SECRET__": JSON.stringify(rootEnv.NSA_SECRET ?? ""),
 };
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
@@ -175,6 +179,41 @@ function marconeDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/nsa locally. Same shape as the SP plugin.
+function nsaDevPlugin() {
+  return {
+    name: "nsa-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/nsa", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks).toString("utf8");
+
+          const { handleNsaRequest } = await server.ssrLoadModule(
+            "/src/lib/server/nsaBridge.ts"
+          );
+          const webReq = new Request("http://localhost/api/nsa", {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleNsaRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "NSA request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -183,7 +222,7 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       rollupOptions: {

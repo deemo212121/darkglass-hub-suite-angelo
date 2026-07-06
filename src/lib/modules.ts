@@ -1319,6 +1319,14 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "add-branch",
+      title: "Add Branch",
+      description: "Drop a point on the map, pick a service radius, and record every zip code inside it.",
+      custom: "add-branch" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "account-management",
       title: "Account Management",
       description: "Store external service accounts used for parts ordering and technician mapping.",

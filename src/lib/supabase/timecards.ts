@@ -255,3 +255,111 @@ export async function getAttendanceForRange(
   void scheduled.requiredCheckOut;
   return rows;
 }
+
+/**
+ * Company-wide timecard warning summary for the HR Dashboard.
+ * Returns one row per profile with a count of days in the current month
+ * where the employee had a missing check-in or check-out.
+ *
+ * RLS is satisfied because the caller (HR/Admin) can read all profiles in
+ * their company, and timecard_entries inherits the same company scope.
+ */
+export interface TimecardWarningRow {
+  profileId: string;
+  displayName: string;
+  email: string;
+  missingEntries: number;      // days with absent status in the current month
+  missingCheckIn: number;      // days with check-out but no check-in
+  missingCheckOut: number;     // days with check-in but no check-out
+  totalWarnings: number;       // sum of all three
+}
+
+export async function getCompanyTimecardWarnings(
+  year: number,
+  month: number   // 0-based
+): Promise<TimecardWarningRow[]> {
+  const mm = String(month + 1).padStart(2, "0");
+  const startDate = `${year}-${mm}-01`;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const endDate = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // 1. Fetch every profile for the company (we need display_name + off_days).
+  const { data: profiles, error: pErr } = await supabase
+    .from("profiles")
+    .select("id, display_name, email, off_days")
+    .neq("role", "SUPERADMIN")
+    .eq("is_active", true);
+  if (pErr) {
+    console.error("getCompanyTimecardWarnings profiles error:", pErr.message);
+    return [];
+  }
+
+  // 2. Fetch all timecard entries for the company in the requested month.
+  const { data: entries, error: eErr } = await supabase
+    .from("timecard_entries")
+    .select("profile_id, work_date, check_in, check_out")
+    .gte("work_date", startDate)
+    .lte("work_date", endDate);
+  if (eErr) {
+    console.error("getCompanyTimecardWarnings entries error:", eErr.message);
+    return [];
+  }
+
+  // Group entries by profile_id.
+  const byProfile = new Map<string, Array<{ work_date: string; check_in: string | null; check_out: string | null }>>();
+  for (const e of entries ?? []) {
+    const key = e.profile_id as string;
+    if (!byProfile.has(key)) byProfile.set(key, []);
+    byProfile.get(key)!.push(e as any);
+  }
+
+  // Build the working-day range (Mon–Fri, not in the future).
+  const workingDays: string[] = [];
+  const d = new Date(startDate + "T00:00:00");
+  const end = new Date(endDate + "T00:00:00");
+  while (d <= end && d.toISOString().slice(0, 10) <= today) {
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    if (dow !== 0 && dow !== 6) workingDays.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+
+  const rows: TimecardWarningRow[] = [];
+  for (const profile of profiles ?? []) {
+    const profileEntries = byProfile.get(profile.id) ?? [];
+    const entryByDate = new Map(profileEntries.map((e) => [e.work_date, e]));
+    const offDays = new Set<number>((profile.off_days as number[] | null) ?? []);
+
+    let missingEntries = 0;
+    let missingCheckIn = 0;
+    let missingCheckOut = 0;
+
+    for (const day of workingDays) {
+      const dow = new Date(day + "T00:00:00").getDay();
+      if (offDays.has(dow)) continue;
+      const e = entryByDate.get(day);
+      if (!e) {
+        missingEntries++;
+      } else if (e.check_in && !e.check_out) {
+        missingCheckOut++;
+      } else if (!e.check_in && e.check_out) {
+        missingCheckIn++;
+      }
+    }
+
+    const totalWarnings = missingEntries + missingCheckIn + missingCheckOut;
+    if (totalWarnings > 0) {
+      rows.push({
+        profileId: profile.id,
+        displayName: (profile.display_name as string | null) ?? (profile.email as string),
+        email: profile.email as string,
+        missingEntries,
+        missingCheckIn,
+        missingCheckOut,
+        totalWarnings,
+      });
+    }
+  }
+
+  return rows.sort((a, b) => b.totalWarnings - a.totalWarnings);
+}
