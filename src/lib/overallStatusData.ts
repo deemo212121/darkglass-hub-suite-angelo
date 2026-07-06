@@ -129,14 +129,49 @@ function statusColor(name: string, idx: number): string {
   return STATUS_COLOR[key] ?? DONUT_PALETTE[idx % DONUT_PALETTE.length];
 }
 
-function isClosedStatus(status: string): boolean {
-  const s = (status || "").toLowerCase();
-  return s.includes("complete") || s.includes("claimed") || s.includes("closed") || s.includes("cancel") || s.startsWith("cl-");
+// Kept byte-for-byte in sync with `statusGroupOf` in TicketList.tsx. That
+// function is the source of truth for what "Open / Pending" means in this
+// app; this dashboard must bucket tickets the exact same way or its counts
+// will silently drift from the Ticket List's "Open / Pending" filter (this
+// caused a real mismatch: statuses like "Acknowledged" have no csr-/op-/pt-/
+// tr-/cl- prefix, so the old blacklist-based check here counted them as
+// pending while TicketList's whitelist-based check put them in "other" and
+// excluded them from Open/Pending).
+type StatusGroup = "open" | "completed" | "cancelled";
+
+function statusGroupOf(status: string): StatusGroup | "other" {
+  const v = String(status || "").trim().toLowerCase();
+  if (!v) return "other";
+  if (v.includes("need cancel")) return "open";
+  if (v === "cl-cancelled" || v === "cancelled" || /\bcancell?ed\b/.test(v)) return "cancelled";
+  if (
+    v === "cl-completed" ||
+    v === "completed" ||
+    v === "cl-claimed" ||
+    v === "claimed" ||
+    v.includes("data closed") ||
+    v.includes("data-closed")
+  ) return "completed";
+  if (
+    v.startsWith("csr-") ||
+    v.startsWith("op-") ||
+    v.startsWith("pt-") ||
+    v.startsWith("tr-") ||
+    v.startsWith("cl-")
+  ) return "open";
+  return "other";
 }
 
+function isClosedStatus(status: string): boolean {
+  return statusGroupOf(status) === "completed" || statusGroupOf(status) === "cancelled";
+}
+
+// "Pending" now means exactly what TicketList's "Open / Pending" filter
+// means: statusGroupOf(status) === "open". Statuses that fall into "other"
+// (no recognized prefix, e.g. a bare "Acknowledged") are excluded from both,
+// instead of being silently swept into "pending" here.
 function isPendingStatus(status: string): boolean {
-  if (!status) return false;
-  return !isClosedStatus(status);
+  return statusGroupOf(status) === "open";
 }
 
 function ticketSourceName(ticket: Ticket): string {
@@ -296,10 +331,15 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
     .map(([name, value], i) => ({ name, value, color: statusColor(name, i) }));
 
   // ── Pending by location (donut) ─────────────────────────────────────────
+  // Keyed on t.location only (no t.branch fallback) so this always agrees
+  // with Ticket List's location filter, which only ever reads t.location.
+  // A branch-only fallback here let tickets with a blank `location` get
+  // counted under a location on this dashboard while being unfindable in
+  // Ticket List when filtered to that same location.
   const locationCounts = new Map<string, number>();
   for (const t of tickets) {
     if (!isPendingStatus(t.status)) continue;
-    const key = (t.location || t.branch || "Unassigned").trim() || "Unassigned";
+    const key = (t.location || "").trim() || "Unassigned";
     locationCounts.set(key, (locationCounts.get(key) ?? 0) + 1);
   }
   const pendingByLocation: DonutSlice[] = Array.from(locationCounts.entries())

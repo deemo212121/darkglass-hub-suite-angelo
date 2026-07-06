@@ -305,7 +305,7 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
         </section>
 
         {/* Three donuts */}
-        <section className="grid gap-4 mb-4 lg:grid-cols-3">
+        <section className="grid gap-4 mb-4 sm:grid-cols-2 xl:grid-cols-3">
           <Donut data={data.pendingByStatus} title="Pending Tickets by Status" />
           <Donut data={filteredByLocation} title="Pending Tickets by Location" />
           <Donut data={data.csrActivity} title="CSR Activity" />
