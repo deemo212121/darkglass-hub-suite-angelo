@@ -5779,6 +5779,121 @@ function TicketDetailsPage() {
                 </div>
               </div>
 
+              {/* Claims Readiness Checklist — visible to Admin, BizOps, Claims roles only */}
+              {(() => {
+                const r = String(currentUserRole || "").toUpperCase();
+                const canSeeChecklist = [
+                  "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+                  "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
+                ].includes(r);
+                if (!canSeeChecklist || !ticket) return null;
+
+                // Evaluate each of the 5 requirements
+                const hasServiceNotes = Boolean(
+                  ticket.problemDescription?.trim() ||
+                  visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
+                );
+                const hasPhotos = partRows.some(p => (p as any).inTracking) ||
+                  Boolean((ticket as any).photosCount > 0) ||
+                  visitLogEntries.some(v => (v as any).visitNo); // proxy — photos checked separately
+                const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
+                  const s = String((p as any).status || "").toLowerCase();
+                  return s && s !== "tech pickup" && s !== "need po" && s !== "";
+                });
+                const hasSameDayUpdate = (() => {
+                  const latest = visitLogEntries[0];
+                  if (!latest) return false;
+                  const ts = (latest as any).updatedAt || (latest as any).timestamp || (latest as any).createdAt;
+                  if (!ts) return false;
+                  const visitDate = (latest as any).scheduleDate;
+                  if (!visitDate) return true;
+                  const updated = new Date(ts).toISOString().slice(0, 10);
+                  return updated === visitDate;
+                })();
+                // Warranty case — check if case number / warranty agent note is present
+                const warrantyStatuses = [
+                  "unsuccessful repair", "infestation", "physical damage",
+                  "unrepairable", "model/serial mismatch", "no fault found",
+                ];
+                const needsWarrantyCall = visitLogEntries.some(v => {
+                  const rs = String((v as any).repairStatus || "").toLowerCase();
+                  return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
+                });
+                const hasWarrantyCase = !needsWarrantyCall || Boolean(
+                  visitLogEntries.some(v =>
+                    (v as any).note?.toLowerCase().includes("case") ||
+                    (v as any).note?.toLowerCase().includes("agent")
+                  )
+                );
+
+                const items = [
+                  {
+                    label: "Warranty Call (if required)",
+                    done: hasWarrantyCase,
+                    detail: needsWarrantyCall
+                      ? "Special scenario detected — ensure case number & agent name are in visit notes"
+                      : "Not required for this ticket",
+                    skip: !needsWarrantyCall,
+                  },
+                  {
+                    label: "Service Notes Complete",
+                    done: hasServiceNotes,
+                    detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
+                  },
+                  {
+                    label: "Required Photos Uploaded",
+                    done: hasPhotos,
+                    detail: "Work order, model/serial tag, installed parts, damage proof — same day",
+                  },
+                  {
+                    label: "Part Status Correct",
+                    done: hasCorrectPartStatus,
+                    detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
+                  },
+                  {
+                    label: "Same-Day Updates",
+                    done: hasSameDayUpdate,
+                    detail: "Notes, photos, part status, warranty info updated same day as visit",
+                  },
+                ];
+
+                const allDone = items.every(i => i.skip || i.done);
+                const doneCount = items.filter(i => i.skip || i.done).length;
+
+                return (
+                  <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
+                    <div className={`flex items-center justify-between px-4 py-3 ${allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
+                          {doneCount}/{items.length}
+                        </span>
+                      </div>
+                      {allDone ? (
+                        <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
+                      ) : (
+                        <span className="text-xs text-amber-400">{items.length - doneCount} item{items.length - doneCount !== 1 ? "s" : ""} pending</span>
+                      )}
+                    </div>
+                    <div className="divide-y divide-slate-800">
+                      {items.map((item, i) => (
+                        <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
+                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
+                            {item.skip ? "—" : item.done ? "✓" : "✗"}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
+                              {item.label}
+                            </div>
+                            <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Servicer Notes */}
               <div className="space-y-4 pb-12">
                 <h4 className="font-semibold text-slate-300">Servicer Notes</h4>
