@@ -1664,9 +1664,33 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
+  // Load photo count for Claims Readiness Checklist (ADMIN/CLAIMS/BIZOPS only).
+  // Uses listTicketPhotos from Firebase Storage — non-blocking, best-effort.
+  const [ticketPhotoCount, setTicketPhotoCount] = useState<number | null>(null);
+  useEffect(() => {
+    const r = String(currentUserRole || "").toUpperCase();
+    const canSeeChecklist = [
+      "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+      "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
+    ].includes(r);
+    if (!canSeeChecklist || !authReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { listTicketPhotos } = await import("@/lib/firebase/storage");
+        const cid = currentCompanyId || "COMP001";
+        const photos = await listTicketPhotos(cid, ticketNo);
+        if (!cancelled) setTicketPhotoCount(photos.length);
+      } catch {
+        if (!cancelled) setTicketPhotoCount(0);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ticketNo, currentUserRole, authReady, currentCompanyId]);
+
   // Load ticket from centralized system
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
-  
+
   useEffect(() => {
     // Load ticket from Supabase first; fall back to centralized/hardcoded.
     const loadTicketData = async () => {
@@ -5793,22 +5817,30 @@ function TicketDetailsPage() {
                   ticket.problemDescription?.trim() ||
                   visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
                 );
-                const hasPhotos = partRows.some(p => (p as any).inTracking) ||
-                  Boolean((ticket as any).photosCount > 0) ||
-                  visitLogEntries.some(v => (v as any).visitNo); // proxy — photos checked separately
+                const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
+                  partRows.some(p => (p as any).inTracking);
                 const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
                   const s = String((p as any).status || "").toLowerCase();
                   return s && s !== "tech pickup" && s !== "need po" && s !== "";
                 });
+                // Same-day: the most recent visit must have been created/updated
+                // on the same calendar day as the visit's schedule date.
+                // Also passes if there's no visit yet (nothing to check).
                 const hasSameDayUpdate = (() => {
+                  if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
                   const latest = visitLogEntries[0];
-                  if (!latest) return false;
-                  const ts = (latest as any).updatedAt || (latest as any).timestamp || (latest as any).createdAt;
+                  const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
+                  if (!schedDate) return true; // no date set — can't evaluate
+                  // Check the visit's own created/updated timestamp
+                  const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
                   if (!ts) return false;
-                  const visitDate = (latest as any).scheduleDate;
-                  if (!visitDate) return true;
-                  const updated = new Date(ts).toISOString().slice(0, 10);
-                  return updated === visitDate;
+                  const updatedDay = new Date(ts).toISOString().slice(0, 10);
+                  const onTime = updatedDay === schedDate;
+                  // Also check if photos were uploaded (if we have a photo count and the
+                  // visit was today, photos being present means same-day upload is satisfied)
+                  const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
+                  const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
+                  return onTime || photosSatisfied;
                 })();
                 // Warranty case — check if case number / warranty agent note is present
                 const warrantyStatuses = [
@@ -5843,7 +5875,11 @@ function TicketDetailsPage() {
                   {
                     label: "Required Photos Uploaded",
                     done: hasPhotos,
-                    detail: "Work order, model/serial tag, installed parts, damage proof — same day",
+                    detail: ticketPhotoCount === null
+                      ? "Checking photo count…"
+                      : ticketPhotoCount > 0
+                        ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
+                        : "No photos found — work order, model/serial tag, installed parts, damage proof required",
                   },
                   {
                     label: "Part Status Correct",
