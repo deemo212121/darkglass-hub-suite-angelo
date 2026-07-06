@@ -40,16 +40,11 @@ export function TicketPhotos({
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const [ocrText, setOcrText] = useState<string | null>(null);
-  const [ocrLoading, setOcrLoading] = useState(false);
   const lastTouchDist = useRef<number | null>(null);
-  // The visit number to tag the next batch of uploads with. Defaults to the
-  // newest visit if the parent passed any options.
   const [selectedVisitNo, setSelectedVisitNo] = useState<string>(() => (visitOptions && visitOptions.length ? visitOptions[visitOptions.length - 1] : ""));
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const cid = companyId || "COMP001";
-  // Storage sub-path. Keep backward compatible: no category => the ticket root.
   const ticketPath = category ? `${ticketNo}/${category}` : ticketNo;
 
   useEffect(() => {
@@ -72,9 +67,6 @@ export function TicketPhotos({
 
   const isImage = (name: string) => /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name);
 
-  // Format the upload timestamp the same way SP's running notes are displayed
-  // — local time, short date + time, with no seconds. Falls back to "—" when
-  // the metadata isn't available.
   const formatUploadedAt = (iso: string | undefined): string => {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -95,7 +87,6 @@ export function TicketPhotos({
     try {
       const uploaded: TicketPhoto[] = [];
       for (const file of Array.from(files)) {
-        // 25MB guard per file.
         if (file.size > 25 * 1024 * 1024) {
           setError(`"${file.name}" is larger than 25MB and was skipped.`);
           continue;
@@ -126,6 +117,9 @@ export function TicketPhotos({
       alert(`Delete failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
+
+  const closePreview = () => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); };
+  const openPreview = (photo: TicketPhoto) => { setPreview(photo); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); };
 
   return (
     <div className="space-y-4 pb-8">
@@ -181,7 +175,7 @@ export function TicketPhotos({
           {photos.map((photo) => (
             <div key={photo.fullPath} className="group relative rounded-lg overflow-hidden border border-white/10 bg-slate-900/50">
               {isImage(photo.name) ? (
-                <button type="button" onClick={() => { setPreview(photo); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }} className="block w-full">
+                <button type="button" onClick={() => openPreview(photo)} className="block w-full">
                   <img src={photo.url} alt={photo.name} className="h-28 w-full object-cover" loading="lazy" />
                 </button>
               ) : (
@@ -214,11 +208,11 @@ export function TicketPhotos({
         </div>
       )}
 
-      {/* Lightbox preview with zoom */}
+      {/* Lightbox with zoom */}
       {preview && (
         <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
-          onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }}
+          onClick={closePreview}
         >
           {/* Toolbar */}
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60 z-10">
@@ -228,106 +222,22 @@ export function TicketPhotos({
               {preview.visitNo && <span className="text-blue-300 ml-2">· Visit {preview.visitNo}</span>}
             </div>
             <div className="flex items-center gap-2">
-              {/* Zoom controls */}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setZoomScale(s => Math.max(1, +(s - 0.5).toFixed(1))); if (zoomScale <= 1.5) setZoomPos({ x: 0, y: 0 }); }}
-                className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center"
-                title="Zoom out"
-              >−</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setZoomScale(s => Math.max(1, +(s - 0.5).toFixed(1))); if (zoomScale <= 1.5) setZoomPos({ x: 0, y: 0 }); }} className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center" title="Zoom out">−</button>
               <span className="text-xs text-slate-300 w-10 text-center">{Math.round(zoomScale * 100)}%</span>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setZoomScale(s => Math.min(5, +(s + 0.5).toFixed(1))); }}
-                className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center"
-                title="Zoom in"
-              >+</button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }}
-                className="px-2 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-xs"
-                title="Reset zoom"
-              >Reset</button>
-              <a
-                href={preview.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="px-2 h-8 rounded bg-blue-600/40 hover:bg-blue-600/60 text-blue-200 text-xs flex items-center"
-              >Open original ↗</a>
-              {/* Extract Text (OCR) */}
-              <button
-                type="button"
-                disabled={ocrLoading}
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (!preview) return;
-                  setOcrLoading(true);
-                  setOcrText(null);
-                  try {
-                    const { createWorker } = await import("tesseract.js");
-                    const worker = await createWorker("eng");
-                    const { data } = await worker.recognize(preview.url);
-                    await worker.terminate();
-                    setOcrText(data.text.trim() || "(No text detected)");
-                  } catch (err) {
-                    setOcrText(`OCR error: ${err instanceof Error ? err.message : String(err)}`);
-                  } finally {
-                    setOcrLoading(false);
-                  }
-                }}
-                className="px-2 h-8 rounded bg-emerald-600/40 hover:bg-emerald-600/60 disabled:opacity-50 text-emerald-200 text-xs flex items-center gap-1"
-                title="Extract text from this photo using OCR"
-              >
-                {ocrLoading ? (
-                  <><span className="animate-spin text-xs">⟳</span> Reading…</>
-                ) : (
-                  <>📄 Extract Text</>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }}
-                className="w-8 h-8 rounded bg-white/10 hover:bg-rose-600/40 text-white text-sm flex items-center justify-center"
-              >✕</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setZoomScale(s => Math.min(5, +(s + 0.5).toFixed(1))); }} className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center" title="Zoom in">+</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }} className="px-2 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-xs" title="Reset zoom">Reset</button>
+              <a href={preview.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="px-2 h-8 rounded bg-blue-600/40 hover:bg-blue-600/60 text-blue-200 text-xs flex items-center">Open original ↗</a>
+              <button type="button" onClick={closePreview} className="w-8 h-8 rounded bg-white/10 hover:bg-rose-600/40 text-white text-sm flex items-center justify-center">✕</button>
             </div>
           </div>
 
-          {/* Image container */}
+          {/* Image */}
           <div
-            className="overflow-hidden w-full h-full flex items-center justify-center cursor-zoom-in pt-12 pb-4"
-            onClick={(e) => {
-              e.stopPropagation();
-              // Double-click to toggle zoom
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              if (zoomScale > 1) { setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }
-              else { setZoomScale(2.5); }
-            }}
-            onWheel={(e) => {
-              e.stopPropagation();
-              const delta = e.deltaY > 0 ? -0.2 : 0.2;
-              setZoomScale(s => Math.min(5, Math.max(1, +(s + delta).toFixed(1))));
-              if (zoomScale + delta <= 1) setZoomPos({ x: 0, y: 0 });
-            }}
-            onTouchStart={(e) => {
-              if (e.touches.length === 2) {
-                const dx = e.touches[0].clientX - e.touches[1].clientX;
-                const dy = e.touches[0].clientY - e.touches[1].clientY;
-                lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
-              }
-            }}
-            onTouchMove={(e) => {
-              if (e.touches.length === 2 && lastTouchDist.current !== null) {
-                const dx = e.touches[0].clientX - e.touches[1].clientX;
-                const dy = e.touches[0].clientY - e.touches[1].clientY;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const ratio = dist / lastTouchDist.current;
-                setZoomScale(s => Math.min(5, Math.max(1, +(s * ratio).toFixed(2))));
-                lastTouchDist.current = dist;
-              }
-            }}
+            className="overflow-hidden w-full h-full flex items-center justify-center cursor-zoom-in pt-12 pb-8"
+            onDoubleClick={(e) => { e.stopPropagation(); if (zoomScale > 1) { setZoomScale(1); setZoomPos({ x: 0, y: 0 }); } else { setZoomScale(2.5); } }}
+            onWheel={(e) => { e.stopPropagation(); const delta = e.deltaY > 0 ? -0.2 : 0.2; setZoomScale(s => Math.min(5, Math.max(1, +(s + delta).toFixed(1)))); if (zoomScale + delta <= 1) setZoomPos({ x: 0, y: 0 }); }}
+            onTouchStart={(e) => { if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX; const dy = e.touches[0].clientY - e.touches[1].clientY; lastTouchDist.current = Math.sqrt(dx * dx + dy * dy); } }}
+            onTouchMove={(e) => { if (e.touches.length === 2 && lastTouchDist.current !== null) { const dx = e.touches[0].clientX - e.touches[1].clientX; const dy = e.touches[0].clientY - e.touches[1].clientY; const dist = Math.sqrt(dx * dx + dy * dy); setZoomScale(s => Math.min(5, Math.max(1, +(s * (dist / lastTouchDist.current!)).toFixed(2)))); lastTouchDist.current = dist; } }}
             onTouchEnd={() => { lastTouchDist.current = null; }}
           >
             <img
@@ -349,13 +259,8 @@ export function TicketPhotos({
                 e.preventDefault();
                 const startX = e.clientX - zoomPos.x;
                 const startY = e.clientY - zoomPos.y;
-                const onMove = (mv: MouseEvent) => {
-                  setZoomPos({ x: mv.clientX - startX, y: mv.clientY - startY });
-                };
-                const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
-                };
+                const onMove = (mv: MouseEvent) => { setZoomPos({ x: mv.clientX - startX, y: mv.clientY - startY }); };
+                const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
                 window.addEventListener("mousemove", onMove);
                 window.addEventListener("mouseup", onUp);
               }}
@@ -366,44 +271,6 @@ export function TicketPhotos({
           <div className="absolute bottom-0 left-0 right-0 px-4 py-2 bg-black/60 text-xs text-slate-400 text-center">
             Scroll to zoom · Double-click to zoom in/out · Drag to pan when zoomed
           </div>
-
-          {/* OCR result panel — slides up from bottom when text is available */}
-          {(ocrText || ocrLoading) && (
-            <div
-              className="absolute bottom-10 left-4 right-4 max-h-52 rounded-xl border border-emerald-500/30 bg-slate-950/95 backdrop-blur shadow-2xl flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between px-3 py-2 border-b border-emerald-500/20">
-                <span className="text-xs font-semibold text-emerald-300">Extracted Text</span>
-                <div className="flex items-center gap-2">
-                  {ocrText && ocrText !== "(No text detected)" && (
-                    <button
-                      type="button"
-                      onClick={() => navigator.clipboard.writeText(ocrText)}
-                      className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-white/5 hover:bg-white/10"
-                    >
-                      Copy
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setOcrText(null)}
-                    className="text-slate-500 hover:text-white text-xs"
-                  >✕</button>
-                </div>
-              </div>
-              <div className="overflow-y-auto px-3 py-2">
-                {ocrLoading ? (
-                  <div className="text-xs text-slate-400 flex items-center gap-2">
-                    <span className="animate-spin">⟳</span>
-                    Processing image — this may take a few seconds on first run while the OCR engine loads…
-                  </div>
-                ) : (
-                  <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed">{ocrText}</pre>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
