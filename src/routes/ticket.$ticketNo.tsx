@@ -5029,7 +5029,7 @@ function TicketDetailsPage() {
                         </div>
                         <div>
                           <div className="text-slate-500 font-semibold text-xs">Master Code</div>
-                          <div className="text-white font-semibold mt-1">{ticket.nsaMasterCode || "—"}</div>
+                          <div className="text-white font-semibold mt-1">{ticket.nsaMasterCode || String(ticket.ticketNo || "").slice(0, 3) || "—"}</div>
                         </div>
                       </div>
                     )}
@@ -5553,7 +5553,7 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Master Code</label>
-                      <div className="text-white mt-1">{ticket.nsaMasterCode || "—"}</div>
+                      <div className="text-white mt-1">{ticket.nsaMasterCode || String(ticket.ticketNo || "").slice(0, 3) || "—"}</div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Cx Preferred Date</label>
