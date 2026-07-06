@@ -1837,12 +1837,17 @@ function TicketDetailsPage() {
   };
 
   // Auto-pull Call Service Information from ServicePower once the ticket has
-  // loaded. Runs once per ticket number. Reads handleSyncCallInfo lazily via
-  // a ref so the effect doesn't need it in its dep list (the function closes
-  // over `ticketNo` already).
+  // loaded. Runs once per ticket number. Skipped for NSA-sourced tickets
+  // (they don't exist in ServicePower and the call would corrupt the fields).
   useEffect(() => {
     if (!ticketData) return;
     if (autoSyncedRef.current === ticketNo) return;
+    // Skip SP auto-sync entirely for NSA tickets — SP doesn't know about them
+    // and the sync would overwrite ticketSource, account, etc. with blank/wrong values.
+    if (String(ticketData.ticketSource || "").toUpperCase().includes("NSA")) {
+      autoSyncedRef.current = ticketNo; // mark as "done" so it never retries
+      return;
+    }
     autoSyncedRef.current = ticketNo;
     // eslint-disable-next-line no-console
     console.log("[SP auto-sync] effect firing for ticket:", ticketNo);
@@ -4805,24 +4810,21 @@ function TicketDetailsPage() {
                       // (falls back to the Squaretrade landing form when
                       // no token has been saved yet).
                       const accountName = String(ticket.account || "").toLowerCase().replace(/\s+/g, "");
-                      const isSquaretrade = accountName.includes("squaretrade");
+                      const isNSA = accountName.includes("nsa") || String(ticket.ticketSource || "").toUpperCase().includes("NSA");
+                      const isSquaretrade = !isNSA && accountName.includes("squaretrade");
                       const hasSaved = isSquaretrade && Boolean(squaretradeUrl);
-                      // Squaretrade tickets jump straight to that ticket's
-                      // Appointment Completion form when we have it. When
-                      // we don't, we deep-link to the same work order in
-                      // ServicePower HUB — SP's SOAP API doesn't expose
-                      // the HUB-only conversation thread that contains
-                      // the URL, so landing on the right work order lets
-                      // claims read it off HUB and paste it via the
-                      // pencil icon.
-                      const href = isSquaretrade
-                        ? resolveSquaretradeUrl(ticketNo)
-                        : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
-                      const title = isSquaretrade
-                        ? hasSaved
-                          ? "Open this ticket's Squaretrade appointment completion form in a new tab"
-                          : "Opens this work order in ServicePower HUB so you can read the Appointment Completion URL and paste it back here via the pencil icon."
-                        : "Open this work order in ServicePower HUB";
+                      const href = isNSA
+                        ? "https://nationalservicealliance.com/login.php"
+                        : isSquaretrade
+                          ? resolveSquaretradeUrl(ticketNo)
+                          : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
+                      const title = isNSA
+                        ? "Open NSA Service Facility Portal"
+                        : isSquaretrade
+                          ? hasSaved
+                            ? "Open this ticket's Squaretrade appointment completion form in a new tab"
+                            : "Opens this work order in ServicePower HUB so you can read the Appointment Completion URL and paste it back here via the pencil icon."
+                          : "Open this work order in ServicePower HUB";
                       return (
                         <>
                           <a
