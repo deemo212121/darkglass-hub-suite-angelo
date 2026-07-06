@@ -40,6 +40,8 @@ export function TicketPhotos({
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
   const lastTouchDist = useRef<number | null>(null);
   // The visit number to tag the next batch of uploads with. Defaults to the
   // newest visit if the parent passed any options.
@@ -179,7 +181,7 @@ export function TicketPhotos({
           {photos.map((photo) => (
             <div key={photo.fullPath} className="group relative rounded-lg overflow-hidden border border-white/10 bg-slate-900/50">
               {isImage(photo.name) ? (
-                <button type="button" onClick={() => { setPreview(photo); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }} className="block w-full">
+                <button type="button" onClick={() => { setPreview(photo); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }} className="block w-full">
                   <img src={photo.url} alt={photo.name} className="h-28 w-full object-cover" loading="lazy" />
                 </button>
               ) : (
@@ -216,7 +218,7 @@ export function TicketPhotos({
       {preview && (
         <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
-          onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }}
+          onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }}
         >
           {/* Toolbar */}
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60 z-10">
@@ -253,9 +255,39 @@ export function TicketPhotos({
                 onClick={(e) => e.stopPropagation()}
                 className="px-2 h-8 rounded bg-blue-600/40 hover:bg-blue-600/60 text-blue-200 text-xs flex items-center"
               >Open original ↗</a>
+              {/* Extract Text (OCR) */}
               <button
                 type="button"
-                onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }}
+                disabled={ocrLoading}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!preview) return;
+                  setOcrLoading(true);
+                  setOcrText(null);
+                  try {
+                    const { createWorker } = await import("tesseract.js");
+                    const worker = await createWorker("eng");
+                    const { data } = await worker.recognize(preview.url);
+                    await worker.terminate();
+                    setOcrText(data.text.trim() || "(No text detected)");
+                  } catch (err) {
+                    setOcrText(`OCR error: ${err instanceof Error ? err.message : String(err)}`);
+                  } finally {
+                    setOcrLoading(false);
+                  }
+                }}
+                className="px-2 h-8 rounded bg-emerald-600/40 hover:bg-emerald-600/60 disabled:opacity-50 text-emerald-200 text-xs flex items-center gap-1"
+                title="Extract text from this photo using OCR"
+              >
+                {ocrLoading ? (
+                  <><span className="animate-spin text-xs">⟳</span> Reading…</>
+                ) : (
+                  <>📄 Extract Text</>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPreview(null); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); setOcrText(null); }}
                 className="w-8 h-8 rounded bg-white/10 hover:bg-rose-600/40 text-white text-sm flex items-center justify-center"
               >✕</button>
             </div>
@@ -334,6 +366,44 @@ export function TicketPhotos({
           <div className="absolute bottom-0 left-0 right-0 px-4 py-2 bg-black/60 text-xs text-slate-400 text-center">
             Scroll to zoom · Double-click to zoom in/out · Drag to pan when zoomed
           </div>
+
+          {/* OCR result panel — slides up from bottom when text is available */}
+          {(ocrText || ocrLoading) && (
+            <div
+              className="absolute bottom-10 left-4 right-4 max-h-52 rounded-xl border border-emerald-500/30 bg-slate-950/95 backdrop-blur shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-3 py-2 border-b border-emerald-500/20">
+                <span className="text-xs font-semibold text-emerald-300">Extracted Text</span>
+                <div className="flex items-center gap-2">
+                  {ocrText && ocrText !== "(No text detected)" && (
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(ocrText)}
+                      className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-white/5 hover:bg-white/10"
+                    >
+                      Copy
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOcrText(null)}
+                    className="text-slate-500 hover:text-white text-xs"
+                  >✕</button>
+                </div>
+              </div>
+              <div className="overflow-y-auto px-3 py-2">
+                {ocrLoading ? (
+                  <div className="text-xs text-slate-400 flex items-center gap-2">
+                    <span className="animate-spin">⟳</span>
+                    Processing image — this may take a few seconds on first run while the OCR engine loads…
+                  </div>
+                ) : (
+                  <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono leading-relaxed">{ocrText}</pre>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
