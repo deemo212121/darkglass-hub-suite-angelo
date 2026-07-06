@@ -217,6 +217,7 @@ interface TicketData {
   nsaPreAuth?: string;
   nsaCaseNumber?: string;
   nsaMasterCode?: string;
+  nsaCoverageExclusions?: string;
 }
 
 interface CompensationRow {
@@ -1752,6 +1753,7 @@ function TicketDetailsPage() {
           nsaPreAuth: (centralTicket as any).nsaPreAuth || "",
           nsaCaseNumber: (centralTicket as any).nsaCaseNumber || (centralTicket as any).originalTicketNo || "",
           nsaMasterCode: (centralTicket as any).nsaMasterCode || "",
+          nsaCoverageExclusions: (centralTicket as any).nsaCoverageExclusions || "",
         };
         setTicketData(mapped);
       } else {
@@ -1883,6 +1885,7 @@ function TicketDetailsPage() {
             nsaPreAuth: dispatch.preAuth ?? prev.nsaPreAuth,
             nsaCaseNumber: dispatch.caseNumber ?? prev.nsaCaseNumber,
             nsaMasterCode: dispatch.masterCode ?? prev.nsaMasterCode,
+            nsaCoverageExclusions: dispatch.coverageExclusions ?? prev.nsaCoverageExclusions,
           };
         });
       } catch (err) {
@@ -5492,11 +5495,35 @@ function TicketDetailsPage() {
               {/* NSA Dispatch Information — only shown for NSA-sourced tickets */}
               {String(ticket.ticketSource || "").toUpperCase().includes("NSA") && (
                 <div className="space-y-4 mb-8">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-semibold text-slate-300">NSA Dispatch Information</h4>
+                  {/* Section header */}
+                  <div className="flex items-center gap-2 border-b border-orange-500/20 pb-2">
+                    <h4 className="font-semibold text-slate-300">Call (Service) Information</h4>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/30 uppercase tracking-wider">NSA</span>
+                    <a
+                      href="https://nationalservicealliance.com/login.php"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto text-xs text-orange-300 hover:text-orange-200 hover:underline flex items-center gap-1"
+                    >
+                      Open NSA Portal
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                    </a>
                   </div>
+
+                  {/* Row 1 — identifiers */}
                   <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold">Ticket No</label>
+                      <div className="text-white mt-1 font-mono">{ticket.ticketNo || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Posting Date</label>
+                      <div className="text-white mt-1">{ticket.postingDate || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Account No</label>
+                      <div className="text-white mt-1">{ticket.accountNo || "—"}</div>
+                    </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Case Number</label>
                       <div className="text-white mt-1">{ticket.nsaCaseNumber || ticket.redoTicketNo || "—"}</div>
@@ -5506,8 +5533,16 @@ function TicketDetailsPage() {
                       <div className="text-white mt-1">{ticket.nsaMasterCode || "—"}</div>
                     </div>
                     <div>
+                      <label className="text-slate-500 font-semibold">Cx Preferred Date</label>
+                      <div className="text-white mt-1">{ticket.schedulePeriod || "—"}</div>
+                    </div>
+                  </div>
+
+                  {/* Row 2 — NSA status + routing */}
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
                       <label className="text-slate-500 font-semibold">NSA Status</label>
-                      <div className="text-orange-300 mt-1 font-semibold capitalize">{ticket.nsaStatus || "—"}</div>
+                      <div className="text-orange-300 mt-1 font-semibold capitalize">{ticket.nsaStatus || ticket.callStatus || "—"}</div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Route Name</label>
@@ -5523,40 +5558,61 @@ function TicketDetailsPage() {
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Schedule ACK</label>
-                      <div className="text-white mt-1">{ticket.nsaScheduleAck ? new Date(ticket.nsaScheduleAck).toLocaleString() : "—"}</div>
+                      <div className="text-white mt-1">
+                        {ticket.nsaScheduleAck
+                          ? (() => { try { return new Date(ticket.nsaScheduleAck).toLocaleString(); } catch { return ticket.nsaScheduleAck; } })()
+                          : "—"}
+                      </div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Required Part</label>
-                      <div className="text-white mt-1">{ticket.nsaRequiredPart === "Y" ? "Yes" : ticket.nsaRequiredPart === "N" ? "No" : ticket.nsaRequiredPart || "—"}</div>
+                      <div className="text-white mt-1">{ticket.nsaRequiredPart === "Y" ? "Yes ✓" : ticket.nsaRequiredPart === "N" ? "No" : ticket.nsaRequiredPart || "—"}</div>
                     </div>
                   </div>
-                  {/* Coverage + Pre-Auth full-width rows */}
+
+                  {/* Special instructions — prominent amber box when present */}
+                  {ticket.nsaSpecialInstructions && (
+                    <div className="text-sm">
+                      <label className="text-slate-500 font-semibold">Special Instructions</label>
+                      <div className="text-amber-200 mt-1 text-xs bg-amber-950/30 rounded px-3 py-2 border border-amber-500/20 leading-relaxed">{ticket.nsaSpecialInstructions}</div>
+                    </div>
+                  )}
+
+                  {/* Notes / Message / Problem Description */}
                   <div className="grid grid-cols-1 gap-3 text-sm">
-                    {ticket.nsaValidCoverage && (
+                    {ticket.problemDescription && (
                       <div>
-                        <label className="text-slate-500 font-semibold">Valid Coverage</label>
-                        <div className="text-white mt-1">{ticket.nsaValidCoverage}</div>
-                      </div>
-                    )}
-                    {ticket.nsaRequiredCoverage && (
-                      <div>
-                        <label className="text-slate-500 font-semibold">Required Coverage</label>
-                        <div className="text-white mt-1">{ticket.nsaRequiredCoverage}</div>
-                      </div>
-                    )}
-                    {ticket.nsaPreAuth && (
-                      <div>
-                        <label className="text-slate-500 font-semibold">Pre-Auth</label>
-                        <div className="text-white mt-1 font-mono text-xs bg-slate-800/60 rounded px-2 py-1.5 border border-slate-700">{ticket.nsaPreAuth}</div>
-                      </div>
-                    )}
-                    {ticket.nsaSpecialInstructions && (
-                      <div>
-                        <label className="text-slate-500 font-semibold">Special Instructions</label>
-                        <div className="text-amber-200 mt-1 text-xs bg-amber-950/30 rounded px-2 py-1.5 border border-amber-500/20">{ticket.nsaSpecialInstructions}</div>
+                        <label className="text-slate-500 font-semibold">Problem Description</label>
+                        <div className="text-white mt-1">{ticket.problemDescription}</div>
                       </div>
                     )}
                   </div>
+
+                  {/* Coverage + Pre-Auth */}
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <label className="text-slate-500 font-semibold">Valid Coverage</label>
+                      <div className="text-white mt-1">{ticket.nsaValidCoverage || "—"}</div>
+                    </div>
+                    <div>
+                      <label className="text-slate-500 font-semibold">Required Coverage</label>
+                      <div className="text-white mt-1">{ticket.nsaRequiredCoverage || "—"}</div>
+                    </div>
+                  </div>
+
+                  {ticket.nsaCoverageExclusions && (
+                    <div className="text-sm">
+                      <label className="text-slate-500 font-semibold">Coverage Exclusions</label>
+                      <div className="text-slate-300 mt-1 text-xs bg-slate-800/40 rounded px-3 py-2 border border-slate-700">{ticket.nsaCoverageExclusions}</div>
+                    </div>
+                  )}
+
+                  {ticket.nsaPreAuth && (
+                    <div className="text-sm">
+                      <label className="text-slate-500 font-semibold">Pre-Auth</label>
+                      <div className="text-green-300 mt-1 font-mono text-xs bg-slate-800/60 rounded px-3 py-2 border border-slate-700">{ticket.nsaPreAuth}</div>
+                    </div>
+                  )}
                 </div>
               )}
 
