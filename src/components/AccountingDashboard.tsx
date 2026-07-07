@@ -34,9 +34,14 @@ interface SupabaseEmployee {
   id: string;
   full_name: string;
   department: string | null;
-  country: string | null;
+  country: string | null;  // derived: "PH" if assigned_branch===Philippines, else "US"
   hourly_rate: number | null;
   status: string | null;
+  // profile fields
+  display_name?: string;
+  username?: string;
+  role?: string;
+  assigned_branch?: string;
 }
 
 interface SalaryEntry {
@@ -46,7 +51,8 @@ interface SalaryEntry {
 }
 
 interface TimecardEntry {
-  employee_id: string;
+  profile_id: string | null;
+  employee_id: string | null;
   work_date: string;
   hours_worked: number;
   overtime_hours: number;
@@ -151,9 +157,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("employees").select("id,full_name,department,country,hourly_rate,status").eq("status", "Active"),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch"),
         supabase.from("salary_entries").select("employee_id,effective_date,hourly_rate").order("effective_date", { ascending: false }),
-        supabase.from("timecard_entries").select("employee_id,work_date,hours_worked,overtime_hours,status").gte("work_date", start).lte("work_date", end),
+        supabase.from("timecard_entries").select("profile_id,employee_id,work_date,hours_worked,overtime_hours,status").gte("work_date", start).lte("work_date", end),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,employee_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
@@ -163,7 +169,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         if (res.error) throw new Error(res.error.message);
       }
 
-      setEmployees((empRes.data ?? []) as SupabaseEmployee[]);
+      setEmployees(((empRes.data ?? []) as any[]).map((p) => ({
+        id: p.id,
+        full_name: p.display_name || p.username || p.id,
+        department: p.role ?? null,
+        country: p.assigned_branch === "Philippines" ? "PH" : "US",
+        hourly_rate: null,
+        status: "Active",
+        display_name: p.display_name,
+        username: p.username,
+        role: p.role,
+        assigned_branch: p.assigned_branch,
+      })) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
       setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
       setPayrollRuns((runsRes.data ?? []) as PayrollRun[]);
@@ -187,11 +204,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }
 
-  // Hours worked per employee in current period
+  // Hours worked per employee in current period — use profile_id if available, fall back to employee_id
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
   for (const tc of timecardEntries) {
-    const prev = hoursMap.get(tc.employee_id) ?? { regular: 0, overtime: 0 };
-    hoursMap.set(tc.employee_id, {
+    const key = tc.profile_id || tc.employee_id;
+    if (!key) continue;
+    const prev = hoursMap.get(key) ?? { regular: 0, overtime: 0 };
+    hoursMap.set(key, {
       regular: prev.regular + (tc.hours_worked ?? 0),
       overtime: prev.overtime + (tc.overtime_hours ?? 0),
     });
