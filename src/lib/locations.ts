@@ -147,3 +147,36 @@ export function mergeLocationOptions(...groups: Array<Iterable<string>>) {
 
   return merged;
 }
+
+/**
+ * Parse the `branch_access` profile field into a list of location strings.
+ * Formats supported:
+ *   - Empty / null → [] (no branches)
+ *   - "*"          → all LOCATIONS
+ *   - Pipe-separated: "Memphis|Atlanta|Nashville"
+ *   - Comma-separated or concatenated: "MemphisAtlanta"
+ */
+export function parseBranchAccess(value: string | null | undefined): string[] {
+  const raw = String(value ?? "").trim();
+  if (!raw) return [];
+  if (raw === "*") return [...LOCATIONS];
+  if (raw.includes("|")) {
+    return raw.split("|").map((s) => s.trim()).filter(Boolean);
+  }
+  const found: string[] = [];
+  const sorted = [...LOCATIONS].sort((a, b) => b.length - a.length);
+  let working = raw;
+  while (working.length > 0) {
+    working = working.replace(/^[\s,]+/, "");
+    if (!working) break;
+    const hit = sorted.find((loc) => working.startsWith(loc));
+    if (!hit) {
+      const next = working.indexOf(",");
+      working = next === -1 ? "" : working.slice(next + 1);
+      continue;
+    }
+    found.push(hit);
+    working = working.slice(hit.length);
+  }
+  return Array.from(new Set(found));
+}
