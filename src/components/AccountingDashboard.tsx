@@ -32,12 +32,11 @@ const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface SupabaseEmployee {
   id: string;
-  first_name: string;
-  last_name: string;
+  full_name: string;
   department: string | null;
   country: string | null;
   hourly_rate: number | null;
-  is_active: boolean | null;
+  status: string | null;
 }
 
 interface SalaryEntry {
@@ -152,7 +151,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("employees").select("id,first_name,last_name,department,country,hourly_rate,is_active").eq("is_active", true),
+        supabase.from("employees").select("id,full_name,department,country,hourly_rate,status").eq("status", "Active"),
         supabase.from("salary_entries").select("employee_id,effective_date,hourly_rate").order("effective_date", { ascending: false }),
         supabase.from("timecard_entries").select("employee_id,work_date,hours_worked,overtime_hours,status").gte("work_date", start).lte("work_date", end),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
@@ -624,7 +623,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     displayRows.map((row) => (
                       <tr key={row.employee.id} className="border-b border-white/5 hover:bg-white/5">
                         <td className="px-4 py-3 font-medium text-white">
-                          {row.employee.first_name} {row.employee.last_name}
+                          {row.employee.full_name}
                         </td>
                         <td className="px-4 py-3 text-slate-300">{row.employee.department ?? "—"}</td>
                         <td className="px-4 py-3 text-center text-slate-300">
@@ -758,7 +757,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                         <tr key={idx} className="border-b border-white/5">
                                           <td className="py-2 text-white">
                                             {emp
-                                              ? `${emp.first_name} ${emp.last_name}`
+                                              ? emp.full_name
                                               : li.employee_id}
                                           </td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
