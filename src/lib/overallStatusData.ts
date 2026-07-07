@@ -183,20 +183,26 @@ function ticketSourceName(ticket: Ticket): string {
 
 function toMonth(iso: string): string {
   // "2026-06-25T..." → "2026-06". Also tolerates "06/25/2026".
+  // Ticket `created` is stored as a bare "YYYY-MM-DD" date (see
+  // tickets.ts: `row.created_at.slice(0, 10)`), which `new Date(...)`
+  // parses as UTC midnight. Reading it back with local getters (getMonth/
+  // getDate) shifts the bucket a day earlier in any timezone behind UTC —
+  // use the UTC getters so the bucket matches the stored calendar date.
   if (!iso) return "";
   const d = new Date(iso);
   if (!isNaN(d.getTime())) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
   }
   return "";
 }
 
 function toDay(iso: string): string {
-  // → "MM/DD" to match the reference's daily axis labels.
+  // → "MM/DD" to match the reference's daily axis labels. See toMonth for
+  // why UTC getters are required here.
   if (!iso) return "";
   const d = new Date(iso);
   if (!isNaN(d.getTime())) {
-    return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`;
   }
   return "";
 }
@@ -213,12 +219,29 @@ function isWithinDays(iso: string, days: number): boolean {
 // Core: roll tickets into chart-ready buckets.
 // ────────────────────────────────────────────────────────────────────────────
 
+// A ticket's Posting date (`created`, a bare "YYYY-MM-DD" string — see
+// tickets.ts) falls within [startDate, endDate] when given. Matches the
+// Ticket List's Posting-date filter so this dashboard and the ticket list
+// agree on what "in range" means.
+function inPostingRange(created: string, startDate?: string, endDate?: string): boolean {
+  if (!startDate && !endDate) return true;
+  if (!created) return false;
+  if (startDate && created < startDate) return false;
+  if (endDate && created > endDate) return false;
+  return true;
+}
+
 /**
  * Pull live tickets for the caller's company and compute every section the
  * OverallStatusPage renders. Lightweight enough to call on mount.
+ *
+ * `startDate`/`endDate` (bare "YYYY-MM-DD") scope the Ticket Statistics
+ * chart and the two Pending-by donuts to tickets posted in that window;
+ * CSR Activity and the ranking tables keep their own fixed windows.
  */
-export async function loadOverallStatusData(): Promise<OverallStatusData> {
-  const [tickets, profiles] = await Promise.all([
+export async function loadOverallStatusData(opts?: { startDate?: string; endDate?: string }): Promise<OverallStatusData> {
+  const { startDate, endDate } = opts ?? {};
+  const [ticketsAll, profiles] = await Promise.all([
     getCompanyTickets(),
     // Profiles roster — we need this to know which display_name/email/username
     // belong to users that hold the CSR role (primary or in extra_roles).
@@ -255,6 +278,11 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
     });
   }
 
+  // Ticket Statistics + both Pending-by donuts are scoped to the selected
+  // Posting-date range; CSR Activity and the ranking tables below keep
+  // using the full roster (`ticketsAll`) with their own fixed windows.
+  const tickets = ticketsAll.filter((t) => inPostingRange(t.created, startDate, endDate));
+
   // ── Source totals (for line ordering + chart legend) ───────────────────
   // First pass: count tickets per source so we know which lines to draw and
   // in what order (busiest first, after TOTAL).
@@ -267,7 +295,7 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
     .sort(([, a], [, b]) => b - a)
     .map(([name]) => name);
 
-  // ── Monthly stats (last ~13 months) ─────────────────────────────────────
+  // ── Monthly stats (scoped to the selected Posting-date range) ───────────
   // Each bucket holds a count per source plus the TOTAL.
   const monthBuckets = new Map<string, Record<string, number>>();
   for (const t of tickets) {
@@ -281,7 +309,6 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
   }
   const monthlyStats: StatPoint[] = Array.from(monthBuckets.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-13)
     .map(([date, vals]) => {
       // Make sure every known source appears as 0 on months with no data so
       // the line chart doesn't break the line.
@@ -290,13 +317,12 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
       return { date, ...full } as StatPoint;
     });
 
-  // ── Daily stats (last ~30 days) ─────────────────────────────────────────
+  // ── Daily stats (scoped to the selected Posting-date range) ─────────────
   const dayBuckets = new Map<string, { iso: string; counts: Record<string, number> }>();
   for (const t of tickets) {
     if (!t.created) continue;
     const d = new Date(t.created);
     if (isNaN(d.getTime())) continue;
-    if (!isWithinDays(t.created, 30)) continue;
     const iso = d.toISOString().slice(0, 10);
     const label = toDay(t.created);
     if (!dayBuckets.has(iso)) dayBuckets.set(iso, { iso, counts: { TOTAL: 0 } });
@@ -352,7 +378,7 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
   // last moved the status. Matched against the CSR roster so non-CSR
   // activity (e.g. a manager closing a ticket) is excluded.
   const csrCounts = new Map<string, number>();
-  for (const t of tickets) {
+  for (const t of ticketsAll) {
     const who = String(t.statusChangedBy || "").trim();
     if (!who) continue;
     const display = csrIdentities.get(who.toLowerCase());
@@ -367,7 +393,7 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
   // Completion rate = closed-or-completed / assigned within the window.
   type TechAgg = { name: string; office: string; thirty: { done: number; total: number }; ten: { done: number; total: number } };
   const techMap = new Map<string, TechAgg>();
-  for (const t of tickets) {
+  for (const t of ticketsAll) {
     const tech = (t.technician || "").trim();
     if (!tech || /unassigned/i.test(tech)) continue;
     const office = (t.location || t.branch || "—").trim() || "—";
@@ -393,7 +419,7 @@ export async function loadOverallStatusData(): Promise<OverallStatusData> {
   // ── Location ranking ────────────────────────────────────────────────────
   type LocAgg = { office: string; thirty: { done: number; total: number }; ten: { done: number; total: number } };
   const locMap = new Map<string, LocAgg>();
-  for (const t of tickets) {
+  for (const t of ticketsAll) {
     const office = (t.location || t.branch || "").trim();
     if (!office) continue;
     if (!locMap.has(office)) locMap.set(office, { office, thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });

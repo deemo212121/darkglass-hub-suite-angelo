@@ -1347,3 +1347,44 @@ async function upsertTicketFromServicePowerImpl(
 
 // suppress unused warning for yn helper (kept for future field mapping)
 void yn;
+
+export interface TicketAuditEntry {
+  ticketId: string;
+  action: string;
+  field: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+  changedBy: string | null;
+  createdAt: string;
+}
+
+/**
+ * Read the ticket_audit_log (company-scoped via RLS). This is the real,
+ * trigger-written trail of who changed a ticket's status/tech/schedule and
+ * when — the live substitute for any "who did what" reporting (Daily
+ * Activity Report, CSR Dashboard per-agent counts) since there is no
+ * separate user-activity table.
+ */
+export async function getTicketAuditLog(opts?: { startDate?: string; endDate?: string }): Promise<TicketAuditEntry[]> {
+  let query = supabase
+    .from("ticket_audit_log")
+    .select("ticket_id, action, field, before_value, after_value, changed_by, created_at")
+    .order("created_at", { ascending: false });
+  if (opts?.startDate) query = query.gte("created_at", opts.startDate);
+  if (opts?.endDate) query = query.lte("created_at", `${opts.endDate}T23:59:59.999Z`);
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("getTicketAuditLog error:", error.message);
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((r: any) => ({
+    ticketId: r.ticket_id,
+    action: r.action ?? "",
+    field: r.field ?? "",
+    beforeValue: r.before_value,
+    afterValue: r.after_value,
+    changedBy: r.changed_by,
+    createdAt: r.created_at,
+  }));
+}

@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   Cell,
-  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -14,7 +13,8 @@ import {
   YAxis,
 } from "recharts";
 import { exportToCSV } from "@/lib/csvExport";
-import { REPAIR_STATUS_OPTIONS, TICKETS, TICKET_SOURCES, type Ticket } from "@/lib/ticketData";
+import { REPAIR_STATUS_OPTIONS, TICKET_SOURCES, type Ticket } from "@/lib/ticketData";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -316,6 +316,28 @@ function ColumnFilter({
 }
 
 export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  // Live tickets from Supabase (company-scoped via RLS) — replaces the old
+  // hardcoded dummy TICKETS import.
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setTicketsLoading(true);
+        const rows = await getCompanyTickets();
+        if (!cancelled) setTickets(rows);
+      } catch (err) {
+        console.error("Failed to load tickets:", err);
+        if (!cancelled) setTickets([]);
+      } finally {
+        if (!cancelled) setTicketsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
@@ -342,25 +364,25 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
     setVisibleColumns(Object.fromEntries(TICKET_COLUMNS.map((c) => [c.key, true])));
 
   const locationOptions = useMemo(
-    () => mergeLocationOptions(LOCATIONS, TICKETS.map((t) => t.location)),
-    [],
+    () => mergeLocationOptions(LOCATIONS, tickets.map((t) => t.location)),
+    [tickets],
   );
   const ticketSourceOptions = useMemo(
     () =>
       Array.from(
         new Set([
           ...TICKET_SOURCES,
-          ...(TICKETS.map((t) => t.ticketSource).filter(Boolean) as string[]),
+          ...(tickets.map((t) => t.ticketSource).filter(Boolean) as string[]),
         ]),
       ),
-    [],
+    [tickets],
   );
 
   // ── Top-filter the real ticket list ──
   const filteredTickets = useMemo(() => {
     const fromN = parseInputDate(startDateFilter);
     const toN = parseInputDate(endDateFilter);
-    return TICKETS.filter((t) => {
+    return tickets.filter((t) => {
       if (repairStatusFilter && t.status !== repairStatusFilter) return false;
       if (locationFilter && t.location !== locationFilter) return false;
       if (ticketSourceFilter && t.ticketSource !== ticketSourceFilter) return false;
@@ -372,7 +394,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
       }
       return true;
     });
-  }, [repairStatusFilter, locationFilter, ticketSourceFilter, startDateFilter, endDateFilter]);
+  }, [tickets, repairStatusFilter, locationFilter, ticketSourceFilter, startDateFilter, endDateFilter]);
 
   // ── Group filtered tickets by status (drives cards + charts) ──
   const statusGroups = useMemo(() => {
@@ -583,32 +605,48 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
                 onClick={() => setShowPieLabels((v) => !v)}
                 className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded border transition-colors ${showPieLabels ? "border-white/20 bg-white/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
               >
-                {showPieLabels ? "Hide Labels" : "Show Labels"}
+                {showPieLabels ? "Hide %" : "Show %"}
               </button>
             </div>
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label={showPieLabels ? ({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%` : false}
-                  labelLine={false}
-                >
-                  {pieData.map((entry, i) => (
-                    <Cell key={i} fill={colorFor(entry.name)} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: any) => [v, n]} />
-                <Legend
-                  wrapperStyle={{ fontSize: 10, color: "var(--foreground)" }}
-                  formatter={(value) => <span style={{ color: "var(--foreground)" }}>{value}</span>}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            {/* On-slice labels overlap once there are more than a handful of
+                statuses — instead the pie sits label-free on the left and
+                every slice gets its own compact row (name + %) on the right,
+                sized to fit all of them in one view without scrolling. */}
+            <div className="flex gap-3 items-center">
+              <ResponsiveContainer width="55%" height={260}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={95}
+                    label={false}
+                    labelLine={false}
+                  >
+                    {pieData.map((entry, i) => (
+                      <Cell key={i} fill={colorFor(entry.name)} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: any) => [v, n]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
+                {pieData.map((entry, i) => {
+                  const pct = totalCount > 0 ? (entry.value / totalCount) * 100 : 0;
+                  return (
+                    <div key={i} className="flex items-center gap-1.5 text-[10px] leading-tight">
+                      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: colorFor(entry.name) }} />
+                      <span className="truncate flex-1" style={{ color: "var(--foreground)" }}>{entry.name}</span>
+                      <span className="text-muted-foreground shrink-0">
+                        {entry.value}{showPieLabels ? ` · ${pct.toFixed(0)}%` : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -623,7 +661,9 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
             <p className="text-[9px] text-muted-foreground mt-1 leading-tight uppercase tracking-wide">Total</p>
           </button>
           {statusGroups.length === 0 ? (
-            <p className="col-span-full text-center text-muted-foreground py-6">No tickets match filters.</p>
+            <p className="col-span-full text-center text-muted-foreground py-6">
+              {ticketsLoading ? "Loading tickets…" : "No tickets match filters."}
+            </p>
           ) : (
             statusGroups.map(([status, list]) => (
               <button
@@ -912,7 +952,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
                 {listTickets.length === 0 ? (
                   <tr>
                     <td colSpan={visibleColCount + 1} className="px-4 py-10 text-center text-muted-foreground">
-                      No tickets match filters.
+                      {ticketsLoading ? "Loading tickets…" : "No tickets match filters."}
                     </td>
                   </tr>
                 ) : (

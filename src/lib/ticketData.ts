@@ -168,8 +168,7 @@ export const TICKET_SOURCES = [
 ] as const;
 
 export const REPAIR_STATUS_OPTIONS = [
-  "CL-Need",
-  "Cancel",
+  "CL-Need Cancel",
   "CL-Parts Back Ordered",
   "CL-Ready to Complete",
   "CSR-Acknowledged",

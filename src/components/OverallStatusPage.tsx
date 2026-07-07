@@ -171,22 +171,32 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
   const [error, setError] = useState<string | null>(null);
   const [statType, setStatType] = useState<"monthly" | "daily">("monthly");
   const [location, setLocation] = useState("ALL");
-  const [refreshKey, setRefreshKey] = useState(0);
 
   // Default date range: last 30 days.
   const today = new Date();
   const thirtyAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
   const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-  const [startDate, setStartDate] = useState<string>(isoDay(thirtyAgo));
-  const [endDate, setEndDate] = useState<string>(isoDay(today));
+  const DEFAULT_START = isoDay(thirtyAgo);
+  const DEFAULT_END = isoDay(today);
+  const [startDate, setStartDate] = useState<string>(DEFAULT_START);
+  const [endDate, setEndDate] = useState<string>(DEFAULT_END);
 
+  const clearFilters = () => {
+    setLocation("ALL");
+    setStartDate(DEFAULT_START);
+    setEndDate(DEFAULT_END);
+  };
+
+  // Refetch automatically whenever the date range changes — no explicit
+  // "Refresh" click needed. Location is filtered client-side (see
+  // filteredByLocation below) so it doesn't need a refetch.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
         setError(null);
-        const next = await loadOverallStatusData();
+        const next = await loadOverallStatusData({ startDate, endDate });
         if (!cancelled) setData(next);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load overall status data.");
@@ -195,7 +205,7 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
       }
     })();
     return () => { cancelled = true; };
-  }, [refreshKey]);
+  }, [startDate, endDate]);
 
   const statData = statType === "monthly" ? data.monthlyStats : data.dailyStats;
   // Show every line on both monthly and daily — sources come straight from
@@ -255,11 +265,11 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
             </div>
             <button
               type="button"
-              onClick={() => setRefreshKey((k) => k + 1)}
+              onClick={clearFilters}
               disabled={loading}
-              className="rounded-md border border-blue-400/40 bg-blue-600/30 px-4 py-1.5 text-sm font-semibold text-blue-200 hover:bg-blue-600/50 disabled:opacity-50"
+              className="rounded-md border border-white/15 bg-slate-800/70 px-4 py-1.5 text-sm font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
             >
-              {loading ? "Refreshing…" : "Refresh"}
+              {loading ? "Loading…" : "Clear Filter"}
             </button>
           </div>
           {error && (

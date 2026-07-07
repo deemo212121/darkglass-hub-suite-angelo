@@ -694,7 +694,10 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
       const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((value) => value.toLowerCase().includes(query));
       const matchesRepairStatus = !repairNeedle || norm(ticket.status) === repairNeedle;
-      const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.schedule, startDateFilter, endDateFilter);
+      // Filter by Posting date (ticket.created) so this agrees with the
+      // Posting column's own funnel filter instead of silently filtering by
+      // Schedule date under an unlabeled "date range" control.
+      const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.created, startDateFilter, endDateFilter);
       const matchesLocation = !locationNeedle || norm(ticket.location) === locationNeedle;
       const matchesSource = !sourceNeedle || norm(ticket.ticketSource) === sourceNeedle;
       // High-level status bucket (Open/Completed/Claimed/Cancelled).
@@ -719,7 +722,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
       const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((v) => v.toLowerCase().includes(query));
       const matchesRepairStatus = !repairStatusFilter || ticket.status === repairStatusFilter;
-      const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.schedule, startDateFilter, endDateFilter);
+      const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.created, startDateFilter, endDateFilter);
       const matchesLocation = !locationFilter || ticket.location === locationFilter;
       const matchesSource = !ticketSourceFilter || (ticket.ticketSource || "") === ticketSourceFilter;
       const matchesOtherCols = COLUMN_FILTER_KEYS.every((key) => {

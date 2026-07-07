@@ -1,12 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { CsrTeamComposition } from "@/components/CsrTeamComposition";
 import {
-  AlertTriangle,
   CheckCircle,
   ChevronLeft,
-  Clock,
+  Loader2,
   MessageSquare,
-  Phone,
   Search,
   Users,
 } from "lucide-react";
@@ -23,28 +22,39 @@ import {
   YAxis,
 } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import {
-  CSR_AGENTS,
-  CSR_MISTAKES,
-  CSR_TEAM_COLORS,
-  CSR_TEAMS,
-  CSR_TREND_10,
-  type CSRAgent,
-} from "@/lib/csrDashboardData";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { getTicketAuditLog } from "@/lib/supabase/tickets";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { LOCATIONS, mergeLocationOptions, parseBranchAccess } from "@/lib/locations";
 
 const COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15"];
 
-const ALL_LOCATIONS = [
-  "All Locations",
-  "Asheville", "Atlanta", "Birmingham", "Cape Girardeau", "Chattanooga",
-  "Columbus", "Dallas", "Destin", "Huntsville", "Jackson, MS", "Jackson, TN",
-  "Jacksonville", "Jonesboro", "Knoxville", "Lake Charles", "Little Rock",
-  "Louisville", "Memphis", "Mobile", "Montgomery", "Nashville", "New Orleans",
-  "Norfolk", "Philippines", "Raleigh", "Richmond", "San Antonio", "Savannah",
-  "St. Louis", "Tallahassee", "Wilmington",
-];
+interface Agent {
+  id: string;
+  name: string;
+  teamKey: string | null; // null = not yet placed on a team (Team Composition)
+  locations: string[];
+  schedule: number; // reschedule actions this CSR made (ticket_audit_log)
+  update: number; // status_change actions this CSR made (ticket_audit_log)
+}
+
+interface TeamMeta {
+  key: string;
+  name: string;
+  color: string;
+}
+
+const branchesOf = (assignedBranch: string | null, branchAccess: string | null): string[] => {
+  const raw = [assignedBranch ?? "", ...parseBranchAccess(branchAccess)];
+  return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
+};
 
 export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [teams, setTeams] = useState<TeamMeta[]>([]);
+
   // ── Filters ──
   const [locationSearchFilter, setLocationSearchFilter] = useState("All Locations");
   const [teamFilter, setTeamFilter] = useState<string>("");
@@ -52,64 +62,124 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [showPieLabels, setShowPieLabels] = useState(true);
+  const [showTeamComposition, setShowTeamComposition] = useState(false);
 
-  // Date filters are wired up for future Supabase queries; sample
-  // dataset isn't date-keyed yet so they're informational for now.
-  void dateFrom;
-  void dateTo;
+  const locationOptions = useMemo(
+    () => ["All Locations", ...mergeLocationOptions(LOCATIONS, agents.flatMap((a) => a.locations))],
+    [agents],
+  );
 
-  const agents = useMemo<CSRAgent[]>(() => {
-    return CSR_AGENTS.filter((a) => {
-      const matchLocation =
-        locationSearchFilter === "All Locations" || (a.locations || []).includes(locationSearchFilter);
-      const matchTeam = !teamFilter || a.team === teamFilter;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        // Team composition lives in its own tables (added by a migration that
+        // may not have been run yet) — fetch it separately so a missing/broken
+        // csr_teams table degrades to "no teams assigned" instead of blanking
+        // out the whole roster and KPIs below.
+        const [profiles, auditLog, composition] = await Promise.all([
+          getCompanyUsers(),
+          getTicketAuditLog({ startDate: dateFrom || undefined, endDate: dateTo || undefined }),
+          getCsrTeamComposition().catch((err) => {
+            console.error("Failed to load CSR team composition:", err);
+            setError(
+              `Team Composition unavailable (${err instanceof Error ? err.message : "unknown error"}). ` +
+              `Run the 0027_csr_team_composition.sql migration in Supabase, then reload.`,
+            );
+            return { teams: [], members: [] };
+          }),
+        ]);
+        if (cancelled) return;
+
+        const teamOf = new Map<string, string>(); // profileId -> teamId
+        for (const m of composition.members) teamOf.set(m.profileId, m.teamId);
+
+        const scheduleCount = new Map<string, number>();
+        const updateCount = new Map<string, number>();
+        for (const entry of auditLog) {
+          if (!entry.changedBy) continue;
+          if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
+          if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+        }
+
+        const roster: Agent[] = profiles
+          .filter((p) => p.is_active !== false)
+          .filter((p) => {
+            const extras = p.extra_roles || [];
+            return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+          })
+          .map((p) => ({
+            id: p.id,
+            name: p.display_name || p.username || p.email,
+            teamKey: teamOf.get(p.id) ?? null,
+            locations: branchesOf(p.assigned_branch, p.branch_access),
+            schedule: scheduleCount.get(p.id) ?? 0,
+            update: updateCount.get(p.id) ?? 0,
+          }));
+
+        setAgents(roster);
+        setTeams(composition.teams.map((t) => ({ key: t.id, name: t.name, color: t.color })));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load CSR Dashboard data.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
+
+  const filteredAgents = useMemo(() => {
+    return agents.filter((a) => {
+      const matchLocation = locationSearchFilter === "All Locations" || a.locations.includes(locationSearchFilter);
+      const matchTeam = !teamFilter || a.teamKey === teamFilter;
       const q = agentSearch.toLowerCase();
       const matchSearch = !q || a.name.toLowerCase().includes(q);
       return matchLocation && matchTeam && matchSearch;
     });
-  }, [locationSearchFilter, teamFilter, agentSearch]);
+  }, [agents, locationSearchFilter, teamFilter, agentSearch]);
 
   const totals = useMemo(
     () =>
-      agents.reduce(
+      filteredAgents.reduce(
         (acc, a) => ({
           agents: acc.agents + 1,
           schedule: acc.schedule + a.schedule,
-          attempt: acc.attempt + a.attempt,
           update: acc.update + a.update,
-          warnings: acc.warnings + a.warning,
-          mistakes: acc.mistakes + (a.mistake ? 1 : 0),
         }),
-        { agents: 0, schedule: 0, attempt: 0, update: 0, warnings: 0, mistakes: 0 },
+        { agents: 0, schedule: 0, update: 0 },
       ),
-    [agents],
+    [filteredAgents],
   );
 
   const teamData = useMemo(
     () =>
-      CSR_TEAMS.map((t) => {
-        const ta = agents.filter((a) => a.team === t);
-        return {
-          name: t.replace("TEAM ", ""),
-          agents: ta.length,
-          schedule: ta.reduce((s, a) => s + a.schedule, 0),
-          attempt: ta.reduce((s, a) => s + a.attempt, 0),
-          mistakes: ta.filter((a) => a.mistake).length,
-          warnings: ta.reduce((s, a) => s + a.warning, 0),
-        };
-      }).filter((t) => t.agents > 0),
-    [agents],
+      teams
+        .map((t) => {
+          const ta = filteredAgents.filter((a) => a.teamKey === t.key);
+          return {
+            key: t.key,
+            name: t.name,
+            color: t.color,
+            agents: ta.length,
+            schedule: ta.reduce((s, a) => s + a.schedule, 0),
+            update: ta.reduce((s, a) => s + a.update, 0),
+          };
+        })
+        .filter((t) => t.agents > 0),
+    [teams, filteredAgents],
   );
 
   const locationBreakdown = useMemo(() => {
     const map: Record<string, number> = {};
-    agents.forEach((a) => {
-      (a.locations || []).forEach((loc) => {
+    filteredAgents.forEach((a) => {
+      a.locations.forEach((loc) => {
         map[loc] = (map[loc] || 0) + 1;
       });
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [agents]);
+  }, [filteredAgents]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -139,7 +209,21 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               <span>{item.icon}</span>{item.label}
             </Link>
           ))}
+          <button
+            type="button"
+            onClick={() => setShowTeamComposition((v) => !v)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+          >
+            <span>👥</span>Team Composition
+          </button>
         </div>
+
+        {showTeamComposition && <CsrTeamComposition />}
+
+        {!showTeamComposition && (<>
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
+        )}
 
         {/* Filters */}
         <div className="panel p-4 mb-6">
@@ -151,7 +235,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                 onChange={(e) => setLocationSearchFilter(e.target.value)}
                 className="glass-input mt-1 w-full"
               >
-                {ALL_LOCATIONS.map((s) => (
+                {locationOptions.map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
@@ -164,8 +248,8 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                 className="glass-input mt-1 w-full"
               >
                 <option value="">All Teams</option>
-                {CSR_TEAMS.map((t) => (
-                  <option key={t} value={t}>{t.replace("TEAM ", "Team ")}</option>
+                {teams.map((t) => (
+                  <option key={t.key} value={t.key}>{t.name}</option>
                 ))}
               </select>
             </div>
@@ -200,17 +284,27 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               />
             </div>
           </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail), optionally narrowed by Date From/To.
+          </p>
         </div>
 
+        {loading ? (
+          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Dashboard…
+          </div>
+        ) : agents.length === 0 ? (
+          <p className="panel p-8 mb-6 text-center text-sm text-muted-foreground">
+            No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+          </p>
+        ) : (
+        <>
         {/* KPI cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-3 mb-6">
           {[
             { label: "Agents", value: totals.agents, color: "text-white", icon: <Users className="h-4 w-4" /> },
             { label: "Schedule", value: totals.schedule, color: "text-green-300", icon: <CheckCircle className="h-4 w-4" /> },
-            { label: "Attempt", value: totals.attempt, color: "text-cyan-300", icon: <Phone className="h-4 w-4" /> },
             { label: "Update", value: totals.update, color: "text-purple-300", icon: <MessageSquare className="h-4 w-4" /> },
-            { label: "Warnings", value: totals.warnings, color: totals.warnings > 0 ? "text-red-300" : "text-muted-foreground", icon: <AlertTriangle className="h-4 w-4" /> },
-            { label: "Mistakes", value: totals.mistakes, color: totals.mistakes > 0 ? "text-orange-300" : "text-muted-foreground", icon: <Clock className="h-4 w-4" /> },
           ].map((k) => (
             <div key={k.label} className="panel p-4 text-center">
               <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
@@ -231,7 +325,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                 <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
                 <Bar dataKey="schedule" fill="#34d399" radius={[4, 4, 0, 0]} name="Schedule" />
-                <Bar dataKey="attempt" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Attempt" />
+                <Bar dataKey="update" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Update" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -279,82 +373,35 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
         </div>
 
-        {/* 10-Day Trend */}
-        <div className="panel p-4 mb-4">
-          <p className="text-sm font-semibold mb-4">10-Day Trend</p>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={CSR_TREND_10} margin={{ left: -10 }}>
-              <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
-              <Bar dataKey="schedule" fill="#34d399" radius={[4, 4, 0, 0]} name="Schedule" />
-              <Bar dataKey="attempt" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Attempt" />
-              <Bar dataKey="mistakes" fill="#f87171" radius={[4, 4, 0, 0]} name="Mistakes" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
         {/* Team cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          {teamData.map((t) => (
+          {teamData.length === 0 ? (
+            <p className="col-span-full text-center text-sm text-muted-foreground py-6">
+              No agents placed on a team yet — use Team Composition to assign them.
+            </p>
+          ) : teamData.map((t) => (
             <div
-              key={t.name}
+              key={t.key}
               className="panel p-4"
-              style={{ borderLeft: `3px solid ${CSR_TEAM_COLORS["TEAM " + t.name] || "#94a3b8"}` }}
+              style={{ borderLeft: `3px solid ${t.color}` }}
             >
-              <p
-                className="text-xs font-bold mb-2"
-                style={{ color: CSR_TEAM_COLORS["TEAM " + t.name] || "#94a3b8" }}
-              >
-                TEAM {t.name}
+              <p className="text-xs font-bold mb-2" style={{ color: t.color }}>
+                {t.name}
               </p>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                 <span className="text-muted-foreground">Agents</span>
                 <span className="text-right font-semibold">{t.agents}</span>
                 <span className="text-muted-foreground">Schedule</span>
                 <span className="text-right text-green-300">{t.schedule}</span>
-                <span className="text-muted-foreground">Attempt</span>
-                <span className="text-right">{t.attempt}</span>
-                <span className="text-muted-foreground">Warnings</span>
-                <span className={`text-right ${t.warnings > 0 ? "text-red-300" : ""}`}>{t.warnings}</span>
-                <span className="text-muted-foreground">Mistakes</span>
-                <span className={`text-right ${t.mistakes > 0 ? "text-orange-300" : ""}`}>{t.mistakes}</span>
+                <span className="text-muted-foreground">Update</span>
+                <span className="text-right">{t.update}</span>
               </div>
             </div>
           ))}
         </div>
-
-        {/* Mistakes log table */}
-        <div className="panel p-0 overflow-hidden">
-          <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-400" />
-            <span className="font-semibold text-sm">Mistakes Log</span>
-            <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/15 text-red-400 border border-red-500/25">{CSR_MISTAKES.length}</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-blue-900/40 border-b border-white/10">
-                  {["Name", "Mistake", "Date", "Reason", "Action Taken"].map((h) => (
-                    <th key={h} className="px-4 py-2.5 text-left font-semibold text-blue-300">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {CSR_MISTAKES.map((m, i) => (
-                  <tr key={i} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-4 py-2.5 font-medium text-slate-200">{m.name}</td>
-                    <td className="px-4 py-2.5 text-center text-orange-300">{m.mistakes}</td>
-                    <td className="px-4 py-2.5 text-slate-300">{m.date}</td>
-                    <td className="px-4 py-2.5 text-slate-300">{m.reason}</td>
-                    <td className="px-4 py-2.5 text-slate-300">{m.actionTaken}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </>
+        )}
+        </>)}
       </main>
     </div>
   );
