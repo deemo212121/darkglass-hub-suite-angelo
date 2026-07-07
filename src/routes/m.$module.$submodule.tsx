@@ -209,7 +209,7 @@ function SubModule() {
         : sub.slug === "repair-forecast"
         ? <RepairForecastPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "daily-activity"
-        ? <DailyActivityPage mod={mod} sub={sub} companyId={companyId} />
+        ? <DailyActivityReport mod={mod} sub={sub} />
         : sub.custom === "part-return-status"
         ? <PartReturnStatusPage />
         : sub.custom === "claims-pipeline"
