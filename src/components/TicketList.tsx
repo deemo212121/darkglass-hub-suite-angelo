@@ -549,6 +549,10 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  // Page size: a real number of rows per page, or "all" to show every
+  // filtered row at once (the old, unpaginated behavior).
+  const [pageSize, setPageSize] = useState<number | "all">(25);
+  const [currentPage, setCurrentPage] = useState(1);
   const [statusLog, setStatusLog] = useState<StatusLogEntry[]>([]);
   // Ref to the table's horizontal-scroll container so a floating scrollbar
   // pinned to the bottom of the viewport can mirror its scroll position.
@@ -658,6 +662,12 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const updateColumnFilter = (key: ColumnFilterKey, next: Set<string>) => {
     setColumnFilters((prev) => ({ ...prev, [key]: next }));
   };
+
+  // Any filter changing invalidates whatever page we were on.
+  useEffect(() => {
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, repairStatusFilter, startDateFilter, endDateFilter, locationFilter, ticketSourceFilter, statusGroupFilter, columnFilters]);
 
   // How to read each filterable column off a TicketItem. Anything returning
   // an empty string is treated as a "(blank)" bucket.
@@ -837,6 +847,15 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     return rows;
   }, [filteredItems, sortKey, sortDir]);
 
+  const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
+  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(sortedItems.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedItems = useMemo(() => {
+    if (pageSize === "all") return sortedItems;
+    const start = (safePage - 1) * pageSize;
+    return sortedItems.slice(start, start + pageSize);
+  }, [sortedItems, safePage, pageSize]);
+
   // Header builder: wraps the header label + filter funnel in a clickable
   // span. Clicking the label triggers the sort; the filter button stops
   // propagation so it never doubles as a sort click.
@@ -999,6 +1018,33 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             </div>
           </div>
 
+          {/* Total ticket count for the currently applied filters + page size */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2 text-sm">
+            <span className="text-muted-foreground">
+              Total Tickets: <span className="font-semibold text-foreground">{filteredItems.length}</span>
+            </span>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Show:</span>
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  onClick={() => { setPageSize(size); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded border transition-colors ${pageSize === size ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground"}`}
+                >
+                  {size}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => { setPageSize("all"); setCurrentPage(1); }}
+                className={`px-2 py-1 rounded border transition-colors ${pageSize === "all" ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground"}`}
+              >
+                All
+              </button>
+            </div>
+          </div>
+
           {/* Ticket Table */}
           <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg">
             <table className="w-full min-w-max text-xs leading-tight">
@@ -1029,7 +1075,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 </tr>
               </thead>
               <tbody>
-                {sortedItems.map((ticket) => (
+                {pagedItems.map((ticket) => (
                   <tr key={ticket.ticketNo} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                     <td className="px-2 py-1.5 text-center font-bold text-green-400 w-12" title={visitedTickets.has(ticket.ticketNo) ? `Visited by: ${getTicketVisitors(ticket.ticketNo).join(", ")}` : "Not visited"}>
                       {visitedTickets.has(ticket.ticketNo) ? "✓" : ""}
@@ -1130,8 +1176,36 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               comes into view. */}
           <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
 
-          <div className="mt-4 text-sm text-muted-foreground">
-            Showing {filteredItems.length} of {SAMPLE_TICKETS.length} tickets ({selectedItems.size} selected)
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+            <span>
+              {filteredItems.length === 0
+                ? "Showing 0 tickets"
+                : pageSize === "all"
+                ? `Showing all ${filteredItems.length} of ${filteredItems.length} tickets`
+                : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, filteredItems.length)} of ${filteredItems.length} tickets`}
+              {" "}({selectedItems.size} selected)
+            </span>
+            {pageSize !== "all" && totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className="btn hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Prev
+                </button>
+                <span className="text-xs">Page {safePage} of {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className="btn hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

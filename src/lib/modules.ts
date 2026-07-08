@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "reserved-part-list-custom" | "parts-dashboard" | "truck-stock"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "truck-stock" | "attendance-monitoring"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -120,7 +120,7 @@ const dashboardMod: ModuleDef = {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
-      custom: "attendance-monitoring" as any,
+      custom: "attendance-monitoring",
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -209,6 +209,15 @@ const dashboardMod: ModuleDef = {
       title: "CSR Dashboard",
       description: "CSR team performance metrics and real-time monitoring.",
       custom: "csr-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "csr-team-leader-dashboard",
+      title: "Team Leader Dashboard",
+      description: "Your personal tracker plus your team's live metrics.",
+      custom: "csr-team-leader-dashboard" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

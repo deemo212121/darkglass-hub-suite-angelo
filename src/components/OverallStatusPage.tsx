@@ -52,11 +52,13 @@ function Donut({ data, title }: { data: DonutSlice[]; title: string }) {
           </Pie>
           <Tooltip
             contentStyle={{ background: "rgba(15,23,42,0.95)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#fff" }}
+            itemStyle={{ color: "#fff" }}
+            labelStyle={{ color: "#fff" }}
             formatter={(value: any, name: any) => [value, name]}
           />
         </PieChart>
       </ResponsiveContainer>
-      <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px] text-slate-400 max-h-24 overflow-y-auto">
+      <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
         {data.slice(0, 30).map((d, i) => (
           <span key={i} className="inline-flex items-center gap-1">
             <span className="h-2 w-2 rounded-full" style={{ background: d.color }} />

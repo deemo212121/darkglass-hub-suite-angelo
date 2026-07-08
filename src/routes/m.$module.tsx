@@ -1,8 +1,11 @@
 import { createFileRoute, Link, Navigate, notFound, Outlet } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
+import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { getMyRoles } from "@/lib/supabase/users";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
@@ -34,8 +37,16 @@ export const Route = createFileRoute("/m/$module")({
 });
 
 function ModuleIndex() {
-  const { ready, email, role } = useAuth();
+  const { ready, email, role, uid } = useAuth();
   const { module: m } = Route.useLoaderData();
+  const [extraRoles, setExtraRoles] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!ready || !uid || m.slug !== "dashboard") return;
+    let cancelled = false;
+    getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
+    return () => { cancelled = true; };
+  }, [ready, uid, m.slug]);
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
@@ -118,7 +129,11 @@ function ModuleIndex() {
         {m.slug === "dashboard" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
-              .filter((s: SubModuleDef) => !["csr-daily-report", "call-tracker", "csr-status-summary"].includes(s.slug))
+              .filter((s: SubModuleDef) => !["csr-daily-report", "call-tracker", "csr-status-summary", "csr-team-leader-dashboard"].includes(s.slug))
+              .filter((s: SubModuleDef) => {
+                const allowed = getDashboardRoleGate(s.slug);
+                return !allowed || hasDashboardAccess(allowed, role, extraRoles);
+              })
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}

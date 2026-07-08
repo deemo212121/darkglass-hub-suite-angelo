@@ -54,6 +54,8 @@ export interface ProfileRow {
   email_report_location: string | null;
   sms_status: string | null;
   off_days: number[] | null;
+  required_check_in: string | null;
+  required_check_out: string | null;
   work_plan: Record<string, any> | null;
   is_active: boolean;
   created_at: string;
@@ -161,10 +163,29 @@ export async function getMyProfileId(firebaseUid: string): Promise<string | null
   return data?.id ?? null;
 }
 
+/**
+ * Resolve the current user's primary role + extra_roles from their Firebase
+ * uid. Used by page-level role gates (useAuth().role alone doesn't carry
+ * extra_roles — see getProfileForLogin).
+ */
+export async function getMyRoles(firebaseUid: string): Promise<{ role: string | null; extraRoles: string[] }> {
+  if (!firebaseUid) return { role: null, extraRoles: [] };
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("role, extra_roles")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+  if (error) {
+    console.error("getMyRoles error:", error.message);
+    return { role: null, extraRoles: [] };
+  }
+  return { role: (data?.role as string | undefined) ?? null, extraRoles: (data?.extra_roles as string[] | null) ?? [] };
+}
+
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, required_check_in, required_check_out, is_active, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 

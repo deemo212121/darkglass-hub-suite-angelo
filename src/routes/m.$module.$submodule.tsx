@@ -69,6 +69,10 @@ import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
+import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { getMyRoles } from "@/lib/supabase/users";
+import { ROLE_LABELS } from "@/lib/roleLabels";
+import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
 import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
@@ -93,8 +97,10 @@ import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage"
 import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
 import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { CSRDashboard } from "@/components/CSRDashboard";
+import { CSRTeamLeaderDashboard } from "@/components/CSRTeamLeaderDashboard";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
+import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
@@ -129,12 +135,26 @@ export const Route = createFileRoute("/m/$module/$submodule")({
 });
 
 function SubModule() {
-  const { ready, email, companyId, role } = useAuth();
+  const { ready, email, companyId, role, uid } = useAuth();
   const { mod, sub } = Route.useLoaderData();
   const location = useLocation();
+
+  // Dashboard-page role gates (e.g. Attendance Monitoring, Payroll). Only
+  // fetch extra_roles when the primary role alone doesn't already pass —
+  // avoids an extra query on every ungated page load.
+  const dashboardAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : null;
+  const roleGrantsQuick = !dashboardAllowedRoles || hasDashboardAccess(dashboardAllowedRoles, role, []);
+  const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!dashboardAllowedRoles || roleGrantsQuick || !ready || !uid) return;
+    let cancelled = false;
+    getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
+    return () => { cancelled = true; };
+  }, [dashboardAllowedRoles, roleGrantsQuick, ready, uid]);
+
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
-  
+
   // Check admin access using Firebase role
   const hasAdminAccess = role && (role.toUpperCase() === "ADMIN" || role.toUpperCase() === "SUPERADMIN");
 
@@ -201,6 +221,38 @@ function SubModule() {
     return <Outlet />;
   }
 
+  // Dashboard-page role gate resolution (see hook above). Wait for the
+  // extra_roles fetch before deciding when the primary role alone doesn't
+  // already pass — avoids a flash of either the denied panel or the page.
+  if (dashboardAllowedRoles && !roleGrantsQuick && extraRoles === null) return null;
+  const dashboardAccessOk = !dashboardAllowedRoles || roleGrantsQuick || hasDashboardAccess(dashboardAllowedRoles, role, extraRoles);
+
+  if (dashboardAllowedRoles && !dashboardAccessOk) {
+    const allowedLabels = dashboardAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                {sub.title} is only available to {allowedLabels}, and SuperAdmin users.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
   return (
     <>
       <AppHeader />
@@ -209,7 +261,9 @@ function SubModule() {
         : sub.slug === "repair-forecast"
         ? <RepairForecastPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "daily-activity"
-        ? <DailyActivityReport mod={mod} sub={sub} />
+        ? <DailyActivityPage mod={mod} sub={sub} companyId={companyId} />
+        : sub.slug === "expense-tracking"
+        ? <ExpenseTrackingPage mod={mod} sub={sub} />
         : sub.custom === "part-return-status"
         ? <PartReturnStatusPage />
         : sub.custom === "claims-pipeline"
@@ -326,6 +380,8 @@ function SubModule() {
         ? <EmployeeSelfServicePage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-dashboard"
         ? <CSRDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-team-leader-dashboard"
+        ? <CSRTeamLeaderDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

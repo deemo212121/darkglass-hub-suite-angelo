@@ -1,26 +1,45 @@
-import { ChevronLeft, DollarSign, Calendar, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
+import { ChevronLeft, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
-import type { ModuleDef, SubModuleDef } from "@/lib/db";
+import { Link, useSearch } from "@tanstack/react-router";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getEmployeeFromEmail, getUserPayslips, getUserAttendance } from "@/lib/userDataSync";
+import { getEmployeeFromEmail } from "@/lib/userDataSync";
 import { LOCATIONS } from "@/lib/locations";
 import {
   type AttendanceRow,
   getAttendanceForRange,
   getMyProfileSchedule,
 } from "@/lib/supabase/timecards";
-
-interface PayrollRecord {
-  id: string;
-  period: string;
-  date: string;
-  grossPay: number;
-  netPay: number;
-  deductions: number;
-  overtime: number;
-  status: "available" | "pending";
-}
+import {
+  getCompanyPtoRequests,
+  createPtoRequest,
+  reviewPtoStage,
+  canReviewPtoStage,
+  isEligibleForPto,
+  ptoEligibleDate,
+  type PtoRequestRow,
+  type PtoType,
+  type PtoStage,
+} from "@/lib/supabase/pto";
+import {
+  getCompanyTimecardCorrections,
+  createTimecardCorrection,
+  approveTimecardCorrection,
+  rejectTimecardCorrection,
+  type TimecardCorrectionRow,
+} from "@/lib/supabase/timecardCorrections";
+import {
+  getCompanyEmployeeRequests,
+  createEmployeeRequest,
+  updateEmployeeRequestStatus,
+  type EmployeeRequestRow,
+  type EmployeeRequestStatus,
+} from "@/lib/supabase/employeeRequests";
+import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { createNotification } from "@/lib/supabase/notifications";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
+import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { ROLE_LABELS } from "@/lib/roleLabels";
 
 interface AttendanceRecord {
   date: string;
@@ -44,62 +63,28 @@ interface Request {
   details: string;
 }
 
+const PTO_TYPE_LABEL: Record<PtoType, string> = {
+  vacation: "Vacation",
+  sick: "Sick Leave",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid",
+  bereavement: "Bereavement",
+};
+
 interface EmployeePayslipData {
-  id: string;
   name: string;
   department: string;
-  dailyTimecards: Array<{
-    date: string;
-    timeIn: string;
-    timeOut: string;
-    mealInTime: string;
-    mealOutTime: string;
-    hoursWorked: number;
-  }>;
-  totalHoursMonth: number;
-  totalOvertimeMonth: number;
-  totalPTOHours: number;
-  totalAbsences: number;
-  totalHolidayPay: number;
-  notes?: string;
+  period: string;
+  generatedDate: string;
+  hoursWorked: number;
+  overtimeHours: number;
+  hourlyRate: number;
+  regularPay: number;
+  overtimePay: number;
+  grossPay: number;
+  netPay: number;
 }
-
-// Mock Data
-const CURRENT_PAYROLL: PayrollRecord = {
-  id: "current",
-  period: "Jun 1-15, 2026",
-  date: "2026-06-16",
-  grossPay: 3200,
-  netPay: 2560,
-  deductions: 400,
-  overtime: 150,
-  status: "available",
-};
-
-const PAYROLL_HISTORY: PayrollRecord[] = [
-  { id: "1", period: "Jun 1-15, 2026", date: "2026-06-16", grossPay: 3200, netPay: 2560, deductions: 400, overtime: 150, status: "available" },
-  { id: "2", period: "May 16-31, 2026", date: "2026-06-01", grossPay: 3100, netPay: 2480, deductions: 380, overtime: 120, status: "available" },
-  { id: "3", period: "May 1-15, 2026", date: "2026-05-16", grossPay: 3200, netPay: 2560, deductions: 400, overtime: 140, status: "available" },
-];
-
-const EMPLOYEE_PAYSLIP_DATA: EmployeePayslipData = {
-  id: "current-employee",
-  name: "John Doe",
-  department: "Operations",
-  dailyTimecards: [
-    { date: "2026-06-01", timeIn: "8:00 AM", timeOut: "5:00 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 8 },
-    { date: "2026-06-02", timeIn: "8:10 AM", timeOut: "5:05 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 8.92 },
-    { date: "2026-06-03", timeIn: "7:55 AM", timeOut: "5:15 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9.33 },
-    { date: "2026-06-04", timeIn: "8:00 AM", timeOut: "5:00 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9 },
-    { date: "2026-06-05", timeIn: "8:05 AM", timeOut: "5:10 PM", mealInTime: "12:00 PM", mealOutTime: "1:00 PM", hoursWorked: 9.08 },
-  ],
-  totalHoursMonth: 160,
-  totalOvertimeMonth: 8,
-  totalPTOHours: 0,
-  totalAbsences: 0,
-  totalHolidayPay: 0,
-  notes: "June payroll processed successfully. All timecards verified.",
-};
 
 const ATTENDANCE_DAILY: AttendanceRecord[] = [
   { date: "2026-06-04", clockIn: "8:00 AM", clockOut: "5:00 PM", hoursWorked: 9, status: "completed" },
@@ -116,28 +101,6 @@ const LOGIN_LOGOUT_HISTORY: LoginLogoutRecord[] = [
   { date: "2026-06-03", time: "5:15 PM", type: "logout" },
 ];
 
-const PTO_BALANCE = {
-  vacation: { available: 12, used: 8, pending: 2 },
-  sickLeave: { available: 10, used: 3, pending: 0 },
-  personal: { available: 3, used: 1, pending: 1 },
-};
-
-const PTO_HISTORY = [
-  { date: "2026-05-20", type: "Vacation", days: 3, status: "approved" },
-  { date: "2026-04-15", type: "Sick Leave", days: 1, status: "approved" },
-];
-
-const UPCOMING_REQUESTS = [
-  { id: "1", type: "PTO Request", dates: "Jun 10-14, 2026", days: 5, status: "pending" },
-];
-
-const ALL_REQUESTS: Request[] = [
-  { id: "1", type: "PTO Request", status: "pending", submittedDate: "2026-06-02", details: "Vacation: Jun 10-14, 2026 (5 days)" },
-  { id: "2", type: "Time Correction", status: "approved", submittedDate: "2026-05-30", details: "Corrected clock-out time for May 28 from 5:00 PM to 5:15 PM" },
-  { id: "3", type: "Attendance Dispute", status: "rejected", submittedDate: "2026-05-25", details: "Missing clock-in record for May 24" },
-  { id: "4", type: "Payroll Inquiry", status: "closed", submittedDate: "2026-05-20", details: "Question about overtime calculation for May 1-15 period" },
-];
-
 function generatePayslipHTML(employee: EmployeePayslipData): string {
   const currentDate = new Date().toLocaleDateString("en-US", {
     year: "numeric",
@@ -145,18 +108,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
     day: "numeric",
   });
 
-  // Calculate payroll values
-  const hourlyRate = 20;
-  const overtimeRate = 30;
-  const ptoRate = 20;
-  const regularPay = employee.totalHoursMonth * hourlyRate;
-  const overtimePay = employee.totalOvertimeMonth * overtimeRate;
-  const ptoPay = employee.totalPTOHours * ptoRate;
-  const holidayPay = employee.totalHolidayPay;
-  const grossPay = regularPay + overtimePay + ptoPay + holidayPay;
-  const absenceCost = employee.totalAbsences * 20;
-  const deductions = grossPay * 0.2;
-  const netPay = grossPay - deductions;
+  const deductions = employee.grossPay - employee.netPay;
 
   return `
 <!DOCTYPE html>
@@ -366,53 +318,13 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
       <div>
         <div class="info-section">
           <label>Payslip Date</label>
-          <span>${currentDate}</span>
+          <span>${employee.generatedDate || currentDate}</span>
         </div>
         <div class="info-section" style="margin-top: 15px;">
           <label>Period</label>
-          <span>June 1-30, 2026</span>
+          <span>${employee.period}</span>
         </div>
       </div>
-    </div>
-
-    <div style="margin-top: 15px; margin-bottom: 15px;">
-      <h3 style="font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 8px; border-bottom: 2px solid #1e40af; padding-bottom: 5px;">Daily Timecard Details</h3>
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Check In</th>
-            <th>Meal Start</th>
-            <th>Meal End</th>
-            <th>Check Out</th>
-            <th>Working Hours</th>
-            <th>Rate</th>
-            <th>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${employee.dailyTimecards.map(tc => {
-            const checkInTime = tc.timeIn || "—";
-            const checkOutTime = tc.timeOut || "—";
-            const mealStart = tc.mealInTime || "—";
-            const mealEnd = tc.mealOutTime || "—";
-            const hours = tc.hoursWorked.toFixed(2);
-            const amount = (tc.hoursWorked * hourlyRate).toFixed(2);
-            return `
-          <tr>
-            <td>${tc.date}</td>
-            <td>${checkInTime}</td>
-            <td>${mealStart}</td>
-            <td>${mealEnd}</td>
-            <td>${checkOutTime}</td>
-            <td>${hours}</td>
-            <td>$${hourlyRate}</td>
-            <td class="amount">$${amount}</td>
-          </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
     </div>
 
     <div class="summary-section">
@@ -420,63 +332,52 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
         <thead>
           <tr>
             <th>Description</th>
+            <th style="text-align: right;">Hours</th>
+            <th style="text-align: right;">Rate</th>
             <th style="text-align: right;">Amount</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>Regular Hours</td>
-            <td class="amount">$${regularPay.toFixed(2)}</td>
+            <td class="amount">${employee.hoursWorked.toFixed(2)}</td>
+            <td class="amount">$${employee.hourlyRate.toFixed(2)}</td>
+            <td class="amount">$${employee.regularPay.toFixed(2)}</td>
           </tr>
-          ${employee.totalOvertimeMonth > 0 ? `
+          ${employee.overtimeHours > 0 ? `
           <tr>
             <td>Overtime Hours</td>
-            <td class="amount">$${overtimePay.toFixed(2)}</td>
-          </tr>
-          ` : ''}
-          ${employee.totalPTOHours > 0 ? `
-          <tr>
-            <td>PTO Hours</td>
-            <td class="amount">$${ptoPay.toFixed(2)}</td>
-          </tr>
-          ` : ''}
-          ${employee.totalAbsences > 0 ? `
-          <tr>
-            <td>Absences (${employee.totalAbsences} days)</td>
-            <td class="amount">-$${absenceCost.toFixed(2)}</td>
-          </tr>
-          ` : ''}
-          ${employee.totalHolidayPay > 0 ? `
-          <tr>
-            <td>Holiday Pay</td>
-            <td class="amount">$${holidayPay.toFixed(2)}</td>
+            <td class="amount">${employee.overtimeHours.toFixed(2)}</td>
+            <td class="amount">$${(employee.hourlyRate * 1.5).toFixed(2)}</td>
+            <td class="amount">$${employee.overtimePay.toFixed(2)}</td>
           </tr>
           ` : ''}
         </tbody>
       </table>
-      
+
       <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>Gross Pay</div>
-        <div class="amount">$${grossPay.toFixed(2)}</div>
+        <div class="amount">$${employee.grossPay.toFixed(2)}</div>
       </div>
 
+      ${deductions > 0 ? `
       <table class="table" style="margin-top: 15px;">
         <tbody>
           <tr>
-            <td>Deductions (20%)</td>
+            <td>Deductions</td>
             <td class="amount">-$${deductions.toFixed(2)}</td>
           </tr>
         </tbody>
       </table>
+      ` : ''}
 
       <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>NET PAY</div>
-        <div class="amount">$${netPay.toFixed(2)}</div>
+        <div class="amount">$${employee.netPay.toFixed(2)}</div>
       </div>
     </div>
 
     <div class="footer">
-      ${employee.notes ? `<div style="text-align: left; margin-bottom: 20px; padding: 12px; background: #f3f4f6; border-left: 4px solid #1e40af; border-radius: 4px;"><p style="margin: 0; font-size: 12px;"><strong style="color: #1e40af;">Notes:</strong> <span style="color: #374151;">${employee.notes}</span></p></div>` : ''}
       <p style="margin: 0; margin-bottom: 10px;">This is an electronically generated payslip. No signature is required.</p>
       <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
     </div>
@@ -487,26 +388,11 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
 }
 
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
-  const { email, uid } = useAuth();
+  const { email, uid, role, displayName } = useAuth();
+  const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   const employee = getEmployeeFromEmail(email);
-  const userPayslips = getUserPayslips(email);
-  
-  // Load current payslip data
-  const currentPayslip = userPayslips.length > 0 ? userPayslips[userPayslips.length - 1] : null;
-  const payslipData = currentPayslip ? {
-    id: currentPayslip.employeeId,
-    name: currentPayslip.employeeName,
-    department: currentPayslip.department,
-    dailyTimecards: [],
-    totalHoursMonth: currentPayslip.hoursWorked,
-    totalOvertimeMonth: currentPayslip.overtimeHours,
-    totalPTOHours: currentPayslip.ptoHours,
-    totalAbsences: 0,
-    totalHolidayPay: currentPayslip.holidayPay || 0,
-    notes: "Payslip generated from employee data sync system",
-  } : EMPLOYEE_PAYSLIP_DATA;
-  
-  const [activeTab, setActiveTab] = useState<"dashboard" | "payroll" | "attendance" | "pto" | "requests">("dashboard");
+
+  const [activeTab, setActiveTab] = useState<"dashboard" | "payroll" | "attendance" | "requests" | "manage">("dashboard");
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
   const [payslipModalOpen, setPayslipModalOpen] = useState(false);
   const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
@@ -519,14 +405,34 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [missingAttendance, setMissingAttendance] = useState<AttendanceRow[]>([]);
   const [warningDismissed, setWarningDismissed] = useState(false);
   const [showLoginLogout, setShowLoginLogout] = useState(false);
-  const [submittedRequests, setSubmittedRequests] = useState<Request[]>(ALL_REQUESTS);
+
+  // Real Supabase-backed PTO / time-correction / attendance-dispute / payroll-inquiry
+  // requests — company-scoped by RLS, filtered down to "mine" below for the
+  // employee-facing tabs and shown in full on the "Manage Requests" tab for
+  // HR/Finance/Admin.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  const [myHireDate, setMyHireDate] = useState<string | null>(null);
+  const [allPtoRequests, setAllPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [allCorrections, setAllCorrections] = useState<TimecardCorrectionRow[]>([]);
+  const [allEmployeeRequests, setAllEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
+  const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [responseNote, setResponseNote] = useState<Record<string, string>>({});
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+
   const [formData, setFormData] = useState({
     leaveType: "Vacation",
     startDate: "",
     endDate: "",
     correctionDate: "",
+    correctedCheckIn: "",
+    correctedCheckOut: "",
+    correctedMealStart: "",
+    correctedMealEnd: "",
     details: "",
-    branch: LOCATIONS[0] || "",
+    branch: (LOCATIONS[0] as string) || "",
   });
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -539,7 +445,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     (async () => {
       try {
         const schedule = await getMyProfileSchedule(uid);
-        if (!schedule.profileId || cancelled) return;
+        if (cancelled) return;
+        setMyProfileId(schedule.profileId);
+        if (!schedule.profileId) return;
         const today = new Date();
         const start = new Date(today);
         start.setDate(start.getDate() - 30);
@@ -566,12 +474,212 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return () => { cancelled = true; };
   }, [uid]);
 
+  // PTO eligibility requires knowing the employee's hire date (stored in
+  // profiles.employee_info, not part of the regular profile columns).
+  useEffect(() => {
+    if (!myProfileId) return;
+    let cancelled = false;
+    getProfileEmployeeInfo(myProfileId).then((info) => {
+      if (!cancelled) setMyHireDate(info?.hireDate || null);
+    });
+    return () => { cancelled = true; };
+  }, [myProfileId]);
+
+  // Load real PTO / correction / attendance-dispute / payroll-inquiry requests
+  // for the whole company (RLS already scopes this to the caller's company) —
+  // used both for "mine" (My Requests tab) and, for HR/Finance/Admin, the
+  // full company view on the Manage Requests tab.
+  useEffect(() => {
+    if (!myProfileId) return;
+    let cancelled = false;
+    (async () => {
+      setRequestsLoading(true);
+      try {
+        const [ptoRows, correctionRows, employeeReqRows, profileRows, payslipRows] = await Promise.all([
+          getCompanyPtoRequests(),
+          getCompanyTimecardCorrections(),
+          getCompanyEmployeeRequests(),
+          getCompanyUsers(),
+          getMyPayslips(myProfileId),
+        ]);
+        if (cancelled) return;
+        setAllPtoRequests(ptoRows);
+        setAllCorrections(correctionRows);
+        setAllEmployeeRequests(employeeReqRows);
+        setCompanyProfiles(profileRows);
+        setMyPayslips(payslipRows);
+      } catch (err) {
+        console.error("Failed to load employee requests:", err);
+      } finally {
+        if (!cancelled) setRequestsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [myProfileId]);
+
+  const refreshRequests = async () => {
+    const [ptoRows, correctionRows, employeeReqRows] = await Promise.all([
+      getCompanyPtoRequests(),
+      getCompanyTimecardCorrections(),
+      getCompanyEmployeeRequests(),
+    ]);
+    setAllPtoRequests(ptoRows);
+    setAllCorrections(correctionRows);
+    setAllEmployeeRequests(employeeReqRows);
+  };
+
+  const myPtoRequests = useMemo(
+    () => allPtoRequests.filter((r) => r.profileId === myProfileId),
+    [allPtoRequests, myProfileId]
+  );
+  const myCorrections = useMemo(
+    () => allCorrections.filter((r) => r.profileId === myProfileId),
+    [allCorrections, myProfileId]
+  );
+  const myEmployeeRequests = useMemo(
+    () => allEmployeeRequests.filter((r) => r.profileId === myProfileId),
+    [allEmployeeRequests, myProfileId]
+  );
+
+  const profileName = (profileId: string) => {
+    const p = companyProfiles.find((p) => p.id === profileId);
+    return p?.display_name || p?.email || "Unknown";
+  };
+
+  const myRequests: Request[] = useMemo(() => {
+    const items: Request[] = [];
+    for (const r of myPtoRequests) {
+      const managerLine = r.managerStatus !== "pending"
+        ? `Manager: ${r.managerStatus}${r.managerReviewedBy ? ` by ${profileName(r.managerReviewedBy)}` : ""}`
+        : "Manager: pending";
+      const hrLine = r.hrStatus !== "pending"
+        ? `HR: ${r.hrStatus}${r.hrReviewedBy ? ` by ${profileName(r.hrReviewedBy)}` : ""}`
+        : "HR: pending";
+      items.push({
+        id: `pto-${r.id}`,
+        type: "PTO Request",
+        status: r.status === "denied" ? "rejected" : r.status === "cancelled" ? "closed" : r.status,
+        submittedDate: r.createdAt.slice(0, 10),
+        details: `${PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}: ${r.startDate} to ${r.endDate} (${r.hoursRequested}h)${r.reason ? ` - ${r.reason}` : ""}\n${managerLine} | ${hrLine}`,
+      });
+    }
+    for (const r of myCorrections) {
+      items.push({
+        id: `corr-${r.id}`,
+        type: "Time Correction",
+        status: r.status,
+        submittedDate: r.createdAt.slice(0, 10),
+        details: `Date: ${r.workDate} - requested ${r.correctedCheckIn || "—"} to ${r.correctedCheckOut || "—"} (was ${r.originalCheckIn || "—"} to ${r.originalCheckOut || "—"})${(r.correctedMealStart || r.correctedMealEnd) ? `\nMeal: requested ${r.correctedMealStart || "—"} to ${r.correctedMealEnd || "—"} (was ${r.originalMealStart || "—"} to ${r.originalMealEnd || "—"})` : ""}${r.reason ? `. ${r.reason}` : ""}${r.reviewedBy ? `\nReviewed by ${profileName(r.reviewedBy)}` : ""}`,
+      });
+    }
+    for (const r of myEmployeeRequests) {
+      items.push({
+        id: `req-${r.id}`,
+        type: r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry",
+        status: r.status,
+        submittedDate: r.createdAt.slice(0, 10),
+        details: r.details + (r.reviewNote ? `\n\nResponse: ${r.reviewNote}` : ""),
+      });
+    }
+    return items.sort((a, b) => b.submittedDate.localeCompare(a.submittedDate));
+  }, [myPtoRequests, myCorrections, myEmployeeRequests, companyProfiles]);
+
+  const filteredMyRequests = useMemo(
+    () => (requestTypeFilter === "all" ? myRequests : myRequests.filter((r) => r.type === requestTypeFilter)),
+    [myRequests, requestTypeFilter]
+  );
+
+  const canManageRequests = ["ADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
+
+  // PTO eligibility: 1 year of tenure from hire date (falls back to account
+  // creation date if HR hasn't set a hire date yet).
+  const myCreatedAt = companyProfiles.find((p) => p.id === myProfileId)?.created_at ?? null;
+  const ptoEligible = isEligibleForPto(myHireDate, myCreatedAt);
+  const ptoEligibleOn = ptoEligibleDate(myHireDate, myCreatedAt);
+
+  // Deep link from a bell-icon notification straight into a specific tab
+  // (e.g. PTO/correction outcome -> "requests", new request submitted ->
+  // "manage", payroll generated -> "payroll").
+  useEffect(() => {
+    const tab = search.tab;
+    if (!tab) return;
+    if (tab === "manage" && !canManageRequests) return;
+    if (["dashboard", "payroll", "attendance", "requests", "manage"].includes(tab)) {
+      setActiveTab(tab as typeof activeTab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.tab, canManageRequests]);
+
+  // Ping every HR/Finance/Admin in the company when a new request comes in,
+  // so they don't have to keep checking the Manage Requests tab manually.
+  // Uses the dedicated notifications table (not the messenger) — see
+  // src/lib/supabase/notifications.ts.
+  const notifyManagers = async (body: string) => {
+    const recipients = companyProfiles.filter((p) => {
+      if (p.id === myProfileId) return false;
+      const primary = (p.role || "").toUpperCase();
+      if (["ADMIN", "HR", "FINANCE"].includes(primary)) return true;
+      return (p.extra_roles || []).some((r) => ["ADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
+    });
+    await Promise.all(
+      recipients.map((r) =>
+        createNotification({
+          recipientId: r.id,
+          senderId: myProfileId,
+          senderName: displayName || employee?.role || "Employee",
+          body,
+          linkTo: "/m/dashboard/employee-self-service?tab=manage",
+        }).catch((err) => console.error("Failed to notify", r.id, err))
+      )
+    );
+  };
+
+  const pendingPto = allPtoRequests.filter((r) => r.status === "pending");
+  const pendingCorrections = allCorrections.filter((r) => r.status === "pending");
+  const pendingEmployeeRequests = allEmployeeRequests.filter((r) => r.status === "pending");
+
+  const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
+    try {
+      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Reviewer");
+      await refreshRequests();
+    } catch (err) {
+      alert(`Failed to update PTO request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const handleCorrectionAction = async (correction: TimecardCorrectionRow, approve: boolean) => {
+    try {
+      if (approve) {
+        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, displayName || "HR", correction.correctedMealStart, correction.correctedMealEnd);
+      } else {
+        await rejectTimecardCorrection(correction, myProfileId, displayName || "HR");
+      }
+      await refreshRequests();
+    } catch (err) {
+      alert(`Failed to update correction: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
+    try {
+      await updateEmployeeRequestStatus(id, status, myProfileId, responseNote[id]);
+      await refreshRequests();
+      setResponseNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (err) {
+      alert(`Failed to update request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
   const tabs = [
     { id: "dashboard", label: "My Dashboard", icon: TrendingUp },
     { id: "payroll", label: "My Payroll", icon: DollarSign },
     { id: "attendance", label: "My Attendance", icon: Clock },
-    { id: "pto", label: "My PTO", icon: Calendar },
     { id: "requests", label: "My Requests", icon: ListTodo },
+    ...(canManageRequests ? [{ id: "manage", label: "Manage Requests", icon: AlertCircle }] : []),
   ];
 
   const getStatusColor = (status: string) => {
@@ -594,70 +702,171 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }
   };
 
-  const handleSubmitRequest = () => {
+  const handleSubmitRequest = async () => {
     if (!formData.details.trim()) {
       alert("Please fill in the details/reason field");
       return;
     }
-
-    let typeLabel = "";
-    let details = "";
-
-    switch (modalType) {
-      case "pto":
-        if (!formData.startDate || !formData.endDate) {
-          alert("Please select start and end dates");
-          return;
-        }
-        typeLabel = "PTO Request";
-        details = `Branch: ${formData.branch} | Position: ${employee?.role || "N/A"} | ${formData.leaveType}: ${formData.startDate} to ${formData.endDate} - ${formData.details}`;
-        break;
-      case "dispute":
-        typeLabel = "Attendance Dispute";
-        details = formData.details;
-        break;
-      case "correction":
-        if (!formData.correctionDate) {
-          alert("Please select a date");
-          return;
-        }
-        typeLabel = "Time Correction";
-        details = `Date: ${formData.correctionDate} - ${formData.details}`;
-        break;
-      case "inquiry":
-        typeLabel = "Payroll Inquiry";
-        details = formData.details;
-        break;
+    if (!myProfileId) {
+      alert("Unable to identify your profile. Please reload the page and try again.");
+      return;
     }
 
-    const newRequest: Request = {
-      id: String(submittedRequests.length + 1),
-      type: typeLabel,
-      status: "pending",
-      submittedDate: new Date().toISOString().split("T")[0],
-      details: details,
-    };
+    setSubmitting(true);
+    try {
+      switch (modalType) {
+        case "pto": {
+          if (!formData.startDate || !formData.endDate) {
+            alert("Please select start and end dates");
+            setSubmitting(false);
+            return;
+          }
+          if (!ptoEligible) {
+            alert(`You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting ${ptoEligibleOn}.`);
+            setSubmitting(false);
+            return;
+          }
+          const ptoTypeMap: Record<string, PtoType> = {
+            Vacation: "vacation",
+            "Sick Leave": "sick",
+            Personal: "personal",
+          };
+          const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+          const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+          await createPtoRequest({
+            profileId: myProfileId,
+            ptoType: ptoTypeMap[formData.leaveType] || "vacation",
+            startDate: formData.startDate,
+            endDate: formData.endDate,
+            reason: `Branch: ${formData.branch} | Position: ${employee?.role || "N/A"} - ${formData.details}`,
+            requestedBy: myProfileId,
+            managerId: managerProfile?.id ?? null,
+          });
+          // PTO needs both a manager and an HR approval — ping the resolved
+          // manager (if any) plus every HR user; if no manager could be
+          // resolved, fall back to notifying ADMIN too so it isn't stranded.
+          {
+            const recipients = new Map<string, ProfileRow>();
+            if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
+            for (const p of companyProfiles) {
+              if (p.id === myProfileId) continue;
+              const primary = (p.role || "").toUpperCase();
+              if (primary === "HR" || (!managerProfile && primary === "ADMIN")) recipients.set(p.id, p);
+            }
+            await Promise.all(
+              Array.from(recipients.values()).map((r) =>
+                createNotification({
+                  recipientId: r.id,
+                  senderId: myProfileId,
+                  senderName: displayName || "Employee",
+                  body: `🗓️ New PTO Request from ${displayName || "an employee"} needs your approval: ${formData.leaveType}, ${formData.startDate} to ${formData.endDate}.`,
+                  linkTo: "/m/dashboard/employee-self-service?tab=manage",
+                }).catch((err) => console.error("Failed to notify", r.id, err))
+              )
+            );
+          }
+          break;
+        }
+        case "dispute":
+          await createEmployeeRequest({
+            profileId: myProfileId,
+            requestType: "attendance_dispute",
+            details: formData.details,
+            requestedBy: myProfileId,
+          });
+          await notifyManagers(`⚠️ New Attendance Dispute from ${displayName || "an employee"}.`);
+          break;
+        case "correction": {
+          if (!formData.correctionDate) {
+            alert("Please select a date");
+            setSubmitting(false);
+            return;
+          }
+          const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
+          await createTimecardCorrection({
+            profileId: myProfileId,
+            workDate: formData.correctionDate,
+            originalCheckIn: existing?.clockIn || "",
+            originalCheckOut: existing?.clockOut || "",
+            correctedCheckIn: formData.correctedCheckIn,
+            correctedCheckOut: formData.correctedCheckOut,
+            originalMealStart: existing?.mealStart || "",
+            originalMealEnd: existing?.mealEnd || "",
+            correctedMealStart: formData.correctedMealStart,
+            correctedMealEnd: formData.correctedMealEnd,
+            reason: formData.details,
+            requestedBy: myProfileId,
+          });
+          // Time correction notifications are scoped to HR + Finance + the
+          // requester (here, the employee themselves) — not the broader
+          // ADMIN/HR/FINANCE set the other request types notify.
+          {
+            const recipients = new Map<string, ProfileRow>();
+            for (const p of companyProfiles) {
+              const primary = (p.role || "").toUpperCase();
+              if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
+            }
+            const requesterProfile = companyProfiles.find((p) => p.id === myProfileId);
+            if (requesterProfile) recipients.set(requesterProfile.id, requesterProfile);
+            await Promise.all(
+              Array.from(recipients.values()).map((r) =>
+                createNotification({
+                  recipientId: r.id,
+                  senderId: myProfileId,
+                  senderName: displayName || "Employee",
+                  body: `🕐 New Time Correction Request from ${displayName || "an employee"} for ${formData.correctionDate}.`,
+                  linkTo: r.id === myProfileId
+                    ? "/m/dashboard/employee-self-service?tab=requests"
+                    : "/m/dashboard/employee-self-service?tab=manage",
+                }).catch((err) => console.error("Failed to notify", r.id, err))
+              )
+            );
+          }
+          break;
+        }
+        case "inquiry":
+          await createEmployeeRequest({
+            profileId: myProfileId,
+            requestType: "payroll_inquiry",
+            details: formData.details,
+            requestedBy: myProfileId,
+          });
+          await notifyManagers(`💰 New Payroll Inquiry from ${displayName || "an employee"}.`);
+          break;
+      }
 
-    setSubmittedRequests([newRequest, ...submittedRequests]);
-    setSubmitSuccess(true);
-    
-    setTimeout(() => {
-      setShowModal(false);
-      setSubmitSuccess(false);
-      setFormData({
-        leaveType: "Vacation",
-        startDate: "",
-        endDate: "",
-        correctionDate: "",
-        details: "",
-        branch: LOCATIONS[0] || "",
-      });
-    }, 1500);
+      await refreshRequests();
+      setSubmitSuccess(true);
+
+      setTimeout(() => {
+        setShowModal(false);
+        setSubmitSuccess(false);
+        setFormData({
+          leaveType: "Vacation",
+          startDate: "",
+          endDate: "",
+          correctionDate: "",
+          correctedCheckIn: "",
+          correctedCheckOut: "",
+          correctedMealStart: "",
+          correctedMealEnd: "",
+          details: "",
+          branch: LOCATIONS[0] || "",
+        });
+      }, 1500);
+    } catch (err) {
+      alert(`Failed to submit request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleDownload = (type: "payslip" | "attendance") => {
-    const csvContent = type === "payslip" 
-      ? `Payslip\nPeriod: ${CURRENT_PAYROLL.period}\nGross Pay: $${CURRENT_PAYROLL.grossPay}\nDeductions: $${CURRENT_PAYROLL.deductions}\nNet Pay: $${CURRENT_PAYROLL.netPay}`
+    const latest = myPayslips[0];
+    const csvContent = type === "payslip"
+      ? (latest
+        ? `Payslip\nPeriod: ${latest.periodStart} to ${latest.periodEnd}\nGross Pay: $${latest.grossPay.toFixed(2)}\nNet Pay: $${latest.netPay.toFixed(2)}`
+        : "Payslip\nNo payroll generated yet.")
       : `Attendance Report\nGenerated: ${new Date().toLocaleDateString()}\nRecords: ${ATTENDANCE_DAILY.length}`;
     
     const element = document.createElement("a");
@@ -674,6 +883,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     setPayslipModalOpen(true);
   };
 
+  const selectedPayslip = myPayslips.find((p) => p.runId === selectedPayslipId) ?? myPayslips[0] ?? null;
+  const payslipData: EmployeePayslipData | null = selectedPayslip ? {
+    name: displayName || "Employee",
+    department: ROLE_LABELS[role || ""] || role || "",
+    period: `${selectedPayslip.periodStart} to ${selectedPayslip.periodEnd}`,
+    generatedDate: selectedPayslip.generatedAt ? new Date(selectedPayslip.generatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
+    hoursWorked: selectedPayslip.hoursWorked,
+    overtimeHours: selectedPayslip.overtimeHours,
+    hourlyRate: selectedPayslip.hourlyRate,
+    regularPay: selectedPayslip.regularPay,
+    overtimePay: selectedPayslip.overtimePay,
+    grossPay: selectedPayslip.grossPay,
+    netPay: selectedPayslip.netPay,
+  } : null;
+
   const handleDownloadPayslip = () => {
     if (!iframeRef.current) return;
     const payslipHtml = iframeRef.current.contentWindow?.document.documentElement.innerHTML;
@@ -682,7 +906,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     const element = document.createElement("a");
     const file = new Blob([payslipHtml], { type: "text/html" });
     element.href = URL.createObjectURL(file);
-    element.download = `Payslip-${EMPLOYEE_PAYSLIP_DATA.name}-${Date.now()}.html`;
+    element.download = `Payslip-${payslipData?.name || "employee"}-${Date.now()}.html`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -734,8 +958,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Current Payroll</p>
-                <p className="text-2xl font-bold text-green-300">${CURRENT_PAYROLL.netPay}</p>
-                <p className="text-xs text-slate-400 mt-1">{CURRENT_PAYROLL.period}</p>
+                <p className="text-2xl font-bold text-green-300">{myPayslips[0] ? `$${myPayslips[0].netPay.toFixed(2)}` : "—"}</p>
+                <p className="text-xs text-slate-400 mt-1">{myPayslips[0] ? `${myPayslips[0].periodStart} to ${myPayslips[0].periodEnd}` : "No payroll yet"}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">PTO Remaining</p>
@@ -807,62 +1031,76 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                 <FileText className="h-4 w-4 text-blue-400" />
-                Current Payroll (Jun 1-15, 2026)
+                {myPayslips[0] ? `Current Payroll (${myPayslips[0].periodStart} to ${myPayslips[0].periodEnd})` : "Current Payroll"}
               </h3>
-              <div className="grid gap-4 md:grid-cols-4 mb-4">
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Gross Pay</p>
-                  <p className="text-lg font-semibold text-blue-300">${CURRENT_PAYROLL.grossPay}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Deductions</p>
-                  <p className="text-lg font-semibold text-red-300">-${CURRENT_PAYROLL.deductions}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Net Pay</p>
-                  <p className="text-lg font-semibold text-green-300">${CURRENT_PAYROLL.netPay}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Overtime</p>
-                  <p className="text-lg font-semibold text-amber-300">${CURRENT_PAYROLL.overtime}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => handleViewPayslip("current")}
-                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
-              >
-                <FileText className="h-3 w-3" />
-                View Payslip
-              </button>
+              {requestsLoading ? (
+                <p className="text-xs text-slate-400 py-4">Loading…</p>
+              ) : !myPayslips[0] ? (
+                <p className="text-xs text-slate-400 py-4">No payroll has been generated for you yet.</p>
+              ) : (
+                <>
+                  <div className="grid gap-4 md:grid-cols-4 mb-4">
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Gross Pay</p>
+                      <p className="text-lg font-semibold text-blue-300">${myPayslips[0].grossPay.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Deductions</p>
+                      <p className="text-lg font-semibold text-red-300">-${(myPayslips[0].grossPay - myPayslips[0].netPay).toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Net Pay</p>
+                      <p className="text-lg font-semibold text-green-300">${myPayslips[0].netPay.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Overtime</p>
+                      <p className="text-lg font-semibold text-amber-300">${myPayslips[0].overtimePay.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleViewPayslip(myPayslips[0].runId)}
+                    className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
+                  >
+                    <FileText className="h-3 w-3" />
+                    View Payslip
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Previous Payroll History */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Previous Payroll History</h3>
-              <div className="space-y-3">
-                {PAYROLL_HISTORY.map(payroll => (
-                  <div key={payroll.id} className="border border-white/10 rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-white">{payroll.period}</p>
-                        <p className="text-xs text-slate-400">{payroll.date}</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-green-300">${payroll.netPay}</p>
-                          <p className="text-xs text-slate-400">Net Pay</p>
+              {myPayslips.length <= 1 ? (
+                <p className="text-xs text-slate-400">No earlier payroll history yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {myPayslips.slice(1).map(payroll => (
+                    <div key={payroll.runId} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-white">{payroll.periodStart} to {payroll.periodEnd}</p>
+                          <p className="text-xs text-slate-400">{payroll.generatedAt ? new Date(payroll.generatedAt).toLocaleDateString() : ""}</p>
                         </div>
-                        <button
-                          onClick={() => handleViewPayslip(payroll.id)}
-                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
-                        >
-                          View
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-green-300">${payroll.netPay.toFixed(2)}</p>
+                            <p className="text-xs text-slate-400">Net Pay</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleViewPayslip(payroll.runId)}
+                            className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
+                          >
+                            View
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1058,116 +1296,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           </div>
         )}
 
-        {/* PTO Tab */}
-        {activeTab === "pto" && (
-          <div className="space-y-6">
-            {/* PTO Balance */}
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-sm font-semibold text-white mb-3">Vacation</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Available:</span>
-                    <span className="text-green-300 font-semibold">{PTO_BALANCE.vacation.available}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Used:</span>
-                    <span className="text-amber-300 font-semibold">{PTO_BALANCE.vacation.used}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Pending:</span>
-                    <span className="text-blue-300 font-semibold">{PTO_BALANCE.vacation.pending}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-sm font-semibold text-white mb-3">Sick Leave</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Available:</span>
-                    <span className="text-green-300 font-semibold">{PTO_BALANCE.sickLeave.available}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Used:</span>
-                    <span className="text-amber-300 font-semibold">{PTO_BALANCE.sickLeave.used}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Pending:</span>
-                    <span className="text-blue-300 font-semibold">{PTO_BALANCE.sickLeave.pending}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-sm font-semibold text-white mb-3">Personal</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Available:</span>
-                    <span className="text-green-300 font-semibold">{PTO_BALANCE.personal.available}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Used:</span>
-                    <span className="text-amber-300 font-semibold">{PTO_BALANCE.personal.used}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Pending:</span>
-                    <span className="text-blue-300 font-semibold">{PTO_BALANCE.personal.pending}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* PTO History */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">PTO History</h3>
-              <div className="space-y-2">
-                {PTO_HISTORY.map((item, idx) => (
-                  <div key={idx} className="flex justify-between text-sm border-b border-white/10 pb-2 last:border-0">
-                    <div>
-                      <p className="text-white font-semibold">{item.type}</p>
-                      <p className="text-xs text-slate-400">{item.date}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-amber-300 font-semibold">{item.days} days</p>
-                      <p className="text-xs text-green-300">Approved ✓</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Upcoming Leave Requests */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Upcoming Leave Requests</h3>
-              {UPCOMING_REQUESTS.length > 0 ? (
-                <div className="space-y-2">
-                  {UPCOMING_REQUESTS.map((request, idx) => (
-                    <div key={idx} className="border border-white/10 rounded p-3">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-sm font-semibold text-white">{request.type}</p>
-                          <p className="text-xs text-slate-400">{request.dates}</p>
-                          <p className="text-xs text-amber-300 mt-1">{request.days} days</p>
-                        </div>
-                        <span className="px-2 py-1 bg-yellow-500/20 text-yellow-300 rounded text-xs font-semibold">Pending</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">No upcoming leave requests</p>
-              )}
-            </div>
-
-            <button
-              onClick={() => { setModalType("pto"); setShowModal(true); }}
-              className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              Submit PTO Request
-            </button>
-          </div>
-        )}
-
         {/* Requests Tab */}
         {activeTab === "requests" && (
           <div className="space-y-6">
@@ -1175,48 +1303,76 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="grid gap-4 md:grid-cols-4">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Pending</p>
-                <p className="text-2xl font-bold text-yellow-300">{submittedRequests.filter(r => r.status === "pending").length}</p>
+                <p className="text-2xl font-bold text-yellow-300">{filteredMyRequests.filter(r => r.status === "pending").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Approved</p>
-                <p className="text-2xl font-bold text-green-300">{submittedRequests.filter(r => r.status === "approved").length}</p>
+                <p className="text-2xl font-bold text-green-300">{filteredMyRequests.filter(r => r.status === "approved").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Rejected</p>
-                <p className="text-2xl font-bold text-red-300">{submittedRequests.filter(r => r.status === "rejected").length}</p>
+                <p className="text-2xl font-bold text-red-300">{filteredMyRequests.filter(r => r.status === "rejected").length}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Closed</p>
-                <p className="text-2xl font-bold text-slate-300">{submittedRequests.filter(r => r.status === "closed").length}</p>
+                <p className="text-2xl font-bold text-slate-300">{filteredMyRequests.filter(r => r.status === "closed").length}</p>
               </div>
             </div>
 
             {/* Requests List */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Track Status</h3>
-              <div className="space-y-3">
-                {submittedRequests.map(request => (
-                  <div key={request.id} className="border border-white/10 rounded-lg p-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-white">{request.type}</p>
-                        <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
-                        <p className="text-sm text-slate-300 mt-2">{request.details}</p>
-                      </div>
-                      <span className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap ml-3 ${getStatusColor(request.status)}`}>
-                        {getStatusIcon(request.status)} {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-white">Track Status</h3>
+                <select
+                  title="Filter by request type"
+                  value={requestTypeFilter}
+                  onChange={(e) => setRequestTypeFilter(e.target.value as typeof requestTypeFilter)}
+                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="all">All Types</option>
+                  <option value="PTO Request">PTO Request</option>
+                  <option value="Time Correction">Time Correction</option>
+                  <option value="Attendance Dispute">Attendance Dispute</option>
+                  <option value="Payroll Inquiry">Payroll Inquiry</option>
+                </select>
               </div>
+              {requestsLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : filteredMyRequests.length === 0 ? (
+                <p className="text-sm text-slate-400">{myRequests.length === 0 ? "No requests submitted yet." : "No requests match this filter."}</p>
+              ) : (
+                <div className="space-y-3">
+                  {filteredMyRequests.map(request => (
+                    <div key={request.id} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-white">{request.type}</p>
+                          <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
+                          <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap ml-3 ${getStatusColor(request.status)}`}>
+                          {getStatusIcon(request.status)} {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Submit Request Buttons */}
+            {!ptoEligible && (
+              <div className="bg-amber-500/10 border border-amber-400/40 rounded-lg p-3 text-xs text-amber-100">
+                You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting {ptoEligibleOn}.
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-2">
               <button
+                type="button"
                 onClick={() => { setModalType("pto"); setShowModal(true); }}
-                className="px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+                disabled={!ptoEligible}
+                title={!ptoEligible ? `Not eligible until ${ptoEligibleOn}` : undefined}
+                className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />
                 PTO Request
@@ -1242,6 +1398,199 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <Plus className="h-4 w-4" />
                 Payroll Inquiry
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Manage Requests Tab (HR / Finance / Admin only) */}
+        {activeTab === "manage" && canManageRequests && (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending PTO</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingPto.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Corrections</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingCorrections.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
+              </div>
+            </div>
+
+            {/* Pending PTO */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">PTO Requests — Pending</h3>
+              {requestsLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : pendingPto.length === 0 ? (
+                <p className="text-sm text-slate-400">No pending PTO requests.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingPto.map((r) => {
+                    const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, role);
+                    const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, role);
+                    return (
+                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}</p>
+                            <p className="text-xs text-slate-400 mt-1">{r.startDate} to {r.endDate} ({r.hoursRequested}h)</p>
+                            {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
+                            <div className="flex gap-2 mt-2">
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
+                                {r.managerReviewedBy ? ` — ${profileName(r.managerReviewedBy)}` : ""}
+                              </span>
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
+                                {r.hrReviewedBy ? ` — ${profileName(r.hrReviewedBy)}` : ""}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2 shrink-0">
+                            {canManagerAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (Mgr)
+                                </button>
+                                <button type="button" onClick={() => handlePtoStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {canHrAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (HR)
+                                </button>
+                                <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {!canManagerAct && !canHrAct && (
+                              <span className="text-xs text-slate-500">Awaiting other approver</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Pending Time Corrections */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Time Corrections — Pending</h3>
+              {requestsLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : pendingCorrections.length === 0 ? (
+                <p className="text-sm text-slate-400">No pending time correction requests.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingCorrections.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3 flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {r.workDate}</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {r.originalCheckIn || "—"} → {r.originalCheckOut || "—"} &nbsp;⟶&nbsp; requested {r.correctedCheckIn || "—"} → {r.correctedCheckOut || "—"}
+                        </p>
+                        {(r.correctedMealStart || r.correctedMealEnd) && (
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Meal: {r.originalMealStart || "—"} → {r.originalMealEnd || "—"} &nbsp;⟶&nbsp; requested {r.correctedMealStart || "—"} → {r.correctedMealEnd || "—"}
+                          </p>
+                        )}
+                        {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleCorrectionAction(r, true)}
+                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCorrectionAction(r, false)}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Pending Attendance Disputes & Payroll Inquiries */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes & Payroll Inquiries — Pending</h3>
+              {requestsLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : pendingEmployeeRequests.length === 0 ? (
+                <p className="text-sm text-slate-400">No pending disputes or inquiries.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingEmployeeRequests.map((r) => (
+                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                      <p className="text-sm font-semibold text-white">
+                        {profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                      <textarea
+                        placeholder="Optional response note (visible to the employee)..."
+                        value={responseNote[r.id] || ""}
+                        onChange={(e) => setResponseNote({ ...responseNote, [r.id]: e.target.value })}
+                        rows={2}
+                        className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        {r.requestType === "attendance_dispute" ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleEmployeeRequestAction(r.id, "approved")}
+                              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEmployeeRequestAction(r.id, "rejected")}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleEmployeeRequestAction(r.id, "closed")}
+                            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition"
+                          >
+                            Respond &amp; Close
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1328,15 +1677,73 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </>
                   )}
                   {modalType === "correction" && (
-                    <div>
-                      <label className="text-xs font-semibold text-white block mb-1">Date</label>
-                      <input 
-                        type="date" 
-                        value={formData.correctionDate}
-                        onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
-                      />
-                    </div>
+                    <>
+                      <div>
+                        <label className="text-xs font-semibold text-white block mb-1">Date</label>
+                        <input
+                          type="date"
+                          title="Date"
+                          value={formData.correctionDate}
+                          onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                        />
+                        {formData.correctionDate && (
+                          <p className="text-xs text-slate-500 mt-1">
+                            {(() => {
+                              const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
+                              return existing
+                                ? `Current record: ${existing.clockIn || "—"} → ${existing.clockOut || "—"} (meal: ${existing.mealStart || "—"} → ${existing.mealEnd || "—"})`
+                                : "No existing record found for this date.";
+                            })()}
+                          </p>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
+                          <input
+                            type="time"
+                            title="Corrected Check In"
+                            value={formData.correctedCheckIn}
+                            onChange={(e) => setFormData({ ...formData, correctedCheckIn: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
+                          <input
+                            type="time"
+                            title="Corrected Check Out"
+                            value={formData.correctedCheckOut}
+                            onChange={(e) => setFormData({ ...formData, correctedCheckOut: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start</label>
+                          <input
+                            type="time"
+                            title="Corrected Meal Start"
+                            value={formData.correctedMealStart}
+                            onChange={(e) => setFormData({ ...formData, correctedMealStart: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End</label>
+                          <input
+                            type="time"
+                            title="Corrected Meal End"
+                            value={formData.correctedMealEnd}
+                            onChange={(e) => setFormData({ ...formData, correctedMealEnd: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500">Leave meal fields blank if only the check-in/check-out time was wrong.</p>
+                    </>
                   )}
                   <div>
                     <label className="text-xs font-semibold text-white block mb-1">Details / Reason</label>
@@ -1352,17 +1759,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
                 <div className="flex gap-3 mt-4">
                   <button
+                    type="button"
                     onClick={() => setShowModal(false)}
-                    className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-semibold transition"
+                    disabled={submitting}
+                    className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-semibold transition disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleSubmitRequest}
-                    className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
+                    disabled={submitting}
+                    className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     <Plus className="h-3 w-3" />
-                    Submit
+                    {submitting ? "Submitting…" : "Submit"}
                   </button>
                 </div>
               </>
@@ -1380,15 +1791,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       )}
 
       {/* Payslip Modal */}
-      {payslipModalOpen && (
+      {payslipModalOpen && payslipData && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 border border-white/10 rounded-lg w-[95vw] h-[95vh] max-w-7xl overflow-hidden flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-8 py-6 border-b border-white/10">
               <h2 className="text-2xl font-bold text-white">
-                {selectedPayslipId === "current" ? "Current Payslip" : "Payslip"}
+                {selectedPayslipId === myPayslips[0]?.runId ? "Current Payslip" : "Payslip"}
               </h2>
               <button
+                type="button"
                 onClick={() => setPayslipModalOpen(false)}
                 className="p-1 hover:bg-white/10 rounded transition"
               >

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ChevronLeft, Search, X } from "lucide-react";
+import { ChevronLeft, Eye, Loader2, Search, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -13,207 +13,201 @@ import {
   YAxis,
 } from "recharts";
 import { exportToCSV } from "@/lib/csvExport";
-import { csrReportData } from "@/lib/reportData";
-import { CSR_AGENTS, type CSRAgent } from "@/lib/csrDashboardData";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { getTicketAuditLog } from "@/lib/supabase/tickets";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { parseBranchAccess } from "@/lib/locations";
 
-const ALL_DATES = Object.keys(csrReportData).sort();
-const ALL_TEAMS = ["TEAM DANIELA", "TEAM ROBYN", "TEAM ROCHELLE", "TEAM SHANE"] as const;
-const TEAM_COLORS: Record<string, string> = {
-  "TEAM DANIELA": "#3b82f6",
-  "TEAM ROBYN": "#34d399",
-  "TEAM ROCHELLE": "#a78bfa",
-  "TEAM SHANE": "#fb923c",
+const UNASSIGNED = "__unassigned__";
+
+interface Agent {
+  id: string;
+  name: string;
+  email: string;
+  username: string;
+  role: "Team Leader" | "Agent";
+  teamKey: string;
+  locations: string[];
+  schedule: number; // reschedule actions this CSR made (ticket_audit_log)
+  update: number; // status_change actions this CSR made (ticket_audit_log)
+}
+
+interface TeamMeta {
+  key: string;
+  name: string;
+  color: string;
+}
+
+const branchesOf = (assignedBranch: string | null, branchAccess: string | null): string[] => {
+  const raw = [assignedBranch ?? "", ...parseBranchAccess(branchAccess)];
+  return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
 };
-
-const fmtDate = (s: string) => {
-  const c = s.trim().replace(/^0/, "");
-  return c.length === 3 ? `${c[0]}/${c.slice(1)}/26` : `${c.slice(0, -2)}/${c.slice(-2)}/26`;
-};
-
-function parseMistakeBadges(raw: string): string[] {
-  if (!raw || raw === "null") return [];
-  const s = raw.trim();
-  if (/^EXT\s/i.test(s)) return [s];
-  if (s.length > 20 && !/\d\/\d/.test(s)) return [s];
-  const normalised = s.replace(/\s*\/\s*/g, " / ").replace(/\s+/g, " ").trim();
-  const slashParts = normalised.split(" / ").map((p) => p.trim()).filter(Boolean);
-  const tokens: string[] = [];
-  for (const part of slashParts) {
-    const dateRe = /(\d+\s+)?(\d{1,2}\/\d{1,2})/g;
-    let lastIdx = 0;
-    let m: RegExpExecArray | null;
-    const subTokens: string[] = [];
-    while ((m = dateRe.exec(part)) !== null) {
-      const prefix = m[1] ? m[1].trim() : "";
-      subTokens.push(prefix ? `${prefix} · ${m[2]}` : m[2]);
-      lastIdx = m.index + m[0].length;
-    }
-    if (subTokens.length === 0) {
-      tokens.push(part);
-    } else {
-      tokens.push(...subTokens);
-      const tail = part.slice(lastIdx).trim();
-      if (tail) tokens.push(tail);
-    }
-  }
-  return tokens.length > 0 ? tokens : [s];
-}
-
-function extractMistakeDates(raw: string): Array<{ m: number; d: number }> {
-  if (!raw || raw === "null") return [];
-  const out: Array<{ m: number; d: number }> = [];
-  const re = /(\d{1,2})\/(\d{1,2})/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw)) !== null) {
-    out.push({ m: parseInt(m[1], 10), d: parseInt(m[2], 10) });
-  }
-  return out;
-}
-
-function parseDateInput(v: string): { m: number; d: number } | null {
-  if (!v) return null;
-  const p = v.split("-");
-  if (p.length < 3) return null;
-  return { m: parseInt(p[1], 10), d: parseInt(p[2], 10) };
-}
-
-function dateGte(a: { m: number; d: number }, b: { m: number; d: number }) {
-  return a.m !== b.m ? a.m > b.m : a.d >= b.d;
-}
-function dateLte(a: { m: number; d: number }, b: { m: number; d: number }) {
-  return a.m !== b.m ? a.m < b.m : a.d <= b.d;
-}
 
 export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [teams, setTeams] = useState<TeamMeta[]>([]);
+
   // Top-bar filters
-  const [date, setDate] = useState(ALL_DATES[ALL_DATES.length - 1] || "");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
-  const [mistakeFilter, setMistakeFilter] = useState("");
-  const [warningFilter, setWarningFilter] = useState("");
 
   // Agent table filters
   const [tblNameSearch, setTblNameSearch] = useState("");
   const [tblTeam, setTblTeam] = useState("");
-  const [tblDateFrom, setTblDateFrom] = useState("");
-  const [tblDateTo, setTblDateTo] = useState("");
+  // Agents can cover 20-30+ locations, which flooded the table when shown
+  // inline — the Locations column was replaced with a Details button that
+  // opens this agent in a modal instead.
+  const [detailsAgent, setDetailsAgent] = useState<Agent | null>(null);
 
-  // Date filter is forwarded by future Supabase queries; sample data
-  // isn't date-keyed yet, so reference it to keep TS happy.
-  void date;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [profiles, auditLog, composition] = await Promise.all([
+          getCompanyUsers(),
+          getTicketAuditLog({ startDate: dateFrom || undefined, endDate: dateTo || undefined }),
+          getCsrTeamComposition().catch((err) => {
+            console.error("Failed to load CSR team composition:", err);
+            setError(
+              `Team Composition unavailable (${err instanceof Error ? err.message : "unknown error"}). ` +
+              `Run the 0027_csr_team_composition.sql migration in Supabase, then reload.`,
+            );
+            return { teams: [], members: [] };
+          }),
+        ]);
+        if (cancelled) return;
 
-  const allAgents = useMemo<CSRAgent[]>(() => CSR_AGENTS.map((a) => ({ ...a, total: a.schedule + a.attempt })), []);
+        const teamOf = new Map<string, string>();
+        for (const m of composition.members) teamOf.set(m.profileId, m.teamId);
+
+        const scheduleCount = new Map<string, number>();
+        const updateCount = new Map<string, number>();
+        for (const entry of auditLog) {
+          if (!entry.changedBy) continue;
+          if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
+          if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+        }
+
+        const roster: Agent[] = profiles
+          .filter((p) => p.is_active !== false)
+          .filter((p) => {
+            const extras = p.extra_roles || [];
+            return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+          })
+          .map((p) => ({
+            id: p.id,
+            name: p.display_name || p.username || p.email,
+            email: p.email || "",
+            username: p.username || "",
+            role: (p.role === "CSR_TEAM_LEADER" || (p.extra_roles || []).includes("CSR_TEAM_LEADER")) ? "Team Leader" : "Agent",
+            teamKey: teamOf.get(p.id) ?? UNASSIGNED,
+            locations: branchesOf(p.assigned_branch, p.branch_access),
+            schedule: scheduleCount.get(p.id) ?? 0,
+            update: updateCount.get(p.id) ?? 0,
+          }));
+
+        setAgents(roster);
+        setTeams(composition.teams.map((t) => ({ key: t.id, name: t.name, color: t.color })));
+
+        // Compute a real 10-day "Schedule" trend from the same audit entries
+        // (reschedule actions), bucketed by day.
+        const buckets = new Map<string, number>();
+        for (const entry of auditLog) {
+          if (entry.action !== "reschedule") continue;
+          const d = new Date(entry.createdAt);
+          if (isNaN(d.getTime())) continue;
+          const key = d.toISOString().slice(0, 10);
+          buckets.set(key, (buckets.get(key) ?? 0) + 1);
+        }
+        setTrend(
+          Array.from(buckets.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(-10)
+            .map(([date, schedule]) => ({ date: date.slice(5).replace("-", "/"), schedule })),
+        );
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load CSR Daily Report.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
+
+  const [trend, setTrend] = useState<{ date: string; schedule: number }[]>([]);
+
+  const teamName = (key: string) => (key === UNASSIGNED ? "Unassigned" : teams.find((t) => t.key === key)?.name || "—");
+  const teamColor = (key: string) => (key === UNASSIGNED ? "#64748b" : teams.find((t) => t.key === key)?.color || "#94a3b8");
 
   // Primary filtered list (top-bar filters)
-  const primaryFiltered = useMemo<CSRAgent[]>(() => {
-    let a = allAgents;
-    if (teamFilter) a = a.filter((x) => x.team === teamFilter);
+  const primaryFiltered = useMemo<Agent[]>(() => {
+    let a = agents;
+    if (teamFilter) a = a.filter((x) => x.teamKey === teamFilter);
     if (locationFilter)
-      a = a.filter((x) =>
-        Array.isArray(x.locations) &&
-        x.locations.some((l) => l.toLowerCase().includes(locationFilter.toLowerCase())),
-      );
-    if (mistakeFilter === "has") a = a.filter((x) => x.mistake && x.mistake !== "null");
-    if (warningFilter === "has") a = a.filter((x) => x.warning && x.warning > 0);
+      a = a.filter((x) => x.locations.some((l) => l.toLowerCase().includes(locationFilter.toLowerCase())));
     return a;
-  }, [allAgents, teamFilter, locationFilter, mistakeFilter, warningFilter]);
+  }, [agents, teamFilter, locationFilter]);
 
   // Table-level filters applied on top of primary
-  const filtered = useMemo<CSRAgent[]>(() => {
-    const fromParsed = parseDateInput(tblDateFrom);
-    const toParsed = parseDateInput(tblDateTo);
+  const filtered = useMemo<Agent[]>(() => {
     return primaryFiltered.filter((a) => {
       if (tblNameSearch && !a.name.toLowerCase().includes(tblNameSearch.toLowerCase())) return false;
-      if (tblTeam && a.team !== tblTeam) return false;
-      if (fromParsed || toParsed) {
-        if (!a.mistake || a.mistake === "null") return false;
-        const dates = extractMistakeDates(a.mistake);
-        if (dates.length === 0) return false;
-        const inRange = dates.some((d) => {
-          const fromOk = !fromParsed || dateGte(d, fromParsed);
-          const toOk = !toParsed || dateLte(d, toParsed);
-          return fromOk && toOk;
-        });
-        if (!inRange) return false;
-      }
+      if (tblTeam && a.teamKey !== tblTeam) return false;
       return true;
     });
-  }, [primaryFiltered, tblNameSearch, tblTeam, tblDateFrom, tblDateTo]);
+  }, [primaryFiltered, tblNameSearch, tblTeam]);
 
-  const tblHasFilters = !!(tblNameSearch || tblTeam || tblDateFrom || tblDateTo);
+  const tblHasFilters = !!(tblNameSearch || tblTeam);
   const clearTblFilters = () => {
     setTblNameSearch("");
     setTblTeam("");
-    setTblDateFrom("");
-    setTblDateTo("");
   };
 
   const teamSummaries = useMemo(
     () =>
-      (teamFilter ? [teamFilter] : ALL_TEAMS)
+      teams
+        .filter((t) => !teamFilter || t.key === teamFilter)
         .map((t) => {
-          const ta = allAgents.filter((a) => a.team === t);
+          const ta = primaryFiltered.filter((a) => a.teamKey === t.key);
           return {
             team: t,
             count: ta.length,
-            totalGH: ta.reduce((s, a) => s + (Number(a.gh) || 0), 0),
-            totalSchedule: ta.reduce((s, a) => s + (Number(a.schedule) || 0), 0),
-            totalAttempt: ta.reduce((s, a) => s + (Number(a.attempt) || 0), 0),
-            totalUpdate: ta.reduce((s, a) => s + (Number(a.update) || 0), 0),
-            warnings: ta.reduce((s, a) => s + (Number(a.warning) || 0), 0),
-            mistakes: ta.filter((a) => a.mistake && a.mistake !== "null").length,
+            totalSchedule: ta.reduce((s, a) => s + a.schedule, 0),
+            totalUpdate: ta.reduce((s, a) => s + a.update, 0),
           };
         })
         .filter((s) => s.count > 0),
-    [allAgents, teamFilter],
+    [teams, primaryFiltered, teamFilter],
   );
 
   const teamBarData = teamSummaries.map((s) => ({
-    name: s.team.replace("TEAM ", ""),
-    GH: s.totalGH,
+    name: s.team.name,
     Schedule: s.totalSchedule,
-    Attempt: s.totalAttempt,
     Update: s.totalUpdate,
   }));
-  const agentBarData = primaryFiltered.slice(0, 12).map((a) => ({
-    name: a.name.split(" ")[0],
-    total: a.total || 0,
-    schedule: a.schedule || 0,
-    attempt: a.attempt || 0,
-    update: a.update || 0,
-  }));
-  // Trend uses the date-keyed report data so it still reflects historical
-  // aggregates even though the table dataset is the fixed CSR roster.
-  const trendData = ALL_DATES.slice(-10).map((dt) => {
-    const agents = ((csrReportData as any)[dt]?.agents || []) as Array<{
-      team?: string;
-      gh?: number;
-      schedule?: number;
-    }>;
-    const ta = teamFilter ? agents.filter((a) => a.team === teamFilter) : agents;
-    return {
-      date: fmtDate(dt),
-      totalGH: ta.reduce((s, a) => s + (Number(a.gh) || 0), 0),
-      schedule: ta.reduce((s, a) => s + (Number(a.schedule) || 0), 0),
-    };
-  });
+  const agentBarData = [...primaryFiltered]
+    .sort((a, b) => b.schedule - a.schedule)
+    .slice(0, 12)
+    .map((a) => ({ name: a.name.split(" ")[0], schedule: a.schedule, update: a.update }));
 
   const handleExportCSV = () => {
     exportToCSV(
       "csr_daily_report",
-      ["Team", "Position", "Name", "Start Date", "Locations", "Schedule", "Attempt", "Update", "Mistake", "Warning"],
+      ["Team", "Position", "Name", "Locations", "Schedule", "Update"],
       filtered.map((a) => [
-        a.team,
-        a.position,
+        teamName(a.teamKey),
+        a.role === "Team Leader" ? "Team Leader" : "CSR Agent",
         a.name,
-        a.startDate,
-        (a.locations || []).join("; "),
+        a.locations.join("; "),
         a.schedule,
-        a.attempt,
         a.update,
-        a.mistake ?? "",
-        a.warning,
       ]),
     );
   };
@@ -232,21 +226,30 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
 
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
+        )}
+
         {/* Top-bar filters */}
         <div className="panel mb-6">
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
-              <select
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
                 className="glass-input text-sm py-1.5 px-3 rounded-md"
-              >
-                {ALL_DATES.length === 0 && <option value="">—</option>}
-                {ALL_DATES.map((d) => (
-                  <option key={d} value={d}>{fmtDate(d)}</option>
-                ))}
-              </select>
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Team</label>
@@ -256,9 +259,10 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                 className="glass-input text-sm py-1.5 px-3 rounded-md"
               >
                 <option value="">All Teams</option>
-                {ALL_TEAMS.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                {teams.map((t) => (
+                  <option key={t.key} value={t.key}>{t.name}</option>
                 ))}
+                <option value={UNASSIGNED}>Unassigned</option>
               </select>
             </div>
             <div className="flex flex-col gap-1">
@@ -273,35 +277,13 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                 />
               </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mistakes</label>
-              <select
-                value={mistakeFilter}
-                onChange={(e) => setMistakeFilter(e.target.value)}
-                className="glass-input text-sm py-1.5 px-3 rounded-md"
-              >
-                <option value="">All</option>
-                <option value="has">Has Mistakes</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Warnings</label>
-              <select
-                value={warningFilter}
-                onChange={(e) => setWarningFilter(e.target.value)}
-                className="glass-input text-sm py-1.5 px-3 rounded-md"
-              >
-                <option value="">All</option>
-                <option value="has">Has Warnings</option>
-              </select>
-            </div>
-            {(teamFilter || locationFilter || mistakeFilter || warningFilter) && (
+            {(teamFilter || locationFilter || dateFrom || dateTo) && (
               <button
                 onClick={() => {
                   setTeamFilter("");
                   setLocationFilter("");
-                  setMistakeFilter("");
-                  setWarningFilter("");
+                  setDateFrom("");
+                  setDateTo("");
                 }}
                 className="btn text-sm px-3 mb-0.5"
               >
@@ -309,35 +291,39 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
               </button>
             )}
             <span className="text-sm text-muted-foreground mb-0.5">
-              {primaryFiltered.length} of {allAgents.length} agents
+              {primaryFiltered.length} of {agents.length} agents
             </span>
           </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail), optionally narrowed by Date From/To.
+          </p>
         </div>
 
+        {loading ? (
+          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Daily Report…
+          </div>
+        ) : agents.length === 0 ? (
+          <p className="panel p-8 mb-6 text-center text-sm text-muted-foreground">
+            No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+          </p>
+        ) : (
+        <>
         {/* Team summary cards */}
         {teamSummaries.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
             {teamSummaries.map((s) => (
-              <div key={s.team} className="panel p-4">
-                <p
-                  className="text-xs font-semibold mb-2"
-                  style={{ color: TEAM_COLORS[s.team] || "#94a3b8" }}
-                >
-                  {s.team}
+              <div key={s.team.key} className="panel p-4">
+                <p className="text-xs font-semibold mb-2" style={{ color: s.team.color }}>
+                  {s.team.name}
                 </p>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                   <span className="text-muted-foreground">Agents</span>
                   <span className="text-right font-medium">{s.count}</span>
                   <span className="text-muted-foreground">Schedule</span>
                   <span className="text-right text-green-300">{s.totalSchedule}</span>
-                  <span className="text-muted-foreground">Attempt</span>
-                  <span className="text-right">{s.totalAttempt}</span>
                   <span className="text-muted-foreground">Update</span>
                   <span className="text-right">{s.totalUpdate}</span>
-                  <span className="text-muted-foreground">Warnings</span>
-                  <span className={`text-right ${s.warnings > 0 ? "text-red-300" : ""}`}>{s.warnings}</span>
-                  <span className="text-muted-foreground">Mistakes</span>
-                  <span className={`text-right ${s.mistakes > 0 ? "text-orange-300" : ""}`}>{s.mistakes}</span>
                 </div>
               </div>
             ))}
@@ -355,7 +341,6 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                 <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--foreground)", fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
                 <Bar dataKey="Schedule" fill="#34d399" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Attempt" fill="#a78bfa" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Update" fill="#fb923c" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -363,7 +348,7 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Schedule Trend — Last 10 Days</p>
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={trendData} margin={{ left: -10 }}>
+              <LineChart data={trend} margin={{ left: -10 }}>
                 <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--foreground)", fontSize: 12 }} />
@@ -376,15 +361,15 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
 
         {agentBarData.length > 0 && (
           <div className="panel p-4 mb-4">
-            <p className="text-sm font-semibold mb-4">Agent — Schedule &amp; Attempt (top 12)</p>
+            <p className="text-sm font-semibold mb-4">Agent — Schedule &amp; Update (top 12)</p>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={agentBarData} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--foreground)", fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
-                <Bar dataKey="attempt" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Attempt" />
                 <Bar dataKey="schedule" fill="#34d399" radius={[4, 4, 0, 0]} name="Schedule" />
+                <Bar dataKey="update" fill="#fb923c" radius={[4, 4, 0, 0]} name="Update" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -416,30 +401,11 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                   className="glass-input text-sm py-1.5 px-3 rounded-md"
                 >
                   <option value="">All Teams</option>
-                  {ALL_TEAMS.map((t) => (
-                    <option key={t} value={t}>{t.replace("TEAM ", "")}</option>
+                  {teams.map((t) => (
+                    <option key={t.key} value={t.key}>{t.name}</option>
                   ))}
+                  <option value={UNASSIGNED}>Unassigned</option>
                 </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Mistake Date From</label>
-                <input
-                  type="date"
-                  value={tblDateFrom}
-                  onChange={(e) => setTblDateFrom(e.target.value)}
-                  className="glass-input text-sm py-1.5 px-3 rounded-md"
-                  style={{ colorScheme: "dark" }}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Mistake Date To</label>
-                <input
-                  type="date"
-                  value={tblDateTo}
-                  onChange={(e) => setTblDateTo(e.target.value)}
-                  className="glass-input text-sm py-1.5 px-3 rounded-md"
-                  style={{ colorScheme: "dark" }}
-                />
               </div>
               {tblHasFilters && (
                 <button
@@ -472,91 +438,113 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Team", "Position", "Name", "Start Date", "Locations", "Schedule", "Attempt", "Update", "Mistakes", "Warning"].map((h) => (
-                  <th key={h} className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">
-                    {h}
-                  </th>
-                ))}
+                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Team</th>
+                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Position</th>
+                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Name</th>
+                <th className="px-3 py-2.5 text-right text-xs text-muted-foreground uppercase whitespace-nowrap w-24">Schedule</th>
+                <th className="px-3 py-2.5 text-right text-xs text-muted-foreground uppercase whitespace-nowrap w-24">Update</th>
+                <th className="px-3 py-2.5 text-center text-xs text-muted-foreground uppercase whitespace-nowrap w-20">Details</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
                     No records match filters.
                   </td>
                 </tr>
               ) : (
-                filtered.map((a, i) => {
-                  const hasMistake = !!a.mistake && a.mistake !== "null";
-                  const badgeCount = hasMistake ? parseMistakeBadges(a.mistake!).length : 0;
-                  const employeeId = encodeURIComponent(a.name);
-                  return (
-                    <tr
-                      key={a.name + i}
-                      className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}
-                    >
-                      <td
-                        className="px-3 py-2.5 text-xs whitespace-nowrap"
-                        style={{ color: TEAM_COLORS[a.team] || "#94a3b8" }}
+                filtered.map((a, i) => (
+                  <tr
+                    key={a.id + i}
+                    className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}
+                  >
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: teamColor(a.teamKey) }}>
+                      {teamName(a.teamKey)}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap text-muted-foreground">
+                      {a.role === "Team Leader" ? "Team Leader" : "CSR Agent"}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">{a.name}</td>
+                    <td className="px-3 py-2.5 text-right text-green-400 w-24">{a.schedule}</td>
+                    <td className="px-3 py-2.5 text-right w-24">{a.update}</td>
+                    <td className="px-3 py-2.5 text-center w-20">
+                      <button
+                        type="button"
+                        onClick={() => setDetailsAgent(a)}
+                        title={`View details for ${a.name}`}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
                       >
-                        {a.team || "—"}
-                      </td>
-                      <td className="px-3 py-2.5 text-xs whitespace-nowrap text-muted-foreground">
-                        {a.position || "CSR Agent"}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <a
-                          href={`/csr/mistake/${employeeId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-medium hover:text-blue-300 hover:underline underline-offset-2 transition-colors"
-                        >
-                          {a.name}
-                        </a>
-                      </td>
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{a.startDate || "—"}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex flex-wrap gap-1">
-                          {(a.locations && a.locations.length > 0 ? a.locations : ["—"]).map((loc, li) => (
-                            <span
-                              key={li}
-                              className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/20 whitespace-nowrap"
-                            >
-                              {loc}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right text-green-400">{a.schedule ?? "—"}</td>
-                      <td className="px-3 py-2.5 text-right">{a.attempt ?? "—"}</td>
-                      <td className="px-3 py-2.5 text-right">{a.update ?? "—"}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        {hasMistake ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/15 text-red-400 border border-red-500/25">
-                            <AlertTriangle className="h-3 w-3" />
-                            {badgeCount}
-                          </span>
-                        ) : (
-                          <span className="text-white/20">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {a.warning && a.warning > 0 ? (
-                          <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-                            {a.warning}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
+        </>
+        )}
+
+        {/* ── Agent Details Modal ── */}
+        {detailsAgent && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setDetailsAgent(null)}>
+            <div className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+                <div className="flex items-center gap-2">
+                  <Eye className="h-4 w-4 text-blue-400" />
+                  <span className="font-semibold">{detailsAgent.name}</span>
+                  <span className="text-xs font-semibold" style={{ color: teamColor(detailsAgent.teamKey) }}>{teamName(detailsAgent.teamKey)}</span>
+                </div>
+                <button onClick={() => setDetailsAgent(null)} className="text-white/30 hover:text-white/70 transition-colors"><X className="h-5 w-5" /></button>
+              </div>
+
+              <div className="px-5 py-4 overflow-y-auto space-y-4">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Role</p>
+                    <p className="font-medium">{detailsAgent.role === "Team Leader" ? "Team Leader" : "CSR Agent"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Username</p>
+                    <p className="font-medium">{detailsAgent.username || "—"}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Email</p>
+                    <p className="font-medium truncate">{detailsAgent.email || "—"}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="panel p-3 text-center">
+                    <p className="text-2xl font-bold text-green-300">{detailsAgent.schedule}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Schedule</p>
+                  </div>
+                  <div className="panel p-3 text-center">
+                    <p className="text-2xl font-bold text-purple-300">{detailsAgent.update}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Update</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
+                    Locations <span className="text-muted-foreground/70">({detailsAgent.locations.length})</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detailsAgent.locations.length === 0 ? (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    ) : detailsAgent.locations.map((loc) => (
+                      <span key={loc} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/20">
+                        {loc}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

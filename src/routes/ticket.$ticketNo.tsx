@@ -557,6 +557,77 @@ function summarizeVisitEntry(entry: VisitLogEntry) {
     .join(" | ");
 }
 
+// Change-log summaries always start with "Visit No: <value>" (see
+// summarizeVisitEntry above) — used to scope the per-visit Change Log to
+// just the visit being viewed instead of every visit on the ticket.
+function visitLogEntryMatchesVisitNo(summary: string, visitNo: string): boolean {
+  return summary.split(" | ")[0] === `Visit No: ${visitNo}`;
+}
+
+// Human-readable labels for the ticket-level fields/actions the DB trigger
+// (log_ticket_change, see 0001_init.sql) writes to ticket_audit_log. These
+// entries have no visit reference at all — they're plain "tickets.status/
+// schedule_date/assigned_tech_id changed" rows — so they're attributed to a
+// visit below purely by timing (see isNearAnyTimestamp).
+const TICKET_LEVEL_AUDIT_FIELDS = new Set(["status", "schedule_date", "assigned_tech_id"]);
+const AUDIT_FIELD_LABELS: Record<string, string> = {
+  status: "Ticket Status",
+  schedule_date: "Ticket Schedule Date",
+  assigned_tech_id: "Assigned Technician",
+};
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  status_change: "Status Change",
+  reschedule: "Rescheduled",
+  reassign: "Reassigned",
+};
+function formatAuditField(field: string): string {
+  return AUDIT_FIELD_LABELS[field] || field;
+}
+function formatAuditAction(action: string): string {
+  return AUDIT_ACTION_LABELS[action] || action;
+}
+
+// Two audit entries represent the SAME real-world edit if their content
+// matches and they happened within a minute of each other. Needed because
+// every edit produces two independent records of itself — an optimistic
+// local entry (client-generated id, persisted to localStorage instantly)
+// and the authoritative Supabase row (DB-generated id, `changed_by` a
+// resolved profile name) — which never share an id to dedupe on directly.
+// Without this, reloading the page after an edit re-fetches the Supabase
+// copy and appends it next to the still-cached local one instead of
+// recognizing them as one event.
+function isSameAuditEvent(a: AuditLogEntry, b: AuditLogEntry): boolean {
+  if (a.field !== b.field || a.action !== b.action || a.before !== b.before || a.after !== b.after) return false;
+  const ta = new Date(a.timestamp).getTime();
+  const tb = new Date(b.timestamp).getTime();
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return a.id === b.id;
+  return Math.abs(ta - tb) <= 60000;
+}
+
+// Saving a visit (addVisitLogEntry) writes the visit row, then syncs the
+// ticket's own schedule/status from it in two follow-up calls — so a
+// reschedule/status_change trigger row lands within ~1s of that save. No
+// visit_id exists on ticket_audit_log to join on directly, so time
+// proximity is the only way to attribute these ticket-level rows back to
+// the visit that caused them. A generous window keeps this robust to
+// slower saves without risking bleed into a different visit — visits are
+// realistically never saved within seconds of each other.
+//
+// Anchors are the visit's own "Visit Log" entry timestamps (one per save,
+// always accurate) plus its created_at as a fallback for the original
+// add — NOT visit.updatedAt, which older rows never actually got bumped
+// for (see updateTicketVisit in supabase/tickets.ts, fixed to stamp it
+// going forward, but historical edits still only have a stale value there).
+const VISIT_AUDIT_CORRELATION_WINDOW_MS = 20000;
+function isNearAnyTimestamp(entryTimestamp: string, anchors: string[]): boolean {
+  const entryMs = new Date(entryTimestamp).getTime();
+  if (!Number.isFinite(entryMs)) return false;
+  return anchors.some((anchor) => {
+    const anchorMs = new Date(anchor).getTime();
+    return Number.isFinite(anchorMs) && Math.abs(entryMs - anchorMs) <= VISIT_AUDIT_CORRELATION_WINDOW_MS;
+  });
+}
+
 function renderVisitSummary(summary: string, comparedSummary?: string) {
   const summaryParts = summary.split(" | ");
   const comparedParts = comparedSummary?.split(" | ") ?? [];
@@ -1093,6 +1164,17 @@ function TicketDetailsPage() {
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [auditEntriesLoaded, setAuditEntriesLoaded] = useState(false);
+  // Caller's Supabase profile id (for stamping ticket_audit_log.changed_by)
+  // and a profile-id -> display-name map (for rendering changed_by back to
+  // a readable name in the Change Log, since the column stores a UUID).
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
+  // Real Supabase ticket UUID (tickets.id) — not part of the mapped
+  // TicketData shape, but needed to scope shared audit-log reads/writes
+  // (ticket_audit_log.ticket_id) to this ticket. Declared here (rather than
+  // alongside ticketData below) since effects earlier in this component
+  // already depend on it.
+  const [ticketDbId, setTicketDbId] = useState<string | null>(null);
   const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
   const [visitsLoaded, setVisitsLoaded] = useState(false);
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
@@ -1246,11 +1328,84 @@ function TicketDetailsPage() {
   const [redoTicketDraft, setRedoTicketDraft] = useState("");
   const [savingRedoTicket, setSavingRedoTicket] = useState(false);
 
+  // Resolve the caller's Supabase profile id once auth is ready — needed to
+  // stamp ticket_audit_log.changed_by on entries this browser writes.
+  useEffect(() => {
+    if (!authReady || !uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getMyProfileId } = await import("@/lib/supabase/users");
+        const id = await getMyProfileId(uid);
+        if (!cancelled) setMyProfileId(id);
+      } catch (err) {
+        console.error("Failed to resolve profile id for audit log:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, uid]);
+
+  // Company roster for resolving ticket_audit_log.changed_by (a profile
+  // UUID) back to a readable name in the Change Log.
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCompanyUsers } = await import("@/lib/supabase/users");
+        const rows = await getCompanyUsers();
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        rows.forEach((p: any) => { map[p.id] = p.display_name || p.email || p.id; });
+        setProfileNameById(map);
+      } catch (err) {
+        console.error("Failed to load profiles for audit log display:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady]);
+
+  // Merge in the shared (Supabase) audit trail for this ticket, so edits
+  // made from any device show up in the Change Log here too — not just the
+  // entries this specific browser wrote to localStorage.
+  useEffect(() => {
+    if (!ticketDbId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getTicketAuditLog } = await import("@/lib/supabase/tickets");
+        const rows = await getTicketAuditLog({ ticketId: ticketDbId });
+        if (cancelled) return;
+        const mapped: AuditLogEntry[] = rows.map((r) => ({
+          id: r.id,
+          timestamp: r.createdAt,
+          by: (r.changedBy && profileNameById[r.changedBy]) || r.changedBy || "Unknown",
+          action: r.action,
+          field: r.field,
+          before: r.beforeValue ?? "—",
+          after: r.afterValue ?? "—",
+        }));
+        setAuditEntries((prev) => {
+          // Drop any prior entry that represents the same event as one of
+          // the Supabase rows (e.g. this browser's own optimistic echo of an
+          // edit it just made) — the Supabase copy replaces it rather than
+          // sitting alongside it.
+          const withoutDupes = prev.filter((e) => !mapped.some((m) => isSameAuditEvent(e, m)));
+          const merged = [...withoutDupes, ...mapped];
+          return merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+        });
+      } catch (err) {
+        console.error("Failed to load shared ticket audit log:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ticketDbId, profileNameById]);
+
   useEffect(() => {
     // Load audit entries from localStorage
     setAuditEntries(loadAuditEntries(ticketNo));
     setAuditEntriesLoaded(true);
-    
+
     // Reset loaded flags when ticket changes
     setVisitsLoaded(false);
     setPartRowsLoaded(false);
@@ -1402,6 +1557,28 @@ function TicketDetailsPage() {
 
   const appendAuditEntry = (entry: Omit<AuditLogEntry, "id" | "timestamp">) => {
     setAuditEntries((entries) => [createAuditEntry(entry), ...entries]);
+
+    // Write through to the shared Supabase audit trail so this change shows
+    // up in the Change Log from any device, not just this browser's
+    // localStorage. Best-effort — the local entry above already renders
+    // instantly for this session regardless of how this turns out.
+    if (ticketDbId) {
+      (async () => {
+        try {
+          const { logTicketAuditEntry } = await import("@/lib/supabase/tickets");
+          await logTicketAuditEntry({
+            ticketId: ticketDbId,
+            action: entry.action,
+            field: entry.field,
+            beforeValue: entry.before,
+            afterValue: entry.after,
+            changedBy: myProfileId,
+          });
+        } catch (err) {
+          console.error("Failed to write shared audit log entry:", err);
+        }
+      })();
+    }
   };
 
   const handleSendSpStatus = async () => {
@@ -1632,11 +1809,37 @@ function TicketDetailsPage() {
     }
   };
 
-  const auditCountLabel = useMemo(() => `${auditEntries.length} change${auditEntries.length === 1 ? "" : "s"} logged`, [auditEntries.length]);
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
     [auditEntries],
   );
+  // Scoped to "Visit Log" entries; further narrowed to one specific visit
+  // (via visitLogEntryMatchesVisitNo) at the render site, same pattern as
+  // partAuditEntries below.
+  const visitAuditEntries = useMemo(
+    () => auditEntries.filter((entry) => entry.field === "Visit Log"),
+    [auditEntries],
+  );
+  // Ticket-level trigger rows (status/reschedule/reassign) — these have no
+  // visit reference, so they're matched to a specific visit by timing at
+  // the render site (see isNearAnyTimestamp) rather than filtered here.
+  const ticketLevelAuditEntries = useMemo(
+    () => auditEntries.filter((entry) => TICKET_LEVEL_AUDIT_FIELDS.has(entry.field)),
+    [auditEntries],
+  );
+  // Everything shown in a specific visit's Change Log: its own "Visit Log"
+  // entries plus whichever ticket-level status/reschedule rows happened
+  // right around that visit's save.
+  const visitChangeLogEntries = useMemo(() => {
+    if (!viewingVisitEntry) return [] as AuditLogEntry[];
+    const visitSpecific = visitAuditEntries.filter((e) =>
+      visitLogEntryMatchesVisitNo(e.before, viewingVisitEntry.visitNo) ||
+      visitLogEntryMatchesVisitNo(e.after, viewingVisitEntry.visitNo)
+    );
+    const anchors = [viewingVisitEntry.timestamp, ...visitSpecific.map((e) => e.timestamp)].filter(Boolean);
+    const ticketLevel = ticketLevelAuditEntries.filter((e) => isNearAnyTimestamp(e.timestamp, anchors));
+    return [...visitSpecific, ...ticketLevel].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [visitAuditEntries, ticketLevelAuditEntries, viewingVisitEntry]);
   const partCountLabel = useMemo(
     () => `${partRows.length} distinct record${partRows.length === 1 ? "" : "s"} found`,
     [partRows.length],
@@ -1690,6 +1893,8 @@ function TicketDetailsPage() {
 
   // Load ticket from centralized system
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
+  // (ticketDbId is declared earlier alongside myProfileId/profileNameById —
+  // effects above this point already depend on it.)
 
   useEffect(() => {
     // Load ticket from Supabase first; fall back to centralized/hardcoded.
@@ -1703,6 +1908,7 @@ function TicketDetailsPage() {
       if (!centralTicket) {
         centralTicket = getTicketByNumber(ticketNo) ?? null;
       }
+      setTicketDbId((centralTicket as any)?._id ?? null);
       if (centralTicket) {
         // Map centralized Ticket to TicketData format
         const mapped: TicketData = {
@@ -2515,6 +2721,7 @@ function TicketDetailsPage() {
     };
 
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
+    visitEntry.updatedBy = editingVisitId ? (myProfileId ?? undefined) : undefined;
 
     // Persist the visit to Supabase
     try {
@@ -2758,18 +2965,25 @@ function TicketDetailsPage() {
   const loadVisitForEdit = (entry: VisitLogEntry) => {
     setVisitFormMode("edit");
     setEditingVisitId(entry.id);
-    setNewVisitStatus(entry.status || "Visited");
+    // Preserve the entry's actual stored value for every field, including
+    // when it's blank — these four (status, actionType, visited,
+    // notCompleted) previously fell back to a non-blank default ("Visited"/
+    // "No") whenever the stored value was empty. status/visited/
+    // notCompleted have no visible form control at all, so that default
+    // silently overwrote a blank field with a fabricated value on every
+    // save, no matter what the user actually edited.
+    setNewVisitStatus(entry.status || "");
     setNewVisitNote(entry.note || "");
     setNewVisitScheduleDate(entry.scheduleDate || "");
     setNewVisitTechnician(entry.technician || "");
     setNewVisitTimeSlot(entry.timeSlot || "");
     setNewVisitActivity(entry.activity || "");
-    setNewVisitActionType(entry.actionType || "Visited");
+    setNewVisitActionType(entry.actionType || "");
     setNewVisitRepairStatus(entry.repairStatus || "");
     setNewVisitRepairType(entry.repairType || "");
     setNewVisitReclaim(entry.reclaim || "");
-    setNewVisitVisited(entry.visited || "Visited");
-    setNewVisitNotCompleted(entry.notCompleted || "No");
+    setNewVisitVisited(entry.visited || "");
+    setNewVisitNotCompleted(entry.notCompleted || "");
     setNewVisitSymptomCx(entry.symptomCx || "");
     setNewVisitDiagnosis(entry.diagnosis || "");
     setNewVisitSymptomTech(entry.symptomTech || "");
@@ -6661,17 +6875,19 @@ function TicketDetailsPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Change Log</div>
-                        <div className="text-sm text-slate-300">Every tracked edit on this ticket</div>
+                        <div className="text-sm text-slate-300">Changes to this visit</div>
                       </div>
-                      <div className="text-xs font-semibold text-blue-300">{auditCountLabel}</div>
+                      <div className="text-xs font-semibold text-blue-300">
+                        {visitChangeLogEntries.length} change{visitChangeLogEntries.length === 1 ? "" : "s"} logged
+                      </div>
                     </div>
                     <div className="mt-4 space-y-3">
-                      {auditEntries.length === 0 ? (
+                      {visitChangeLogEntries.length === 0 ? (
                         <div className="px-4 py-8 text-center text-slate-400">
                           No tracked changes yet.
                         </div>
                       ) : (
-                        auditEntries.map((entry) => (
+                        visitChangeLogEntries.map((entry) => (
                           <div key={entry.id} className="border border-white/10 rounded-lg bg-slate-900/30 hover:bg-slate-900/50 transition">
                             {/* Header Row */}
                             <div className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20">
@@ -6685,11 +6901,11 @@ function TicketDetailsPage() {
                               </div>
                               <div>
                                 <div className="text-xs text-blue-300 font-semibold mb-1">Action</div>
-                                <div className="text-sm text-slate-300">{entry.action}</div>
+                                <div className="text-sm text-slate-300">{formatAuditAction(entry.action)}</div>
                               </div>
                               <div>
                                 <div className="text-xs text-blue-300 font-semibold mb-1">Field</div>
-                                <div className="text-sm text-slate-300">{entry.field}</div>
+                                <div className="text-sm text-slate-300">{formatAuditField(entry.field)}</div>
                               </div>
                             </div>
                             

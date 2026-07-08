@@ -31,3 +31,13 @@ export const ROLE_LABELS: Record<string, string> = {
   TRIAGE_USER: "Triage User",
   TRIAGE_MANAGER: "Triage Manager",
 };
+
+/**
+ * Normalize a raw role string to the canonical snake-case-uppercase code
+ * (e.g. "CSR_MANAGER") used by the UserRole enum. Some profiles have a
+ * legacy space-separated value (e.g. "CSR Manager") instead of the enum
+ * code — this lets role checks match either form.
+ */
+export function normalizeRole(role: string | null | undefined): string {
+  return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+}

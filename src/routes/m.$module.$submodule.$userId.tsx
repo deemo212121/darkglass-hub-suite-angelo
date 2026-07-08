@@ -6,7 +6,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { getUserManagementRecord } from "@/lib/user-management";
-import { LOCATIONS, ALL_TECHNICIANS } from "@/lib/locations";
+import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
@@ -452,6 +452,7 @@ function UserDetailsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
   const [seqId, setSeqId] = useState<string>("");
+  const [managerCandidates, setManagerCandidates] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<(typeof USER_TABS)[number]>("General Information");
   const [form, setForm] = useState({
     email: "",
@@ -495,6 +496,14 @@ function UserDetailsPage() {
           const all = await getCompanyUsers();
           const idx = all.findIndex((u) => u.id === p.id);
           setSeqId(idx >= 0 ? String(idx + 1) : "");
+          // Manager dropdown candidates: real users with a manager-ish or
+          // admin role, not a hardcoded name list. Stored as free-text
+          // (manager_name matched against real profiles by display name —
+          // see resolveTeamLeadOrManager in src/lib/notifyRouting.ts).
+          const eligible = all.filter((u) => (u.role || "").toUpperCase() === "ADMIN" || (u.role || "").toUpperCase().includes("MANAGER"));
+          setManagerCandidates(
+            Array.from(new Set(eligible.map((u) => u.display_name || u.email).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+          );
         } catch { /* ignore */ }
         setForm({
           email: p.email || "",
@@ -730,8 +739,8 @@ function UserDetailsPage() {
                         <span className={labelCls}>Direct Manager <span className="normal-case text-[10px] text-slate-500">(mandatory for Tech)</span></span>
                         <select value={form.managerName} onChange={(e) => update("managerName", e.target.value)} className={inputCls}>
                           <option value="">— select —</option>
-                          {!ALL_TECHNICIANS.includes(form.managerName) && form.managerName && <option value={form.managerName}>{form.managerName}</option>}
-                          {ALL_TECHNICIANS.map((t) => <option key={t} value={t}>{t}</option>)}
+                          {!managerCandidates.includes(form.managerName) && form.managerName && <option value={form.managerName}>{form.managerName}</option>}
+                          {managerCandidates.map((t) => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </label>
                       <label className="space-y-1.5 text-sm">

@@ -23,11 +23,23 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import type { ModuleDef, SubModuleDef } from "@/lib/db";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
+import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
+import { ROLE_LABELS } from "@/lib/roleLabels";
+import { calcWorkedHours, getMyProfileSchedule } from "@/lib/supabase/timecards";
+import { createNotification } from "@/lib/supabase/notifications";
+import { useAuth } from "@/lib/auth";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
+// PH employees are paid in PHP; this converts their PHP-denominated rate into
+// a comparable USD figure so the whole dashboard can report in one currency
+// (no ₱ shown anywhere) instead of switching symbols per employee's country.
 const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
+// Hours worked are computed client-side from real check_in/check_out punches
+// (timecard_entries.hours_worked/overtime_hours are never populated by the
+// clock-in/out save flow) — same convention as PayrollCalculationPage.tsx.
+const REGULAR_HOURS_PER_DAY = 8;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface SupabaseEmployee {
@@ -42,10 +54,13 @@ interface SupabaseEmployee {
   username?: string;
   role?: string;
   assigned_branch?: string;
+  offDays?: number[];
+  requiredCheckIn?: string;
+  requiredCheckOut?: string;
 }
 
 interface SalaryEntry {
-  employee_id: string;
+  profile_id: string;
   effective_date: string;
   hourly_rate: number;
 }
@@ -54,8 +69,10 @@ interface TimecardEntry {
   profile_id: string | null;
   employee_id: string | null;
   work_date: string;
-  hours_worked: number;
-  overtime_hours: number;
+  check_in: string | null;
+  check_out: string | null;
+  meal_start: string | null;
+  meal_end: string | null;
   status: string;
 }
 
@@ -69,7 +86,7 @@ interface PayrollRun {
 
 interface PayrollLineItem {
   payroll_run_id: string;
-  employee_id: string;
+  profile_id: string;
   hours_worked: number;
   overtime_hours: number;
   hourly_rate: number;
@@ -91,9 +108,11 @@ interface PayrollAuditLogRow {
 interface EmployeePayrollRow {
   employee: SupabaseEmployee;
   hourlyRate: number;
+  hourlyRateUSD: number;
   hoursWorked: number;
   overtimeHours: number;
   grossPay: number;
+  grossPayUSD: number;
 }
 
 interface MonthlyBarData {
@@ -104,26 +123,78 @@ interface MonthlyBarData {
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
-function periodBounds(): { start: string; end: string } {
-  const now = new Date();
-  const end = now.toISOString().split("T")[0];
-  const startDate = new Date(now);
-  startDate.setDate(startDate.getDate() - 13); // last 14 days inclusive
+// Weekends are off days — a period should never end on one (nothing worked
+// there anyway), so roll back to the Friday before.
+function rollBackToWeekday(d: Date): Date {
+  const day = d.getDay(); // 0=Sun, 6=Sat
+  if (day === 0) d.setDate(d.getDate() - 2);
+  else if (day === 6) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+// Regular/overtime hours per employee from a set of raw timecard rows —
+// shared by the live preview and by regeneratePayroll() (which recomputes
+// against a past run's own period rather than the current preview range).
+function computeHoursMap(entries: TimecardEntry[]): Map<string, { regular: number; overtime: number }> {
+  const hoursMap = new Map<string, { regular: number; overtime: number }>();
+  for (const tc of entries) {
+    const key = tc.profile_id || tc.employee_id;
+    if (!key || !tc.check_in || !tc.check_out) continue;
+    const hours = calcWorkedHours({
+      checkIn: tc.check_in,
+      checkOut: tc.check_out,
+      mealStart: tc.meal_start || "",
+      mealEnd: tc.meal_end || "",
+      notes: "",
+    });
+    const reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
+    const ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
+    const prev = hoursMap.get(key) ?? { regular: 0, overtime: 0 };
+    hoursMap.set(key, { regular: prev.regular + reg, overtime: prev.overtime + ot });
+  }
+  return hoursMap;
+}
+
+// Ends yesterday (or the Friday before, if yesterday fell on a weekend) —
+// an employee still clocked in today wouldn't have a check-out yet, so
+// including today would understate their hours. Starts the day after the
+// previous payroll run's period_end so consecutive runs never gap or
+// overlap; with no prior run (first time ever), defaults to a 14-day window.
+function periodBounds(lastPeriodEnd: string | null): { start: string; end: string } {
+  const endDate = rollBackToWeekday((() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d;
+  })());
+  const end = endDate.toISOString().split("T")[0];
+
+  let startDate: Date;
+  if (lastPeriodEnd) {
+    startDate = new Date(lastPeriodEnd + "T00:00:00");
+    startDate.setDate(startDate.getDate() + 1);
+  } else {
+    startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 13); // first-ever run: default 14-day window
+  }
   const start = startDate.toISOString().split("T")[0];
   return { start, end };
 }
 
-function fmt(amount: number, currency: "USD" | "PHP" = "USD") {
-  if (currency === "PHP") {
-    return `₱${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-  }
+// Always USD — PH employees are paid in PHP internally (salary_entries),
+// but every amount is converted (see EXCHANGE_RATE) before it reaches this
+// formatter so nothing in the UI shows ₱.
+function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { uid, displayName } = useAuth();
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "reports">("overview");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [employeeSearch, setEmployeeSearch] = useState("");
 
   // Raw data
   const [employees, setEmployees] = useState<SupabaseEmployee[]>([]);
@@ -137,7 +208,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
@@ -147,27 +220,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     setLoading(true);
     setError(null);
     try {
-      const { start, end } = periodBounds();
-
       const [
         empRes,
         salRes,
-        tcRes,
         runsRes,
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch"),
-        supabase.from("salary_entries").select("employee_id,effective_date,hourly_rate").order("effective_date", { ascending: false }),
-        supabase.from("timecard_entries").select("profile_id,employee_id,work_date,hours_worked,overtime_hours,status").gte("work_date", start).lte("work_date", end),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERADMIN"),
+        supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
-        supabase.from("payroll_line_items").select("payroll_run_id,employee_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
+        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
       ]);
 
-      for (const res of [empRes, salRes, tcRes, runsRes, lineRes, auditRes]) {
+      for (const res of [empRes, salRes, runsRes, lineRes, auditRes]) {
         if (res.error) throw new Error(res.error.message);
       }
+
+      const runs = (runsRes.data ?? []) as PayrollRun[];
+      // runs is already ordered by generated_at desc, so runs[0] is the most
+      // recent run — the next period picks up the day after it ended.
+      const { start, end } = periodBounds(runs[0]?.period_end ?? null);
+      const tcRes = await supabase
+        .from("timecard_entries")
+        .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
+        .gte("work_date", start)
+        .lte("work_date", end);
+      if (tcRes.error) throw new Error(tcRes.error.message);
 
       setEmployees(((empRes.data ?? []) as any[]).map((p) => ({
         id: p.id,
@@ -180,10 +260,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         username: p.username,
         role: p.role,
         assigned_branch: p.assigned_branch,
+        offDays: p.off_days ?? undefined,
+        requiredCheckIn: p.required_check_in ?? undefined,
+        requiredCheckOut: p.required_check_out ?? undefined,
       })) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
       setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
-      setPayrollRuns((runsRes.data ?? []) as PayrollRun[]);
+      setPayrollRuns(runs);
       setPayrollLineItems((lineRes.data ?? []) as PayrollLineItem[]);
       setAuditLog((auditRes.data ?? []) as PayrollAuditLogRow[]);
     } catch (err: unknown) {
@@ -195,28 +278,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyProfileSchedule(uid).then((s) => {
+      if (!cancelled) setMyProfileId(s.profileId);
+    });
+    return () => { cancelled = true; };
+  }, [uid]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
-  // Latest salary entry per employee
+  // Latest salary entry per employee (salaryEntries is already ordered by
+  // effective_date desc, so the first hit per profile is the current rate).
   const latestRateMap = new Map<string, number>();
   for (const se of salaryEntries) {
-    if (!latestRateMap.has(se.employee_id)) {
-      latestRateMap.set(se.employee_id, se.hourly_rate);
+    if (!latestRateMap.has(se.profile_id)) {
+      latestRateMap.set(se.profile_id, se.hourly_rate);
     }
   }
 
-  // Hours worked per employee in current period — use profile_id if available, fall back to employee_id
-  const hoursMap = new Map<string, { regular: number; overtime: number }>();
-  for (const tc of timecardEntries) {
-    const key = tc.profile_id || tc.employee_id;
-    if (!key) continue;
-    const prev = hoursMap.get(key) ?? { regular: 0, overtime: 0 };
-    hoursMap.set(key, {
-      regular: prev.regular + (tc.hours_worked ?? 0),
-      overtime: prev.overtime + (tc.overtime_hours ?? 0),
-    });
-  }
+  // Hours worked per employee in current period. Computed from real
+  // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
+  const hoursMap = computeHoursMap(timecardEntries);
 
-  // Build payroll rows
+  // Build payroll rows. salary_entries.hourly_rate is always entered as a
+  // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
+  // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
+  // regardless of the employee's assigned country, so hourlyRateUSD/grossPayUSD
+  // are just hourlyRate/grossPay verbatim — no PHP division here. (EXCHANGE_RATE
+  // is still used for payroll_line_items rows recorded with currency: "PHP"
+  // before this was standardized — see toggleRun()/Reports tab below.)
   const payrollRows: EmployeePayrollRow[] = employees.map((emp) => {
     const hourlyRate =
       latestRateMap.get(emp.id) ?? emp.hourly_rate ?? 0;
@@ -226,23 +317,30 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return {
       employee: emp,
       hourlyRate,
+      hourlyRateUSD: hourlyRate,
       hoursWorked: hours.regular,
       overtimeHours: hours.overtime,
       grossPay,
+      grossPayUSD: grossPay,
     };
   });
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
 
-  const totalUSPayroll = usRows.reduce((s, r) => s + r.grossPay, 0);
-  const totalPHPayroll = phRows.reduce((s, r) => s + r.grossPay, 0);
-  const totalPayrollUSD = totalUSPayroll + totalPHPayroll / EXCHANGE_RATE;
+  // grossPayUSD is already plain USD (see payrollRows above) — no conversion here.
+  const totalUSPayroll = usRows.reduce((s, r) => s + r.grossPayUSD, 0);
+  const totalPHPayroll = phRows.reduce((s, r) => s + r.grossPayUSD, 0);
+  const totalPayrollUSD = totalUSPayroll + totalPHPayroll;
   const avgPayPerEmployee =
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
 
-  // Monthly bar chart data from payroll_line_items grouped by run period
+  // Monthly bar chart data from payroll_line_items grouped by run period.
+  // Older rows may have been recorded with currency: "PHP" (native, pre-
+  // standardization) — convert only those; everything else (all current
+  // rows use currency: "USD") is already a plain USD figure.
   const monthlyBarData: MonthlyBarData[] = (() => {
+    const toUSD = (li: PayrollLineItem) => (li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0));
     const map = new Map<string, { usPayroll: number; phPayroll: number }>();
     for (const run of payrollRuns) {
       const label = run.period_start
@@ -251,24 +349,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const items = payrollLineItems.filter((li) => li.payroll_run_id === run.id);
       const us = items
         .filter((li) => {
-          const emp = employees.find((e) => e.id === li.employee_id);
+          const emp = employees.find((e) => e.id === li.profile_id);
           return emp?.country === "US";
         })
-        .reduce((s, li) => s + (li.gross_pay ?? 0), 0);
+        .reduce((s, li) => s + toUSD(li), 0);
       const ph = items
         .filter((li) => {
-          const emp = employees.find((e) => e.id === li.employee_id);
+          const emp = employees.find((e) => e.id === li.profile_id);
           return emp?.country === "PH";
         })
-        .reduce((s, li) => s + (li.gross_pay ?? 0), 0);
+        .reduce((s, li) => s + toUSD(li), 0);
       const prev = map.get(label) ?? { usPayroll: 0, phPayroll: 0 };
       map.set(label, { usPayroll: prev.usPayroll + us, phPayroll: prev.phPayroll + ph });
     }
     return Array.from(map.entries()).map(([month, v]) => ({
       month,
       usPayroll: Math.round(v.usPayroll),
-      phPayroll: Math.round(v.phPayroll / EXCHANGE_RATE),
-      total: Math.round(v.usPayroll + v.phPayroll / EXCHANGE_RATE),
+      phPayroll: Math.round(v.phPayroll),
+      total: Math.round(v.usPayroll + v.phPayroll),
     }));
   })();
 
@@ -277,7 +375,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     if (payrollRows.length === 0) return;
     setGenerating(true);
     try {
-      const { start, end } = periodBounds();
+      // payrollRuns is ordered by generated_at desc, so [0] is the most
+      // recent run — the next period picks up the day after it ended.
+      const lastPeriodEnd = payrollRuns[0]?.period_end ?? null;
+      const { start, end } = periodBounds(lastPeriodEnd);
+      if (start > end) {
+        setError(`Payroll already covers through ${lastPeriodEnd}. Nothing new to generate yet — use "Regenerate Last Payroll" if you need to recompute it (e.g. a rate or timecard was fixed after the fact).`);
+        setGenerating(false);
+        return;
+      }
 
       // Insert payroll run
       const { data: runData, error: runErr } = await supabase
@@ -285,7 +391,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         .insert({
           period_start: start,
           period_end: end,
-          status: "completed",
+          status: "generated",
           generated_at: new Date().toISOString(),
         })
         .select("id")
@@ -294,18 +400,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       const runId = (runData as { id: string }).id;
 
-      // Build line items
+      // Build line items — always USD (hourlyRateUSD/grossPayUSD are
+      // already exchange-rate-converted for PH rows), so every run this
+      // dashboard generates reads in one currency, no ₱ anywhere.
       const lineItems = payrollRows.map((r) => ({
         payroll_run_id: runId,
-        employee_id: r.employee.id,
+        profile_id: r.employee.id,
         hours_worked: r.hoursWorked,
         overtime_hours: r.overtimeHours,
-        hourly_rate: r.hourlyRate,
-        regular_pay: r.hoursWorked * r.hourlyRate,
-        overtime_pay: r.overtimeHours * r.hourlyRate * 1.5,
-        gross_pay: r.grossPay,
-        net_pay: r.grossPay, // simplified — no deductions model
-        currency: r.employee.country === "PH" ? "PHP" : "USD",
+        hourly_rate: r.hourlyRateUSD,
+        regular_pay: r.hoursWorked * r.hourlyRateUSD,
+        overtime_pay: r.overtimeHours * r.hourlyRateUSD * 1.5,
+        gross_pay: r.grossPayUSD,
+        net_pay: r.grossPayUSD, // simplified — no deductions model
+        currency: "USD",
       }));
 
       const { error: lineErr } = await supabase.from("payroll_line_items").insert(lineItems);
@@ -313,17 +421,108 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       // Insert audit log entry
       await supabase.from("payroll_audit_log").insert({
-        action: "GENERATE",
+        action: "generate",
         employee_name: "All Employees",
         details: `Generated payroll run for ${start} – ${end}. ${payrollRows.length} employees. Total: $${totalPayrollUSD.toFixed(2)}`,
         amount: Math.round(totalPayrollUSD * 100) / 100,
       });
+
+      // Notify every employee who actually got paid something in this run —
+      // skip $0 rows (e.g. no rate set yet) since there's nothing to tell them.
+      await Promise.all(
+        payrollRows
+          .filter((r) => r.grossPayUSD > 0)
+          .map((r) =>
+            createNotification({
+              recipientId: r.employee.id,
+              senderId: myProfileId,
+              senderName: displayName || "Accounting",
+              body: `💰 Your payroll for ${start} – ${end} is ready: ${fmt(r.grossPayUSD)}.`,
+              linkTo: "/m/dashboard/employee-self-service?tab=payroll",
+            }).catch((err) => console.error("Failed to notify", r.employee.id, err))
+          )
+      );
 
       await fetchData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to generate payroll");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // ── Regenerate the most recent payroll run ───────────────────────────────────
+  // Recomputes and replaces that run's line items using current rates/
+  // attendance — for when a rate was missing or a timecard was corrected
+  // after the run was already generated. Same period_start/period_end, just
+  // fresh numbers and a bumped generated_at.
+  const regeneratePayroll = async () => {
+    const lastRun = payrollRuns[0];
+    if (!lastRun) return;
+    setRegenerating(true);
+    try {
+      const { data: entriesData, error: entriesErr } = await supabase
+        .from("timecard_entries")
+        .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
+        .gte("work_date", lastRun.period_start)
+        .lte("work_date", lastRun.period_end);
+      if (entriesErr) throw new Error(entriesErr.message);
+
+      const regenHoursMap = computeHoursMap((entriesData ?? []) as TimecardEntry[]);
+      const regenRows = employees.map((emp) => {
+        const hourlyRate = latestRateMap.get(emp.id) ?? emp.hourly_rate ?? 0;
+        const hours = regenHoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
+        const grossPayUSD = hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
+        return { employee: emp, hoursWorked: hours.regular, overtimeHours: hours.overtime, hourlyRateUSD: hourlyRate, grossPayUSD };
+      });
+
+      const { error: deleteErr } = await supabase.from("payroll_line_items").delete().eq("payroll_run_id", lastRun.id);
+      if (deleteErr) throw new Error(deleteErr.message);
+
+      const lineItems = regenRows.map((r) => ({
+        payroll_run_id: lastRun.id,
+        profile_id: r.employee.id,
+        hours_worked: r.hoursWorked,
+        overtime_hours: r.overtimeHours,
+        hourly_rate: r.hourlyRateUSD,
+        regular_pay: r.hoursWorked * r.hourlyRateUSD,
+        overtime_pay: r.overtimeHours * r.hourlyRateUSD * 1.5,
+        gross_pay: r.grossPayUSD,
+        net_pay: r.grossPayUSD,
+        currency: "USD",
+      }));
+      const { error: insertErr } = await supabase.from("payroll_line_items").insert(lineItems);
+      if (insertErr) throw new Error(insertErr.message);
+
+      await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", lastRun.id);
+
+      const newTotal = regenRows.reduce((s, r) => s + r.grossPayUSD, 0);
+      await supabase.from("payroll_audit_log").insert({
+        action: "edit",
+        employee_name: "All Employees",
+        details: `Regenerated payroll run for ${lastRun.period_start} – ${lastRun.period_end}. ${regenRows.length} employees. Total: $${newTotal.toFixed(2)}.`,
+        amount: Math.round(newTotal * 100) / 100,
+      });
+
+      await Promise.all(
+        regenRows
+          .filter((r) => r.grossPayUSD > 0)
+          .map((r) =>
+            createNotification({
+              recipientId: r.employee.id,
+              senderId: myProfileId,
+              senderName: displayName || "Accounting",
+              body: `🔄 Your payroll for ${lastRun.period_start} – ${lastRun.period_end} was updated: ${fmt(r.grossPayUSD)}.`,
+              linkTo: "/m/dashboard/employee-self-service?tab=payroll",
+            }).catch((err) => console.error("Failed to notify", r.employee.id, err))
+          )
+      );
+
+      await fetchData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to regenerate payroll");
+    } finally {
+      setRegenerating(false);
     }
   };
 
@@ -339,7 +538,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try {
       const { data, error: e } = await supabase
         .from("payroll_line_items")
-        .select("payroll_run_id,employee_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency")
+        .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency")
         .eq("payroll_run_id", runId);
       if (e) throw new Error(e.message);
       setRunLineItems((prev) => ({ ...prev, [runId]: (data ?? []) as PayrollLineItem[] }));
@@ -360,8 +559,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }
 
   // ── Render helpers ───────────────────────────────────────────────────────────
+  // selectedCurrency is really a "which team" filter (US vs PH employees) —
+  // every amount is always shown in USD regardless of which team is active.
   const displayRows = selectedCurrency === "USD" ? usRows : phRows;
-  const currencySymbol = selectedCurrency === "USD" ? "$" : "₱";
+
+  const departmentOptions = Array.from(
+    new Set(displayRows.map((r) => r.employee.department).filter((d): d is string => !!d))
+  );
+
+  const visibleRows = displayRows.filter((row) => {
+    if (departmentFilter !== "all" && row.employee.department !== departmentFilter) return false;
+    if (employeeSearch && !row.employee.full_name.toLowerCase().includes(employeeSearch.toLowerCase())) return false;
+    return true;
+  });
+  const visibleTotalUSD = visibleRows.reduce((s, r) => s + r.grossPayUSD, 0);
 
   if (loading) {
     return (
@@ -459,7 +670,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">US / PH Split</p>
                 <p className="text-lg font-bold text-purple-300">
-                  {fmt(totalUSPayroll)} / {fmt(totalPHPayroll / EXCHANGE_RATE)}
+                  {fmt(totalUSPayroll)} / {fmt(totalPHPayroll)}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {usRows.length} US · {phRows.length} PH employees
@@ -507,6 +718,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
               <button
+                type="button"
                 onClick={generatePayroll}
                 disabled={generating || payrollRows.length === 0}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
@@ -514,7 +726,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />}
                 Generate Payroll
               </button>
+              {payrollRuns.length > 0 && (
+                <button
+                  type="button"
+                  onClick={regeneratePayroll}
+                  disabled={regenerating}
+                  title={`Recompute the last run (${payrollRuns[0].period_start} – ${payrollRuns[0].period_end}) using current rates/attendance`}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
+                >
+                  {regenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Regenerate Last Payroll
+                </button>
+              )}
               <button
+                type="button"
                 onClick={() => setShowAuditLog(!showAuditLog)}
                 className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
               >
@@ -526,7 +751,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 {(["USD", "PHP"] as const).map((cur) => (
                   <button
                     key={cur}
-                    onClick={() => setSelectedCurrency(cur)}
+                    onClick={() => {
+                      setSelectedCurrency(cur);
+                      setDepartmentFilter("all");
+                    }}
                     className={`px-4 py-2 rounded text-sm font-semibold transition ${
                       selectedCurrency === cur
                         ? "bg-blue-600 text-white"
@@ -544,9 +772,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Total Payroll (Period)</p>
                 <p className="text-2xl font-bold text-green-300">
-                  {selectedCurrency === "USD"
-                    ? fmt(totalUSPayroll)
-                    : fmt(totalPHPayroll, "PHP")}
+                  {fmt(selectedCurrency === "USD" ? totalUSPayroll : totalPHPayroll)}
                 </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -557,17 +783,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Overtime Pay</p>
                 <p className="text-2xl font-bold text-orange-300">
-                  {selectedCurrency === "USD"
-                    ? fmt(usRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRate * 1.5, 0))
-                    : fmt(phRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRate * 1.5, 0), "PHP")}
+                  {fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
                 </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Avg per Employee</p>
                 <p className="text-2xl font-bold text-purple-300">
-                  {selectedCurrency === "USD"
-                    ? fmt(usRows.length > 0 ? totalUSPayroll / usRows.length : 0)
-                    : fmt(phRows.length > 0 ? totalPHPayroll / phRows.length : 0, "PHP")}
+                  {fmt(displayRows.length > 0
+                    ? (selectedCurrency === "USD" ? totalUSPayroll : totalPHPayroll) / displayRows.length
+                    : 0)}
                 </p>
               </div>
             </div>
@@ -618,7 +842,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <span className="text-sm font-semibold">
                   {selectedCurrency === "USD" ? "US" : "PH"} Employee Payroll — Current Period
                 </span>
-                <span className="text-xs text-slate-400">{displayRows.length} employees</span>
+                <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
+              </div>
+              <div className="px-4 py-3 border-b border-white/10 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Department / Role</label>
+                  <select
+                    title="Department / Role"
+                    value={departmentFilter}
+                    onChange={(e) => setDepartmentFilter(e.target.value)}
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="all">All Departments</option>
+                    {departmentOptions.map((d) => (
+                      <option key={d} value={d}>{ROLE_LABELS[d] ?? d}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Search</label>
+                  <input
+                    type="text"
+                    value={employeeSearch}
+                    onChange={(e) => setEmployeeSearch(e.target.value)}
+                    placeholder="Search employee..."
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
               </div>
               <table className="w-full text-sm min-w-[700px]">
                 <thead>
@@ -632,19 +882,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRows.length === 0 ? (
+                  {visibleRows.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-8 text-center text-slate-500 text-sm">
                         No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
                       </td>
                     </tr>
                   ) : (
-                    displayRows.map((row) => (
+                    visibleRows.map((row) => (
                       <tr key={row.employee.id} className="border-b border-white/5 hover:bg-white/5">
-                        <td className="px-4 py-3 font-medium text-white">
-                          {row.employee.full_name}
+                        <td className="px-4 py-3 font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setDetailEmployee(row.employee)}
+                            className="text-blue-400 hover:text-blue-300 hover:underline"
+                          >
+                            {row.employee.full_name}
+                          </button>
                         </td>
-                        <td className="px-4 py-3 text-slate-300">{row.employee.department ?? "—"}</td>
+                        <td className="px-4 py-3 text-slate-300">
+                          {row.employee.department ? (ROLE_LABELS[row.employee.department] ?? row.employee.department) : "—"}
+                        </td>
                         <td className="px-4 py-3 text-center text-slate-300">
                           {row.hoursWorked.toFixed(1)}
                         </td>
@@ -652,27 +910,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {row.overtimeHours.toFixed(1)}
                         </td>
                         <td className="px-4 py-3 text-center text-slate-300">
-                          {currencySymbol}{row.hourlyRate.toFixed(2)}
+                          ${row.hourlyRateUSD.toFixed(2)}
                         </td>
                         <td className="px-4 py-3 text-right font-semibold text-green-300">
-                          {selectedCurrency === "USD"
-                            ? fmt(row.grossPay)
-                            : fmt(row.grossPay, "PHP")}
+                          {fmt(row.grossPayUSD)}
                         </td>
                       </tr>
                     ))
                   )}
                 </tbody>
-                {displayRows.length > 0 && (
+                {visibleRows.length > 0 && (
                   <tfoot>
                     <tr className="border-t border-white/20 bg-white/5">
                       <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-slate-300">
                         Total
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-green-300">
-                        {selectedCurrency === "USD"
-                          ? fmt(totalUSPayroll)
-                          : fmt(totalPHPayroll, "PHP")}
+                        {fmt(visibleTotalUSD)}
                       </td>
                     </tr>
                   </tfoot>
@@ -729,11 +983,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           <td className="px-4 py-3">
                             <span
                               className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                                run.status === "completed"
-                                  ? "bg-green-900/50 text-green-300"
-                                  : run.status === "pending"
+                                run.status === "draft"
                                   ? "bg-yellow-900/50 text-yellow-300"
-                                  : "bg-slate-700 text-slate-300"
+                                  : "bg-green-900/50 text-green-300"
                               }`}
                             >
                               {run.status}
@@ -771,29 +1023,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   </thead>
                                   <tbody>
                                     {runLineItems[run.id].map((li, idx) => {
-                                      const emp = employees.find((e) => e.id === li.employee_id);
+                                      const emp = employees.find((e) => e.id === li.profile_id);
+                                      // Historical runs generated before this dashboard went dollar-only
+                                      // may still be flagged "PHP" — convert those for display so every
+                                      // run (old or new) reads in USD.
+                                      const divisor = li.currency === "PHP" ? EXCHANGE_RATE : 1;
                                       return (
                                         <tr key={idx} className="border-b border-white/5">
                                           <td className="py-2 text-white">
                                             {emp
                                               ? emp.full_name
-                                              : li.employee_id}
+                                              : li.profile_id}
                                           </td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
                                           <td className="py-2 text-center text-orange-300">{li.overtime_hours?.toFixed(1)}</td>
                                           <td className="py-2 text-right text-slate-300">
-                                            {li.currency === "PHP" ? "₱" : "$"}{li.hourly_rate?.toFixed(2)}
+                                            ${(li.hourly_rate / divisor).toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right text-slate-300">
-                                            {li.currency === "PHP" ? "₱" : "$"}{li.regular_pay?.toFixed(2)}
+                                            ${(li.regular_pay / divisor).toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right text-orange-300">
-                                            {li.currency === "PHP" ? "₱" : "$"}{li.overtime_pay?.toFixed(2)}
+                                            ${(li.overtime_pay / divisor).toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right font-semibold text-green-300">
-                                            {li.currency === "PHP" ? "₱" : "$"}{li.gross_pay?.toFixed(2)}
+                                            ${(li.gross_pay / divisor).toFixed(2)}
                                           </td>
-                                          <td className="py-2 text-right text-slate-400">{li.currency}</td>
+                                          <td className="py-2 text-right text-slate-400">USD</td>
                                         </tr>
                                       );
                                     })}
@@ -813,6 +1069,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
       </main>
+
+      {detailEmployee && (
+        <EmployeePayrollDetailModal
+          profileId={detailEmployee.id}
+          employeeName={detailEmployee.full_name}
+          department={detailEmployee.department ?? undefined}
+          requiredCheckIn={detailEmployee.requiredCheckIn}
+          requiredCheckOut={detailEmployee.requiredCheckOut}
+          offDays={detailEmployee.offDays}
+          onClose={() => setDetailEmployee(null)}
+          onRateChanged={fetchData}
+        />
+      )}
     </div>
   );
 }

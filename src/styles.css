@@ -791,6 +791,38 @@
     color: #fff;
   }
 
+  /* To-Do List — Branch dropdown hardcodes a dark navy button/menu, which
+     stays dark even in light mode since it never followed the theme. */
+  :root[data-theme="light"] .todo-panel {
+    background: var(--lt-surface) !important;
+    border-color: var(--lt-border) !important;
+    color: var(--lt-text) !important;
+  }
+  :root[data-theme="light"] .todo-meta {
+    color: var(--lt-text-2) !important;
+  }
+  :root[data-theme="light"] .todo-branch-button {
+    background: #ffffff !important;
+    border-color: var(--lt-border) !important;
+    color: var(--lt-text) !important;
+  }
+  :root[data-theme="light"] .todo-branch-menu {
+    background: #ffffff !important;
+    border-color: var(--lt-border) !important;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.15) !important;
+  }
+  :root[data-theme="light"] .todo-branch-option {
+    color: var(--lt-text) !important;
+  }
+  :root[data-theme="light"] .todo-branch-option:hover,
+  :root[data-theme="light"] .todo-branch-option.is-active {
+    background: rgba(59, 130, 246, 0.12) !important;
+    color: var(--lt-text) !important;
+  }
+  :root[data-theme="light"] .todo-meta-count {
+    color: var(--lt-text-2) !important;
+  }
+
   .todo-meta-pill {
     display: inline-flex;
     align-items: center;
@@ -11000,10 +11032,15 @@
 :root[data-theme="light"] .summary-table td, :root[data-theme="light"] .unverified-table td, :root[data-theme="light"] .changed-tickets-table td { color: var(--lt-text) !important; }
 
 /* ── #1 fix: chart tooltip text must follow the theme (your file flips the
-   tooltip bg to light in light mode; text must go dark there, light in dark). */
-.recharts-tooltip-label,
-.recharts-tooltip-item,
-.recharts-tooltip-item-name,
-.recharts-tooltip-item-value,
-.recharts-tooltip-item-separator { color: var(--color-foreground) !important; }
+   tooltip bg to light in light mode; text must go dark there).
+   Scoped to light mode only — some charts hardcode a fixed white-bg/
+   dark-text tooltip that's meant to look the same in both themes (see
+   e.g. CSRStatusSummary's TOOLTIP_STYLE); an unscoped !important here
+   forced their text to var(--color-foreground) even in dark mode, which
+   is a light color — producing invisible near-white-on-white text. */
+:root[data-theme="light"] .recharts-tooltip-label,
+:root[data-theme="light"] .recharts-tooltip-item,
+:root[data-theme="light"] .recharts-tooltip-item-name,
+:root[data-theme="light"] .recharts-tooltip-item-value,
+:root[data-theme="light"] .recharts-tooltip-item-separator { color: var(--color-foreground) !important; }
 

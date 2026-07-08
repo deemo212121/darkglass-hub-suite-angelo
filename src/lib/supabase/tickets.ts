@@ -915,6 +915,12 @@ export async function updateTicketVisit(visitId: string, visit: Partial<UIVisit>
       status: visit.status ?? null,
       note: visit.note ?? null,
       update_reason: visit.updateReason ?? null,
+      // Previously omitted, so updated_at/updated_by never actually moved
+      // off their insert-time default — every visit looked "just edited"
+      // at its own creation time forever, and nothing could tell a real
+      // edit apart from a fresh add. Stamp them for real on every edit.
+      updated_at: new Date().toISOString(),
+      updated_by: visit.updatedBy ?? null,
     })
     .eq("id", visitId);
   if (error) {
@@ -1349,6 +1355,7 @@ async function upsertTicketFromServicePowerImpl(
 void yn;
 
 export interface TicketAuditEntry {
+  id: string;
   ticketId: string;
   action: string;
   field: string;
@@ -1360,16 +1367,18 @@ export interface TicketAuditEntry {
 
 /**
  * Read the ticket_audit_log (company-scoped via RLS). This is the real,
- * trigger-written trail of who changed a ticket's status/tech/schedule and
- * when — the live substitute for any "who did what" reporting (Daily
- * Activity Report, CSR Dashboard per-agent counts) since there is no
- * separate user-activity table.
+ * shared trail of who changed a ticket/visit and when — a mix of rows the
+ * DB trigger writes automatically (status/tech/schedule changes on the
+ * `tickets` table) and rows the app writes explicitly via
+ * logTicketAuditEntry (visit edits, SP status sends, etc. — see the ticket
+ * detail page's Change Log). Pass `ticketId` to scope to one ticket.
  */
-export async function getTicketAuditLog(opts?: { startDate?: string; endDate?: string }): Promise<TicketAuditEntry[]> {
+export async function getTicketAuditLog(opts?: { ticketId?: string; startDate?: string; endDate?: string }): Promise<TicketAuditEntry[]> {
   let query = supabase
     .from("ticket_audit_log")
-    .select("ticket_id, action, field, before_value, after_value, changed_by, created_at")
+    .select("id, ticket_id, action, field, before_value, after_value, changed_by, created_at")
     .order("created_at", { ascending: false });
+  if (opts?.ticketId) query = query.eq("ticket_id", opts.ticketId);
   if (opts?.startDate) query = query.gte("created_at", opts.startDate);
   if (opts?.endDate) query = query.lte("created_at", `${opts.endDate}T23:59:59.999Z`);
 
@@ -1379,6 +1388,7 @@ export async function getTicketAuditLog(opts?: { startDate?: string; endDate?: s
     throw new Error(error.message);
   }
   return (data ?? []).map((r: any) => ({
+    id: r.id,
     ticketId: r.ticket_id,
     action: r.action ?? "",
     field: r.field ?? "",
@@ -1387,4 +1397,32 @@ export async function getTicketAuditLog(opts?: { startDate?: string; endDate?: s
     changedBy: r.changed_by,
     createdAt: r.created_at,
   }));
+}
+
+/**
+ * Manually record a ticket audit entry (e.g. a visit edit, an SP status
+ * send) — anything not already covered by the DB trigger's automatic
+ * status/tech/schedule logging on the `tickets` table itself. `changedBy`
+ * must be a real `profiles.id`, not a display name (the column is a FK).
+ */
+export async function logTicketAuditEntry(entry: {
+  ticketId: string;
+  action: string;
+  field: string;
+  beforeValue?: string | null;
+  afterValue?: string | null;
+  changedBy?: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from("ticket_audit_log").insert({
+    ticket_id: entry.ticketId,
+    action: entry.action,
+    field: entry.field,
+    before_value: entry.beforeValue ?? null,
+    after_value: entry.afterValue ?? null,
+    changed_by: entry.changedBy ?? null,
+  });
+  if (error) {
+    console.error("logTicketAuditEntry error:", error.message);
+    throw new Error(error.message);
+  }
 }

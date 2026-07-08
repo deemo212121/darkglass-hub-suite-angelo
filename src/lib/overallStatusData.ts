@@ -19,7 +19,7 @@
  *  - ALL_LOCATIONS_FILTER         — flat list for the location dropdown
  */
 
-import { getCompanyTickets } from "./supabase/tickets";
+import { getCompanyTickets, getTicketAuditLog } from "./supabase/tickets";
 import { getCompanyUsers } from "./supabase/users";
 import type { Ticket } from "./ticketData";
 
@@ -241,7 +241,7 @@ function inPostingRange(created: string, startDate?: string, endDate?: string): 
  */
 export async function loadOverallStatusData(opts?: { startDate?: string; endDate?: string }): Promise<OverallStatusData> {
   const { startDate, endDate } = opts ?? {};
-  const [ticketsAll, profiles] = await Promise.all([
+  const [ticketsAll, profiles, auditLog] = await Promise.all([
     getCompanyTickets(),
     // Profiles roster — we need this to know which display_name/email/username
     // belong to users that hold the CSR role (primary or in extra_roles).
@@ -249,6 +249,13 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     getCompanyUsers().catch((err) => {
       console.error("Failed to load profiles for CSR activity:", err);
       return [] as Awaited<ReturnType<typeof getCompanyUsers>>;
+    }),
+    // Full change history (every status/reassign/reschedule action, not just
+    // the "last changer" pointer stored on the ticket) — see csrCounts below
+    // for why this matters.
+    getTicketAuditLog().catch((err) => {
+      console.error("Failed to load ticket audit log for CSR activity:", err);
+      return [] as Awaited<ReturnType<typeof getTicketAuditLog>>;
     }),
   ]);
 
@@ -373,13 +380,16 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     .map(([name, value], i) => ({ name, value, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
 
   // ── CSR activity (donut) ────────────────────────────────────────────────
-  // Count, per CSR-role user, how many tickets they changed the status on.
-  // Source signal: tickets.status_changed_by — the audit trigger records who
-  // last moved the status. Matched against the CSR roster so non-CSR
-  // activity (e.g. a manager closing a ticket) is excluded.
+  // Count, per CSR-role user, every status/reassign/reschedule action they've
+  // ever made — read from the FULL ticket_audit_log history, not
+  // tickets.status_changed_by. That column only stores the single most
+  // recent changer per ticket, so a CSR's early-stage edits disappear from
+  // it the moment anyone else (a manager closing the ticket, etc.) touches
+  // the same ticket later — undercounting exactly the CSRs who work tickets
+  // at an early stage and hand them off.
   const csrCounts = new Map<string, number>();
-  for (const t of ticketsAll) {
-    const who = String(t.statusChangedBy || "").trim();
+  for (const entry of auditLog) {
+    const who = String(entry.changedBy || "").trim();
     if (!who) continue;
     const display = csrIdentities.get(who.toLowerCase());
     if (!display) continue; // not a CSR-role user
@@ -391,11 +401,30 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
 
   // ── Tech ranking ────────────────────────────────────────────────────────
   // Completion rate = closed-or-completed / assigned within the window.
+  // Some tickets get stamped with a manager or office/admin account (e.g.
+  // "Daven Hodge" — primary role Senior Branch Manager, "Memphis Admin" — no
+  // profile at all) as a fallback when no field tech is assigned yet. Those
+  // aren't real techs and skew the ranking with 0%/100% rows from a handful
+  // of tickets, so exclude them — but NOT everyone lacking a profile match:
+  // some real field techs (e.g. "Erick Guzman Juarez") have no User
+  // Management account yet and would be wrongly dropped by a strict
+  // "must match a TECHNICIAN profile" allow-list.
+  const nonTechRoleByName = new Map<string, string>(); // lowercased display/username → primary role
+  for (const p of profiles) {
+    const display = ((p as any).display_name || (p as any).username || "").trim();
+    if (!display) continue;
+    const primary = String((p as any).role || "").toUpperCase();
+    if (primary && primary !== "TECHNICIAN") nonTechRoleByName.set(display.toLowerCase(), primary);
+  }
+  const isNonTechName = (tech: string) =>
+    nonTechRoleByName.has(tech.toLowerCase()) || /\badmin\b/i.test(tech);
+
   type TechAgg = { name: string; office: string; thirty: { done: number; total: number }; ten: { done: number; total: number } };
   const techMap = new Map<string, TechAgg>();
   for (const t of ticketsAll) {
     const tech = (t.technician || "").trim();
     if (!tech || /unassigned/i.test(tech)) continue;
+    if (isNonTechName(tech)) continue;
     const office = (t.location || t.branch || "—").trim() || "—";
     const key = `${tech}::${office}`;
     if (!techMap.has(key)) techMap.set(key, { name: tech, office, thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });

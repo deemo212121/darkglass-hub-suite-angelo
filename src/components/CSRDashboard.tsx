@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { CsrTeamComposition } from "@/components/CsrTeamComposition";
+import { useAuth } from "@/lib/auth";
+import { normalizeRole } from "@/lib/roleLabels";
 import {
   CheckCircle,
   ChevronLeft,
@@ -50,6 +52,20 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
 };
 
 export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { role, ready } = useAuth();
+  const navigate = useNavigate();
+  const normalizedRole = normalizeRole(role);
+  // CSR Agents and Team Leaders don't get the org-wide manager overview —
+  // they land on their own Personal + Team dashboard instead.
+  const shouldRedirectToPersonalDashboard = normalizedRole === "CSR_AGENT" || normalizedRole === "CSR_TEAM_LEADER";
+  const isCsrManager = normalizedRole === "CSR_MANAGER";
+
+  useEffect(() => {
+    if (ready && shouldRedirectToPersonalDashboard) {
+      navigate({ to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "csr-team-leader-dashboard" } });
+    }
+  }, [ready, shouldRedirectToPersonalDashboard, navigate]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -181,6 +197,16 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredAgents]);
 
+  // Waiting on auth to resolve, or mid-redirect to the personal dashboard —
+  // don't flash the manager-only overview in either case.
+  if (!ready || shouldRedirectToPersonalDashboard) {
+    return (
+      <div className="min-h-screen flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
@@ -197,9 +223,14 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         {/* Quick nav */}
         <div className="flex flex-wrap gap-2 mb-6 mt-4">
           {[
+            { slug: "csr-team-leader-dashboard", label: "My Team Dashboard", icon: "🧑‍💼" },
             { slug: "csr-daily-report", label: "CSR Daily Report", icon: "📋" },
             { slug: "csr-status-summary", label: "Status Summary", icon: "📊" },
-          ].map((item) => (
+          ]
+            // CSR Managers oversee every team, not one of their own — the
+            // personal/team dashboard doesn't apply to them.
+            .filter((item) => !(isCsrManager && item.slug === "csr-team-leader-dashboard"))
+            .map((item) => (
             <Link
               key={item.slug}
               to="/m/$module/$submodule"
@@ -320,7 +351,9 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             <p className="text-sm font-semibold mb-4">Team Performance</p>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={teamData} margin={{ left: -10 }}>
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                {/* Team names move to the legend row below instead of
+                    crowding the axis as tick labels. */}
+                <XAxis dataKey="name" tick={false} axisLine={{ stroke: "rgba(148,163,184,0.3)" }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
@@ -328,6 +361,24 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                 <Bar dataKey="update" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Update" />
               </BarChart>
             </ResponsiveContainer>
+            {/* Team legend — which bar group is which team, plus each
+                team's Agents/Schedule/Update, so this replaces the old
+                per-team card grid entirely. */}
+            <div className="mt-3 pt-3 border-t border-white/10 divide-y divide-white/5">
+              {teamData.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 text-center">
+                  No agents placed on a team yet — use Team Composition to assign them.
+                </p>
+              ) : teamData.map((t) => (
+                <div key={t.key} className="flex items-center gap-3 py-1.5 px-1 hover:bg-white/5 rounded">
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ background: t.color }} />
+                  <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color: t.color }}>{t.name}</span>
+                  <span className="text-[10px] text-muted-foreground w-16 text-right shrink-0">{t.agents} agent{t.agents === 1 ? "" : "s"}</span>
+                  <span className="text-[10px] text-green-300 w-14 text-right shrink-0">Sch {t.schedule}</span>
+                  <span className="text-[10px] text-purple-300 w-14 text-right shrink-0">Upd {t.update}</span>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="panel p-4">
             <div className="flex items-center justify-between mb-4">
@@ -371,33 +422,6 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               </PieChart>
             </ResponsiveContainer>
           </div>
-        </div>
-
-        {/* Team cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          {teamData.length === 0 ? (
-            <p className="col-span-full text-center text-sm text-muted-foreground py-6">
-              No agents placed on a team yet — use Team Composition to assign them.
-            </p>
-          ) : teamData.map((t) => (
-            <div
-              key={t.key}
-              className="panel p-4"
-              style={{ borderLeft: `3px solid ${t.color}` }}
-            >
-              <p className="text-xs font-bold mb-2" style={{ color: t.color }}>
-                {t.name}
-              </p>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                <span className="text-muted-foreground">Agents</span>
-                <span className="text-right font-semibold">{t.agents}</span>
-                <span className="text-muted-foreground">Schedule</span>
-                <span className="text-right text-green-300">{t.schedule}</span>
-                <span className="text-muted-foreground">Update</span>
-                <span className="text-right">{t.update}</span>
-              </div>
-            </div>
-          ))}
         </div>
         </>
         )}

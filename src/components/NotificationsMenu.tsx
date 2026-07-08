@@ -1,15 +1,21 @@
 /**
  * NotificationsMenu — bell icon in AppHeader with a dropdown of recent
- * system notifications.
+ * notifications, merged from two sources:
  *
- * Pulled from the upstream usapp repo. Reads from a localStorage queue
- * (`ahs:offline:notifications`) that any feature can push to via a
- * "ahs-notif-updated" CustomEvent so this menu refreshes without a
- * page reload. Comes seeded with a few demo entries so the panel is
- * never empty during walkthroughs.
+ *  1. "system" kind DMs sent to the caller (e.g. Attendance Monitoring's
+ *     "Notify Individual" / "Notify Team Lead" alerts — see
+ *     AttendanceMonitoringPage.tsx). Read state is the same per-thread
+ *     message_reads pointer the Messages menu uses, so reading one here
+ *     also clears its unread count there.
+ *  2. The dedicated `notifications` table (see migration 0035) — used by
+ *     alerts that should NEVER show up in the internal messenger (e.g.
+ *     "new employee request submitted" pinging HR/Finance/Admin). These
+ *     can carry a `linkTo` so clicking one navigates straight to the
+ *     relevant page.
  */
-import { useState, useEffect } from "react";
-import { Bell, CheckCheck, Package, Clock, ShieldAlert, Wrench } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Bell, CheckCheck } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,41 +24,32 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/lib/auth";
+import { getMyProfileId } from "@/lib/supabase/users";
+import {
+  getMySystemNotifications,
+  markThreadRead,
+  subscribeToAllNewMessages,
+  type SystemNotification,
+} from "@/lib/supabase/messaging";
+import {
+  getMyNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  subscribeToMyNotifications,
+  type NotificationRow,
+} from "@/lib/supabase/notifications";
 
-interface DemoNotif {
+interface MergedNotif {
   id: string;
-  kind: "system" | "part_status_change" | "cross_inventory_request" | "tech_eod_reminder" | "restock_auto" | "claim_part_tamper";
-  title: string;
+  source: "dm" | "table";
+  dmThreadId?: string;
+  senderName: string | null;
   body: string;
-  ticketNo?: string;
-  isRead: boolean;
   createdAt: string;
+  isRead: boolean;
+  linkTo: string | null;
 }
-
-const KIND_ICON: Record<string, React.ElementType> = {
-  system: Bell,
-  part_status_change: Package,
-  cross_inventory_request: Wrench,
-  tech_eod_reminder: Clock,
-  restock_auto: Package,
-  claim_part_tamper: ShieldAlert,
-};
-
-const KIND_COLOR: Record<string, string> = {
-  system: "text-blue-300 bg-blue-400/10 border-blue-400/20",
-  part_status_change: "text-amber-300 bg-amber-400/10 border-amber-400/20",
-  cross_inventory_request: "text-violet-300 bg-violet-400/10 border-violet-400/20",
-  tech_eod_reminder: "text-cyan-300 bg-cyan-400/10 border-cyan-400/20",
-  restock_auto: "text-green-300 bg-green-400/10 border-green-400/20",
-  claim_part_tamper: "text-rose-300 bg-rose-400/10 border-rose-400/20",
-};
-
-const DEMO_NOTIFS: DemoNotif[] = [
-  { id: "1", kind: "restock_auto", title: "Part back in stock", body: "Ticket #054822474136 — Drain Pump marked as Restock. Status updated to Back in Stock.", ticketNo: "054822474136", isRead: false, createdAt: new Date(Date.now() - 600000).toISOString() },
-  { id: "2", kind: "cross_inventory_request", title: "Cross-branch inventory request", body: "demo@demo.com is attempting to use 'Control Board' from Nashville's inventory. Please locate and ship.", isRead: false, createdAt: new Date(Date.now() - 1800000).toISOString() },
-  { id: "3", kind: "tech_eod_reminder", title: "End-of-day checklist reminder", body: "Please make sure all tickets, part statuses, and visit logs are updated before end of day.", isRead: true, createdAt: new Date(Date.now() - 7200000).toISOString() },
-  { id: "4", kind: "system", title: "System notice", body: "This is a demo environment. No data is saved to any database.", isRead: true, createdAt: new Date(Date.now() - 86400000).toISOString() },
-];
 
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -65,47 +62,121 @@ function timeAgo(iso: string) {
 }
 
 export function NotificationsMenu() {
-  const [liveNotifs, setLiveNotifs] = useState<DemoNotif[]>([]);
-  const [demoNotifs, setDemoNotifs] = useState<DemoNotif[]>(DEMO_NOTIFS);
+  const { uid, ready } = useAuth();
+  const navigate = useNavigate();
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [dmNotifs, setDmNotifs] = useState<SystemNotification[]>([]);
+  const [tableNotifs, setTableNotifs] = useState<NotificationRow[]>([]);
   const [open, setOpen] = useState(false);
 
-  // Pull in offline-queue notifications (tamper alerts, EOD reminders, restock)
-  // pushed from anywhere in the app, and refresh on the custom event.
-  useEffect(() => {
-    const load = () => {
-      try {
-        const raw = localStorage.getItem("ahs:offline:notifications");
-        setLiveNotifs(raw ? JSON.parse(raw) : []);
-      } catch { setLiveNotifs([]); }
-    };
-    load();
-    window.addEventListener("ahs-notif-updated", load);
-    window.addEventListener("storage", load);
-    return () => {
-      window.removeEventListener("ahs-notif-updated", load);
-      window.removeEventListener("storage", load);
-    };
+  const load = useCallback(async (pid: string) => {
+    try {
+      const [dmRows, tableRows] = await Promise.all([
+        getMySystemNotifications(pid),
+        getMyNotifications(pid),
+      ]);
+      setDmNotifs(dmRows);
+      setTableNotifs(tableRows);
+    } catch (err) {
+      console.error("Failed to load notifications:", err);
+    }
   }, []);
 
-  const notifs = [...liveNotifs, ...demoNotifs];
-  const unread = notifs.filter(n => !n.isRead).length;
+  useEffect(() => {
+    if (!ready || !uid) return;
+    let cancelled = false;
+    getMyProfileId(uid).then((pid) => {
+      if (cancelled || !pid) return;
+      setProfileId(pid);
+      load(pid);
+    });
+    return () => { cancelled = true; };
+  }, [ready, uid, load]);
 
-  const markRead = (id: string) => {
-    setDemoNotifs(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    setLiveNotifs(prev => {
-      const next = prev.map(n => n.id === id ? { ...n, isRead: true } : n);
-      try { localStorage.setItem("ahs:offline:notifications", JSON.stringify(next)); } catch {}
-      return next;
+  // Live-append any new system DM addressed to me.
+  useEffect(() => {
+    if (!profileId) return;
+    const unsubscribe = subscribeToAllNewMessages((row) => {
+      if (row.kind !== "system" || row.sender_id === profileId || !row.dm_thread_id) return;
+      load(profileId);
     });
+    return unsubscribe;
+  }, [profileId, load]);
+
+  // Live-append any new table-based notification addressed to me.
+  useEffect(() => {
+    if (!profileId) return;
+    const unsubscribe = subscribeToMyNotifications(profileId, () => load(profileId));
+    return unsubscribe;
+  }, [profileId, load]);
+
+  const notifs: MergedNotif[] = useMemo(() => {
+    const merged: MergedNotif[] = [
+      ...dmNotifs.map((n): MergedNotif => ({
+        id: `dm-${n.id}`,
+        source: "dm",
+        dmThreadId: n.dmThreadId,
+        senderName: n.senderName,
+        body: n.body,
+        createdAt: n.createdAt,
+        isRead: n.isRead,
+        linkTo: null,
+      })),
+      ...tableNotifs.map((n): MergedNotif => ({
+        id: `tbl-${n.id}`,
+        source: "table",
+        senderName: n.senderName,
+        body: n.body,
+        createdAt: n.createdAt,
+        isRead: n.isRead,
+        linkTo: n.linkTo,
+      })),
+    ];
+    return merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [dmNotifs, tableNotifs]);
+
+  const unread = notifs.filter((n) => !n.isRead).length;
+
+  const markRead = async (n: MergedNotif) => {
+    if (!profileId || n.isRead) return;
+    if (n.source === "dm") {
+      setDmNotifs((prev) => prev.map((x) => (x.dmThreadId === n.dmThreadId ? { ...x, isRead: true } : x)));
+      try {
+        await markThreadRead({ profileId, dmThreadId: n.dmThreadId! });
+      } catch (err) {
+        console.error("Failed to mark notification read:", err);
+      }
+    } else {
+      const rawId = n.id.replace(/^tbl-/, "");
+      setTableNotifs((prev) => prev.map((x) => (x.id === rawId ? { ...x, isRead: true } : x)));
+      try {
+        await markNotificationRead(rawId);
+      } catch (err) {
+        console.error("Failed to mark notification read:", err);
+      }
+    }
   };
-  const markAll = (e: Event) => {
+
+  const markAll = async (e: Event) => {
     e.preventDefault();
-    setDemoNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
-    setLiveNotifs(prev => {
-      const next = prev.map(n => ({ ...n, isRead: true }));
-      try { localStorage.setItem("ahs:offline:notifications", JSON.stringify(next)); } catch {}
-      return next;
-    });
+    if (!profileId) return;
+    const threadIds = Array.from(new Set(dmNotifs.map((n) => n.dmThreadId)));
+    setDmNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
+    setTableNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
+    try {
+      await Promise.all([
+        ...threadIds.map((dmThreadId) => markThreadRead({ profileId, dmThreadId })),
+        markAllNotificationsRead(profileId),
+      ]);
+    } catch (err) {
+      console.error("Failed to mark all notifications read:", err);
+    }
+  };
+
+  const handleSelect = (n: MergedNotif) => {
+    markRead(n);
+    setOpen(false);
+    if (n.linkTo) navigate({ to: n.linkTo });
   };
 
   return (
@@ -139,26 +210,32 @@ export function NotificationsMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        {notifs.map(n => {
-          const Icon = KIND_ICON[n.kind] ?? Bell;
-          const color = KIND_COLOR[n.kind] ?? KIND_COLOR.system;
-          return (
-            <DropdownMenuItem key={n.id} onSelect={() => { markRead(n.id); setOpen(false); }} className="flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3">
-              <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border ${color}`}><Icon className="h-4 w-4" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className={`truncate text-sm font-semibold ${n.isRead ? "text-muted-foreground" : "text-foreground"}`}>{n.title}</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(n.createdAt)}</span>
-                </span>
-                <span className={`mt-0.5 line-clamp-2 block text-xs leading-5 ${n.isRead ? "text-muted-foreground" : "text-foreground/70"}`}>{n.body}</span>
-                {n.ticketNo && <span className="mt-1 inline-block rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-mono text-blue-600 dark:text-blue-300">#{n.ticketNo}</span>}
+        {notifs.length === 0 ? (
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground">No notifications yet.</div>
+        ) : notifs.map(n => (
+          <DropdownMenuItem key={n.id} onSelect={() => handleSelect(n)} className="flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3">
+            <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border text-blue-300 bg-blue-400/10 border-blue-400/20">
+              <Bell className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center justify-between gap-2">
+                <span className={`truncate text-sm font-semibold ${n.isRead ? "text-muted-foreground" : "text-foreground"}`}>{n.senderName || "System"}</span>
+                <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(n.createdAt)}</span>
               </span>
-              {!n.isRead && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-blue-400" />}
-            </DropdownMenuItem>
-          );
-        })}
+              <span className={`mt-0.5 line-clamp-2 block text-xs leading-5 ${n.isRead ? "text-muted-foreground" : "text-foreground/70"}`}>{n.body}</span>
+            </span>
+            {!n.isRead && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-blue-400" />}
+          </DropdownMenuItem>
+        ))}
         <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        <div className="px-3 pb-1 pt-1.5 text-[11px] text-muted-foreground text-center">Demo mode — notifications are local only.</div>
+        <Link
+          to="/m/$module/$submodule"
+          params={{ module: "admin", submodule: "internal-message-support" }}
+          onClick={() => setOpen(false)}
+          className="block px-3 py-2 text-center text-[11px] text-blue-400 hover:text-blue-300"
+        >
+          View all messages
+        </Link>
       </DropdownMenuContent>
     </DropdownMenu>
   );
