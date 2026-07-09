@@ -1,26 +1,30 @@
 /**
- * Parts → Truck Stock
+ * Parts → Truck Stock panel — embedded as the "Truck Stock" tab inside
+ * PartInventory.tsx (previously its own routed submodule, merged in so both
+ * live under one Part Inventory page).
  *
- * Lists every part currently in-house, grouped by branch. The same row also
- * shows cross-branch availability so a tech can see at a glance whether
- * another location already has the part before placing a new PO.
+ * Lists every part currently in-house, grouped by branch, with a
+ * branch-or-all filter. The same row also shows cross-branch availability
+ * so a tech can see at a glance whether another location already has the
+ * part before placing a new PO.
  *
  * Wired to the `truck_stock` table via src/lib/supabase/truckStock.ts.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Plus, Pencil, Trash2, Save, X, Upload } from "lucide-react";
-import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { Plus, Pencil, Trash2, Save, X, Upload } from "lucide-react";
 import {
   getTruckStock,
   upsertTruckStockRow,
   deleteTruckStockRow,
   bulkUpsertTruckStock,
   type TruckStockRow,
+  type TruckStockStatus,
 } from "@/lib/supabase/truckStock";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
 import { resolveTruckStockBranch } from "@/lib/truckStockBranchMap";
+
+const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
 const emptyDraft = (): TruckStockRow => ({
   id: "",
@@ -31,9 +35,10 @@ const emptyDraft = (): TruckStockRow => ({
   quantity: 1,
   storageLocation: "",
   notes: "",
+  status: "in_stock",
 });
 
-export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+export function TruckStockPanel() {
   const [rows, setRows] = useState<TruckStockRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +47,13 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | TruckStockStatus>("");
+  // Page size: a real number of rows per page, or "all" to show every row —
+  // same convention as TicketList.tsx. Truck Stock can have thousands of
+  // rows across every branch, and rendering them all at once is what was
+  // causing the lag.
+  const [pageSize, setPageSize] = useState<number | "all">(100);
+  const [currentPage, setCurrentPage] = useState(1);
   const [draft, setDraft] = useState<TruckStockRow | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
@@ -96,6 +108,7 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (branchFilter && r.branch !== branchFilter) return false;
+      if (statusFilter && r.status !== statusFilter) return false;
       if (!s) return true;
       return (
         r.partNo.toLowerCase().includes(s) ||
@@ -104,17 +117,30 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         r.storageLocation.toLowerCase().includes(s)
       );
     });
-  }, [rows, search, branchFilter]);
+  }, [rows, search, branchFilter, statusFilter]);
+
+  // Any filter changing invalidates whatever page we were on.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, branchFilter, statusFilter]);
+
+  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedRows = useMemo(() => {
+    if (pageSize === "all") return filteredRows;
+    const start = (safePage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, safePage, pageSize]);
 
   const groupedByBranch = useMemo(() => {
     const map = new Map<string, TruckStockRow[]>();
-    filteredRows.forEach((r) => {
+    pagedRows.forEach((r) => {
       const key = r.branch || "Unassigned";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     });
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filteredRows]);
+  }, [pagedRows]);
 
   const handleSave = async () => {
     if (!draft) return;
@@ -196,47 +222,33 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   };
 
   return (
-    <main className="flex-1 bg-slate-950 py-6">
-      <div className="max-w-7xl mx-auto px-6 space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <Link
-              to="/m/$module/$submodule"
-              params={{ module: mod.slug, submodule: sub.slug }}
-              className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
-            >
-              <ChevronLeft className="h-3 w-3" /> Back to {mod.label}
-            </Link>
-            <h1 className="mt-1 text-2xl font-bold text-white">{sub.title}</h1>
-            <p className="text-sm text-slate-400">{sub.description}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleImport}
-              disabled={importBusy || busy}
-              title="Bulk-import the PROJECT A USAPP inventory workbook"
-              className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
-            >
-              <Upload className="h-4 w-4" />
-              {importBusy
-                ? importProgress
-                  ? `Importing… ${importProgress.done}/${importProgress.total}`
-                  : "Importing…"
-                : "Import workbook"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDraft(emptyDraft())}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40"
-            >
-              <Plus className="h-4 w-4" /> Add stock
-            </button>
-          </div>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={handleImport}
+          disabled={importBusy || busy}
+          title="Bulk-import the PROJECT A USAPP inventory workbook"
+          className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
+        >
+          <Upload className="h-4 w-4" />
+          {importBusy
+            ? importProgress
+              ? `Importing… ${importProgress.done}/${importProgress.total}`
+              : "Importing…"
+            : "Import workbook"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDraft(emptyDraft())}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40"
+        >
+          <Plus className="h-4 w-4" /> Add stock
+        </button>
+      </div>
 
-        {importResult ? (
+      {importResult ? (
           <div className="rounded border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
             {importResult}
           </div>
@@ -261,8 +273,48 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               </option>
             ))}
           </select>
+          <select
+            title="Filter by status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value === "in_use" ? "in_use" : e.target.value === "in_stock" ? "in_stock" : "")}
+            className="rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">All statuses</option>
+            <option value="in_stock">In Stock</option>
+            <option value="in_use">In Use</option>
+          </select>
           <div className="text-xs text-slate-400">
             {filteredRows.length} of {rows.length} rows · {branchOptions.length} branches
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+          <span>
+            {filteredRows.length === 0
+              ? "Showing 0 rows"
+              : pageSize === "all"
+              ? `Showing all ${filteredRows.length} of ${filteredRows.length} rows`
+              : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, filteredRows.length)} of ${filteredRows.length} rows`}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <span>Show:</span>
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <button
+                key={size}
+                type="button"
+                onClick={() => { setPageSize(size); setCurrentPage(1); }}
+                className={`px-2 py-1 rounded border transition-colors ${pageSize === size ? "border-blue-500/40 bg-blue-500/15 text-blue-300" : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-400"}`}
+              >
+                {size}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => { setPageSize("all"); setCurrentPage(1); }}
+              className={`px-2 py-1 rounded border transition-colors ${pageSize === "all" ? "border-blue-500/40 bg-blue-500/15 text-blue-300" : "border-white/10 bg-white/5 hover:bg-white/10 text-slate-400"}`}
+            >
+              All
+            </button>
           </div>
         </div>
 
@@ -294,8 +346,29 @@ export function TruckStockPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             />
           ))
         )}
-      </div>
-    </main>
+
+        {pageSize !== "all" && totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 text-sm text-slate-400">
+            <button
+              type="button"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="rounded border border-white/15 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Prev
+            </button>
+            <span className="text-xs">Page {safePage} of {totalPages}</span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="rounded border border-white/15 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
+    </div>
   );
 }
 
@@ -328,6 +401,7 @@ function BranchSection({
               <th className="px-3 py-2 text-left">Description</th>
               <th className="px-3 py-2 text-left">Brand</th>
               <th className="px-3 py-2 text-right">Qty</th>
+              <th className="px-3 py-2 text-left">Status</th>
               <th className="px-3 py-2 text-left">Other branches</th>
               <th className="px-3 py-2 text-left">Notes</th>
               <th className="px-3 py-2 w-24"></th>
@@ -353,6 +427,17 @@ function BranchSection({
                   <td className="px-3 py-2">{row.description || "—"}</td>
                   <td className="px-3 py-2">{row.manufacturer || "—"}</td>
                   <td className="px-3 py-2 text-right font-semibold">{row.quantity}</td>
+                  <td className="px-3 py-2">
+                    {row.status === "in_use" ? (
+                      <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-200">
+                        In Use
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
+                        In Stock
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     {elsewhere.length === 0 ? (
                       <span className="text-slate-500">— only here</span>
@@ -434,18 +519,16 @@ function DraftEditor({
       <div className="grid grid-cols-1 md:grid-cols-6 gap-3 text-xs">
         <label className="md:col-span-2 flex flex-col gap-1">
           <span className="text-slate-300">Branch *</span>
-          <input
-            list="truck-stock-branches"
+          <select
             value={draft.branch}
             onChange={(e) => setDraft({ ...draft, branch: e.target.value })}
-            placeholder="Asheville, Houston HQ, …"
             className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
-          />
-          <datalist id="truck-stock-branches">
+          >
+            <option value="">Select branch</option>
             {branchOptions.map((b) => (
-              <option key={b} value={b} />
+              <option key={b} value={b}>{b}</option>
             ))}
-          </datalist>
+          </select>
         </label>
         <label className="md:col-span-2 flex flex-col gap-1">
           <span className="text-slate-300">Part No *</span>
@@ -465,6 +548,17 @@ function DraftEditor({
             onChange={(e) => setDraft({ ...draft, quantity: Number(e.target.value) || 0 })}
             className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
           />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-slate-300">Status</span>
+          <select
+            value={draft.status}
+            onChange={(e) => setDraft({ ...draft, status: e.target.value === "in_use" ? "in_use" : "in_stock" })}
+            className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="in_stock">In Stock</option>
+            <option value="in_use">In Use</option>
+          </select>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-300">Stored At</span>

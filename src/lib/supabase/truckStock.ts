@@ -9,6 +9,8 @@
 
 import { supabase } from "./client";
 
+export type TruckStockStatus = "in_stock" | "in_use";
+
 export type TruckStockRow = {
   id: string;
   branch: string;
@@ -18,6 +20,7 @@ export type TruckStockRow = {
   quantity: number;
   storageLocation: string;
   notes: string;
+  status: TruckStockStatus;
   updatedAt?: string;
 };
 
@@ -31,6 +34,7 @@ function fromDb(r: any): TruckStockRow {
     quantity: Number(r.quantity ?? 0),
     storageLocation: r.storage_location ?? "",
     notes: r.notes ?? "",
+    status: r.status === "in_use" ? "in_use" : "in_stock",
     updatedAt: r.updated_at ?? undefined,
   };
 }
@@ -44,6 +48,7 @@ function toDb(row: TruckStockRow): Record<string, unknown> {
     quantity: Number.isFinite(row.quantity) ? Math.max(0, Math.trunc(row.quantity)) : 0,
     storage_location: row.storageLocation?.trim() || null,
     notes: row.notes?.trim() || null,
+    status: row.status === "in_use" ? "in_use" : "in_stock",
   };
 }
 
@@ -139,6 +144,7 @@ export async function findTruckStockForPart(partNo: string): Promise<TruckStockR
     .select("*")
     .ilike("part_no", trimmed)
     .gt("quantity", 0)
+    .eq("status", "in_stock")
     .order("quantity", { ascending: false });
   if (error) {
     console.warn("findTruckStockForPart error:", error.message);
@@ -175,6 +181,7 @@ export async function bulkUpsertTruckStock(
       quantity: Number.isFinite(r.quantity) ? Math.max(0, Math.trunc(r.quantity)) : 0,
       storage_location: r.storageLocation?.trim() || null,
       notes: r.notes?.trim() || null,
+      status: r.status === "in_use" ? "in_use" : "in_stock",
     }));
     const { error, count } = await supabase
       .from("truck_stock")
