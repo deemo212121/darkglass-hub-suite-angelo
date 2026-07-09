@@ -6,7 +6,7 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, type EmployeeInfo } from "@/lib/supabase/users";
 import { subscribeNotifications, markNotificationRead, type AppNotification } from "@/lib/firebase/notifications";
 import {
   addCandidate,
@@ -54,6 +54,7 @@ interface Employee {
   email: string;
   position: string; // raw role code
   branch: string;
+  department: string;
   country: "US" | "PH";
   birthday: string;
   address: string;
@@ -62,7 +63,49 @@ interface Employee {
   terminationDate?: string;
   terminationReason?: string;
   status: EmploymentStatus;
+  onboardingDocs: Record<string, boolean>;
 }
+
+// Onboarding Documents — per-role/country checklist columns (see the
+// "Onboarding Documents" tab). Distinct lists because each group's required
+// paperwork genuinely differs (e.g. Technicians need a Vehicle Use Agreement,
+// Parts Managers need a W4 vs PH's W-8BEN); confirmed against the company's
+// existing tracking spreadsheets rather than guessed.
+const TECHNICIAN_ONBOARDING_DOCS = [
+  "Employee Confirmation Form",
+  "Contractor Data Sheet",
+  "Direct Deposit Authorization",
+  "Contractor Off Days Policy",
+  "Vehicle Use Agreement",
+  "Technician Questions",
+  "Non-Disclosure Agreement",
+  "Plus One",
+  "Parts Responsibility Acknowledgement",
+  "W9",
+  "Driver's License",
+  "Social Security",
+  "CAR IQ",
+  "Floor Protection",
+  "Subcontractor Agreement",
+];
+const PARTS_MANAGER_ONBOARDING_DOCS = [
+  "Employee Confirmation Form",
+  "Employee Data",
+  "Direct Deposit Authorization",
+  "Employee Off Days Policy",
+  "Non-Disclosure Agreement",
+  "W4",
+  "Driver's License",
+  "Social Security",
+];
+const PH_ONBOARDING_DOCS = [
+  "Employee Data",
+  "Direct Deposit Authorization",
+  "Non-Disclosure Agreement",
+  "CSR Duty Agreement",
+  "Employee Off Days Agreement",
+  "W-8BEN",
+];
 
 const branchesOf = (assignedBranch: string | null, branchAccess: string | null): string[] => {
   const raw = [assignedBranch ?? "", ...parseBranchAccess(branchAccess)];
@@ -96,7 +139,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "onboarding" | "report">("hiring");
 
   // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
   // the bell icon reads (kind: "jotform_submission"), just filtered into its
@@ -293,6 +336,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [roleByProfileId, setRoleByProfileId] = useState<Map<string, string>>(new Map());
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [myLocations, setMyLocations] = useState<string[]>([]);
+  // Full employee_info per profile, cached so Onboarding Documents can merge
+  // a toggle into the existing record instead of clobbering bank info,
+  // address, etc. with a partial save.
+  const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
   const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
 
@@ -317,6 +364,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // base64 photoDataUrl, too heavy to pull on every profile-list load)
       // — fetch hire dates etc. for just this list in one bulk query.
       const infoByProfileId = await getEmployeeInfoByProfileIds(profiles.map((p) => p.id));
+      setEmployeeInfoByProfileId(infoByProfileId);
 
       const mapped: Employee[] = profiles.map(p => {
         const info = infoByProfileId.get(p.id) || {};
@@ -327,6 +375,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           email: p.email,
           position: p.role,
           branch: p.assigned_branch || "",
+          department: p.department || "",
           country: PH_BRANCH_NAMES.has(p.assigned_branch || "") ? "PH" : "US",
           birthday: info.birthDate || "",
           address: [info.address1, info.city, info.state].filter(Boolean).join(", "),
@@ -335,6 +384,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationDate: info.employmentStatusDate || info.terminateDate || undefined,
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
+          onboardingDocs: info.onboardingDocs || {},
         };
       });
       setEmployees(mapped);
@@ -370,6 +420,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [allNotes, setAllNotes] = useState<CsrAgentNote[]>([]);
   const [pendingNotes, setPendingNotes] = useState<CsrAgentNote[]>([]);
   const [pendingNotesLoading, setPendingNotesLoading] = useState(true);
+
+  // Mistakes/Warnings totals shown above Pending Reviews — scoped to a date
+  // range (Today by default), same "Today" quick-select + From/To pattern as
+  // the Generate Report tab. Counts approved notes only, windowed by
+  // createdAt (same field the department trend chart below already uses).
+  const [warningsRangeFrom, setWarningsRangeFrom] = useState(today);
+  const [warningsRangeTo, setWarningsRangeTo] = useState(today);
+  const setWarningsRangeToday = () => { setWarningsRangeFrom(today); setWarningsRangeTo(today); };
+  const warningsCountKpi = useMemo(() => {
+    const inRange = (n: CsrAgentNote) => {
+      const d = n.createdAt.slice(0, 10);
+      return n.status === "approved" && d >= warningsRangeFrom && d <= warningsRangeTo;
+    };
+    return {
+      warnings: allNotes.filter((n) => n.type === "warning" && inRange(n)).length,
+      mistakes: allNotes.filter((n) => n.type === "mistake" && inRange(n)).length,
+    };
+  }, [allNotes, warningsRangeFrom, warningsRangeTo]);
 
   const loadNotes = async () => {
     try {
@@ -472,6 +540,323 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     resigned: employees.filter((e) => e.status === "resigned").length,
   }), [visibleCandidates, employees]);
 
+  // ── Generate Report: same KPI breakdown as the top of the page, scoped to
+  // a date range instead of all-time. Candidates are windowed by when they
+  // applied (createdAt); terminated/resigned are windowed by terminationDate
+  // — same fields the department trend chart below already uses this way. ──
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [reportFrom, setReportFrom] = useState(todayStr);
+  const [reportTo, setReportTo] = useState(todayStr);
+  const setReportRangeToday = () => { setReportFrom(todayStr); setReportTo(todayStr); };
+
+  const reportCandidates = useMemo(
+    () => visibleCandidates.filter((c) => {
+      const d = c.createdAt.slice(0, 10);
+      return d >= reportFrom && d <= reportTo;
+    }),
+    [visibleCandidates, reportFrom, reportTo]
+  );
+  const reportTerminatedEmployees = useMemo(
+    () => employees.filter((e) => e.terminationDate && e.terminationDate >= reportFrom && e.terminationDate <= reportTo),
+    [employees, reportFrom, reportTo]
+  );
+  const hiringReportKpi = useMemo(() => ({
+    candidates: reportCandidates.length,
+    scheduled: reportCandidates.filter((c) => c.status === "interviewing").length,
+    preSelected: reportCandidates.filter((c) => c.status === "selected").length,
+    rejected: reportCandidates.filter((c) => c.status === "rejected").length,
+    hired: reportCandidates.filter((c) => c.status === "hired").length,
+    terminated: reportTerminatedEmployees.filter((e) => e.status === "terminated").length,
+    resigned: reportTerminatedEmployees.filter((e) => e.status === "resigned").length,
+  }), [reportCandidates, reportTerminatedEmployees]);
+  const reportRangeLabel = reportFrom === reportTo ? reportFrom : `${reportFrom} to ${reportTo}`;
+
+  const hiringReportRows: [string, number][] = [
+    ["Candidates", hiringReportKpi.candidates],
+    ["Scheduled for Interview", hiringReportKpi.scheduled],
+    ["Pre-Selected", hiringReportKpi.preSelected],
+    ["Rejected", hiringReportKpi.rejected],
+    ["Hired", hiringReportKpi.hired],
+    ["Terminated", hiringReportKpi.terminated],
+    ["Resigned", hiringReportKpi.resigned],
+  ];
+
+  // Metric -> the same accent color its KPI tile uses on the dashboard, so
+  // the exported sheet visually matches the on-screen tiles.
+  const hiringReportColors: Record<string, string> = {
+    "Candidates": "#2563eb",
+    "Scheduled for Interview": "#ca8a04",
+    "Pre-Selected": "#9333ea",
+    "Rejected": "#dc2626",
+    "Hired": "#16a34a",
+    "Terminated": "#dc2626",
+    "Resigned": "#475569",
+  };
+
+  /**
+   * Plain CSV can't carry color — there's no such thing as a "colored cell"
+   * in comma-separated text. Excel (and Sheets) will happily open an HTML
+   * table saved with a .xls extension and render its inline styles as real
+   * colored cells, so we build the same colored/bordered look as the PDF
+   * this way instead of pulling in a binary xlsx-writing library.
+   */
+  const downloadHiringReportExcel = () => {
+    const html = `
+      <html>
+        <head><meta charset="UTF-8"></head>
+        <body>
+          <table border="0" cellspacing="0" cellpadding="6" style="border-collapse:collapse; font-family:Arial,Helvetica,sans-serif;">
+            <tr><td colspan="2" style="background:#1e40af; color:white; font-size:18px; font-weight:bold; padding:10px;">AHS SYSTEM</td></tr>
+            <tr><td colspan="2" style="background:#1e40af; color:#e0e7ff; font-size:13px; padding:4px 10px 10px;">HIRING REPORT</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Report Range</td><td>${escapeHtml(reportRangeLabel)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Generated</td><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+            <tr><td colspan="2">&nbsp;</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Metric</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Total</td>
+            </tr>
+            ${hiringReportRows.map(([label, value], i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(label)}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:${hiringReportColors[label] ?? "#111827"};">${value}</td>
+            </tr>`).join("")}
+          </table>
+        </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hiring-report-${reportFrom}_to_${reportTo}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadHiringReportPdf = async () => {
+    // Same logo + container styling as downloadSubmissionPdf, so every
+    // generated document in this app reads as one consistent system.
+    let logoDataUrl = "";
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      logoDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      // Logo is cosmetic — proceed without it if it fails to load.
+    }
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Hiring Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            table th { background: #f3f4f6; color: #1f2937; padding: 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; border: 1px solid #e5e7eb; }
+            table td { padding: 8px; border: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
+            table td.amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+            table tr:nth-child(even) { background: #fafafa; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, table th, .info-section { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>HIRING REPORT</h1>
+                <p>${escapeHtml(reportRangeLabel)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Report Range</label>
+              <span>${escapeHtml(reportRangeLabel)}</span>
+            </div>
+
+            <table>
+              <thead><tr><th>Metric</th><th style="text-align:right;">Total</th></tr></thead>
+              <tbody>
+                ${hiringReportRows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="amount">${value}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
+  };
+
+  // ── Generate Report: Warnings & Mistakes — same date-range pattern as the
+  // Hiring report above, and the same approved-notes-by-createdAt counting
+  // the Warnings & Mistakes tab's own KPI tiles use. Independent range state
+  // from that tab's filter since this is a separate export flow. ──
+  const [wmReportFrom, setWmReportFrom] = useState(today);
+  const [wmReportTo, setWmReportTo] = useState(today);
+  const setWmReportRangeToday = () => { setWmReportFrom(today); setWmReportTo(today); };
+
+  const wmReportKpi = useMemo(() => {
+    const inRange = (n: CsrAgentNote) => {
+      const d = n.createdAt.slice(0, 10);
+      return n.status === "approved" && d >= wmReportFrom && d <= wmReportTo;
+    };
+    return {
+      warnings: allNotes.filter((n) => n.type === "warning" && inRange(n)).length,
+      mistakes: allNotes.filter((n) => n.type === "mistake" && inRange(n)).length,
+    };
+  }, [allNotes, wmReportFrom, wmReportTo]);
+  const wmReportRangeLabel = wmReportFrom === wmReportTo ? wmReportFrom : `${wmReportFrom} to ${wmReportTo}`;
+  const wmReportRows: [string, number][] = [
+    ["Warnings", wmReportKpi.warnings],
+    ["Mistakes", wmReportKpi.mistakes],
+  ];
+  const wmReportColors: Record<string, string> = { "Warnings": "#ca8a04", "Mistakes": "#ea580c" };
+
+  const downloadWmReportExcel = () => {
+    const html = `
+      <html>
+        <head><meta charset="UTF-8"></head>
+        <body>
+          <table border="0" cellspacing="0" cellpadding="6" style="border-collapse:collapse; font-family:Arial,Helvetica,sans-serif;">
+            <tr><td colspan="2" style="background:#1e40af; color:white; font-size:18px; font-weight:bold; padding:10px;">AHS SYSTEM</td></tr>
+            <tr><td colspan="2" style="background:#1e40af; color:#e0e7ff; font-size:13px; padding:4px 10px 10px;">WARNINGS &amp; MISTAKES REPORT</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Report Range</td><td>${escapeHtml(wmReportRangeLabel)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Generated</td><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+            <tr><td colspan="2">&nbsp;</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Metric</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Total</td>
+            </tr>
+            ${wmReportRows.map(([label, value], i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(label)}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:${wmReportColors[label] ?? "#111827"};">${value}</td>
+            </tr>`).join("")}
+          </table>
+        </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `warnings-mistakes-report-${wmReportFrom}_to_${wmReportTo}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadWmReportPdf = async () => {
+    let logoDataUrl = "";
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      logoDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      // Logo is cosmetic — proceed without it if it fails to load.
+    }
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Warnings & Mistakes Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            table th { background: #f3f4f6; color: #1f2937; padding: 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; border: 1px solid #e5e7eb; }
+            table td { padding: 8px; border: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
+            table td.amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+            table tr:nth-child(even) { background: #fafafa; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, table th, .info-section { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>WARNINGS &amp; MISTAKES REPORT</h1>
+                <p>${escapeHtml(wmReportRangeLabel)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Report Range</label>
+              <span>${escapeHtml(wmReportRangeLabel)}</span>
+            </div>
+
+            <table>
+              <thead><tr><th>Metric</th><th style="text-align:right;">Total</th></tr></thead>
+              <tbody>
+                ${wmReportRows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="amount">${value}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
+  };
+
   const handleAddCandidate = async () => {
     if (!newCandidate.name.trim()) return;
     setSavingCandidate(true);
@@ -566,6 +951,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleCancelStatusChange = () => setConfirmDialog(null);
+
+  // ── Onboarding Documents: per-employee checklist, persisted on
+  // employee_info (same flexible JSON field bank info/address/etc. already
+  // live on) so no new table is needed. Merges into the cached full info
+  // rather than the trimmed Employee row, so a toggle never clobbers other
+  // saved fields like bank details or SSN. Grouped by role for
+  // Technician/Parts Manager (their required paperwork differs), and by
+  // country for Philippines (one shared list regardless of role there).
+  // Parts Manager is the catch-all for every other US role — not just
+  // PARTS_MANAGER — so nobody in the US falls through both tabs. ──
+  const [onboardingGroup, setOnboardingGroup] = useState<"TECHNICIAN" | "PARTS_MANAGER" | "PH">("TECHNICIAN");
+  const onboardingEmployees = useMemo(() => {
+    if (onboardingGroup === "PH") return employees.filter((e) => e.country === "PH");
+    if (onboardingGroup === "TECHNICIAN") return employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN");
+    return employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
+  }, [employees, onboardingGroup]);
+  const onboardingDocColumns =
+    onboardingGroup === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
+    : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
+    : PH_ONBOARDING_DOCS;
+
+  const toggleOnboardingDoc = async (employeeId: string, docName: string) => {
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return;
+    const newValue = !employee.onboardingDocs[docName];
+
+    setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: newValue } } : e)));
+
+    const existingInfo = employeeInfoByProfileId.get(employeeId) || {};
+    const updatedInfo: EmployeeInfo = { ...existingInfo, onboardingDocs: { ...(existingInfo.onboardingDocs || {}), [docName]: newValue } };
+    try {
+      await saveProfileEmployeeInfo(employeeId, updatedInfo);
+      setEmployeeInfoByProfileId((prev) => new Map(prev).set(employeeId, updatedInfo));
+    } catch (err) {
+      // Revert the optimistic update on failure.
+      setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: !newValue } } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update onboarding document status.");
+    }
+  };
 
   // Warnings actually approved by HR (final stage) — not timecard-derived.
   const approvedWarningCountByProfile = useMemo(() => {
@@ -685,6 +1109,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0 },
           { key: "directory", label: "Employee Directory", count: employees.length },
           ...(canViewJotformTab ? [{ key: "jotform", label: "Jotform Submissions", count: unreadJotformCount }] as const : []),
+          { key: "onboarding", label: "Onboarding Documents", count: 0 },
+          { key: "report", label: "Generate Report", count: 0 },
         ] as const).map((tab) => (
           <button
             key={tab.key}
@@ -817,6 +1243,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* ── Warnings & Mistakes tab: Pending Reviews, Approved log, department trend ── */}
       {activeTab === "warnings" && (
       <>
+      {/* Mistakes / Warnings totals — date-ranged, Today by default */}
+      <div className="panel p-4 mb-4">
+        <div className="flex flex-wrap items-end gap-3 mb-3">
+          <button type="button" onClick={setWarningsRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${warningsRangeFrom === today && warningsRangeTo === today ? "bg-primary/20 text-primary" : ""}`}>
+            Today
+          </button>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+            <input type="date" value={warningsRangeFrom} onChange={(e) => setWarningsRangeFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+            <input type="date" value={warningsRangeTo} onChange={(e) => setWarningsRangeTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><AlertTriangle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-yellow-300">{warningsCountKpi.warnings}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
+          </div>
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><XCircle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-orange-300">{warningsCountKpi.mistakes}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
+          </div>
+        </div>
+      </div>
+
       {/* Pending Reviews — HR's final call (stage 2) */}
       {isHrOrAdmin && (
         <div className="panel p-4 mb-4">
@@ -1206,6 +1661,163 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             ))}
           </div>
         )}
+      </div>
+      )}
+
+      {/* ── Onboarding Documents ── */}
+      {activeTab === "onboarding" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+          <div>
+            <h2 className="font-semibold text-sm">Onboarding Documents</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Click a cell to toggle whether that document has been collected.</p>
+          </div>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
+            <button type="button" onClick={() => setOnboardingGroup("TECHNICIAN")} className={`px-4 text-xs font-medium transition-colors ${onboardingGroup === "TECHNICIAN" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Technician</button>
+            <button type="button" onClick={() => setOnboardingGroup("PARTS_MANAGER")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PARTS_MANAGER" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Parts Manager</button>
+            <button type="button" onClick={() => setOnboardingGroup("PH")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PH" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Philippines</button>
+          </div>
+        </div>
+
+        <div>
+          <table className="w-full table-fixed text-xs">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[9%]">Name</th>
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{onboardingGroup === "PH" ? "Dept." : "Branch"}</th>
+                {onboardingDocColumns.map((doc) => (
+                  <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">{doc}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {onboardingEmployees.length === 0 ? (
+                <tr><td colSpan={2 + onboardingDocColumns.length} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : `No ${onboardingGroup === "TECHNICIAN" ? "Technician" : onboardingGroup === "PARTS_MANAGER" ? "Parts Manager" : "Philippines"} employees found.`}</td></tr>
+              ) : (
+                onboardingEmployees.map((employee) => (
+                  <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-1.5 py-1.5 font-medium truncate" title={employee.name}>{employee.name}</td>
+                    <td className="px-1.5 py-1.5 text-muted-foreground truncate" title={onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch}>
+                      {/* PH's "Department" column reads from position/role, same
+                          label the Employee Directory tab shows — not the raw
+                          department field, which is usually blank. */}
+                      {(onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch) || "—"}
+                    </td>
+                    {onboardingDocColumns.map((doc) => {
+                      const done = !!employee.onboardingDocs[doc];
+                      return (
+                        <td key={doc} className="px-0.5 py-0.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => toggleOnboardingDoc(employee.id, doc)}
+                            className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-white/5 text-muted-foreground hover:bg-white/10"}`}
+                          >
+                            {done ? "YES" : "NO"}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* ── Generate Report ── */}
+      {activeTab === "report" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Hiring Report</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of Candidates, Scheduled for Interview, Pre-Selected, Rejected, Hired, Terminated, and Resigned for the selected range.</p>
+        </div>
+
+        {/* Range filter */}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex flex-wrap items-end gap-3">
+            <button type="button" onClick={setReportRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${reportFrom === todayStr && reportTo === todayStr ? "bg-primary/20 text-primary" : ""}`}>
+              Today
+            </button>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+              <input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+              <input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="ml-auto flex gap-2">
+              <button onClick={downloadHiringReportExcel} className="btn text-sm px-3 py-1.5">Download Excel</button>
+              <button onClick={downloadHiringReportPdf} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Download PDF</button>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI tiles — same shape as the top-of-page overview, scoped to the range */}
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          {[
+            { label: "Candidates", value: hiringReportKpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
+            { label: "Scheduled for Interview", value: hiringReportKpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
+            { label: "Pre-Selected", value: hiringReportKpi.preSelected, color: "text-purple-300", icon: <CheckCircle className="h-4 w-4" /> },
+            { label: "Rejected", value: hiringReportKpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
+            { label: "Hired", value: hiringReportKpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
+            { label: "Terminated", value: hiringReportKpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
+            { label: "Resigned", value: hiringReportKpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" /> },
+          ].map((k) => (
+            <div key={k.label} className="panel p-3 text-center">
+              <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+              <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
+      {/* ── Generate Warnings & Mistakes Report ── */}
+      {activeTab === "report" && (
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Mistakes &amp; Warnings Report</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of approved Warnings and Mistakes for the selected range.</p>
+        </div>
+
+        {/* Range filter */}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex flex-wrap items-end gap-3">
+            <button type="button" onClick={setWmReportRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${wmReportFrom === today && wmReportTo === today ? "bg-primary/20 text-primary" : ""}`}>
+              Today
+            </button>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+              <input type="date" value={wmReportFrom} onChange={(e) => setWmReportFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+              <input type="date" value={wmReportTo} onChange={(e) => setWmReportTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="ml-auto flex gap-2">
+              <button onClick={downloadWmReportExcel} className="btn text-sm px-3 py-1.5">Download Excel</button>
+              <button onClick={downloadWmReportPdf} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Download PDF</button>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI tiles */}
+        <div className="p-4 grid grid-cols-2 gap-2">
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><AlertTriangle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-yellow-300">{wmReportKpi.warnings}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
+          </div>
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><XCircle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-orange-300">{wmReportKpi.mistakes}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
+          </div>
+        </div>
       </div>
       )}
 

@@ -217,6 +217,8 @@ export interface EmployeeInfo {
   attachments?: string[];
   employmentStatus?: "active" | "inactive" | "terminated" | "resigned";
   employmentStatusDate?: string;
+  /** Onboarding Documents checklist — keyed by document name (e.g. "W4"), true = collected. */
+  onboardingDocs?: Record<string, boolean>;
 }
 
 /** Load the employee_info JSON for a profile (by profile id). */
