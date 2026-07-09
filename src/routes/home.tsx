@@ -6,6 +6,7 @@ import { MODULES } from "@/lib/modules";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
 import { shouldUseMobile } from "@/lib/device";
+import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -51,7 +52,9 @@ function Home() {
           <p className="text-muted-foreground">Choose a module to get started.</p>
         </div>
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {MODULES.map((m) => (
+          {MODULES.filter((m) => isModuleAllowed(role, m.slug)).map((m) => {
+            const visibleSubmodules = m.submodules.filter((s) => isSubmoduleAllowed(role, m.slug, s.slug));
+            return (
             <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
               <div className="flex items-center gap-3 mb-3">
                 <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: m.accent }} />
@@ -60,15 +63,16 @@ function Home() {
               </div>
               <p className="text-sm text-muted-foreground mb-4">{m.tagline}</p>
               <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-                {m.submodules.slice(0, 6).map((s) => (
+                {visibleSubmodules.slice(0, 6).map((s) => (
                   <li key={s.slug} className="text-foreground/80 truncate">• {s.title}</li>
                 ))}
               </ul>
-              {m.submodules.length > 6 && (
-                <div className="text-xs text-muted-foreground mt-2">+{m.submodules.length - 6} more</div>
+              {visibleSubmodules.length > 6 && (
+                <div className="text-xs text-muted-foreground mt-2">+{visibleSubmodules.length - 6} more</div>
               )}
             </Link>
-          ))}
+            );
+          })}
         </div>
       </main>
       <Footer />

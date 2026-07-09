@@ -215,6 +215,8 @@ export interface EmployeeInfo {
   terminateDate?: string;
   employeeNote?: string;
   attachments?: string[];
+  employmentStatus?: "active" | "inactive" | "terminated" | "resigned";
+  employmentStatusDate?: string;
 }
 
 /** Load the employee_info JSON for a profile (by profile id). */
@@ -230,6 +232,31 @@ export async function getProfileEmployeeInfo(profileId: string): Promise<Employe
   }
   const info = (data as any)?.employee_info;
   return info && typeof info === "object" ? (info as EmployeeInfo) : null;
+}
+
+/**
+ * Bulk-load employee_info for a set of profiles in one query — used by
+ * employee-list views (e.g. HR & Recruitment Dashboard) that need each
+ * row's hire date without paying for employee_info (which can carry a
+ * base64 photoDataUrl) on every getCompanyUsers() call.
+ */
+export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise<Map<string, EmployeeInfo>> {
+  const out = new Map<string, EmployeeInfo>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, employee_info")
+    .in("id", uniq);
+  if (error) {
+    console.error("getEmployeeInfoByProfileIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const info = (row as any).employee_info;
+    if (info && typeof info === "object") out.set((row as any).id, info as EmployeeInfo);
+  }
+  return out;
 }
 
 /** Save the employee_info JSON for a profile (by profile id). */

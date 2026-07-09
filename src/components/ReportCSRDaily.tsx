@@ -17,6 +17,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getTicketAuditLog } from "@/lib/supabase/tickets";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { getAllAgentNotes } from "@/lib/supabase/csrAgentNotes";
 import { parseBranchAccess } from "@/lib/locations";
 
 const UNASSIGNED = "__unassigned__";
@@ -31,6 +32,8 @@ interface Agent {
   locations: string[];
   schedule: number; // reschedule actions this CSR made (ticket_audit_log)
   update: number; // status_change actions this CSR made (ticket_audit_log)
+  warnings: number; // approved warning notes, narrowed by Date From/To like everything else here
+  mistakes: number; // approved mistake notes, narrowed by Date From/To like everything else here
 }
 
 interface TeamMeta {
@@ -70,7 +73,7 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       try {
         setLoading(true);
         setError(null);
-        const [profiles, auditLog, composition] = await Promise.all([
+        const [profiles, auditLog, composition, allNotes] = await Promise.all([
           getCompanyUsers(),
           getTicketAuditLog({ startDate: dateFrom || undefined, endDate: dateTo || undefined }),
           getCsrTeamComposition().catch((err) => {
@@ -80,6 +83,10 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
               `Run the 0027_csr_team_composition.sql migration in Supabase, then reload.`,
             );
             return { teams: [], members: [] };
+          }),
+          getAllAgentNotes().catch((err) => {
+            console.error("Failed to load agent notes:", err);
+            return [];
           }),
         ]);
         if (cancelled) return;
@@ -93,6 +100,19 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           if (!entry.changedBy) continue;
           if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
           if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+        }
+
+        // Only approved notes count toward the official tally — same rule as
+        // the agent detail page — narrowed by Date From/To, or all-time when blank.
+        const warningCount = new Map<string, number>();
+        const mistakeCount = new Map<string, number>();
+        for (const n of allNotes) {
+          if (n.status !== "approved") continue;
+          const day = n.createdAt.slice(0, 10);
+          if (dateFrom && day < dateFrom) continue;
+          if (dateTo && day > dateTo) continue;
+          if (n.type === "warning") warningCount.set(n.agentProfileId, (warningCount.get(n.agentProfileId) ?? 0) + 1);
+          if (n.type === "mistake") mistakeCount.set(n.agentProfileId, (mistakeCount.get(n.agentProfileId) ?? 0) + 1);
         }
 
         const roster: Agent[] = profiles
@@ -111,6 +131,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             locations: branchesOf(p.assigned_branch, p.branch_access),
             schedule: scheduleCount.get(p.id) ?? 0,
             update: updateCount.get(p.id) ?? 0,
+            warnings: warningCount.get(p.id) ?? 0,
+            mistakes: mistakeCount.get(p.id) ?? 0,
           }));
 
         setAgents(roster);
@@ -181,6 +203,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             count: ta.length,
             totalSchedule: ta.reduce((s, a) => s + a.schedule, 0),
             totalUpdate: ta.reduce((s, a) => s + a.update, 0),
+            totalWarnings: ta.reduce((s, a) => s + a.warnings, 0),
+            totalMistakes: ta.reduce((s, a) => s + a.mistakes, 0),
           };
         })
         .filter((s) => s.count > 0),
@@ -191,6 +215,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
     name: s.team.name,
     Schedule: s.totalSchedule,
     Update: s.totalUpdate,
+    Warnings: s.totalWarnings,
+    Mistakes: s.totalMistakes,
   }));
   const agentBarData = [...primaryFiltered]
     .sort((a, b) => b.schedule - a.schedule)
@@ -200,7 +226,7 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const handleExportCSV = () => {
     exportToCSV(
       "csr_daily_report",
-      ["Team", "Position", "Name", "Locations", "Schedule", "Update"],
+      ["Team", "Position", "Name", "Locations", "Schedule", "Update", "Warnings", "Mistakes"],
       filtered.map((a) => [
         teamName(a.teamKey),
         a.role === "Team Leader" ? "Team Leader" : "CSR Agent",
@@ -208,6 +234,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         a.locations.join("; "),
         a.schedule,
         a.update,
+        a.warnings,
+        a.mistakes,
       ]),
     );
   };
@@ -295,7 +323,7 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             </span>
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground">
-            Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail), optionally narrowed by Date From/To.
+            Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail); Warnings/Mistakes reflect approved notes only. Leave Date From/To blank for all-time totals, or narrow either.
           </p>
         </div>
 
@@ -311,19 +339,23 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         <>
         {/* Team summary cards */}
         {teamSummaries.length > 0 && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-6">
             {teamSummaries.map((s) => (
-              <div key={s.team.key} className="panel p-4">
-                <p className="text-xs font-semibold mb-2" style={{ color: s.team.color }}>
+              <div key={s.team.key} className="panel p-2.5">
+                <p className="text-xs font-semibold mb-1.5 truncate" style={{ color: s.team.color }}>
                   {s.team.name}
                 </p>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                   <span className="text-muted-foreground">Agents</span>
                   <span className="text-right font-medium">{s.count}</span>
                   <span className="text-muted-foreground">Schedule</span>
                   <span className="text-right text-green-300">{s.totalSchedule}</span>
                   <span className="text-muted-foreground">Update</span>
-                  <span className="text-right">{s.totalUpdate}</span>
+                  <span className="text-right text-orange-300">{s.totalUpdate}</span>
+                  <span className="text-muted-foreground">Warnings</span>
+                  <span className="text-right text-yellow-300">{s.totalWarnings}</span>
+                  <span className="text-muted-foreground">Mistakes</span>
+                  <span className="text-right text-red-300">{s.totalMistakes}</span>
                 </div>
               </div>
             ))}
@@ -342,6 +374,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                 <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
                 <Bar dataKey="Schedule" fill="#34d399" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Update" fill="#fb923c" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Warnings" fill="#facc15" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Mistakes" fill="#f87171" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -524,6 +558,14 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                   <div className="panel p-3 text-center">
                     <p className="text-2xl font-bold text-purple-300">{detailsAgent.update}</p>
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Update</p>
+                  </div>
+                  <div className="panel p-3 text-center">
+                    <p className="text-2xl font-bold text-yellow-300">{detailsAgent.warnings}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
+                  </div>
+                  <div className="panel p-3 text-center">
+                    <p className="text-2xl font-bold text-red-300">{detailsAgent.mistakes}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
                   </div>
                 </div>
 

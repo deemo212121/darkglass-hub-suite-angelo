@@ -25,6 +25,7 @@ import { Route as TicketsMapRouteImport } from './routes/tickets.map'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
+import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 import { Route as MModuleSubmoduleUserIdRouteImport } from './routes/m.$module.$submodule.$userId'
@@ -109,6 +110,11 @@ const EmployeeEmployeeIdRoute = EmployeeEmployeeIdRouteImport.update({
   path: '/employee/$employeeId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CsrAgentAgentIdRoute = CsrAgentAgentIdRouteImport.update({
+  id: '/csr-agent/$agentId',
+  path: '/csr-agent/$agentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/admin/users',
   path: '/admin/users',
@@ -139,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -160,6 +167,7 @@ export interface FileRoutesByTo {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -182,6 +190,7 @@ export interface FileRoutesById {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
@@ -205,6 +214,7 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -226,6 +236,7 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -247,6 +258,7 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/m/$module'
     | '/ticket/$ticketNo'
@@ -269,6 +281,7 @@ export interface RootRouteChildren {
   SuperadminRoute: typeof SuperadminRoute
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
+  CsrAgentAgentIdRoute: typeof CsrAgentAgentIdRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
   TicketTicketNoRoute: typeof TicketTicketNoRoute
@@ -389,6 +402,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmployeeEmployeeIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/csr-agent/$agentId': {
+      id: '/csr-agent/$agentId'
+      path: '/csr-agent/$agentId'
+      fullPath: '/csr-agent/$agentId'
+      preLoaderRoute: typeof CsrAgentAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/users': {
       id: '/admin/users'
       path: '/admin/users'
@@ -449,6 +469,7 @@ const rootRouteChildren: RootRouteChildren = {
   SuperadminRoute: SuperadminRoute,
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
+  CsrAgentAgentIdRoute: CsrAgentAgentIdRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
   TicketTicketNoRoute: TicketTicketNoRoute,

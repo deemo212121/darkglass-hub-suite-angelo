@@ -684,14 +684,16 @@
   }
 
   /* Date input calendar icon styling - white icon */
-  input[type="date"]::-webkit-calendar-picker-indicator {
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator {
     filter: brightness(0) invert(1);
     cursor: pointer;
   }
 
   input[type="date"],
   input[type="datetime-local"],
-  input[type="time"] {
+  input[type="time"],
+  input[type="month"] {
     color-scheme: dark;
   }
 
@@ -3009,7 +3011,8 @@
 /* Date inputs back to light color-scheme */
 :root[data-theme="light"] input[type="date"],
 :root[data-theme="light"] input[type="datetime-local"],
-:root[data-theme="light"] input[type="time"] {
+:root[data-theme="light"] input[type="time"],
+:root[data-theme="light"] input[type="month"] {
   color-scheme: light;
 }
 
@@ -3061,15 +3064,26 @@
 
 :root[data-theme="light"] .from-slate-950,
 :root[data-theme="light"] .from-slate-900,
-:root[data-theme="light"] .from-slate-800 {
+:root[data-theme="light"] .from-slate-800,
+:root[data-theme="light"] .from-slate-950\/80,
+:root[data-theme="light"] .from-slate-950\/90,
+:root[data-theme="light"] .from-slate-900\/80,
+:root[data-theme="light"] .from-slate-900\/90,
+:root[data-theme="light"] .from-slate-800\/80,
+:root[data-theme="light"] .from-slate-800\/90 {
   --tw-gradient-from: var(--lt-surface-2) var(--tw-gradient-from-position) !important;
 }
 :root[data-theme="light"] .via-slate-900,
-:root[data-theme="light"] .via-slate-800 {
+:root[data-theme="light"] .via-slate-800,
+:root[data-theme="light"] .via-slate-900\/80,
+:root[data-theme="light"] .via-slate-800\/80 {
   --tw-gradient-via: var(--lt-surface-2) var(--tw-gradient-via-position) !important;
 }
 :root[data-theme="light"] .to-slate-950,
-:root[data-theme="light"] .to-slate-900 {
+:root[data-theme="light"] .to-slate-900,
+:root[data-theme="light"] .to-slate-950\/50,
+:root[data-theme="light"] .to-slate-900\/50,
+:root[data-theme="light"] .to-slate-900\/60 {
   --tw-gradient-to: var(--lt-surface-3) var(--tw-gradient-to-position) !important;
 }
 
@@ -3343,7 +3357,8 @@
    mode should show it dark. Clear the invert filter. */
 :root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
 :root[data-theme="light"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
-:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator {
+:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="month"]::-webkit-calendar-picker-indicator {
   filter: none !important;
   opacity: 0.85 !important;
 }
@@ -8399,15 +8414,26 @@
 
 :root[data-theme="light"] .from-slate-950,
 :root[data-theme="light"] .from-slate-900,
-:root[data-theme="light"] .from-slate-800 {
+:root[data-theme="light"] .from-slate-800,
+:root[data-theme="light"] .from-slate-950\/80,
+:root[data-theme="light"] .from-slate-950\/90,
+:root[data-theme="light"] .from-slate-900\/80,
+:root[data-theme="light"] .from-slate-900\/90,
+:root[data-theme="light"] .from-slate-800\/80,
+:root[data-theme="light"] .from-slate-800\/90 {
   --tw-gradient-from: var(--lt-surface-2) var(--tw-gradient-from-position) !important;
 }
 :root[data-theme="light"] .via-slate-900,
-:root[data-theme="light"] .via-slate-800 {
+:root[data-theme="light"] .via-slate-800,
+:root[data-theme="light"] .via-slate-900\/80,
+:root[data-theme="light"] .via-slate-800\/80 {
   --tw-gradient-via: var(--lt-surface-2) var(--tw-gradient-via-position) !important;
 }
 :root[data-theme="light"] .to-slate-950,
-:root[data-theme="light"] .to-slate-900 {
+:root[data-theme="light"] .to-slate-900,
+:root[data-theme="light"] .to-slate-950\/50,
+:root[data-theme="light"] .to-slate-900\/50,
+:root[data-theme="light"] .to-slate-900\/60 {
   --tw-gradient-to: var(--lt-surface-3) var(--tw-gradient-to-position) !important;
 }
 
@@ -10913,7 +10939,8 @@
    the invert filter in light mode so the calendar icon shows dark. */
 :root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
 :root[data-theme="light"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
-:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator {
+:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="month"]::-webkit-calendar-picker-indicator {
   filter: none !important;
   opacity: 0.85 !important;
 }

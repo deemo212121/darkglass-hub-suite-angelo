@@ -63,6 +63,13 @@ const SERVER_DEFINE = {
   "globalThis.__NSA_BASE_URL__": JSON.stringify(rootEnv.NSA_BASE_URL ?? "https://api.nsaweb.com"),
   "globalThis.__NSA_API_KEY__": JSON.stringify(rootEnv.NSA_API_KEY ?? ""),
   "globalThis.__NSA_SECRET__": JSON.stringify(rootEnv.NSA_SECRET ?? ""),
+  // Firebase service account (SERVER ONLY — used by the Jotform webhook to
+  // write notifications via the Firestore REST API; same reasoning as the
+  // Supabase JWT secret above, never exposed to the client bundle).
+  "globalThis.__FIREBASE_SA_EMAIL__": JSON.stringify(rootEnv.FIREBASE_SERVICE_ACCOUNT_EMAIL ?? ""),
+  "globalThis.__FIREBASE_SA_PRIVATE_KEY__": JSON.stringify(
+    rootEnv.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY ?? ""
+  ),
 };
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
@@ -214,6 +221,44 @@ function nsaDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/jotform locally. Same shape as the other
+// dev plugins above, but preserves the request's query string (?secret=...)
+// since Jotform's webhook config has no custom-header option — the shared
+// secret travels as a query param, unlike the other bridges' JSON-only bodies.
+function jotformDevPlugin() {
+  return {
+    name: "jotform-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/jotform", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleJotformRequest } = await server.ssrLoadModule(
+            "/src/lib/server/jotformBridge.ts"
+          );
+          const webReq = new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/octet-stream" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleJotformRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Jotform webhook failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -222,7 +267,7 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       rollupOptions: {

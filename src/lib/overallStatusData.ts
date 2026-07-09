@@ -285,9 +285,12 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     });
   }
 
-  // Ticket Statistics + both Pending-by donuts are scoped to the selected
-  // Posting-date range; CSR Activity and the ranking tables below keep
-  // using the full roster (`ticketsAll`) with their own fixed windows.
+  // Ticket Statistics (the line chart below) is scoped to the selected
+  // Posting-date range as a flow metric — how many tickets were posted
+  // within [startDate, endDate]. The two Pending-by donuts use a different,
+  // "as of" snapshot instead (see `pendingAsOf` further down); CSR Activity
+  // and the ranking tables keep using the full roster (`ticketsAll`) with
+  // their own fixed windows.
   const tickets = ticketsAll.filter((t) => inPostingRange(t.created, startDate, endDate));
 
   // ── Source totals (for line ordering + chart legend) ───────────────────
@@ -353,10 +356,21 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     ...orderedSources.map((name, i) => ({ key: name, color: sourceColor(name, i) })),
   ];
 
+  // "As of" backlog snapshot for the two Pending-by donuts: every ticket
+  // that already existed by the selected end date (no lower bound — an
+  // older ticket that's still open belongs in today's backlog even if it
+  // was posted before the start date) and is still pending right now. This
+  // is a point-in-time snapshot, not a flow-within-the-window count, so it
+  // deliberately does NOT reuse `tickets` (which is bounded on both ends
+  // for the Ticket Statistics chart above).
+  const pendingAsOf = ticketsAll.filter((t) => {
+    if (endDate && t.created > endDate) return false;
+    return isPendingStatus(t.status);
+  });
+
   // ── Pending by status (donut) ───────────────────────────────────────────
   const statusCounts = new Map<string, number>();
-  for (const t of tickets) {
-    if (!isPendingStatus(t.status)) continue;
+  for (const t of pendingAsOf) {
     statusCounts.set(t.status, (statusCounts.get(t.status) ?? 0) + 1);
   }
   const pendingByStatus: DonutSlice[] = Array.from(statusCounts.entries())
@@ -370,8 +384,7 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
   // counted under a location on this dashboard while being unfindable in
   // Ticket List when filtered to that same location.
   const locationCounts = new Map<string, number>();
-  for (const t of tickets) {
-    if (!isPendingStatus(t.status)) continue;
+  for (const t of pendingAsOf) {
     const key = (t.location || "").trim() || "Unassigned";
     locationCounts.set(key, (locationCounts.get(key) ?? 0) + 1);
   }
@@ -408,27 +421,37 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
   // of tickets, so exclude them — but NOT everyone lacking a profile match:
   // some real field techs (e.g. "Erick Guzman Juarez") have no User
   // Management account yet and would be wrongly dropped by a strict
-  // "must match a TECHNICIAN profile" allow-list.
+  // "must match a TECHNICIAN profile" allow-list. A role that merely
+  // *contains* "TECHNICIAN" (e.g. TECHNICIAN_MANAGER) still personally
+  // works tickets and counts as a real tech — only exclude roles with no
+  // technician component at all (Senior Branch Manager, BIZOPS_MANAGER, ...).
   const nonTechRoleByName = new Map<string, string>(); // lowercased display/username → primary role
   for (const p of profiles) {
     const display = ((p as any).display_name || (p as any).username || "").trim();
     if (!display) continue;
     const primary = String((p as any).role || "").toUpperCase();
-    if (primary && primary !== "TECHNICIAN") nonTechRoleByName.set(display.toLowerCase(), primary);
+    if (primary && !primary.includes("TECHNICIAN")) nonTechRoleByName.set(display.toLowerCase(), primary);
   }
   const isNonTechName = (tech: string) =>
     nonTechRoleByName.has(tech.toLowerCase()) || /\badmin\b/i.test(tech);
 
-  type TechAgg = { name: string; office: string; thirty: { done: number; total: number }; ten: { done: number; total: number } };
+  // One row per technician — not per (technician, office) pair. Grouping by
+  // office fragmented a tech across multiple rows whenever their tickets
+  // carried different (or blank) location values, e.g. Erick Guzman Juarez
+  // showing once under "San Antonio" and again under "—" for a handful of
+  // tickets with no recorded location. The displayed office is whichever
+  // one shows up most often among that tech's tickets.
+  type TechAgg = { name: string; officeCounts: Map<string, number>; thirty: { done: number; total: number }; ten: { done: number; total: number } };
   const techMap = new Map<string, TechAgg>();
   for (const t of ticketsAll) {
     const tech = (t.technician || "").trim();
     if (!tech || /unassigned/i.test(tech)) continue;
     if (isNonTechName(tech)) continue;
-    const office = (t.location || t.branch || "—").trim() || "—";
-    const key = `${tech}::${office}`;
-    if (!techMap.has(key)) techMap.set(key, { name: tech, office, thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });
+    const key = tech.toLowerCase();
+    if (!techMap.has(key)) techMap.set(key, { name: tech, officeCounts: new Map(), thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });
     const agg = techMap.get(key)!;
+    const office = (t.location || t.branch || "").trim();
+    if (office) agg.officeCounts.set(office, (agg.officeCounts.get(office) ?? 0) + 1);
     const done = isClosedStatus(t.status);
     const stamp = t.statusChangedAt || t.created;
     if (isWithinDays(stamp, 30)) { agg.thirty.total += 1; if (done) agg.thirty.done += 1; }
@@ -437,7 +460,7 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
   const techRows = Array.from(techMap.values())
     .map((a) => ({
       name: a.name,
-      office: a.office,
+      office: Array.from(a.officeCounts.entries()).sort(([, x], [, y]) => y - x)[0]?.[0] ?? "—",
       thirtyDay: a.thirty.total > 0 ? Math.round((a.thirty.done / a.thirty.total) * 10000) / 100 : null,
       tenDay: a.ten.total > 0 ? Math.round((a.ten.done / a.ten.total) * 10000) / 100 : null,
     }))

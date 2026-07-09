@@ -4,12 +4,14 @@ import { CsrTeamComposition } from "@/components/CsrTeamComposition";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import {
+  AlertTriangle,
   CheckCircle,
   ChevronLeft,
   Loader2,
   MessageSquare,
   Search,
   Users,
+  XCircle,
 } from "lucide-react";
 import {
   Bar,
@@ -27,9 +29,14 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getTicketAuditLog } from "@/lib/supabase/tickets";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { LOCATIONS, mergeLocationOptions, parseBranchAccess } from "@/lib/locations";
 
 const COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15"];
+// Stage 1 of the two-stage review chain (Team Leader submits -> CSR
+// Manager reviews first -> HR makes the final call). This panel only
+// handles stage 1 — items CSR Managers weigh in on before they go to HR.
+const STAGE1_REVIEWER_ROLES = new Set(["CSR_MANAGER", "MANAGER", "ADMIN", "SUPERADMIN"]);
 
 interface Agent {
   id: string;
@@ -59,12 +66,39 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   // they land on their own Personal + Team dashboard instead.
   const shouldRedirectToPersonalDashboard = normalizedRole === "CSR_AGENT" || normalizedRole === "CSR_TEAM_LEADER";
   const isCsrManager = normalizedRole === "CSR_MANAGER";
+  const canReviewNotes = ready && STAGE1_REVIEWER_ROLES.has(normalizedRole);
 
   useEffect(() => {
     if (ready && shouldRedirectToPersonalDashboard) {
       navigate({ to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "csr-team-leader-dashboard" } });
     }
   }, [ready, shouldRedirectToPersonalDashboard, navigate]);
+
+  const [pendingNotes, setPendingNotes] = useState<CsrAgentNote[]>([]);
+  const [pendingNotesLoading, setPendingNotesLoading] = useState(true);
+  const loadPendingNotes = async () => {
+    try {
+      setPendingNotesLoading(true);
+      // getPendingAgentNotes() returns both stages — this panel is stage 1 only.
+      setPendingNotes((await getPendingAgentNotes()).filter((n) => n.status === "pending"));
+    } catch (err) {
+      console.error("Failed to load pending agent notes:", err);
+    } finally {
+      setPendingNotesLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (canReviewNotes) loadPendingNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReviewNotes]);
+  const decideNote = async (id: string, status: "manager_approved" | "rejected") => {
+    try {
+      await reviewAgentNote(id, status);
+      await loadPendingNotes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update review status.");
+    }
+  };
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -187,6 +221,8 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
     [teams, filteredAgents],
   );
 
+  const agentNameById = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
+
   const locationBreakdown = useMemo(() => {
     const map: Record<string, number> = {};
     filteredAgents.forEach((a) => {
@@ -248,6 +284,59 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             <span>👥</span>Team Composition
           </button>
         </div>
+
+        {/* Pending warning/mistake submissions awaiting a manager's decision. */}
+        {canReviewNotes && (
+          <div className="panel p-4 mb-6">
+            <p className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+              <AlertTriangle className="h-4 w-4 text-yellow-400" /> Pending Reviews
+              {pendingNotes.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-300 border border-yellow-500/25">{pendingNotes.length}</span>
+              )}
+            </p>
+            {pendingNotesLoading ? (
+              <p className="text-xs text-muted-foreground py-2">Loading…</p>
+            ) : pendingNotes.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">Nothing waiting on review.</p>
+            ) : (
+              <div className="space-y-2">
+                {pendingNotes.map((n) => (
+                  <div key={n.id} className="rounded-lg border border-white/10 bg-white/5 p-3 flex items-start gap-3">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${n.type === "warning" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-orange-500/20 text-orange-300 border border-orange-500/30"}`}>
+                      {n.type === "warning" ? "Warning" : "Mistake"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs">
+                        <span className="font-semibold">{agentNameById.get(n.agentProfileId) || "Unknown agent"}</span> — {n.note}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {n.ticketNo && <>Ticket <span className="font-mono text-blue-400">{n.ticketNo}</span> · </>}
+                        Submitted by {n.createdByName || "Unknown"} · {new Date(n.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => decideNote(n.id, "manager_approved")}
+                        title="Sends to HR for the final decision"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-green-500/15 text-green-300 border border-green-500/30 hover:bg-green-500/25 transition-colors"
+                      >
+                        <CheckCircle className="h-3 w-3" /> Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => decideNote(n.id, "rejected")}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25 transition-colors"
+                      >
+                        <XCircle className="h-3 w-3" /> Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {showTeamComposition && <CsrTeamComposition />}
 

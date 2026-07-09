@@ -60,7 +60,6 @@ import { PartDailyCollection } from "@/components/PartDailyCollection";
 import { PartReturn } from "@/components/PartReturn";
 import { ReservedPartList } from "@/components/ReservedPartList";
 import { PartsDashboard } from "@/components/PartsDashboard";
-import { TruckStockPage } from "@/components/TruckStockPage";
 import { TicketList } from "@/components/TicketList";
 import { NewTicketPage } from "@/components/NewTicketPage";
 import { TodoListPage } from "@/components/TodoListPage";
@@ -69,6 +68,7 @@ import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
+import { isSubmoduleAllowed } from "@/lib/roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
@@ -154,6 +154,34 @@ function SubModule() {
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
+
+  // CSR Agents/Team Leaders get a narrow allow-list (their own Dashboard
+  // tools + Tickets) — this is what actually stops someone from bypassing
+  // the hidden tiles by typing the URL directly.
+  if (!isSubmoduleAllowed(role, mod.slug, sub.slug)) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Your role doesn't have access to {sub.title}.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   // Check admin access using Firebase role
   const hasAdminAccess = role && (role.toUpperCase() === "ADMIN" || role.toUpperCase() === "SUPERADMIN");
@@ -334,8 +362,6 @@ function SubModule() {
         ? <TriagePerformanceReport mod={mod} sub={sub} />
         : (sub as any).custom === "report-hr-daily"
         ? <ReportHRDaily mod={mod} sub={sub} />
-        : (sub as any).custom === "report-csr-daily"
-        ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-claims-daily"
         ? <ReportClaimsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-triage-daily"
@@ -404,8 +430,6 @@ function SubModule() {
         ? <RepairStatusesPage />
         : (sub as any).custom === "parts-dashboard"
         ? <PartsDashboard mod={mod} sub={sub} />
-        : (sub as any).custom === "truck-stock"
-        ? <TruckStockPage mod={mod} sub={sub} />
         : sub.custom === "reserved-part-list-custom"
         ? <ReservedPartList mod={mod} sub={sub} />
         : sub.slug === "po-status"

@@ -1,6 +1,6 @@
 /**
  * NotificationsMenu — bell icon in AppHeader with a dropdown of recent
- * notifications, merged from two sources:
+ * notifications, merged from three sources:
  *
  *  1. "system" kind DMs sent to the caller (e.g. Attendance Monitoring's
  *     "Notify Individual" / "Notify Team Lead" alerts — see
@@ -12,8 +12,16 @@
  *     "new employee request submitted" pinging HR/Finance/Admin). These
  *     can carry a `linkTo` so clicking one navigates straight to the
  *     relevant page.
+ *  3. HR only: a realtime Firestore subscription (notifications/{uid}/items
+ *     via subscribeNotifications) — this is the existing
+ *     sendNotificationToRole()/users_index Firestore architecture (also used
+ *     by e.g. PartInventory's cross-inventory alerts), and is how the
+ *     Jotform webhook (api/jotform.ts) delivers "New Form Submitted" pings
+ *     since a Cloudflare Worker can't run the Supabase-scoped, session-based
+ *     write path the other two sources use. Chimes on genuinely new arrivals
+ *     (not on the first snapshot after subscribing).
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Bell, CheckCheck } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -39,10 +47,17 @@ import {
   subscribeToMyNotifications,
   type NotificationRow,
 } from "@/lib/supabase/notifications";
+import {
+  subscribeNotifications,
+  markNotificationRead as markFirestoreNotificationRead,
+  markAllNotificationsRead as markAllFirestoreNotificationsRead,
+  type AppNotification,
+} from "@/lib/firebase/notifications";
+import { playNotifySound } from "@/lib/notifySound";
 
 interface MergedNotif {
   id: string;
-  source: "dm" | "table";
+  source: "dm" | "table" | "firestore";
   dmThreadId?: string;
   senderName: string | null;
   body: string;
@@ -62,11 +77,14 @@ function timeAgo(iso: string) {
 }
 
 export function NotificationsMenu() {
-  const { uid, ready } = useAuth();
+  const { uid, ready, role } = useAuth();
   const navigate = useNavigate();
+  const isHr = ready && (role ?? "").toUpperCase() === "HR";
   const [profileId, setProfileId] = useState<string | null>(null);
   const [dmNotifs, setDmNotifs] = useState<SystemNotification[]>([]);
   const [tableNotifs, setTableNotifs] = useState<NotificationRow[]>([]);
+  const [firestoreNotifs, setFirestoreNotifs] = useState<AppNotification[]>([]);
+  const seenFirestoreIds = useRef<Set<string> | null>(null);
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async (pid: string) => {
@@ -110,6 +128,31 @@ export function NotificationsMenu() {
     return unsubscribe;
   }, [profileId, load]);
 
+  // HR only: realtime Firestore subscription (see file header). Re-subscribes
+  // only when isHr or uid actually changes; the cleanup below always
+  // unsubscribes the previous listener first, so there's never more than one
+  // live listener for a given mount.
+  useEffect(() => {
+    if (!isHr || !uid) {
+      setFirestoreNotifs([]);
+      return;
+    }
+    seenFirestoreIds.current = null;
+    const unsubscribe = subscribeNotifications(uid, (items) => {
+      setFirestoreNotifs(items);
+      if (seenFirestoreIds.current === null) {
+        // First snapshot after (re)subscribing — establish the baseline
+        // without chiming for notifications that already existed.
+        seenFirestoreIds.current = new Set(items.map((i) => i.id));
+      } else {
+        const hasNewArrival = items.some((i) => !seenFirestoreIds.current!.has(i.id));
+        seenFirestoreIds.current = new Set(items.map((i) => i.id));
+        if (hasNewArrival) playNotifySound();
+      }
+    });
+    return unsubscribe;
+  }, [isHr, uid]);
+
   const notifs: MergedNotif[] = useMemo(() => {
     const merged: MergedNotif[] = [
       ...dmNotifs.map((n): MergedNotif => ({
@@ -131,14 +174,35 @@ export function NotificationsMenu() {
         isRead: n.isRead,
         linkTo: n.linkTo,
       })),
+      ...firestoreNotifs.map((n): MergedNotif => ({
+        id: `fs-${n.id}`,
+        source: "firestore",
+        senderName: n.title,
+        body: n.body,
+        createdAt: n.createdAt,
+        isRead: n.isRead,
+        linkTo: n.link ?? null,
+      })),
     ];
     return merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [dmNotifs, tableNotifs]);
+  }, [dmNotifs, tableNotifs, firestoreNotifs]);
 
   const unread = notifs.filter((n) => !n.isRead).length;
 
   const markRead = async (n: MergedNotif) => {
-    if (!profileId || n.isRead) return;
+    if (n.isRead) return;
+    if (n.source === "firestore") {
+      if (!uid) return;
+      const rawId = n.id.replace(/^fs-/, "");
+      setFirestoreNotifs((prev) => prev.map((x) => (x.id === rawId ? { ...x, isRead: true } : x)));
+      try {
+        await markFirestoreNotificationRead(uid, rawId);
+      } catch (err) {
+        console.error("Failed to mark notification read:", err);
+      }
+      return;
+    }
+    if (!profileId) return;
     if (n.source === "dm") {
       setDmNotifs((prev) => prev.map((x) => (x.dmThreadId === n.dmThreadId ? { ...x, isRead: true } : x)));
       try {
@@ -159,7 +223,16 @@ export function NotificationsMenu() {
 
   const markAll = async (e: Event) => {
     e.preventDefault();
-    if (!profileId) return;
+    setFirestoreNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
+    const firestoreMark = uid && firestoreNotifs.length > 0 ? markAllFirestoreNotificationsRead(uid) : Promise.resolve();
+    if (!profileId) {
+      try {
+        await firestoreMark;
+      } catch (err) {
+        console.error("Failed to mark all notifications read:", err);
+      }
+      return;
+    }
     const threadIds = Array.from(new Set(dmNotifs.map((n) => n.dmThreadId)));
     setDmNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
     setTableNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
@@ -167,6 +240,7 @@ export function NotificationsMenu() {
       await Promise.all([
         ...threadIds.map((dmThreadId) => markThreadRead({ profileId, dmThreadId })),
         markAllNotificationsRead(profileId),
+        firestoreMark,
       ]);
     } catch (err) {
       console.error("Failed to mark all notifications read:", err);

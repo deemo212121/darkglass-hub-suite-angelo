@@ -41,3 +41,41 @@ export const ROLE_LABELS: Record<string, string> = {
 export function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 }
+
+/**
+ * CSR Agents and Team Leaders get a narrow slice of the app — their own
+ * Dashboard tools and Tickets, nothing else. Everyone else is unrestricted
+ * (this is an allow-list applied only to these two roles, not a general
+ * permission system).
+ */
+const CSR_RESTRICTED_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER"]);
+
+/** Top-level modules a CSR Agent/Team Leader may open. */
+const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets"]);
+
+/** Within the Dashboard module, the only submodules a CSR Agent/Team Leader may open. */
+const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
+  "daily-activity",
+  "overall-status",
+  "employee-self-service",
+  "csr-dashboard", // redirects them to their own csr-team-leader-dashboard
+  "csr-team-leader-dashboard", // the personal dashboard that redirect lands on
+]);
+
+export function isCsrRestrictedRole(role: string | null | undefined): boolean {
+  return CSR_RESTRICTED_ROLES.has(normalizeRole(role));
+}
+
+/** Whether a CSR Agent/Team Leader may open this module at all. Non-CSR roles always pass. */
+export function isModuleAllowed(role: string | null | undefined, moduleSlug: string): boolean {
+  if (!isCsrRestrictedRole(role)) return true;
+  return CSR_ALLOWED_MODULES.has(moduleSlug);
+}
+
+/** Whether a CSR Agent/Team Leader may open this submodule. Non-CSR roles always pass. */
+export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: string, submoduleSlug: string): boolean {
+  if (!isCsrRestrictedRole(role)) return true;
+  if (!isModuleAllowed(role, moduleSlug)) return false;
+  if (moduleSlug === "dashboard") return CSR_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
+  return true; // tickets: fully open once the module itself is allowed
+}

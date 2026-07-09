@@ -5,6 +5,7 @@ import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
 import { getMyRoles } from "@/lib/supabase/users";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
@@ -58,6 +59,21 @@ function ModuleIndex() {
     return <Outlet />;
   }
 
+  if (!isModuleAllowed(role, m.slug)) {
+    return (
+      <>
+        <AppHeader />
+        <main className="max-w-[1400px] mx-auto px-6 py-8">
+          <div className="panel text-center max-w-md mx-auto">
+            <h1 className="text-xl font-semibold">Access restricted</h1>
+            <p className="text-sm text-muted-foreground mt-2">Your role doesn't have access to the {m.label} module.</p>
+            <Link to="/home" className="btn btn-primary mt-4 inline-flex">Back home</Link>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   const partsLandingOrder = [
     "part-pickup",
@@ -134,6 +150,7 @@ function ModuleIndex() {
                 const allowed = getDashboardRoleGate(s.slug);
                 return !allowed || hasDashboardAccess(allowed, role, extraRoles);
               })
+              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
@@ -151,7 +168,9 @@ function ModuleIndex() {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {submodules.map((s: SubModuleDef) => (
+            {submodules
+              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug))
+              .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
                 to="/m/$module/$submodule"
