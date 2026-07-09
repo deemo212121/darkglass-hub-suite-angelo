@@ -1,0 +1,272 @@
+================================================================
+   ADMIN HUB SOLUTIONS — DEV REPORT
+   Covers: Thursday, 06/25/2026  &  Friday, 06/26/2026
+================================================================
+
+
+----------------------------------------------------------------
+A. YESTERDAY — 06/25/2026
+----------------------------------------------------------------
+
+ServicePower auto-sync (hourly)
+   * Hourly auto-sync from ServicePower for San Antonio and Asheville
+   * Runs from start of current month through today; skips tickets
+     already present so it never duplicates work
+   * Removed the manual "Sync ServicePower" card; the sync is now
+     fully automatic in the background
+
+Duplicate-ticket prevention
+   * Added DB unique index on (company_id, ticket_no) so two parallel
+     syncs can never create two rows for the same ticket
+   * Race-recovery in the upsert path: if a concurrent insert beats us
+     to it we switch to update instead of erroring
+
+Branch / Loc resolver fix
+   * Branch resolution now uses the Location-Management coverage zips
+     (admins can edit, no more hard-coded list)
+   * City overrides for edge cases (e.g. Salem -> Asheville)
+   * Sanitizer strips garbage SP service-location codes (IH / OS / DO /
+     Unknown) on read so they don't leak into the Loc column
+   * One-shot per-session backfill re-resolves bad rows without an
+     SP round-trip
+
+MFG_ID_SOURCE map (raw SP codes -> readable WO Source)
+   * Centralised mapping of warranty-company codes to friendly labels
+     (e.g. I565 -> SQUARE TRADE, B100 -> CENTRICITY, K100 -> SPPN)
+   * Old rows already in the DB now display the friendly label too,
+     without needing a re-sync
+
+Per-column filters on Ticket List (Excel-style)
+   * Funnel icon next to each column header
+   * Checkbox dropdown with a search box and "show all OTHER filters"
+     option set, so filters compose like Excel
+   * Date filter now accepts ISO, MM/DD/YY, and MM/DD/YYYY
+
+Customer edit lock
+   * Once a user manually edits a customer's info, background SP syncs
+     stop overwriting it
+   * Lock survives reloads
+
+Account / accountNo semantics cleaned up
+   * ticket.account = WO source (e.g. "AIG WARRANTY")
+   * ticket.accountNo = servicer credential (e.g. "GSL00002")
+   * Service Information's Account No reads from env at view time
+
+Service Tracking phone consistency
+   * Phone reads homePhone first, then cellPhone (consistent everywhere)
+   * Hardcoded phones removed from Visit Log
+   * General Info "Location" shows ticket.location || ticket.city
+   * Auto-sync writes SP Phone1/Phone2 to customers (subject to lock)
+
+Profile password change via Firebase re-auth
+
+Parts module merge (from janeyyy16/usapp)
+   * Pulled 5 components: PartInventory, PartDailyPickup,
+     PartDailyCollection, PartReturn, ReservedPartList
+   * Plus firebase/notifications.ts
+   * Added PartsDashboard + parts-dashboard slug
+   * Reordered parts landing per spec (pickup -> collection -> return
+     status -> receive -> inventory -> history -> footprint -> return
+     -> management -> order -> po-status -> return-pickup)
+
+Internal Messenger access for all roles
+   * Everyone can now access internal-message-support regardless of role
+
+ServicePower Running Notes
+   * "Running Notes" button + modal on the ticket detail page
+   * Pulls existing notes from SP and lets us post new ones via SOAP
+   * Notes are classified Internal vs External by AddedBy code
+   * Documented SP-side limitation (their API only returns notes pushed
+     via API, not status events) with an in-app banner
+
+Ticket photos show upload date / time
+
+Add Visit modal: default technician = "Memphis Admin"
+
+Cleanup: dropped two duplicate tickets per request
+
+Claim Transaction section on ticket detail (UI complete)
+   * Status / Claim-To / Payment-Method dropdowns
+   * Two-row layout mirroring Part Transaction
+   * Inline draft row, Add / Update / Cancel actions
+   * Yellow CLAIM NOTE textarea
+   * Request Authorization + Update buttons in the header
+
+Internal Messenger: clickable & validated ticket numbers
+   * Requires '#' prefix so phone numbers don't false-positive
+   * Each #TICKET is validated against Supabase
+   * Invalid ones render red + struck-through with an alert icon and
+     a tooltip explaining why
+
+Part Transaction lock when ticket is Claimed / Data Closed
+   * Only Claims / Claims Manager / Naveen can edit parts after that
+   * UI is disabled with an amber banner explaining why
+   * Unauthorized attempts notify Naveen / Ian / Tina
+
+Location Management cleanup
+   * Removed the top-bar search; per-tab toolbar instead
+   * Compressed tables, no more sideways scroll
+   * Coverage tab filter uses case-insensitive trimmed compare
+
+Marcone mSupply API integration
+   * Production credentials live
+   * Bridge uses OAuth 2.0 Client Credentials with Basic Auth header
+     (matches their Postman PDF)
+   * Token cached server-side with 30 s safety buffer, auto-refresh
+     on 401
+   * Build-time define constants in vite.config.ts so the bridge
+     works in both dev and prod
+
+Marcone /parts/lookup — Lookup button on Part Transaction
+   * Lookup button next to Part No on the inline Add row
+   * Greys out until both Part Dist. and Part No are filled
+   * Only fires for Marcone-prefixed distributors
+   * Pricing uses first.price (account net), not first.dealer
+     (which was overcharging)
+   * Important discovery: omit the make field — Marcone uses internal
+     codes (GEH not GE) and resolves brand server-side when make is
+     omitted
+
+Send Ticket via Internal Messenger
+   * Send icon next to Copy on the ticket detail header
+   * Opens a modal at root level (works on every tab)
+   * Live recipient suggestions from the company user list
+   * Optional Message textarea (sent before the #TICKETNO link)
+
+
+----------------------------------------------------------------
+B. TODAY — 06/26/2026
+----------------------------------------------------------------
+
+Part Transaction default Part Status
+   * Inline Add row now defaults to "Need PO" instead of blank
+
+Work Planner: cancelled tickets dropped
+   * createPlannerTickets() filters out anything containing "cancel"
+     ("Need Cancel" is treated as still-open and stays visible)
+   * Applies to both initial load and post-drag refresh
+
+ServicePower sync no longer overwrites schedule
+   * upsertTicketFromServicePower stopped writing schedule_date
+   * CSR-assigned dates are preserved across re-syncs
+   * Maintenance SQL script (clear-schedule-csr-assigned.sql) wipes
+     any historical SP-set dates on tickets still at "CSR-Assigned
+     to ASC" — wrapped in BEGIN / COMMIT and disables the audit
+     trigger for the bulk update
+
+Work Planner visibility rules tightened
+   * Requires an actual schedule_date (no fallback to created_at)
+   * Must match the selected planner date exactly
+   * Hides CSR-Assigned to ASC, CSR-Needs Scheduling, PT-* (pre-
+     schedule statuses)
+
+Ticket List: column header sorting
+   * Click a header to sort by that column
+   * Text columns cycle A->Z -> Z->A -> original
+   * Date columns: single click = newest first; second click = clear
+   * Number columns cycle low->high -> high->low -> original
+   * Up/down arrow indicator next to the active sort header
+   * Filter funnels keep working independently (event propagation
+     stopped so they don't trigger sort)
+
+Product Information: Exploded View + Service Bulletin buttons
+   * Two pill buttons on the right of Product Information
+   * Saves links keyed on the model number — every ticket with the
+     same model picks up the same link automatically
+   * Pencil icon for editing, "Add" placeholder when blank
+   * Edit modal with URL field, Save, Cancel, and "Clear link"
+   * New DB table model_resources with company-scoped RLS
+     (migration 0019)
+
+Admin > User Management
+   * Two new roles: Triage User and Triage Manager (added to UserRole
+     union, ROLE_LABELS, and the role dropdown)
+   * User Type is now a multi-select dropdown checkbox (matches Branch
+     Access layout). First ticked = primary role (drives RLS); the
+     rest land in profiles.extra_roles (new column, migration 0020)
+   * Branch Access gained an "All Locations" option that stores
+     sentinel "*" and forces unrestricted allowedLocations at sign-in
+
+Ticket List status palette
+   * statusColorClass extended with the full palette:
+       PT-Need PreAuthorization -> red-orange
+       CL-Ready to Complete -> red
+       OP-Ready for Service -> blue
+       CSR-Left Message for Cx -> mint
+       OP-Waiting for Part -> yellow
+       CSR-Assigned to ASC -> near-white
+       TR-Need Triage -> grey
+       CL-Need Cancel -> peach
+       CL-Parts Back Ordered -> near-white
+       OP-Reschedule Follow up -> pink
+       CSR-Acknowledged -> coral
+   * Ticket No cell now uses the same color as the Status cell
+
+Ticket List status group dropdown
+   * New dropdown next to Date / Source: All / Open / Pending,
+     Completed / Claimed, Cancelled
+   * Cancelled bucket only catches real cancelled flavours
+     (CL-Need Cancel stays in Pending)
+
+Edit Customer scope tightened
+   * Only address fields and phone numbers are editable
+   * Name and Email are shown as read-only labels in edit mode
+   * Save payload no longer writes firstName / lastName / email
+
+Floating horizontal scrollbar on Ticket List
+   * Custom-rendered scrollbar pinned at the very bottom of the
+     browser (rendered via React portal to bypass any ancestor
+     transform / backdrop-filter that would break position:fixed)
+   * Auto-hides when the table has no overflow, when the table is
+     entirely off-screen, or once the table's own native scrollbar
+     has come into view at the bottom of the page
+   * Drag the thumb to scroll; click empty track to page-jump
+
+Quick Module Navigator (sticks below the header on every page)
+   * Small "Modules" pill anchored just below the nav bar, right
+     edge aligned with the user pill
+   * Hover to expand into the 6 top-level modules (Dashboard /
+     Tickets / Parts / Claims / Report / Admin)
+   * Hover any module name for a dropdown of its submodules
+   * Portaled to document.body so transforms in ancestors can't
+     break its fixed positioning
+
+Small UI text cleanups on the ticket detail page
+   * Office distance now just reads "51.7 mi" (was "51.7 mi from
+     office")
+   * Marcone lookup result reads "in stock" / "out of stock" without
+     the count
+
+New Ticket Map page
+   * Map View button on Ticket List, right next to Columns
+   * Route /tickets/map — opens with the user's current Ticket-List
+     filters pre-applied via URL search params
+   * Filter row at the top mirrors the ones on Ticket List, plus a
+     date range that defaults to the current week (Mon -> Sun)
+   * Google Maps Geocoder plots each ticket as a status-colored
+     circle marker; click to see ticket # / customer / status /
+     schedule / address in a side card
+   * Office markers (one per distinct branch in the filtered set)
+     drawn as cyan teardrop pins with the 🏢 emoji, using saved
+     Location-Management coordinates or geocoded fallback
+   * Bounds auto-fit so the offices + tickets fit in view together
+
+Work Map cleanup
+   * Removed the arrow polyline that was connecting unassigned
+     tickets — Unassigned bucket no longer draws a route line
+
+
+----------------------------------------------------------------
+C. MIGRATIONS TO RUN (in Supabase SQL Editor)
+----------------------------------------------------------------
+
+  0019_model_resources.sql        — per-model link table (Exploded
+                                    View + Service Bulletin)
+  0020_profile_extra_roles.sql    — adds profiles.extra_roles text[]
+
+  scripts/clear-schedule-csr-assigned.sql — one-off maintenance:
+                                    wipes schedule_date on tickets
+                                    still at CSR-Assigned to ASC
+                                    (back-fills missing company_id
+                                    first, suspends the audit trigger
+                                    for the bulk update)

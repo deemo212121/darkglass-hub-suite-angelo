@@ -1,0 +1,43 @@
+[build]
+  command = "npm run build"
+  # TanStack Start (SSR) emits client assets to dist/client and the server
+  # entry to dist/server/index.js. We serve the client assets statically and
+  # render every other request through the SSR function.
+  publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  # Bundle the built server entry (+ its chunks) into the SSR function.
+  included_files = ["dist/server/**"]
+
+# 1. Static assets (JS/CSS/images) are served directly from dist/client/assets.
+[[redirects]]
+  from = "/assets/*"
+  to = "/assets/:splat"
+  status = 200
+
+# 2. Everything else is server-rendered by the SSR function.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/ssr"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), microphone=(), camera=()"
+
+# Cache static assets
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

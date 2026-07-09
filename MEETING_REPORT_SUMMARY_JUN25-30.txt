@@ -1,0 +1,403 @@
+AH SOLUTIONS — WEEKLY SUMMARY
+Period: Wednesday, June 25 → Tuesday, June 30, 2026
+================================================================================
+
+KEY THEMES THIS WEEK
+--------------------------------------------------------------------------------
+1. ServicePower sync got tougher and smarter (no duplicates, schedule dates
+   right, branch resolution fixed, status labels readable).
+2. New Claim Transaction workflow next to Part Transaction, with a per-role
+   lock so only the right people can edit either one.
+3. SquareTrade workflow end-to-end: per-ticket appointment URLs, customer
+   notes mirrored from SP, parts auto-imported from running notes.
+4. Marcone API live in production with a part-lookup button and tracking-
+   number sync.
+5. New "Need Claim List", improved Ticket List (filters/sort/map view),
+   rebuilt CSR dashboards, polished Part / Location / User Management.
+6. Quality-of-life: API health watcher, zip-validates-city on New Ticket,
+   New Module Navigator pill, internal messenger with clickable tickets.
+
+
+================================================================================
+WEDNESDAY 06/25 — TICKET LIST + SERVICEPOWER FOUNDATIONS
+================================================================================
+
+Ticket List & ServicePower sync
+- Hourly auto-sync from ServicePower pulling current month → today,
+  scoped to San Antonio + Asheville coverage zips. Skips tickets already
+  in the DB, no duplicates. Manual "Sync now" card removed.
+- AHS status auto-set from SP call status (Cancelled → CL-Cancelled,
+  Completed → CL-Ready to Complete, Accepted+NSA → CSR-Needs Scheduling,
+  Accepted → CSR-Assigned to ASC). Local edits preserved on re-sync.
+- DB unique index + race recovery so two tabs can't create the same
+  ticket twice.
+- Branch / Location resolver now uses Location Management overrides
+  (admins can edit), with city overrides (e.g. Salem → Asheville) and
+  a sanitizer that strips junk SP codes (IH/OS/DO/Unknown).
+- One-shot per-session backfill re-resolves bad Loc values from
+  zip + city without an SP round-trip.
+- Work Order Source codes (K100, I698, I250, I990…) mapped to readable
+  labels (SPPN, AIG WARRANTY, ALLIANCE SPEED QUEEN, ASSURANT SOLUTIONS).
+  Old rows display the friendly label without re-sync.
+
+Per-column filters on Ticket List (Excel-style)
+- Funnel icon next to every header, search-in-list checkbox dropdown.
+- Date filter now accepts ISO (YYYY-MM-DD), MM/DD/YY, and MM/DD/YYYY.
+
+Ticket detail
+- Customer-edit lock: once Customer Info is edited by a user, SP syncs
+  stop overwriting it (`customers.edited_by_user` flag).
+- Renamed `ticket.account` = Work Order Source (e.g. "AIG WARRANTY"),
+  `ticket.accountNo` = our servicer credential ("GSL00002").
+- General Info "Location" shows ticket.location || ticket.city.
+- Ticket photos show upload date/time below thumbnails and in the
+  lightbox.
+- Add Visit modal default technician = "Memphis Admin".
+- /profile → Change Password via Firebase reauthenticate + updatePassword.
+
+Running Notes (ServicePower)
+- New Running Notes button + modal next to Add Visit. Pulls SP
+  getCallNotes + getCallInfo, dedupes, parses RemarksCollection.
+- Internal vs External classified by AddedBy code (GSL00002 = Internal,
+  warranty company codes = External).
+- Send path uses our servicer account so warranty companies never see
+  employee identities.
+- Documented SP limitation: their API only returns notes pushed through
+  the API, not HUB-typed notes or status auto-events.
+
+Part Transaction
+- Inline two-row layout mirroring SP HUB (part / dist / desc / fees /
+  claim-to on Row A; status / note / tracking / RA / hold on Row B).
+- Part lock kicks in when ticket = Claimed or Data Closed. Banner +
+  disabled actions. Bypass attempts notify Naveen / Ian / Tina.
+
+Claim Transaction (new)
+- New section on the Service Tracking tab next to Part Transaction.
+- Centralised dropdowns in `src/lib/claimDropdowns.ts`:
+  CLAIM_STATUSES (14), CLAIM_TOS (19), PAYMENT_METHODS (4).
+- Two-row table matching Part Transaction density, inline draft row,
+  per-row Edit + Delete.
+- Header: title, ticket # badge, source pill, mileage chip,
+  Request Authorization, Update.
+
+Internal Messenger
+- Tokens starting with `#` (e.g. #SA-3458831) become clickable ticket
+  links. Plain numbers / phones never false-positive.
+- Invalid ticket numbers render red + struck through with a tooltip
+  ("doesn't match any ticket").
+- Send Ticket icon next to Copy on ticket detail; modal with live
+  recipient suggestions, opens or reuses a DM thread.
+- Internal Messenger access opened to all roles.
+
+Parts module (upstream merge)
+- Pulled 5 components: PartInventory, PartDailyPickup, PartDailyCollection,
+  PartReturn, ReservedPartList (+ firebase notifications helper).
+- Parts Dashboard page added; module landing reordered to user spec.
+- Fixed 3 back-arrow routes pointing to wrong parents.
+
+Location Management
+- Compressed Locations / Part Addresses / Coverage tables: per-tab
+  search, tighter padding, truncation on wide columns.
+- Coverage tab filter now case-insensitive trimmed compare so loose DB
+  values still match.
+
+Marcone mSupply API (new)
+- /api/marcone serverless route + dev plugin. Secrets stay server-side.
+- OAuth 2.0 Client Credentials (Basic Auth header, body
+  grant_type=client_credentials), exactly per Marcone's Postman PDF.
+- Token cached server-side, auto-refresh on 401, transparent retry.
+- Lookup button on Part Transaction inline Add row: greys out until
+  Part Dist + Part No are filled, fires only for Marcone distributors,
+  autofills Description / Part Price / Core Value without overwriting.
+
+
+================================================================================
+FRIDAY 06/26 — WORK PLANNER, SORTING, MAP, NAVIGATOR
+================================================================================
+
+Work Planner
+- createPlannerTickets() filters out anything with "cancel" in the
+  status (Need Cancel kept visible as still-open).
+- ServicePower sync stopped writing `schedule_date` (CSR owns the
+  date). Maintenance SQL wipes historic SP-set dates on tickets still
+  at "CSR-Assigned to ASC".
+- Work Planner now requires an actual schedule_date (no created_at
+  fallback) and must match the selected planner date exactly.
+- Hides pre-schedule statuses (CSR-Assigned to ASC, CSR-Needs
+  Scheduling, PT-*).
+
+Ticket List
+- Click a header to sort. Text A↔Z, dates newest↔clear, numbers
+  low↔high. Active sort header shows up/down arrow. Filter funnels
+  keep working independently.
+- Status palette extended (PT-Need PreAuthorization → red-orange,
+  CL-Ready to Complete → red, OP-Ready for Service → blue, etc.).
+  Ticket No cell uses the same color as Status cell.
+- New status group dropdown next to Date / Source:
+  All / Open / Pending / Completed / Claimed / Cancelled.
+- Floating horizontal scrollbar pinned to the very bottom of the
+  browser (React portal to bypass ancestor transforms). Auto-hides
+  when not needed.
+- Edit Customer scope tightened: only address + phones editable; name
+  and email shown read-only.
+
+Product Information
+- New "Exploded View" + "Service Bulletin" pill buttons. Links saved
+  keyed on model number so every ticket with the same model picks it
+  up automatically. Pencil icon to edit, Add when blank.
+- New DB table `model_resources` with company-scoped RLS (migration 0019).
+
+Admin > User Management
+- Two new roles: Triage User and Triage Manager.
+- User Type is now a multi-select checkbox (matches Branch Access).
+  Primary role drives RLS; the rest land in `profiles.extra_roles`
+  (migration 0020).
+- Branch Access "All Locations" stores sentinel "*" and forces
+  unrestricted allowedLocations at sign-in.
+
+Part Transaction default
+- Inline Add row defaults Part Status to "Need PO" instead of blank.
+
+New Ticket Map page
+- Map View button on Ticket List, next to Columns. Route /tickets/map
+  opens with the current Ticket-List filters pre-applied (URL params).
+- Filter row mirrors Ticket List + date range defaulting to current
+  week (Mon → Sun).
+- Google Maps Geocoder plots each ticket as a status-coloured circle;
+  click for side card. Offices drawn as cyan teardrop pins with 🏢
+  emoji using Location-Management coords. Auto-fit bounds.
+- Work Map cleanup: removed the arrow polyline connecting unassigned
+  tickets.
+
+Module Navigator
+- Small "Modules" pill below the nav bar, right-aligned with the user
+  pill. Hover expands into top-level modules; hover any module for its
+  submodules. Portaled to document.body so transforms never break it.
+
+Small text cleanups
+- Office distance now reads "51.7 mi" (no "from office").
+- Marcone result reads "in stock" / "out of stock" without the count.
+
+
+================================================================================
+MONDAY 06/29 — SQUARETRADE, CUSTOMER NOTES, CSR REBUILDS
+================================================================================
+
+Location Management — Coverage fixes
+- Dropdown sourced from canonical LOCATIONS instead of polluted
+  coverage_rows (zip codes were leaking in via old imports).
+- Strict cleanliness filter (must have a letter, rejects 3+ digit
+  prefix, max 40 chars).
+- Selected location coverage + filtered rows now fall back to bundled
+  CSV (DEFAULT_COVERAGE_ROWS) when Supabase returns zero rows.
+  Little Rock and other branches render polygons immediately.
+
+SquareTrade Account chip routing
+- Account chip detects SquareTrade and routes to that ticket's
+  specific Appointment Completion URL. Other accounts go to
+  ServicePower workorders.
+- Per-ticket URL stored in localStorage under
+  `ahs:squaretrade:appointmentUrl:<ticketNo>`.
+- Pencil icon next to chip opens paste modal (accepts full URL or
+  just token). When URL not saved, falls back to ticket-specific
+  ServicePower deep-link instead of generic dashboard.
+
+Auto-extract SquareTrade URL from SP notes
+- `extractSquaretradeUrl()` scans text for confirmappointment URLs or
+  bare UUID tokens. Handles XML entity decoding (&amp;, CDATA) so it
+  works on raw SP SOAP XML.
+- fetchServicePowerNotes() returns rawXml (getCallNotes) and
+  rawCallInfoXml (getCallInfo). Auto-sync effect scans both + parsed
+  note bodies for SquareTrade tickets and persists on detection.
+
+Customer Notes mirror SP Running Notes
+- Auto-load on every ticket open. `displayedCustomerNotes` memo
+  formats ISO dates to MM/DD/YYYY HH:MM:SS, dedupes, sorts oldest →
+  newest (top = first, bottom = latest).
+- When SP returns notes, legacy `ticket.customerNotes` dummies are
+  ignored (fixes EarlyRepair showing 6 instead of 4 actual SP notes).
+- Refresh button, syncing indicator, error pill, whitespace-pre-wrap
+  for long messages.
+
+Sync Parts from SP Notes button
+- New `squaretradeNotesParser.ts` parses "Allstate part order details"
+  and "Allstate part tracking details" formats. Skips "not yet
+  available".
+- Purple "Sync Parts from Notes" button in Part Transactions toolbar.
+- Handler creates Need-PO rows for new parts
+  (partDist/claimTo = "Squaretrade"), overlays
+  tracking/desc/qty on existing rows (preserves manual edits), skips
+  no-op rows, writes audit log.
+
+Part Management page rebuild
+- Multi-select Location with portal-rendered search-in-list dropdown.
+- "Select a location to load data" gate.
+- Export CSV button via shared `exportToCSV` helper.
+- Kept the better Submit-POs confirmation modal (line items + total).
+
+CSR Dashboard / Status Summary / Daily Report rebuild
+- New `csrDashboardData.ts` shared dataset (CSR_AGENTS, CSR_TEAMS,
+  CSR_TEAM_COLORS, CSR_MISTAKES, CSR_TREND_10).
+- CSRDashboard: 5-col filter bar, 6 KPI cards, team performance / pie /
+  10-day trend, full Mistakes Log table.
+- CSRStatusSummary: real TICKETS data (no random samples), 21-column
+  visibility menu, per-column funnel filters, click-to-pivot status
+  cards, pie + bar charts.
+- ReportCSRDaily: top-bar + inline filters, team summary cards,
+  performance chart, schedule trend line, top-12 agent bar, CSV
+  export. Agent names link to /csr/mistake/:employeeId.
+
+User Management column filters
+- Same funnel pattern as Ticket List on ID, Login Name, User Name,
+  Type, Email, Manager, Technician ID, Assigned Branch.
+- Funnel icon turns blue when the column is narrowing.
+
+Minor polish
+- "ΓǪ" → "…" in syncing indicator.
+- SquareTrade pencil icon tooltip mentions auto-sync.
+- Cleaned up integration source files in Parts/ folder after merge.
+
+
+================================================================================
+TUESDAY 06/30 — POLISH, INTEGRATIONS, RELIABILITY
+================================================================================
+
+Tier code display
+- Both Tier render sites in ticket route show `tier.code` alone (no
+  dollar amount). When code is "Base" or no match, shows "N/A". Panel
+  hides company tag in N/A case.
+
+Marcone tracking parser broadened
+- WE04X24719 already had tracking 382332946145 on the order page but
+  parser only read shipments[].trackingNumber.
+- Extended `MarconeOrderInformationRaw` to accept tracking on order
+  header (`trackingNumber`, `TrackingNumber`, `tracking`,
+  `trackingNumbers`) and on items.
+- New collector dedups via Set, splits on `[,\s/;|]+`, joins with
+  commas.
+- Sync-from-Notes now skips no-op rows so completed parts aren't
+  re-touched.
+
+Sync from Claim button (Assurant) — IN PROGRESS
+- Button moved from Parts toolbar to Claim Transaction header (next to
+  Request Authorization). Shows for Assurant accounts where status
+  contains "claim".
+- Handler tries 9 manufacturer × identifier combinations × 3
+  service-center number candidates (27 total). Logs each attempt.
+- Bridge updated to send `serviceCenterNumber` defaulted from
+  VITE_SERVICEPOWER_SERVICER_NUMBER → VITE_SERVICEPOWER_SERVICER_ACCOUNT
+  (GSL00002).
+- BLOCKER: All 27 attempts return "Invalid
+  manufacturerName/serviceCenterNumber". GSL00002 is the SP login,
+  not the Assurant-issued servicer number. Need correct number from
+  Assurant or SP HUB servicer profile, then set
+  VITE_SERVICEPOWER_SERVICER_NUMBER in .env + Cloudflare.
+
+Part Transaction lock — role expansion
+- Lock now bypasses for: ADMIN, MANAGER, BRANCH_MANAGER,
+  SENIOR_BRANCH_MANAGER, BIZOPS_MANAGER, BIZOPS_SENIOR_MANAGER,
+  CLAIMS, CLAIMS_MANAGER, PARTS, PARTS_MANAGER.
+- CSR_MANAGER and below stay locked. Triage stays locked.
+- Loads `extra_roles` from Supabase profiles for multi-role check.
+- Banner copy + tooltips updated.
+
+Need Claim List — functional with real tickets
+- Replaced dummy data with `getCompanyTickets()` from Supabase.
+  Narrows to claim-relevant statuses on load.
+- Bulk-fetches part counts from `parts` table by ticket_id.
+- Auto-default "Pre-Claim Status" based on ticket status.
+- Status-dot colour by aging (14 / 30 day thresholds).
+- All filters working: location, date, ticket #, status checkboxes,
+  free-text search. Refresh button, loading/error states inline.
+
+Need Claim List — links open in new tab
+- Converted 3 Tanstack Link blocks (ticket #, parts count, Open
+  ticket action) to plain `<a>` with target="_blank" + rel
+  noopener.
+
+API health watcher with admin notifications
+- New `apiHealth.ts` tracks per-endpoint failure streaks.
+- After 3 consecutive failures: notifies Admin, Manager, Claims
+  Manager, Parts Manager roles + Naveen / Ian / Tina by name.
+  Throttled to 1 notification per 10 minutes per endpoint.
+- Wraps `marconeRequest`, `retrieveClaim`, `fetchServicePowerNotes`.
+- auth.tsx mirrors companyId into watcher via
+  `setApiHealthCompanyId()` so background fetches notify the right
+  company.
+- `getApiHealthState()` exported for a future Admin Diagnostics page.
+
+Part status stays "PO Made" after order placement
+- `syncMarconeOrderStatus()` no longer auto-promotes to "Part Ready"
+  when invoice/tracking arrives — it's still being shipped, so PO Made
+  is correct.
+- Only back-order responses still flip PO Made → Back Order.
+- Tracking #, invoice #, ETA still pulled into the row.
+
+New Ticket page — zip validates city/state
+- New `zipLookup.ts` uses free `api.zippopotam.us/us/{zip}` (no API
+  key). Caches in memory + sessionStorage.
+- Zip input strips non-digits and caps at 5. Once 5 digits, auto-fills
+  empty city/state and shows an amber warning with "Use suggested
+  values" button if typed values don't match.
+- Submit-time guard re-runs lookup and blocks save with a clear
+  message. Fails open on network errors.
+
+SP schedule date sync + timezone fix
+- Bug: ticket 015789584139 was scheduled 7/2 in SP but showed 6/30 on
+  our Work Map. Two root causes:
+  1. `formatServicePowerDate` ran UTC timestamps through `new Date()`
+     and read local-tz date → day-off-by-one. Rewrote to read y/m/d
+     fragment directly from the string (handles ISO with timezone,
+     compact YYYYMMDD, US MM/DD/YY).
+  2. Sync was deliberately skipping `schedule_date` (old "CSR owns
+     the date" rule). Reversed: SP wins on every sync; existing date
+     kept only when SP sends nothing.
+- New `parseScheduleDateForSql()` normalises to YYYY-MM-DD Postgres
+  format or null.
+- Existing-row lookup now fetches `schedule_date` too for comparison.
+
+
+================================================================================
+MIGRATIONS TO RUN IN SUPABASE (pending from this week)
+================================================================================
+- 0019_model_resources.sql           Exploded View / Service Bulletin links per model
+- 0020_profile_extra_roles.sql       profiles.extra_roles text[] (multi-role)
+- 0021_customer_alt_phone.sql        customers alternate phone
+- 0022_ticket_product_edited.sql     product-edit lock flag
+- 0023_truck_stock.sql               truck stock table
+- scripts/clear-schedule-csr-assigned.sql (one-off maintenance,
+  superseded today by the SP schedule sync change — only run if you
+  want to wipe historic SP-set dates)
+
+
+================================================================================
+NEW FILES THIS WEEK
+================================================================================
+- src/lib/marconeApi.ts                 Marcone mSupply client wrapper
+- src/lib/server/servicePowerBridge.ts  retrieveClaim addition
+- src/lib/claimDropdowns.ts             CLAIM_STATUSES / CLAIM_TOS / PAYMENT_METHODS
+- src/lib/squaretradeUrl.ts             per-ticket SQT URL helpers + extractor
+- src/lib/squaretradeNotesParser.ts     SQT/Allstate part-note parser
+- src/lib/csrDashboardData.ts           shared CSR dashboard dataset
+- src/lib/zipLookup.ts                  zip → city/state validator
+- src/lib/apiHealth.ts                  API failure tracker + admin notifier
+
+
+================================================================================
+OPEN ITEMS / NEXT STEPS
+================================================================================
+1. Sync from Claim (Assurant): get the correct Assurant-issued
+   servicer number and set VITE_SERVICEPOWER_SERVICER_NUMBER in .env +
+   Cloudflare. Then re-test — the 27-attempt logging will tell us
+   immediately what's still wrong.
+2. Run the five pending Supabase migrations (0019–0023).
+3. Teach Sync Parts from Notes to recognise other warranty companies'
+   note formats (Assurant, GE, Encompass) once we have samples.
+4. Promote per-ticket SquareTrade URL from localStorage to a
+   `tickets.squaretrade_url` column when cross-device handoff is
+   needed.
+5. Swap CSR_AGENTS from sample data to a Supabase view once the
+   HR/attendance schema lands.
+6. Add an Admin Diagnostics page that surfaces `getApiHealthState()`
+   so admins can see API status at a glance instead of waiting for
+   the failure notification.

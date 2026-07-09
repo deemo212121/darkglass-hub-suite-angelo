@@ -1,0 +1,423 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>P/O Status - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.status-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.status-controls {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1.25rem;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.control-group input:focus,
+		.control-group select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.status-meta {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1rem;
+			margin-bottom: 1rem;
+			color: #cbd5e1;
+			font-size: 0.88rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		table.status-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.status-table th,
+		.status-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.65rem 0.75rem;
+			font-size: 0.82rem;
+			white-space: nowrap;
+			text-align: center;
+		}
+
+		.status-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+		}
+
+		.status-table td:first-child,
+		.status-table td:nth-child(2) {
+			text-align: left;
+		}
+
+		.ticket-link {
+			color: inherit;
+			text-decoration: none;
+			font-weight: inherit;
+			cursor: pointer;
+		}
+
+		.ticket-link:hover {
+			text-decoration: underline;
+		}
+
+		.status-pill {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0.25rem 0.6rem;
+			border-radius: 999px;
+			font-size: 0.75rem;
+			font-weight: 700;
+		}
+
+		.status-open {
+			background: #dbeafe;
+			color: #1d4ed8;
+		}
+
+		.status-pending {
+			background: #fef3c7;
+			color: #92400e;
+		}
+
+		.status-complete {
+			background: #dcfce7;
+			color: #166534;
+		}
+
+		.report-footer {
+			margin-top: 1rem;
+			color: #cbd5e1;
+			font-size: 0.9rem;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+
+			<div id="poStatusFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+				<div id="poStatusFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">P/O Status</h2>
+		</div>
+
+		<div class="status-panel">
+			<div class="status-controls">
+				<div class="control-group">
+					<label for="location">Location</label>
+					<select id="location">
+						<option value="">All Locations</option>
+						<option value="Philippines">Philippines</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Dallas">Dallas</option>
+						<option value="Memphis">Memphis</option>
+						<option value="Tallahassee">Tallahassee</option>
+					</select>
+				</div>
+				<div class="control-group">
+					<label for="poDate">P/O Date</label>
+					<input id="poDate" type="date" value="2026-05-07">
+				</div>
+				<div class="control-group">
+					<label for="poDateEnd">~</label>
+					<input id="poDateEnd" type="date" value="2026-05-14">
+				</div>
+				<div class="control-group">
+					<label for="poNo">P/O No</label>
+					<input id="poNo" type="text" placeholder="Enter P/O number">
+				</div>
+				<div class="control-group">
+					<label for="branch">Branch</label>
+					<input id="branch" type="text" placeholder="Enter branch">
+				</div>
+			</div>
+
+			<div class="status-meta">
+				<div>Summary: Active P/O and part records</div>
+				<div>Default range: 05/07/2026 ~ 05/14/2026</div>
+				<div>Filter: Open part orders only (No-Invoice)</div>
+			</div>
+
+			<div class="table-wrap">
+				<table class="status-table">
+					<thead>
+						<tr>
+							<th>Ticket No</th>
+							<th>P/O #</th>
+							<th>P/O Date</th>
+							<th>Order #</th>
+							<th>Account #</th>
+							<th>Part No</th>
+							<th>Description</th>
+							<th>Unit Price</th>
+							<th>Order Qty</th>
+							<th>Item Status</th>
+							<th>ETA</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10452" target="_blank" rel="noopener noreferrer">TCK-10452</a></td>
+							<td>PO-260507-001</td>
+							<td>2026-05-07</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10491" target="_blank" rel="noopener noreferrer">TCK-10491</a></td>
+							<td>PO-260508-014</td>
+							<td>2026-05-08</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10512" target="_blank" rel="noopener noreferrer">TCK-10512</a></td>
+							<td>PO-260510-022</td>
+							<td>2026-05-10</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10518" target="_blank" rel="noopener noreferrer">TCK-10518</a></td>
+							<td>PO-260511-009</td>
+							<td>2026-05-11</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10536" target="_blank" rel="noopener noreferrer">TCK-10536</a></td>
+							<td>PO-260513-017</td>
+							<td>2026-05-13</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+						<tr>
+							<td><a class="ticket-link" href="../Tickets/ticket_details.html?ticket=TCK-10549" target="_blank" rel="noopener noreferrer">TCK-10549</a></td>
+							<td>PO-260514-031</td>
+							<td>2026-05-14</td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td></td>
+							<td><span class="status-pill status-pending">No-Invoice</span></td>
+							<td></td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
+			<div class="report-footer">Showing 6 P/O status records filtered for open part orders only.</div>
+		</div>
+	</div>
+
+	<script>
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function syncPoStatusFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const table = tableWrap ? tableWrap.querySelector('.status-table') : null;
+			const floatingBar = document.getElementById('poStatusFloatingScrollbar');
+			const floatingInner = document.getElementById('poStatusFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updatePoStatusFloatingScrollbarVisibility() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('poStatusFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncPoStatusFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupPoStatusFloatingScrollbar() {
+			const tableWrap = document.querySelector('.table-wrap');
+			const floatingBar = document.getElementById('poStatusFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			let syncingFromFloating = false;
+			let syncingFromTable = false;
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromTable) { syncingFromTable = false; return; }
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) { syncingFromFloating = false; return; }
+				syncingFromTable = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updatePoStatusFloatingScrollbarVisibility();
+			});
+			window.addEventListener('resize', function () {
+				syncPoStatusFloatingScrollbar();
+				updatePoStatusFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updatePoStatusFloatingScrollbarVisibility, { passive: true });
+			syncPoStatusFloatingScrollbar();
+			updatePoStatusFloatingScrollbarVisibility();
+		}
+
+		window.addEventListener('load', loadUserInfo);
+		window.addEventListener('load', setupPoStatusFloatingScrollbar);
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

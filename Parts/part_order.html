@@ -1,0 +1,650 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Order - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.order-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.25rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.form-section {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+			gap: 1.5rem;
+			margin-bottom: 2rem;
+		}
+
+		.form-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.form-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #e5e7eb;
+		}
+
+		.required::after {
+			content: " *";
+			color: #ef4444;
+		}
+
+		.form-group input,
+		.form-group select {
+			width: 100%;
+			padding: 0.65rem 0.75rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.9rem;
+			font-family: inherit;
+		}
+
+		.form-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.form-group input:focus,
+		.form-group select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+		}
+
+		.form-section-title {
+			grid-column: 1 / -1;
+			font-size: 0.95rem;
+			font-weight: 600;
+			color: #64b5f6;
+			margin-bottom: -1rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+
+		.form-actions {
+			display: flex;
+			gap: 1rem;
+			margin-top: 2rem;
+			grid-column: 1 / -1;
+		}
+
+		.btn {
+			padding: 0.65rem 1.5rem;
+			border-radius: 6px;
+			border: none;
+			font-size: 0.9rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s ease;
+		}
+
+		.btn-primary {
+			background: linear-gradient(135deg, #1e3c72, #2a5298);
+			color: #fff;
+		}
+
+		.btn-primary:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 8px 16px rgba(30, 60, 114, 0.3);
+		}
+
+		.btn-secondary {
+			background: rgba(255, 255, 255, 0.1);
+			color: #fff;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+		}
+
+		.btn-secondary:hover {
+			background: rgba(255, 255, 255, 0.15);
+		}
+
+		.order-filters {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 1rem;
+			margin-bottom: 1.5rem;
+		}
+
+		.filter-chip {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.5rem;
+			padding: 0.5rem 1rem;
+			background: rgba(96, 165, 250, 0.15);
+			border: 1px solid rgba(96, 165, 250, 0.3);
+			border-radius: 20px;
+			color: #64b5f6;
+			font-size: 0.85rem;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.filter-chip:hover {
+			background: rgba(96, 165, 250, 0.25);
+		}
+
+		.filter-chip.active {
+			background: #64b5f6;
+			color: #1f2937;
+		}
+
+		/* ── Order Table ── */
+		.order-table-container {
+			margin-top: 2rem;
+			background: rgba(255, 255, 255, 0.04);
+			border: 1px solid rgba(255, 255, 255, 0.1);
+			border-radius: 8px;
+			overflow-x: auto;
+		}
+
+		.order-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.9rem;
+			color: #e5e7eb;
+		}
+
+		.order-table thead {
+			background: rgba(30, 60, 114, 0.8);
+			border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+		}
+
+		.order-table th {
+			padding: 0.75rem 1rem;
+			text-align: left;
+			font-weight: 600;
+			color: #93c5fd;
+			letter-spacing: 0.02em;
+		}
+
+		.order-table th.subheader {
+			background: rgba(30, 60, 114, 0.5);
+			padding: 0.5rem 1rem;
+			font-size: 0.8rem;
+			font-weight: 500;
+			color: #bfdbfe;
+			border-top: 1px solid rgba(96, 165, 250, 0.2);
+		}
+
+		.order-table tbody tr {
+			border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+			transition: background 0.15s ease;
+		}
+
+		.order-table tbody tr:hover {
+			background: rgba(96, 165, 250, 0.08);
+		}
+
+		.order-table td {
+			padding: 0.75rem 1rem;
+			text-align: left;
+		}
+
+		.order-table td.status-cell {
+			font-weight: 500;
+			color: #60a5fa;
+		}
+
+		.order-table td.action-cell {
+			display: flex;
+			gap: 0.5rem;
+			align-items: center;
+		}
+
+		.btn-action {
+			padding: 0.4rem 0.8rem;
+			border-radius: 4px;
+			border: none;
+			font-size: 0.8rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.btn-reserve {
+			background: rgba(59, 130, 246, 0.2);
+			color: #60a5fa;
+			border: 1px solid rgba(59, 130, 246, 0.4);
+		}
+
+		.btn-reserve:hover {
+			background: rgba(59, 130, 246, 0.35);
+		}
+
+		.btn-manual-po {
+			background: rgba(34, 197, 94, 0.2);
+			color: #4ade80;
+			border: 1px solid rgba(34, 197, 94, 0.4);
+		}
+
+		.btn-manual-po:hover {
+			background: rgba(34, 197, 94, 0.35);
+		}
+
+		.btn-manual-po.disabled,
+		.btn-manual-po:disabled {
+			opacity: 0.5;
+			cursor: not-allowed;
+			background: rgba(107, 114, 128, 0.2);
+			color: #9ca3af;
+			border-color: rgba(107, 114, 128, 0.3);
+		}
+
+		.empty-state {
+			text-align: center;
+			padding: 2rem;
+			color: #64748b;
+			font-size: 0.95rem;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Order</h2>
+		</div>
+
+		<div class="order-panel">
+			<div class="form-section">
+				<div class="form-section-title">Order Criteria</div>
+
+				<div class="form-group">
+					<label class="required">Location</label>
+					<select id="location" onchange="updateOrderDisplay()">
+						<option value="">Select Location</option>
+						<option value="Philippines">Philippines</option>
+						<option value="Tallahassee">Tallahassee</option>
+						<option value="Memphis">Memphis</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Dallas">Dallas</option>
+						<option value="San Antonio">San Antonio</option>
+						<option value="Lake Charles">Lake Charles</option>
+						<option value="Destin">Destin</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label>Part Dist.</label>
+					<select id="partDist" onchange="updateOrderDisplay()">
+						<option value="">Select Distributor</option>
+						<option value="LG">LG</option>
+						<option value="Encompass">Encompass</option>
+						<option value="SS">SS</option>
+						<option value="Marcone-162468">Marcone-162468</option>
+						<option value="Encompass-Birmingham/Montgomery">Encompass-Birmingham/Montgomery</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label>Technician</label>
+					<input type="text" id="technician" placeholder="Enter technician name">
+				</div>
+
+				<div class="form-group">
+					<label class="required">Schedule Date</label>
+					<input type="date" id="scheduleDate" value="2026-05-15">
+				</div>
+
+				<div class="form-group">
+					<label class="required">Warranty Type</label>
+					<select id="warrantyType" onchange="updateOrderDisplay()">
+						<option value="">Select Warranty Type</option>
+						<option value="Concession LP">Concession LP</option>
+						<option value="Concession L">Concession L</option>
+						<option value="Concession P">Concession P</option>
+						<option value="In warranty">In warranty</option>
+						<option value="Labor only Wty">Labor only Wty</option>
+						<option value="Out-of-warranty">Out-of-warranty</option>
+						<option value="Part only Wty">Part only Wty</option>
+						<option value="Special Part 5 year">Special Part 5 year</option>
+						<option value="Unknown">Unknown</option>
+						<option value="Ext Wty">Ext Wty</option>
+						<option value="Ext Labor Wty">Ext Labor Wty</option>
+						<option value="Ext Part Wty">Ext Part Wty</option>
+					</select>
+				</div>
+
+				<div class="form-group">
+					<label>Repair Status</label>
+					<select id="repairStatus" disabled>
+						<option value="Need PO" selected>Need PO</option>
+					</select>
+					<small style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem;">Locked to "Need PO"</small>
+				</div>
+			</div>
+
+			<div style="margin: 1.5rem 0; padding: 1rem 0; border-top: 1px solid rgba(255, 255, 255, 0.1); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+				<h4 style="color: #64b5f6; font-size: 0.95rem; margin: 0 0 1rem 0; text-transform: uppercase; letter-spacing: 0.05em;">Custom Filters</h4>
+				<div class="order-filters">
+					<div class="filter-chip" onclick="toggleFilter(this, 'pastSchedule')">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"></circle>
+							<polyline points="12 6 12 12 16 14"></polyline>
+						</svg>
+						Past Schedule Date
+					</div>
+					<div class="filter-chip" onclick="toggleFilter(this, 'noSchedule')">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="12" y1="5" x2="12" y2="19"></line>
+							<line x1="5" y1="12" x2="19" y2="12"></line>
+						</svg>
+						No Schedule Date
+					</div>
+					<div class="filter-chip" onclick="toggleFilter(this, 'all')">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M12 5v14M5 12h14"></path>
+						</svg>
+						All
+					</div>
+					<div class="filter-chip" onclick="toggleFilter(this, 'needPO')">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+						</svg>
+						Need PO
+					</div>
+					<div class="filter-chip" onclick="toggleFilter(this, 'unapproved')">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+						</svg>
+						Include Unapproved Parts
+					</div>
+				</div>
+			</div>
+
+			<div class="form-actions">
+				<button class="btn btn-primary" onclick="submitOrder()">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.5rem;">
+						<polyline points="20 6 9 17 4 12"></polyline>
+					</svg>
+					Create Order
+				</button>
+				<button class="btn btn-secondary" onclick="resetForm()">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 0.5rem;">
+						<polyline points="23 4 23 10 17 10"></polyline>
+						<path d="M20.49 15a9 9 0 1 1-2-8.83"></path>
+					</svg>
+					Reset
+				</button>
+			</div>
+
+			<div id="orderSummary" style="margin-top: 2rem; padding: 1rem; background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.2); border-radius: 8px; display: none;">
+				<h4 style="color: #64b5f6; margin-top: 0;">Order Summary</h4>
+				<div id="summaryContent" style="font-size: 0.9rem; color: #cbd5e1;"></div>
+			</div>
+
+			<!-- Order Table -->
+			<div class="order-table-container">
+				<table class="order-table">
+					<thead>
+						<tr>
+							<th>Ticket #</th>
+							<th>Status</th>
+							<th>Part Dist.</th>
+							<th>Part No</th>
+							<th>Description</th>
+							<th colspan="2" style="text-align: center;">ETA on inventory</th>
+							<th colspan="2" style="text-align: center;">Action</th>
+						</tr>
+						<tr>
+							<th colspan="5"></th>
+							<th class="subheader">Request</th>
+							<th class="subheader">Avail.</th>
+							<th class="subheader">Reserve</th>
+							<th class="subheader">Manual P/O</th>
+						</tr>
+					</thead>
+					<tbody id="orderTableBody">
+						<tr>
+							<td colspan="9" class="empty-state">No orders found. Select criteria and click "Create Order" to generate a list.</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		// Toggle filter chips
+		let activeFilters = new Set();
+		function toggleFilter(element, filterId) {
+			element.classList.toggle('active');
+			if (element.classList.contains('active')) {
+				activeFilters.add(filterId);
+			} else {
+				activeFilters.delete(filterId);
+			}
+			updateOrderDisplay();
+		}
+
+		// Update order display
+		function updateOrderDisplay() {
+			const location = document.getElementById('location').value;
+			const warranties = document.getElementById('warrantyType').value;
+			
+			if (location && warranties) {
+				document.getElementById('orderSummary').style.display = 'block';
+				const filters = Array.from(activeFilters).join(', ') || 'None';
+				document.getElementById('summaryContent').innerHTML = `
+					<p><strong>Location:</strong> ${location}</p>
+					<p><strong>Warranty Type:</strong> ${warranties}</p>
+					<p><strong>Active Filters:</strong> ${filters}</p>
+					<p><strong>Ready to create order</strong></p>
+				`;
+			} else {
+				document.getElementById('orderSummary').style.display = 'none';
+			}
+		}
+
+		// Submit order
+		function submitOrder() {
+			const location = document.getElementById('location').value;
+			const partDist = document.getElementById('partDist').value;
+			const technician = document.getElementById('technician').value;
+			const scheduleDate = document.getElementById('scheduleDate').value;
+			const warrantyType = document.getElementById('warrantyType').value;
+			const repairStatus = document.getElementById('repairStatus').value;
+
+			if (!location || !warrantyType) {
+				alert('Please fill in all required fields (marked with *)');
+				return;
+			}
+
+			const orderData = {
+				location,
+				partDist,
+				technician,
+				scheduleDate,
+				warrantyType,
+				repairStatus,
+				filters: Array.from(activeFilters),
+				createdAt: new Date().toLocaleString()
+			};
+
+			localStorage.setItem('lastOrder', JSON.stringify(orderData));
+			
+			// Generate sample order data for the table
+			populateOrderTable(location, partDist, warrantyType);
+		}
+
+		// Generate sample orders and populate the table
+		function populateOrderTable(location, partDist, warrantyType) {
+			const orderTableBody = document.getElementById('orderTableBody');
+			
+			// Sample data structure
+			const sampleOrders = [
+				{
+					ticketNo: 'TK-001549',
+					status: 'Need PO',
+					partDist: partDist || 'LG',
+					partNo: 'ACQ86576404',
+					description: 'Compressor Motor',
+					requestQty: 1,
+					availQty: 0,
+					eta: '2026-06-05'
+				},
+				{
+					ticketNo: 'TK-001548',
+					status: 'Need PO',
+					partDist: partDist || 'Encompass',
+					partNo: 'WPW10217825',
+					description: 'Wire Harness',
+					requestQty: 2,
+					availQty: 1,
+					eta: ''
+				},
+				{
+					ticketNo: 'TK-001547',
+					status: 'Need PO',
+					partDist: partDist || 'SS',
+					partNo: 'RPS345-78',
+					description: 'Pump Assembly',
+					requestQty: 1,
+					availQty: 0,
+					eta: '2026-06-10'
+				},
+				{
+					ticketNo: 'TK-001546',
+					status: 'Need PO',
+					partDist: partDist || 'Marcone-162468',
+					partNo: 'EVT456-12',
+					description: 'Evaporator Coil',
+					requestQty: 1,
+					availQty: 0,
+					eta: ''
+				}
+			];
+
+			// Filter or limit orders based on selected partDist
+			let filteredOrders = sampleOrders;
+			if (partDist) {
+				filteredOrders = sampleOrders.filter(o => o.partDist === partDist);
+			}
+
+			if (filteredOrders.length === 0) {
+				orderTableBody.innerHTML = `
+					<tr>
+						<td colspan="9" class="empty-state">No orders found for the selected criteria.</td>
+					</tr>
+				`;
+				return;
+			}
+
+			// Populate table rows
+			orderTableBody.innerHTML = filteredOrders.map(order => {
+				const hasETA = order.eta && order.eta.trim() !== '';
+				return `
+					<tr>
+						<td>${order.ticketNo}</td>
+						<td class="status-cell">${order.status}</td>
+						<td>${order.partDist}</td>
+						<td>${order.partNo}</td>
+						<td>${order.description}</td>
+						<td style="text-align: center;">${order.requestQty}</td>
+						<td style="text-align: center;">${order.availQty}</td>
+						<td class="action-cell">
+							<button class="btn-action btn-reserve" onclick="reservePart('${order.ticketNo}')">Reserve</button>
+						</td>
+						<td class="action-cell">
+							<button class="btn-action btn-manual-po ${!hasETA ? 'disabled' : ''}" 
+								onclick="manualPO('${order.ticketNo}')" 
+								${!hasETA ? 'disabled title="Visible only when ETA is set"' : 'title="Create manual purchase order"'}>
+								Manual P/O
+							</button>
+						</td>
+					</tr>
+				`;
+			}).join('');
+
+			alert(`Part Order created successfully!\n\nLocation: ${location}\nWarranty Type: ${warrantyType}\n\nFound ${filteredOrders.length} order(s) below.`);
+		}
+
+		// Reserve part action
+		function reservePart(ticketNo) {
+			alert(`Reservation initiated for Ticket: ${ticketNo}`);
+			// Logic to handle part reservation
+		}
+
+		// Manual P/O action
+		function manualPO(ticketNo) {
+			alert(`Manual P/O initiated for Ticket: ${ticketNo}`);
+			// Logic to handle manual purchase order
+		}
+
+		// Reset form
+		function resetForm() {
+			document.getElementById('location').value = '';
+			document.getElementById('partDist').value = '';
+			document.getElementById('technician').value = '';
+			document.getElementById('scheduleDate').value = '2026-05-15';
+			document.getElementById('warrantyType').value = '';
+			document.getElementById('repairStatus').value = '';
+			document.querySelectorAll('.filter-chip').forEach(chip => chip.classList.remove('active'));
+			activeFilters.clear();
+			document.getElementById('orderSummary').style.display = 'none';
+		}
+
+		window.addEventListener('load', loadUserInfo);
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>
