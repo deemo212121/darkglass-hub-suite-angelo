@@ -3352,6 +3352,8 @@
 :root[data-theme="light"] .text-amber-100 { color: #b45309 !important; }
 :root[data-theme="light"] .border-amber-400\/40 { border-color: rgba(180, 83, 9, 0.5) !important; }
 :root[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(37, 99, 235, 0.12) !important; }
+:root[data-theme="light"] .bg-blue-500\/5 { background-color: rgba(37, 99, 235, 0.08) !important; }
+:root[data-theme="light"] .border-blue-500\/20 { border-color: rgba(37, 99, 235, 0.35) !important; }
 
 /* ── Native date/time calendar icon: dark theme inverts it to white; light
    mode should show it dark. Clear the invert filter. */
@@ -8702,6 +8704,8 @@
 :root[data-theme="light"] .text-amber-100 { color: #b45309 !important; }
 :root[data-theme="light"] .border-amber-400\/40 { border-color: rgba(180, 83, 9, 0.5) !important; }
 :root[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(37, 99, 235, 0.12) !important; }
+:root[data-theme="light"] .bg-blue-500\/5 { background-color: rgba(37, 99, 235, 0.08) !important; }
+:root[data-theme="light"] .border-blue-500\/20 { border-color: rgba(37, 99, 235, 0.35) !important; }
 
 /* ── Native date/time calendar icon: dark theme inverts it to white; light
    mode should show it dark. Clear the invert filter. */
@@ -10845,9 +10849,12 @@
 :root[data-theme="light"] .bg-emerald-500\/20,
 :root[data-theme="light"] .bg-green-500\/15,
 :root[data-theme="light"] .bg-green-500\/20 { background-color: rgba(16, 185, 129, 0.16) !important; }
+:root[data-theme="light"] .bg-green-500\/5,
+:root[data-theme="light"] .bg-green-500\/10 { background-color: rgba(16, 185, 129, 0.10) !important; }
 :root[data-theme="light"] .border-emerald-400\/40,
 :root[data-theme="light"] .border-emerald-500\/30,
-:root[data-theme="light"] .border-green-400\/40 { border-color: rgba(5, 150, 105, 0.55) !important; }
+:root[data-theme="light"] .border-green-400\/40,
+:root[data-theme="light"] .border-green-500\/20 { border-color: rgba(5, 150, 105, 0.55) !important; }
 
 /* Blue accent chips/buttons (Copy, View Log) + section headings */
 :root[data-theme="light"] .text-blue-300,
@@ -10929,6 +10936,8 @@
 :root[data-theme="light"] .text-amber-100 { color: #b45309 !important; }
 :root[data-theme="light"] .border-amber-400\/40 { border-color: rgba(180, 83, 9, 0.5) !important; }
 :root[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(37, 99, 235, 0.12) !important; }
+:root[data-theme="light"] .bg-blue-500\/5 { background-color: rgba(37, 99, 235, 0.08) !important; }
+:root[data-theme="light"] .border-blue-500\/20 { border-color: rgba(37, 99, 235, 0.35) !important; }
 
 /* ════════════════════════════════════════════════════════════════════════
    LIGHT THEME — full scan gap-fills

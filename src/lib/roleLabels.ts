@@ -79,3 +79,27 @@ export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: 
   if (moduleSlug === "dashboard") return CSR_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
   return true; // tickets: fully open once the module itself is allowed
 }
+
+/**
+ * Roles allowed to flag a ticket as misdiagnosed (ticket.$ticketNo.tsx) and
+ * to see the "Show Misdiagnosed" filter (TicketList.tsx) — manager-tier
+ * reviewers only. "Managers" maps to the plain MANAGER role plus branch
+ * managers; Triage/Claims/BizOps are their own dedicated manager roles,
+ * called out separately from the generic "Managers" bucket per how this
+ * was originally requested.
+ */
+const MISDIAGNOSED_ROLES = new Set([
+  "ADMIN",
+  "SUPERADMIN",
+  "MANAGER",
+  "BRANCH_MANAGER",
+  "SENIOR_BRANCH_MANAGER",
+  "BIZOPS_MANAGER",
+  "BIZOPS_SENIOR_MANAGER",
+  "TRIAGE_MANAGER",
+  "CLAIMS_MANAGER",
+]);
+
+export function canManageMisdiagnosed(role: string | null | undefined): boolean {
+  return MISDIAGNOSED_ROLES.has(normalizeRole(role));
+}

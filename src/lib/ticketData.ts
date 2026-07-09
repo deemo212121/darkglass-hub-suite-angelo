@@ -44,6 +44,13 @@ export interface Ticket {
   status: string;
   phone: string;
   redo: string;
+  /**
+   * "Y"/"N" — set by a manager-tier reviewer when a technician's diagnosis
+   * turned out wrong, which is why the repair took longer than expected.
+   * See tickets.misdiagnosed (migration 0046). Who set/unset it is tracked
+   * via the existing ticket_audit_log, not here.
+   */
+  misdiagnosed?: string;
   aging: number;
   calls: number;
   partOrder: string;

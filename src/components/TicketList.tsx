@@ -16,6 +16,7 @@ import {
   getPartOrderStateByTicketIds,
 } from "@/lib/supabase/tickets";
 import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
+import { canManageMisdiagnosed } from "@/lib/roleLabels";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
@@ -540,11 +541,13 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
 
   const SAMPLE_TICKETS: TicketItem[] = tickets;
-  const { email, allowedLocations } = useAuth();
+  const { email, role, allowedLocations } = useAuth();
+  const canViewMisdiagnosed = canManageMisdiagnosed(role);
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
+  const [misdiagnosedOnlyFilter, setMisdiagnosedOnlyFilter] = useState(false);
   const [locationFilter, setLocationFilter] = useState("");
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
@@ -718,9 +721,14 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         if (!selected || selected.size === 0) return true;
         return selected.has(columnValueGetters[key](ticket));
       });
-      return matchesAccess && matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource && matchesStatusGroup && matchesColumns;
+      // "Show Misdiagnosed" — manager-tier only (canViewMisdiagnosed also
+      // guards whether the checkbox even renders, but re-checked here too
+      // so the filter can't silently apply for a role that toggled it on
+      // and then lost access, e.g. after a role change mid-session).
+      const matchesMisdiagnosed = !misdiagnosedOnlyFilter || !canViewMisdiagnosed || ticket.misdiagnosed === "Y";
+      return matchesAccess && matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource && matchesStatusGroup && matchesColumns && matchesMisdiagnosed;
     });
-  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters]);
+  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters, misdiagnosedOnlyFilter, canViewMisdiagnosed]);
 
   // Build option lists per column from the data set **before** that column's own
   // filter is applied — so opening Loc still shows every Loc value present in
@@ -961,6 +969,23 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
+
+            {/* "Show Misdiagnosed" — manager-tier only, same allow-list as
+                the Misdiagnosed checkbox on the ticket detail page. Sits
+                under the Start Date field it's grouped near. */}
+            {canViewMisdiagnosed && (
+              <div className="grid gap-3 lg:grid-cols-4">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={misdiagnosedOnlyFilter}
+                    onChange={(e) => setMisdiagnosedOnlyFilter(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-white/30 accent-red-500"
+                  />
+                  <span className="font-semibold">Show Misdiagnosed</span>
+                </label>
+              </div>
+            )}
 
             {/* Column visibility filter + Map View shortcut */}
             <div className="relative flex justify-end items-center gap-2">
