@@ -187,11 +187,21 @@ function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
+// Older payroll_line_items rows may have been recorded with currency: "PHP"
+// (native, pre-standardization) — convert only those; everything else (all
+// current rows use currency: "USD") is already a plain USD figure.
+function toUSD(li: PayrollLineItem): number {
+  return li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0);
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { uid, displayName } = useAuth();
+  const { uid } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "reports">("overview");
+  // Overview KPI cards default to the live current-period preview, but can
+  // be pointed at any previously generated payroll run instead.
+  const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [employeeSearch, setEmployeeSearch] = useState("");
@@ -335,12 +345,48 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const avgPayPerEmployee =
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
 
+  // Overview KPI cards: either the live current-period preview (computed
+  // above from payrollRows) or a specific historical run's actual recorded
+  // payroll_line_items — selected via the dropdown on the Overview tab.
+  const selectedRun = selectedRunId === "current" ? null : payrollRuns.find((r) => r.id === selectedRunId) ?? null;
+  const overviewSummary = (() => {
+    if (!selectedRun) {
+      return {
+        totalPayrollUSD,
+        totalUSPayroll,
+        totalPHPayroll,
+        usCount: usRows.length,
+        phCount: phRows.length,
+        avgPayPerEmployee,
+        periodLabel: "Last 14 days · USD",
+        employeeCount: employees.length,
+        employeeCountLabel: "Active",
+      };
+    }
+    const items = payrollLineItems.filter((li) => li.payroll_run_id === selectedRun.id);
+    let usTotal = 0, phTotal = 0, usCount = 0, phCount = 0;
+    for (const li of items) {
+      const emp = employees.find((e) => e.id === li.profile_id);
+      const usd = toUSD(li);
+      if (emp?.country === "PH") { phTotal += usd; phCount++; }
+      else { usTotal += usd; usCount++; }
+    }
+    const total = usTotal + phTotal;
+    return {
+      totalPayrollUSD: total,
+      totalUSPayroll: usTotal,
+      totalPHPayroll: phTotal,
+      usCount,
+      phCount,
+      avgPayPerEmployee: items.length > 0 ? total / items.length : 0,
+      periodLabel: `${selectedRun.period_start} – ${selectedRun.period_end} · USD`,
+      employeeCount: items.length,
+      employeeCountLabel: "Paid in this run",
+    };
+  })();
+
   // Monthly bar chart data from payroll_line_items grouped by run period.
-  // Older rows may have been recorded with currency: "PHP" (native, pre-
-  // standardization) — convert only those; everything else (all current
-  // rows use currency: "USD") is already a plain USD figure.
   const monthlyBarData: MonthlyBarData[] = (() => {
-    const toUSD = (li: PayrollLineItem) => (li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0));
     const map = new Map<string, { usPayroll: number; phPayroll: number }>();
     for (const run of payrollRuns) {
       const label = run.period_start
@@ -436,8 +482,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             createNotification({
               recipientId: r.employee.id,
               senderId: myProfileId,
-              senderName: displayName || "Accounting",
-              body: `💰 Your payroll for ${start} – ${end} is ready: ${fmt(r.grossPayUSD)}.`,
+              senderName: "Payroll",
+              body: "💰 Payslip is Ready — View Payslip",
               linkTo: "/m/dashboard/employee-self-service?tab=payroll",
             }).catch((err) => console.error("Failed to notify", r.employee.id, err))
           )
@@ -511,8 +557,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             createNotification({
               recipientId: r.employee.id,
               senderId: myProfileId,
-              senderName: displayName || "Accounting",
-              body: `🔄 Your payroll for ${lastRun.period_start} – ${lastRun.period_end} was updated: ${fmt(r.grossPayUSD)}.`,
+              senderName: "Payroll",
+              body: "🔄 Payslip Updated — View Payslip",
               linkTo: "/m/dashboard/employee-self-service?tab=payroll",
             }).catch((err) => console.error("Failed to notify", r.employee.id, err))
           )
@@ -655,31 +701,49 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* ── Overview Tab ─────────────────────────────────────────────────── */}
         {activeTab === "overview" && (
           <div className="space-y-6">
+            {/* Period selector */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-400 uppercase tracking-wide">Period</label>
+              <select
+                title="Select payroll period"
+                value={selectedRunId}
+                onChange={(e) => setSelectedRunId(e.target.value)}
+                className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+              >
+                <option value="current">Current Period (Live)</option>
+                {payrollRuns.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {run.period_start} – {run.period_end}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* KPI Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Total Employees</p>
-                <p className="text-2xl font-bold text-green-300">{employees.length}</p>
-                <p className="text-xs text-slate-500 mt-1">Active</p>
+                <p className="text-2xl font-bold text-green-300">{overviewSummary.employeeCount}</p>
+                <p className="text-xs text-slate-500 mt-1">{overviewSummary.employeeCountLabel}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Total Payroll (Current Period)</p>
-                <p className="text-2xl font-bold text-blue-300">{fmt(totalPayrollUSD)}</p>
-                <p className="text-xs text-slate-500 mt-1">Last 14 days · USD</p>
+                <p className="text-xs text-slate-400 mb-1">{selectedRun ? "Total Payroll (Selected Period)" : "Total Payroll (Current Period)"}</p>
+                <p className="text-2xl font-bold text-blue-300">{fmt(overviewSummary.totalPayrollUSD)}</p>
+                <p className="text-xs text-slate-500 mt-1">{overviewSummary.periodLabel}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">US / PH Split</p>
                 <p className="text-lg font-bold text-purple-300">
-                  {fmt(totalUSPayroll)} / {fmt(totalPHPayroll)}
+                  {fmt(overviewSummary.totalUSPayroll)} / {fmt(overviewSummary.totalPHPayroll)}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {usRows.length} US · {phRows.length} PH employees
+                  {overviewSummary.usCount} US · {overviewSummary.phCount} PH employees
                 </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Avg Pay / Employee</p>
-                <p className="text-2xl font-bold text-amber-300">{fmt(avgPayPerEmployee)}</p>
-                <p className="text-xs text-slate-500 mt-1">Current period</p>
+                <p className="text-2xl font-bold text-amber-300">{fmt(overviewSummary.avgPayPerEmployee)}</p>
+                <p className="text-xs text-slate-500 mt-1">{selectedRun ? "Selected period" : "Current period"}</p>
               </div>
             </div>
 

@@ -624,7 +624,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           {activeTab === "daily-attendance" && (
             <>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 bg-gradient-to-br from-slate-800/80 to-slate-900/50 border border-white/10 rounded-lg p-4 backdrop-blur">
+                <div className="flex-1 bg-slate-900/50 border border-white/10 rounded-lg p-4 backdrop-blur">
                   <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-orange-400" />
                     Attendance Alerts
@@ -1264,21 +1264,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Check In</label>
-                    <input type="time" value={correctionForm.correctedCheckIn} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckIn: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Corrected Check In" value={correctionForm.correctedCheckIn} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckIn: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Check Out</label>
-                    <input type="time" value={correctionForm.correctedCheckOut} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckOut: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Corrected Check Out" value={correctionForm.correctedCheckOut} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedCheckOut: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Meal Start</label>
-                    <input type="time" title="Corrected Meal Start" value={correctionForm.correctedMealStart} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealStart: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Corrected Meal Start" value={correctionForm.correctedMealStart} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealStart: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-1">Corrected Meal End</label>
-                    <input type="time" title="Corrected Meal End" value={correctionForm.correctedMealEnd} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealEnd: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Corrected Meal End" value={correctionForm.correctedMealEnd} onChange={(e) => setCorrectionForm({ ...correctionForm, correctedMealEnd: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                 </div>
                 <div>
@@ -1314,11 +1314,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Check In</label>
-                    <input type="time" value={correctionTimecardData.checkIn} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, checkIn: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Check In" value={correctionTimecardData.checkIn} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, checkIn: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Check Out</label>
-                    <input type="time" value={correctionTimecardData.checkOut} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, checkOut: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                    <input type="time" step="1" title="Check Out" value={correctionTimecardData.checkOut} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, checkOut: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                   </div>
                 </div>
                 {(selectedCorrection.correctedMealStart || selectedCorrection.correctedMealEnd || selectedCorrection.originalMealStart || selectedCorrection.originalMealEnd) && (
@@ -1327,11 +1327,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <label className="block text-xs text-slate-400 uppercase mb-2">Meal Start</label>
-                        <input type="time" title="Meal Start" value={correctionTimecardData.mealStart} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, mealStart: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                        <input type="time" step="1" title="Meal Start" value={correctionTimecardData.mealStart} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, mealStart: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                       </div>
                       <div>
                         <label className="block text-xs text-slate-400 uppercase mb-2">Meal End</label>
-                        <input type="time" title="Meal End" value={correctionTimecardData.mealEnd} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, mealEnd: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                        <input type="time" step="1" title="Meal End" value={correctionTimecardData.mealEnd} onChange={(e) => setCorrectionTimecardData({ ...correctionTimecardData, mealEnd: e.target.value })} className="w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
                       </div>
                     </div>
                   </>

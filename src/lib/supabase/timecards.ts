@@ -142,15 +142,17 @@ export async function deleteEntry(profileId: string, workDate: string): Promise<
 
 
 /**
- * Compute hours worked between two HH:MM strings, accounting for an optional
- * meal break. Mirrors the math used by the personal timecard page so the
- * self-service Attendance tab agrees with the timecard.
+ * Compute hours worked between two "HH:MM" or "HH:MM:SS" strings, accounting
+ * for an optional meal break. Mirrors the math used by the personal timecard
+ * page so the self-service Attendance tab agrees with the timecard. Seconds
+ * (when present) are included so payroll hours — and therefore pay — aren't
+ * rounded to the nearest minute.
  */
 function hoursBetween(t1: string, t2: string): number {
   if (!t1 || !t2) return 0;
-  const [h1, m1] = t1.split(":").map(Number);
-  const [h2, m2] = t2.split(":").map(Number);
-  return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+  const [h1, m1, s1 = 0] = t1.split(":").map(Number);
+  const [h2, m2, s2 = 0] = t2.split(":").map(Number);
+  return ((h2 * 3600 + m2 * 60 + s2) - (h1 * 3600 + m1 * 60 + s1)) / 3600;
 }
 
 export function calcWorkedHours(entry: UITimeEntry): number {

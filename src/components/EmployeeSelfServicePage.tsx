@@ -72,16 +72,33 @@ const PTO_TYPE_LABEL: Record<PtoType, string> = {
   bereavement: "Bereavement",
 };
 
+interface PayslipDailyRow {
+  date: string;
+  clockIn: string;
+  clockOut: string;
+  mealStart: string;
+  mealEnd: string;
+  hours: number;
+  rate: number;
+  amount: number;
+}
+
+// Renders a raw "HH:MM" or "HH:MM:SS" capture time as "h:mm AM/PM" for the payslip.
+function formatClockTime(t: string): string {
+  if (!t) return "—";
+  const [h, m, s = 0] = t.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "—";
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")} ${period}`;
+}
+
 interface EmployeePayslipData {
   name: string;
   department: string;
   period: string;
   generatedDate: string;
-  hoursWorked: number;
-  overtimeHours: number;
-  hourlyRate: number;
-  regularPay: number;
-  overtimePay: number;
+  dailyRows: PayslipDailyRow[];
   grossPay: number;
   netPay: number;
 }
@@ -331,28 +348,40 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
       <table class="table">
         <thead>
           <tr>
-            <th>Description</th>
-            <th style="text-align: right;">Hours</th>
+            <th>Date</th>
+            <th>Time In</th>
+            <th>Meal In</th>
+            <th>Meal Out</th>
+            <th>Time Out</th>
+            <th style="text-align: right;">Duty Hours</th>
             <th style="text-align: right;">Rate</th>
-            <th style="text-align: right;">Amount</th>
+            <th style="text-align: right;">Total</th>
           </tr>
         </thead>
         <tbody>
+          ${employee.dailyRows.length > 0 ? employee.dailyRows.map((r) => `
           <tr>
-            <td>Regular Hours</td>
-            <td class="amount">${employee.hoursWorked.toFixed(2)}</td>
-            <td class="amount">$${employee.hourlyRate.toFixed(2)}</td>
-            <td class="amount">$${employee.regularPay.toFixed(2)}</td>
+            <td>${r.date}</td>
+            <td>${formatClockTime(r.clockIn)}</td>
+            <td>${formatClockTime(r.mealStart)}</td>
+            <td>${formatClockTime(r.mealEnd)}</td>
+            <td>${formatClockTime(r.clockOut)}</td>
+            <td class="amount">${r.hours.toFixed(2)}</td>
+            <td class="amount">$${r.rate.toFixed(2)}</td>
+            <td class="amount">$${r.amount.toFixed(2)}</td>
           </tr>
-          ${employee.overtimeHours > 0 ? `
+          `).join('') : `
           <tr>
-            <td>Overtime Hours</td>
-            <td class="amount">${employee.overtimeHours.toFixed(2)}</td>
-            <td class="amount">$${(employee.hourlyRate * 1.5).toFixed(2)}</td>
-            <td class="amount">$${employee.overtimePay.toFixed(2)}</td>
+            <td colspan="8" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
           </tr>
-          ` : ''}
+          `}
         </tbody>
+        <tfoot>
+          <tr style="font-weight: 700; background: #f3f4f6;">
+            <td colspan="7">Total</td>
+            <td class="amount">$${employee.grossPay.toFixed(2)}</td>
+          </tr>
+        </tfoot>
       </table>
 
       <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
@@ -418,6 +447,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
+  const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
+  const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [responseNote, setResponseNote] = useState<Record<string, string>>({});
   const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
@@ -884,16 +915,65 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   };
 
   const selectedPayslip = myPayslips.find((p) => p.runId === selectedPayslipId) ?? myPayslips[0] ?? null;
+
+  // Build the day-by-day duty breakdown shown on the payslip: fetch real
+  // attendance for the selected payslip's exact pay period and apply that
+  // run's stored hourly rate per day (payroll runs use one flat rate per
+  // employee for the whole period, so no per-day rate lookup is needed).
+  useEffect(() => {
+    if (!payslipModalOpen || !selectedPayslip || !myProfileId) {
+      setPayslipDailyRows([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setPayslipDailyLoading(true);
+      try {
+        const schedule = uid ? await getMyProfileSchedule(uid) : null;
+        const rows = await getAttendanceForRange(
+          myProfileId,
+          selectedPayslip.periodStart,
+          selectedPayslip.periodEnd,
+          {
+            requiredCheckIn: schedule?.requiredCheckIn,
+            requiredCheckOut: schedule?.requiredCheckOut,
+          }
+        );
+        if (cancelled) return;
+        const rate = selectedPayslip.hourlyRate;
+        const daily: PayslipDailyRow[] = rows
+          .filter((r) => r.hoursWorked > 0)
+          .map((r) => {
+            const regular = Math.min(r.hoursWorked, 8);
+            const overtime = Math.max(0, r.hoursWorked - 8);
+            return {
+              date: r.date,
+              clockIn: r.clockIn,
+              clockOut: r.clockOut,
+              mealStart: r.mealStart,
+              mealEnd: r.mealEnd,
+              hours: r.hoursWorked,
+              rate,
+              amount: regular * rate + overtime * rate * 1.5,
+            };
+          });
+        setPayslipDailyRows(daily);
+      } catch (err) {
+        console.error("Failed to load payslip daily breakdown:", err);
+        if (!cancelled) setPayslipDailyRows([]);
+      } finally {
+        if (!cancelled) setPayslipDailyLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [payslipModalOpen, selectedPayslip, myProfileId, uid]);
+
   const payslipData: EmployeePayslipData | null = selectedPayslip ? {
     name: displayName || "Employee",
     department: ROLE_LABELS[role || ""] || role || "",
     period: `${selectedPayslip.periodStart} to ${selectedPayslip.periodEnd}`,
     generatedDate: selectedPayslip.generatedAt ? new Date(selectedPayslip.generatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
-    hoursWorked: selectedPayslip.hoursWorked,
-    overtimeHours: selectedPayslip.overtimeHours,
-    hourlyRate: selectedPayslip.hourlyRate,
-    regularPay: selectedPayslip.regularPay,
-    overtimePay: selectedPayslip.overtimePay,
+    dailyRows: payslipDailyRows,
     grossPay: selectedPayslip.grossPay,
     netPay: selectedPayslip.netPay,
   } : null;
@@ -1703,6 +1783,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
                           <input
                             type="time"
+                            step="1"
                             title="Corrected Check In"
                             value={formData.correctedCheckIn}
                             onChange={(e) => setFormData({ ...formData, correctedCheckIn: e.target.value })}
@@ -1713,6 +1794,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
                           <input
                             type="time"
+                            step="1"
                             title="Corrected Check Out"
                             value={formData.correctedCheckOut}
                             onChange={(e) => setFormData({ ...formData, correctedCheckOut: e.target.value })}
@@ -1725,6 +1807,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start</label>
                           <input
                             type="time"
+                            step="1"
                             title="Corrected Meal Start"
                             value={formData.correctedMealStart}
                             onChange={(e) => setFormData({ ...formData, correctedMealStart: e.target.value })}
@@ -1735,6 +1818,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End</label>
                           <input
                             type="time"
+                            step="1"
                             title="Corrected Meal End"
                             value={formData.correctedMealEnd}
                             onChange={(e) => setFormData({ ...formData, correctedMealEnd: e.target.value })}
@@ -1810,12 +1894,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
             {/* Payslip Content */}
             <div className="flex-1 overflow-y-auto bg-white">
-              <iframe
-                ref={iframeRef}
-                srcDoc={generatePayslipHTML(payslipData)}
-                className="w-full h-full border-none"
-                title="Payslip"
-              />
+              {payslipDailyLoading ? (
+                <div className="w-full h-full flex items-center justify-center text-slate-500 text-sm">
+                  Loading payslip…
+                </div>
+              ) : (
+                <iframe
+                  ref={iframeRef}
+                  srcDoc={generatePayslipHTML(payslipData)}
+                  className="w-full h-full border-none"
+                  title="Payslip"
+                />
+              )}
             </div>
 
             {/* Modal Footer */}

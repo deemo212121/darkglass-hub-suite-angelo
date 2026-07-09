@@ -112,6 +112,8 @@ export interface Ticket {
     triageNote: string;
     status: string;
     note: string;
+    /** Set once a newer visit supersedes this one — blocks further edits. */
+    locked?: boolean;
   }>;
   parts?: Array<{
     id: string;

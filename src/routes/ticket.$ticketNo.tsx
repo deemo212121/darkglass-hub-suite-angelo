@@ -5,7 +5,7 @@ import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
@@ -39,6 +39,7 @@ import {
   getTicketVisits as sbGetTicketVisits,
   addTicketVisit as sbAddTicketVisit,
   updateTicketVisit as sbUpdateTicketVisit,
+  deleteTicketVisit as sbDeleteTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
   updateTicketAssignment as sbUpdateTicketAssignment,
   updateTicketCustomer as sbUpdateTicketCustomer,
@@ -304,6 +305,8 @@ interface VisitLogEntry {
   triageNote: string;
   status: string;
   note: string;
+  /** Set once a newer visit supersedes this one — blocks further edits. */
+  locked?: boolean;
 }
 
 type TicketCopyPayload = {
@@ -2697,6 +2700,7 @@ function TicketDetailsPage() {
         triageNote: newVisitTriageNote,
         status: newVisitStatus,
         note: trimmedNote,
+        locked: false,
       })),
       by: currentEditor,
       scheduleDate: newVisitScheduleDate,
@@ -2723,6 +2727,17 @@ function TicketDetailsPage() {
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
     visitEntry.updatedBy = editingVisitId ? (myProfileId ?? undefined) : undefined;
 
+    // A brand-new visit supersedes whichever visit was previously the latest
+    // (visitLogEntries[0] — the log is newest-first). Auto-mark that one as
+    // rescheduled and lock it so it can't be edited afterward — only the
+    // newest visit's repair status should ever drive the ticket status:
+    // e.g. adding V3 flips V2 to "OP-Reschedule Follow up" and locks it,
+    // while V3's own repair status becomes the ticket's status below.
+    const previousLatestVisit = !editingVisitId ? visitLogEntries[0] ?? null : null;
+    const supersededVisit: VisitLogEntry | null = previousLatestVisit
+      ? { ...previousLatestVisit, repairStatus: "OP-Reschedule Follow up", locked: true }
+      : null;
+
     // Persist the visit to Supabase
     try {
       if (editingVisitId) {
@@ -2731,6 +2746,11 @@ function TicketDetailsPage() {
         const saved = await sbAddTicketVisit(ticketNo, visitEntry as any);
         // adopt the DB-generated id so future edits target the right row
         visitEntry.id = saved.id;
+      }
+      if (supersededVisit) {
+        await sbUpdateTicketVisit(supersededVisit.id, supersededVisit as any).catch((e) =>
+          console.warn("previous visit reschedule sync skipped:", e)
+        );
       }
       // Sync the ticket itself with this visit: schedule date, technician, slot.
       await sbUpdateTicketAssignment(ticketNo, {
@@ -2755,7 +2775,10 @@ function TicketDetailsPage() {
         return entries.map((entry) => (entry.id === editingVisitId ? visitEntry : entry));
       }
 
-      return [visitEntry, ...entries];
+      const withReschedule = supersededVisit
+        ? entries.map((entry) => (entry.id === supersededVisit.id ? supersededVisit : entry))
+        : entries;
+      return [visitEntry, ...withReschedule];
     });
     appendAuditEntry({
       by: currentEditor,
@@ -2764,6 +2787,15 @@ function TicketDetailsPage() {
       before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
       after: summarizeVisitEntry(visitEntry),
     });
+    if (supersededVisit && previousLatestVisit) {
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Auto-rescheduled prior visit",
+        field: "Visit Log",
+        before: `Visit ${previousLatestVisit.visitNo} - ${previousLatestVisit.repairStatus || "—"}`,
+        after: `Visit ${previousLatestVisit.visitNo} - OP-Reschedule Follow up`,
+      });
+    }
 
     clearVisitForm();
     setIsVisitModalOpen(false);
@@ -2958,6 +2990,10 @@ function TicketDetailsPage() {
   };
 
   const openVisitEditModal = (entry: VisitLogEntry) => {
+    if (entry.locked) {
+      alert(`Visit ${entry.visitNo} is locked — a newer visit has already superseded it.`);
+      return;
+    }
     loadVisitForEdit(entry);
     setIsVisitModalOpen(true);
   };
@@ -2999,18 +3035,58 @@ function TicketDetailsPage() {
     setViewingVisitEntry(entry);
   };
 
-  const deleteVisitLogEntry = (visitId: string) => {
+  const deleteVisitLogEntry = async (visitId: string) => {
     if (!confirm("Remove this visit log entry?")) return;
 
     const entryToDelete = visitLogEntries.find((entry) => entry.id === visitId) ?? null;
-    setVisitLogEntries((entries) => entries.filter((entry) => entry.id !== visitId));
+    if (!entryToDelete) return;
+
+    // Deleting the current latest visit (visitLogEntries[0] — newest-first)
+    // un-supersedes whichever visit is now the latest: unlock it and put its
+    // repair status back in the driver's seat for the ticket's status.
+    const wasLatest = visitLogEntries[0]?.id === visitId;
+    const remaining = visitLogEntries.filter((entry) => entry.id !== visitId);
+    const newLatest = wasLatest ? remaining[0] ?? null : null;
+    const unlockedVisit: VisitLogEntry | null = newLatest && newLatest.locked
+      ? { ...newLatest, locked: false }
+      : null;
+
+    try {
+      await sbDeleteTicketVisit(visitId);
+      if (unlockedVisit) {
+        await sbUpdateTicketVisit(unlockedVisit.id, unlockedVisit as any);
+        if (unlockedVisit.repairStatus) {
+          await sbUpdateTicketStatus(ticketNo, unlockedVisit.repairStatus).catch((e) =>
+            console.warn("status update skipped:", e)
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete visit:", err);
+      alert(`Failed to delete visit: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+
+    setVisitLogEntries((entries) => {
+      const next = entries.filter((entry) => entry.id !== visitId);
+      return unlockedVisit ? next.map((entry) => (entry.id === unlockedVisit.id ? unlockedVisit : entry)) : next;
+    });
     appendAuditEntry({
       by: currentEditor,
       action: "Deleted visit log",
       field: "Visit Log",
-      before: entryToDelete ? summarizeVisitEntry(entryToDelete) : "—",
+      before: summarizeVisitEntry(entryToDelete),
       after: "Removed",
     });
+    if (unlockedVisit) {
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Unlocked visit after deletion",
+        field: "Visit Log",
+        before: `Visit ${unlockedVisit.visitNo} - locked`,
+        after: `Visit ${unlockedVisit.visitNo} - unlocked, now the latest visit`,
+      });
+    }
 
     if (editingVisitId === visitId) {
       clearVisitForm();
@@ -3510,13 +3586,16 @@ function TicketDetailsPage() {
         }
       }
 
-      // Reflect changes in the grid immediately.
+      // Reflect changes in the grid immediately. Newly inserted rows go at
+      // the end, not the front — P1..Pn are assigned by array position (see
+      // the `P{index + 1}` label in the parts table) and P1 must stay the
+      // oldest part.
       setPartRows((prev) => {
         const next = prev.map((row) => {
           const u = updates.find((x) => x.id === row.id);
           return u ? u.next : row;
         });
-        return [...insertedWithIds, ...next];
+        return [...next, ...insertedWithIds];
       });
 
       // Audit log entries so the timeline shows who imported what.
@@ -4455,7 +4534,11 @@ function TicketDetailsPage() {
         before: "—",
         after: summarizePartRow(nextRow),
       });
-      return [nextRow, ...rows];
+      // Append, don't prepend — P1..Pn are assigned by array position
+      // (see the `P{index + 1}` label in the parts table), and P1 must
+      // stay the oldest part. Prepending here used to bump every existing
+      // part's number up and relabel the brand-new part P1.
+      return [...rows, nextRow];
     });
 
     // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered
@@ -6385,7 +6468,14 @@ function TicketDetailsPage() {
                                 {visitLabelById.get(entry.id) ?? entry.visitNo}
                               </div>
                               <div>
-                                <div className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</span>
+                                  {entry.locked ? (
+                                    <span title="A newer visit has superseded this one — locked from further edits." className="inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                                      <Lock className="h-2.5 w-2.5" /> Locked
+                                    </span>
+                                  ) : null}
+                                </div>
                                 <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
                               </div>
                             </div>
@@ -6457,7 +6547,13 @@ function TicketDetailsPage() {
                             <button type="button" onClick={() => loadVisitForView(entry)} className="rounded-md border border-white/15 bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-200/40">
                               View
                             </button>
-                            <button type="button" onClick={() => openVisitEditModal(entry)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/25">
+                            <button
+                              type="button"
+                              onClick={() => openVisitEditModal(entry)}
+                              disabled={entry.locked}
+                              title={entry.locked ? `Visit ${entry.visitNo} is locked — a newer visit has already superseded it.` : undefined}
+                              className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-blue-500/15"
+                            >
                               Edit
                             </button>
                             <button type="button" onClick={() => deleteVisitLogEntry(entry.id)} className="rounded-md border border-rose-400/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/25">
@@ -8424,7 +8520,8 @@ function TicketDetailsPage() {
             .from("truck_stock")
             .select("*")
             .in("part_no", trimmed)
-            .gt("quantity", 0);
+            .gt("quantity", 0)
+            .eq("status", "in_stock");
           if (error) {
             console.warn("truck stock batch fetch error:", error.message);
             return [];
@@ -8438,6 +8535,7 @@ function TicketDetailsPage() {
             quantity: Number(r.quantity ?? 0),
             storageLocation: r.storage_location ?? "",
             notes: r.notes ?? "",
+            status: r.status === "in_use" ? "in_use" : "in_stock",
             updatedAt: r.updated_at ?? undefined,
           }));
         }}

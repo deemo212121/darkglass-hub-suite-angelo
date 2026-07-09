@@ -620,6 +620,7 @@ function rowToVisit(row: any): UIVisit {
     triageNote: row.triage_note ?? "",
     status: row.status ?? "",
     note: row.note ?? "",
+    locked: row.locked ?? false,
   };
 }
 
@@ -883,6 +884,7 @@ export async function addTicketVisit(ticketNo: string, visit: Partial<UIVisit>):
       triage_note: visit.triageNote ?? null,
       status: visit.status ?? null,
       note: visit.note ?? null,
+      locked: visit.locked ?? false,
     })
     .select("*")
     .single();
@@ -914,6 +916,7 @@ export async function updateTicketVisit(visitId: string, visit: Partial<UIVisit>
       triage_note: visit.triageNote ?? null,
       status: visit.status ?? null,
       note: visit.note ?? null,
+      locked: visit.locked ?? false,
       update_reason: visit.updateReason ?? null,
       // Previously omitted, so updated_at/updated_by never actually moved
       // off their insert-time default — every visit looked "just edited"

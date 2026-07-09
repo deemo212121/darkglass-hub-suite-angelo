@@ -122,20 +122,24 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     );
   };
 
+  // Includes seconds so payroll can compute hours (and therefore pay) to
+  // sub-minute precision instead of rounding every punch to the minute.
   const getNowTime = (): string => {
     const now = new Date();
     return (
       String(now.getHours()).padStart(2, "0") +
       ":" +
-      String(now.getMinutes()).padStart(2, "0")
+      String(now.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(now.getSeconds()).padStart(2, "0")
     );
   };
 
   const timeDiff = (t1: string, t2: string): number => {
     if (!t1 || !t2) return 0;
-    const [h1, m1] = t1.split(":").map(Number);
-    const [h2, m2] = t2.split(":").map(Number);
-    return ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+    const [h1, m1, s1 = 0] = t1.split(":").map(Number);
+    const [h2, m2, s2 = 0] = t2.split(":").map(Number);
+    return ((h2 * 3600 + m2 * 60 + s2) - (h1 * 3600 + m1 * 60 + s1)) / 3600;
   };
 
   const calcHours = (entry: TimeEntry): number => {

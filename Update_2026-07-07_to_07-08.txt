@@ -1,0 +1,68 @@
+DARKGLASS HUB SUITE - PROGRESS UPDATE
+Covering: July 7-8, 2026
+
+
+JULY 7 - PAYROLL, ATTENDANCE & EMPLOYEE SELF-SERVICE
+-----------------------------------------------------
+- Payroll generation now stops at yesterday's date - it never pulls in
+  today's timecards, since some employees haven't clocked out yet.
+- Payroll periods now continue from the end of the last generated run
+  instead of always using a fixed rolling window, and the end date rolls
+  back to the nearest weekday if it lands on a Saturday or Sunday.
+- Added a "Regenerate Last Payroll" option so an already-generated period
+  can be recalculated with current data instead of being stuck.
+- Payslip-ready notifications now show up in the bell icon right away.
+  Root cause of the delay: Supabase Realtime had never actually been
+  turned on for any table in the app, so "live" updates required a page
+  reload everywhere, not just for payslips. Fixed with a migration.
+- Time Correction request notifications are now scoped to just HR,
+  Finance, and the employee who submitted the request - previously went
+  to a much broader admin list.
+- Time Correction requests can now also fix meal start/end times, not
+  just clock-in/clock-out.
+- Added a PTO eligibility rule: employees aren't eligible for PTO until
+  they've completed 1 year with the company, based on their hire date.
+- Truck Stock page is now paginated (100 rows at a time, same pattern as
+  Ticket List) - it was lagging badly from loading everything at once.
+- Added an In Stock / In Use status field to Truck Stock, and wired it
+  into part lookup/fulfillment so a part marked "in use" is never
+  suggested as available stock for a different ticket.
+- Payroll now records time down to the second instead of rounding to the
+  minute, so pay calculates accurately to the cent.
+- Simplified payroll notifications to a generic "Payslip is Ready"
+  message - no dollar amounts, no personal name as the sender.
+- Rebuilt the payslip view: instead of one lump-sum "Regular Hours" row,
+  it now shows a real day-by-day table (Date, Time In, Meal In, Meal Out,
+  Time Out, Duty Hours, Rate, Total) with a grand total at the bottom.
+
+
+JULY 8 - PART INVENTORY REBUILD + PULLING IN TEAMMATES' WORK
+-----------------------------------------------------------
+- Rebuilt Part Inventory to show real parts ordered on real tickets
+  (previously randomly-generated placeholder data), with working
+  Location / Distributor / Status filters, search, and pagination.
+- Pulled in and integrated Janey's branch (janeyyy16/usapp), about 20
+  files' worth of updates:
+    - CSR Agent warning/mistake notes with a two-stage review workflow
+      (department manager reviews first, then HR makes the final call)
+    - New CSR Agent detail page (stats, recent activity, notes history)
+    - CSR Team Leader Dashboard, including a Mistake/Warning Logs
+      transparency section
+    - HR Candidates / recruitment pipeline (with resume upload)
+    - Role-based page restrictions so CSR Agents/Team Leaders only see
+      their own tools, enforced both on the tile grid and by blocking
+      direct URL access
+    - Several live-data bug fixes (Overall Status backlog counts,
+      technician stats no longer splitting one tech across rows)
+- Pulled in and integrated Dee's branch (deemo212121/darkglass-hub-ahs):
+  a Jotform webhook that notifies HR through the bell icon whenever a
+  new form is submitted.
+- Added the environment variables the Jotform webhook needs to
+  ahsolutionscopy .env / .env.example.
+
+
+IN PROGRESS (July 9)
+--------------------
+- Wiring up the Firebase service account credentials so the Jotform
+  webhook can actually deliver notifications (currently fails safely
+  with a clear error until this is set).
