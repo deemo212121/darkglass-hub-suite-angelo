@@ -187,14 +187,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  // Clicking a Jotform notification opens a modal with the full submission —
-  // `answers` is Jotform's own "Label: value, Label: value…" summary string.
-  // Split on commas that precede a "Label:" pattern (rather than every comma)
-  // so a comma inside an answer itself — e.g. an address "123 Main St,
-  // Springfield" — doesn't get treated as a field separator.
+  // Clicking a Jotform notification opens a modal with the full submission.
+  // `answers` is now a JSON-encoded array of {label, value} rows built
+  // directly from Jotform's structured rawRequest (see buildAnswerRows in
+  // jotformBridge.ts) — reliable for checkboxes/paragraphs, unlike the old
+  // comma-split parse of Jotform's free-text "pretty" summary, which could
+  // silently mis-split or drop answers containing their own commas.
   const [selectedSubmission, setSelectedSubmission] = useState<AppNotification | null>(null);
   const parseAnswers = (answers: string | undefined): { label: string; value: string }[] => {
     if (!answers) return [];
+    try {
+      const parsed = JSON.parse(answers);
+      if (Array.isArray(parsed)) return parsed as { label: string; value: string }[];
+    } catch {
+      // Not JSON — must be an older notification stored before this format
+      // changed. Fall back to the legacy comma-split parse of the "pretty"
+      // string so existing notifications still render something.
+    }
     return answers
       .split(/,\s*(?=[^,:]+:)/)
       .map((part) => {
