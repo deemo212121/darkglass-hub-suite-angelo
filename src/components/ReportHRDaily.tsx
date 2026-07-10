@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } fro
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, type EmployeeInfo } from "@/lib/supabase/users";
 import { subscribeNotifications, markNotificationRead, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -130,7 +130,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     });
     return () => { cancelled = true; };
   }, [ready, uid]);
-  const canViewJotformTab = isHrOrAdmin || hasHrSubRole;
+  // isJotformHrRole (not the broader isHrOrAdmin) so this stays in exact
+  // sync with findHrFirebaseUids() in jotformBridge.ts — otherwise this tab
+  // is visible to roles the webhook never actually notifies, and it just
+  // sits empty forever for them regardless of how many submissions come in.
+  const canViewJotformTab = isJotformHrRole(normalizedMyRole) || hasHrSubRole;
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -446,9 +450,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         isHrOrAdmin ? getPendingAgentNotes().catch(() => []) : Promise.resolve([]),
       ]);
       setAllNotes(all);
-      // getPendingAgentNotes() returns both stages — HR's queue is stage 2
-      // only (items a department manager already approved).
-      setPendingNotes(awaitingReview.filter((n) => n.status === "manager_approved"));
+      // Show both stages here — HR/Admin can act directly on a still-pending
+      // (stage 1) submission instead of waiting on a department manager to
+      // review it first on the employee's own page. decideNote() already
+      // supports deciding from either stage.
+      setPendingNotes(awaitingReview);
     } finally {
       setPendingNotesLoading(false);
     }
@@ -962,11 +968,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Parts Manager is the catch-all for every other US role — not just
   // PARTS_MANAGER — so nobody in the US falls through both tabs. ──
   const [onboardingGroup, setOnboardingGroup] = useState<"TECHNICIAN" | "PARTS_MANAGER" | "PH">("TECHNICIAN");
+  const [onboardingSearch, setOnboardingSearch] = useState("");
   const onboardingEmployees = useMemo(() => {
-    if (onboardingGroup === "PH") return employees.filter((e) => e.country === "PH");
-    if (onboardingGroup === "TECHNICIAN") return employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN");
-    return employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
-  }, [employees, onboardingGroup]);
+    const byGroup =
+      onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
+      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN")
+      : employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
+    const q = onboardingSearch.trim().toLowerCase();
+    return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
+  }, [employees, onboardingGroup, onboardingSearch]);
   const onboardingDocColumns =
     onboardingGroup === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
     : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
@@ -1272,7 +1282,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
 
-      {/* Pending Reviews — HR's final call (stage 2) */}
+      {/* Pending Reviews — both stage 1 (pending, no department manager sign-off
+          yet) and stage 2 (manager_approved) show up here, since HR/Admin can
+          decide directly on either rather than being blocked until a
+          department manager acts first on the employee's own page. */}
       {isHrOrAdmin && (
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-1 flex items-center gap-1.5">
@@ -1281,11 +1294,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-300 border border-yellow-500/25">{pendingNotes.length}</span>
             )}
           </p>
-          <p className="text-[10px] text-muted-foreground mb-3">Already approved by the employee's manager — awaiting your final decision.</p>
+          <p className="text-[10px] text-muted-foreground mb-3">Every warning/mistake awaiting a decision, at any review stage.</p>
           {pendingNotesLoading ? (
             <p className="text-xs text-muted-foreground py-2">Loading…</p>
           ) : pendingNotes.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-2">Nothing waiting on your final decision.</p>
+            <p className="text-xs text-muted-foreground py-2">Nothing waiting on a decision.</p>
           ) : (
             <div className="space-y-2">
               {pendingNotes.map((n) => {
@@ -1296,7 +1309,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {n.type === "warning" ? "Warning" : "Mistake"}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs"><span className="font-semibold">{employeeName}</span> — {n.note}</p>
+                      <p className="text-xs">
+                        <span className="font-semibold">{employeeName}</span> — {n.note}{" "}
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${n.status === "manager_approved" ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" : "bg-slate-500/20 text-slate-300 border border-slate-500/30"}`}>
+                          {n.status === "manager_approved" ? "Manager-approved" : "Awaiting manager"}
+                        </span>
+                      </p>
                       <p className="text-[10px] text-muted-foreground mt-1">
                         {n.ticketNo && <>Ticket <span className="font-mono text-blue-400">{n.ticketNo}</span> · </>}
                         Submitted by {n.createdByName || "Unknown"} · {new Date(n.createdAt).toLocaleString()}
@@ -1672,10 +1690,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <h2 className="font-semibold text-sm">Onboarding Documents</h2>
             <p className="text-[10px] text-muted-foreground mt-0.5">Click a cell to toggle whether that document has been collected.</p>
           </div>
-          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
-            <button type="button" onClick={() => setOnboardingGroup("TECHNICIAN")} className={`px-4 text-xs font-medium transition-colors ${onboardingGroup === "TECHNICIAN" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Technician</button>
-            <button type="button" onClick={() => setOnboardingGroup("PARTS_MANAGER")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PARTS_MANAGER" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Parts Manager</button>
-            <button type="button" onClick={() => setOnboardingGroup("PH")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PH" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Philippines</button>
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
+              <button type="button" onClick={() => setOnboardingGroup("TECHNICIAN")} className={`px-4 text-xs font-medium transition-colors ${onboardingGroup === "TECHNICIAN" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Technician</button>
+              <button type="button" onClick={() => setOnboardingGroup("PARTS_MANAGER")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PARTS_MANAGER" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Parts Manager</button>
+              <button type="button" onClick={() => setOnboardingGroup("PH")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PH" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Philippines</button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={onboardingSearch}
+                onChange={(e) => setOnboardingSearch(e.target.value)}
+                placeholder="Search name…"
+                className="glass-input text-xs py-1.5 pl-8 pr-3 rounded-md w-40 h-7.5"
+              />
+            </div>
           </div>
         </div>
 

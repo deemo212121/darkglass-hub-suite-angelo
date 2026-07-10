@@ -237,16 +237,26 @@ async function mirrorSubmissionFiles(
   return results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
 }
 
+// Must stay in sync with isJotformHrRole()/JOTFORM_HR_ROLES in
+// src/lib/roleLabels.ts, which gates who sees the Jotform Submissions tab
+// on the HR & Recruitment Dashboard (ReportHRDaily.tsx) — this is who
+// actually gets notified. Inlined rather than imported: this file is
+// deliberately dependency-free so it stays portable across whatever
+// runtime ends up building it (Cloudflare Worker today, previously a
+// Vercel nodejs20.x function).
+const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+
 /**
- * Look up HR recipients from Supabase `profiles` — the app's actual source of
- * truth for users and roles (Firestore's `users_index` is legacy and isn't
- * written to by the current user-provisioning flow, so querying it here
- * always returned zero recipients for any account created recently).
+ * Look up HR-tier recipients from Supabase `profiles` — the app's actual
+ * source of truth for users and roles (Firestore's `users_index` is legacy
+ * and isn't written to by the current user-provisioning flow, so querying
+ * it here always returned zero recipients for any account created
+ * recently).
  *
- * Matches HR as either the primary `role` or anywhere in `extra_roles`
- * (sub-roles), scoped to the target company and active accounts only.
- * Uses the service-role key to bypass RLS — this webhook has no logged-in
- * Supabase session to scope a normal query to.
+ * Matches HR/Admin/Superadmin/Manager as either the primary `role` or
+ * anywhere in `extra_roles` (sub-roles), scoped to the target company and
+ * active accounts only. Uses the service-role key to bypass RLS — this
+ * webhook has no logged-in Supabase session to scope a normal query to.
  */
 async function findHrFirebaseUids(
   supabaseUrl: string,
@@ -270,7 +280,7 @@ async function findHrFirebaseUids(
   return rows
     .filter((r) => {
       const roles = [r.role, ...(r.extra_roles ?? [])].map((v) => String(v ?? "").trim().toUpperCase());
-      return roles.includes("HR");
+      return roles.some((v) => JOTFORM_HR_ROLES.has(v));
     })
     .map((r) => r.firebase_uid)
     .filter((uid): uid is string => Boolean(uid));

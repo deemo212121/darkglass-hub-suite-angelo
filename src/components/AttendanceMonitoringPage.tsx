@@ -1,10 +1,11 @@
-import { AlertCircle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { ROLE_LABELS, canSubmitConductNote } from "@/lib/roleLabels";
+import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
   getCompanyTimecardEntries,
   getProfileIdByFirebaseUid,
@@ -115,6 +116,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Attendance notes can only be created/edited by HR, Finance, or Admin —
   // other roles that can view this page (e.g. BizOps Manager) can't.
   const canManageNotes = ["ADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
+  // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
+  // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
+  // any manager-flavored role can submit one here for a tardy employee, but
+  // unlike CsrAgentDetailPage it never fast-tracks to approved: every
+  // submission from this tab always waits on HR review.
+  const canWarn = ready && canSubmitConductNote(role);
 
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -124,7 +131,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"daily-attendance" | "pto-management" | "corrections">("daily-attendance");
+  const [activeTab, setActiveTab] = useState<"daily-attendance" | "pto-management" | "corrections" | "warnings">("daily-attendance");
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
@@ -144,6 +151,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoFormHireDate, setPtoFormHireDate] = useState<string | null>(null);
   const [showCorrectionForm, setShowCorrectionForm] = useState(false);
   const [correctionForm, setCorrectionForm] = useState({ profileId: "", workDate: "", correctedCheckIn: "", correctedCheckOut: "", correctedMealStart: "", correctedMealEnd: "", reason: "" });
+  const [conductNotes, setConductNotes] = useState<CsrAgentNote[]>([]);
+  const [warnSearch, setWarnSearch] = useState("");
+  const [warnTarget, setWarnTarget] = useState<{ profileId: string; name: string } | null>(null);
+  const [warnText, setWarnText] = useState("");
+  const [warnSaving, setWarnSaving] = useState(false);
 
   const todayISO = useMemo(() => toISODate(new Date()), []);
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -161,7 +173,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, entryRows, noteRows, ptoRows, correctionRows, historyRows] = await Promise.all([
+      const [profileId, profileRows, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCompanyTimecardEntries(rangeStart, rangeEnd),
@@ -169,6 +181,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         getCompanyPtoRequests(),
         getCompanyTimecardCorrections(),
         getCompanyTimecardCorrectionHistory(),
+        getAllAgentNotes().catch(() => []),
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
@@ -181,6 +194,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setPtoRequests(ptoRows);
       setCorrections(correctionRows);
       setCorrectionHistory(historyRows);
+      setConductNotes(conductNoteRows);
     } catch (error) {
       console.error("Failed to load attendance data:", error);
     } finally {
@@ -348,6 +362,41 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
   }, [summaryProfiles, entriesByKey]);
+
+  // ---- Warnings tab: month-to-date late counts, tardiest first ----
+  const warnEmployees = useMemo(() => {
+    const q = warnSearch.trim().toLowerCase();
+    return monthlySummary
+      .filter((row) => !q || row.name.toLowerCase().includes(q))
+      .slice()
+      .sort((a, b) => b.late - a.late || a.name.localeCompare(b.name));
+  }, [monthlySummary, warnSearch]);
+
+  const handleSubmitWarning = async () => {
+    if (!warnTarget) return;
+    if (!warnText.trim()) {
+      alert("Please enter a warning note.");
+      return;
+    }
+    setWarnSaving(true);
+    try {
+      // Always routes through HR review, even for HR/Admin/Superadmin
+      // submitters — unlike CsrAgentDetailPage, tardiness warnings issued
+      // here should never auto-approve themselves.
+      await addAgentNote({
+        agentProfileId: warnTarget.profileId,
+        type: "warning",
+        note: warnText.trim(),
+      });
+      setConductNotes(await getAllAgentNotes().catch(() => conductNotes));
+      setWarnTarget(null);
+      setWarnText("");
+    } catch (error) {
+      alert(`Failed to submit warning: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setWarnSaving(false);
+    }
+  };
 
   const handleDownloadSummary = () => {
     const today = todayISO;
@@ -609,6 +658,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
               { id: "pto-management", label: "PTO Management", Icon: Calendar },
               { id: "corrections", label: "Corrections", Icon: FileText },
+              { id: "warnings", label: "Warnings", Icon: AlertTriangle },
             ].map(tab => {
               const Icon = tab.Icon;
               return (
@@ -1127,7 +1177,157 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           )}
 
+          {activeTab === "warnings" && (
+            <div className="space-y-6">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-yellow-400" />
+                      Tardy Employees — Month to Date
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">Issue a warning for repeated tardiness — it goes to the same review queue as HR's Warnings &amp; Mistakes tab.</p>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search employee..."
+                    value={warnSearch}
+                    onChange={(e) => setWarnSearch(e.target.value)}
+                    className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none w-56"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Late (MTD)</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Attendance %</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                    ) : warnEmployees.length === 0 ? (
+                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No employees match this search.</td></tr>
+                    ) : warnEmployees.map((row) => (
+                      <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
+                        <td className="px-3 py-3 text-white font-medium">
+                          <a href={`/employee/${row.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                            {row.name}
+                          </a>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${row.late === 0 ? "text-slate-500" : row.late <= 2 ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-red-500/20 text-red-300 border border-red-500/30"}`}>
+                            {row.late}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-center text-white font-semibold">{row.pct}%</td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${row.status === "Good" ? "bg-green-500/20 text-green-300 border-green-500/30" : row.status === "Warning" ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" : "bg-red-500/20 text-red-300 border-red-500/30"}`}>{row.status}</span>
+                        </td>
+                        <td className="px-3 py-3">
+                          {canWarn ? (
+                            <button
+                              type="button"
+                              onClick={() => { setWarnTarget({ profileId: row.profileId, name: row.name }); setWarnText(row.late > 0 ? `Repeated tardiness — ${row.late} late arrival${row.late === 1 ? "" : "s"} this month.` : ""); }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 transition"
+                            >
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              <span className="text-xs">Warn</span>
+                            </button>
+                          ) : (
+                            <span className="text-slate-500 text-xs">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Recent Warnings & Mistakes — same employee_conduct_notes table HR reviews */}
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-yellow-400" /> Recent Warnings &amp; Mistakes
+                </h2>
+                {conductNotes.length === 0 ? (
+                  <p className="text-sm text-slate-400 py-4 text-center">No warnings or mistakes on file yet.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Note</th>
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {conductNotes.slice(0, 15).map((n) => (
+                        <tr key={n.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                          <td className="px-3 py-3 text-white font-medium">
+                            <a href={`/employee/${n.agentProfileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                              {profileName(n.agentProfileId)}
+                            </a>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${n.type === "warning" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-orange-500/20 text-orange-300 border border-orange-500/30"}`}>
+                              {n.type === "warning" ? "Warning" : "Mistake"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-slate-300 max-w-xs truncate" title={n.note}>{n.note}</td>
+                          <td className="px-3 py-3 text-slate-400 text-xs">{new Date(n.createdAt).toLocaleString()}</td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${n.status === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : n.status === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-slate-500/20 text-slate-300 border-slate-500/30"}`}>
+                              {n.status === "approved" ? "Approved" : n.status === "rejected" ? "Rejected" : n.status === "manager_approved" ? "Awaiting HR" : "Pending"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
         </div>
+
+        {/* Warning Modal */}
+        {warnTarget && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-yellow-400" /> Issue Warning
+                  </h3>
+                  <p className="text-sm text-slate-400">{warnTarget.name}</p>
+                </div>
+                <button type="button" onClick={() => { setWarnTarget(null); setWarnText(""); }} className="text-slate-400 hover:text-white transition p-1">✕</button>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-semibold text-slate-300 mb-2">Warning Note</label>
+                <textarea value={warnText} onChange={(e) => setWarnText(e.target.value)} placeholder="Describe the tardiness / conduct issue..." rows={4} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-3 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
+              </div>
+              <p className="text-xs text-slate-500 mb-4">
+                This always goes to the HR Warnings &amp; Mistakes dashboard for review before it's issued — the employee is only notified once it's approved there.
+              </p>
+              <div className="flex gap-3">
+                <button type="button" onClick={handleSubmitWarning} disabled={warnSaving} className="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm">
+                  {warnSaving ? "Submitting…" : "Submit for Review"}
+                </button>
+                <button type="button" onClick={() => { setWarnTarget(null); setWarnText(""); }} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Notes Modal */}
         {selectedNote && (

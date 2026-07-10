@@ -959,6 +959,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           <button
                             type="button"
                             onClick={() => setDetailEmployee(row.employee)}
+                            title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
                             className="text-blue-400 hover:text-blue-300 hover:underline"
                           >
                             {row.employee.full_name}

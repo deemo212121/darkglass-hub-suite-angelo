@@ -41,6 +41,7 @@ import {
   updateTicketVisit as sbUpdateTicketVisit,
   deleteTicketVisit as sbDeleteTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
+  updateTicketMisdiagnosed as sbUpdateTicketMisdiagnosed,
   updateTicketAssignment as sbUpdateTicketAssignment,
   updateTicketCustomer as sbUpdateTicketCustomer,
   updateTicketFields as sbUpdateTicketFields,
@@ -51,6 +52,8 @@ import {
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
+import { canManageMisdiagnosed } from "@/lib/roleLabels";
+
 // Product category options for the ticket Product Information dropdown.
 const PRODUCT_CATEGORY_OPTIONS = [
   "Air Conditioner", "Bed", "Coffee Machines", "Compactor", "Cooktop", "Dehumidifier",
@@ -159,6 +162,9 @@ interface TicketData {
   product: string;
   tat: string;
   status: string;
+  /** Set by a manager-tier reviewer when the technician's diagnosis was
+   * wrong — see the Misdiagnosed checkbox in the ticket header. */
+  misdiagnosed?: boolean;
   schedule: string;
   contact: string;
   location: string;
@@ -656,6 +662,45 @@ function renderVisitSummary(summary: string, comparedSummary?: string) {
   );
 }
 
+// Part Number color coding, driven by that part's status — RED = blocked,
+// YELLOW = in the customer's hands / on order, BLUE = installed,
+// GREEN = resolved/paid/ready, GREY = parked/inactive, GREY + strikethrough
+// = voided/write-off outcomes. Only the Part No text picks up the color;
+// the Part Status control/badge itself stays in its normal, unstyled look.
+const PART_STATUS_TEXT_COLOR: Record<string, string> = {
+  "Cancelled": "text-red-400",
+  "Need PO": "text-red-400",
+
+  "CX Home": "text-yellow-500",
+  "Cx Received": "text-yellow-500",
+  "PO Made": "text-yellow-500",
+
+  "Used": "text-blue-400",
+
+  "Claimed": "text-green-500",
+  "Hold for next vist": "text-green-500",
+  "PAID": "text-green-500",
+  "Part Ready": "text-green-500",
+  "SQT Received": "text-green-500",
+
+  "Back Order": "text-slate-400",
+  "Defective": "text-slate-400",
+  "Hold for Estimation": "text-slate-400",
+  "Not Used & Stocked": "text-slate-400",
+  "Tech Pickup": "text-slate-400",
+  "Transfer to Another Ticket": "text-slate-400",
+
+  "RA - Defect": "text-slate-400 line-through decoration-2",
+  "RA- DMG": "text-slate-400 line-through decoration-2",
+  "RA - PNN": "text-slate-400 line-through decoration-2",
+  "RA - Qty Discrepancy": "text-slate-400 line-through decoration-2",
+  "Lost": "text-slate-400 line-through decoration-2",
+};
+
+function partStatusTextClass(status: string): string {
+  return PART_STATUS_TEXT_COLOR[status] || "";
+}
+
 function summarizePartRow(row: PartTransactionRow) {
   return [
     ["Part No", row.partNo],
@@ -738,6 +783,13 @@ const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy
   cxPaid: "Cx Paid",
 };
 
+// Default technician pre-filled on a new visit log entry: Nashville tickets
+// default to the Nashville Admin placeholder, everything else defaults to
+// Memphis Admin (the original, still the fallback for every other branch).
+function defaultTechnicianForLocation(location: string | undefined | null): string {
+  return String(location || "").trim().toLowerCase() === "nashville" ? "Nashville Admin" : "Memphis Admin";
+}
+
 // Compute Turnaround Time (TAT): days elapsed since the ticket was created.
 // Accepts common date formats (ISO, MM/DD/YY, MM/DD/YYYY). Returns e.g. "3d".
 function computeTAT(created: string | undefined): string {
@@ -788,6 +840,27 @@ function getOfficeCoordinates(location: string): { lat: number; lng: number } | 
     if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
   }
   return null;
+}
+
+// Electrolux tickets logged under the "Huntsville" location actually
+// dispatch from one of two different real offices depending on which state
+// the customer is in — the branch name alone doesn't disambiguate this.
+// Overrides the normal location-based mileage starting point for just this
+// account + location + state combination; every other account's Huntsville
+// tickets keep using the location's own stored coordinates. Returns a plain
+// address string (not lat/lng) so the Distance Matrix API geocodes it the
+// same way it already does for destinations, instead of us hand-typing
+// coordinates for a calculation that affects mileage reimbursement.
+const ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN: Record<string, string> = {
+  AL: "631 Beacon Pkwy W #106, Birmingham, AL 35209, USA",
+  TN: "163 N Mt Juliet Rd, Mt. Juliet, TN 37122, USA",
+};
+function getElectroluxHuntsvilleMileageOrigin(ticket: { account?: string; location?: string; state?: string }): string | null {
+  const account = String(ticket.account || "").trim().toLowerCase();
+  const location = String(ticket.location || "").trim().toLowerCase();
+  const state = String(ticket.state || "").trim().toUpperCase();
+  if (!account.includes("electrolux") || location !== "huntsville") return null;
+  return ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN[state] ?? null;
 }
 
 const DEFAULT_TICKET: TicketData = {
@@ -1584,6 +1657,65 @@ function TicketDetailsPage() {
     }
   };
 
+  const canFlagMisdiagnosed = canManageMisdiagnosed(currentUserRole);
+
+  const toggleMisdiagnosed = async () => {
+    if (!ticket || !canFlagMisdiagnosed) return;
+    const next = !ticket.misdiagnosed;
+    const confirmed = confirm(
+      next
+        ? "Are you sure you want to flag this ticket as misdiagnosed?"
+        : "Are you sure you want to remove the misdiagnosed flag from this ticket?"
+    );
+    if (!confirmed) return;
+    setTicketData((prev) => (prev ? { ...prev, misdiagnosed: next } : prev));
+    try {
+      await sbUpdateTicketMisdiagnosed(ticketNo, next);
+    } catch (err) {
+      console.error("Failed to update misdiagnosed flag:", err);
+      setTicketData((prev) => (prev ? { ...prev, misdiagnosed: !next } : prev));
+      alert(`Failed to update misdiagnosed flag: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+    appendAuditEntry({
+      by: currentEditor,
+      action: next ? "Flagged as misdiagnosed" : "Unflagged as misdiagnosed",
+      field: "Misdiagnosed",
+      before: next ? "No" : "Yes",
+      after: next ? "Yes" : "No",
+    });
+  };
+
+  // Self-heal: the ticket's status should always mirror the latest visit's
+  // repair status. That invariant used to get silently broken by editing an
+  // older, not-yet-locked visit (see isLatestVisit above) — tickets that
+  // already drifted out of sync stay wrong forever otherwise, since nothing
+  // else re-checks this after the fact. Runs once visits have actually
+  // loaded, and only writes when there's a real mismatch to fix.
+  useEffect(() => {
+    if (!ticket || !visitsLoaded || !ticketDbId || visitLogEntries.length === 0) return;
+    const latest = visitLogEntries[0];
+    const latestStatus = latest.repairStatus?.trim();
+    if (!latestStatus || latestStatus === ticket.status) return;
+    const staleStatus = ticket.status;
+    (async () => {
+      try {
+        await sbUpdateTicketStatus(ticketNo, latestStatus);
+        setTicketData((prev) => (prev ? { ...prev, status: latestStatus } : prev));
+        appendAuditEntry({
+          by: "System",
+          action: "Resynced ticket status from latest visit",
+          field: "status",
+          before: staleStatus,
+          after: latestStatus,
+        });
+      } catch (err) {
+        console.error("Failed to resync ticket status from latest visit:", err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitsLoaded, visitLogEntries, ticketDbId]);
+
   const handleSendSpStatus = async () => {
     if (!spStatus) {
       alert("Please select a status to send to ServicePower.");
@@ -1816,6 +1948,14 @@ function TicketDetailsPage() {
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
     [auditEntries],
   );
+  // Who has flagged/unflagged this ticket as misdiagnosed, most recent
+  // first — shown inline next to the checkbox itself rather than folded
+  // into the visit-scoped change log below, since this isn't tied to any
+  // one visit.
+  const misdiagnosedAuditEntries = useMemo(
+    () => auditEntries.filter((entry) => entry.field === "Misdiagnosed"),
+    [auditEntries],
+  );
   // Scoped to "Visit Log" entries; further narrowed to one specific visit
   // (via visitLogEntryMatchesVisitNo) at the render site, same pattern as
   // partAuditEntries below.
@@ -1921,6 +2061,7 @@ function TicketDetailsPage() {
           product: centralTicket.model,
           tat: computeTAT(centralTicket.created),
           status: centralTicket.status,
+          misdiagnosed: centralTicket.misdiagnosed === "Y",
           schedule: centralTicket.schedule,
           contact: centralTicket.contact || "",
           location: centralTicket.location,
@@ -2160,8 +2301,9 @@ function TicketDetailsPage() {
   // still resolves instead of showing "— mi".
   useEffect(() => {
     if (!ticket) { setOfficeDistanceMiles(null); return; }
-    const office = getOfficeCoordinates(ticket.location || ticket.city || "");
-    if (!office) { setOfficeDistanceMiles(null); return; }
+    const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(ticket);
+    const office = overrideOrigin ? null : getOfficeCoordinates(ticket.location || ticket.city || "");
+    if (!overrideOrigin && !office) { setOfficeDistanceMiles(null); return; }
 
     // Candidate destination strings, most specific first.
     const destinationCandidates = [
@@ -2182,7 +2324,11 @@ function TicketDetailsPage() {
       const maps = (window as Window & { google?: any }).google?.maps;
       if (!maps) return;
       const service = new maps.DistanceMatrixService();
-      const originLatLng = new maps.LatLng(office.lat, office.lng);
+      // The Distance Matrix API accepts a plain address string for origins
+      // too (it geocodes it the same way it does destinations), so the
+      // Electrolux/Huntsville override just passes its address straight
+      // through — no need to resolve it to lat/lng ourselves.
+      const origin = overrideOrigin ?? new maps.LatLng(office!.lat, office!.lng);
 
       const tryCandidate = (idx: number) => {
         if (cancelled) return;
@@ -2191,19 +2337,31 @@ function TicketDetailsPage() {
           const geocoder = new maps.Geocoder();
           geocoder.geocode({ address: destinationCandidates[0] }, (results: any, status: string) => {
             if (cancelled) return;
-            if (status === "OK" && results?.[0]) {
-              const pos = results[0].geometry.location;
-              setOfficeDistanceMiles(milesBetween(office, { lat: pos.lat(), lng: pos.lng() }));
-            } else {
-              setOfficeDistanceMiles(null);
+            if (status !== "OK" || !results?.[0]) { setOfficeDistanceMiles(null); return; }
+            const pos = results[0].geometry.location;
+            const destCoords = { lat: pos.lat(), lng: pos.lng() };
+            if (!overrideOrigin) {
+              setOfficeDistanceMiles(milesBetween(office!, destCoords));
+              return;
             }
+            // Origin is an address string here — geocode it too so the
+            // Haversine fallback has coordinates to work with.
+            geocoder.geocode({ address: overrideOrigin }, (originResults: any, originStatus: string) => {
+              if (cancelled) return;
+              if (originStatus === "OK" && originResults?.[0]) {
+                const originPos = originResults[0].geometry.location;
+                setOfficeDistanceMiles(milesBetween({ lat: originPos.lat(), lng: originPos.lng() }, destCoords));
+              } else {
+                setOfficeDistanceMiles(null);
+              }
+            });
           });
           return;
         }
 
         service.getDistanceMatrix(
           {
-            origins: [originLatLng],
+            origins: [origin],
             destinations: [destinationCandidates[idx]],
             travelMode: maps.TravelMode.DRIVING,
             unitSystem: maps.UnitSystem.IMPERIAL,
@@ -2242,7 +2400,7 @@ function TicketDetailsPage() {
     }
 
     return () => { cancelled = true; };
-  }, [ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip]);
+  }, [ticket?.account, ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip]);
 
   // Compute related tickets: any OTHER company ticket sharing a key field with
   // this one (email, phone, zip, customer name, address, model, or serial).
@@ -2752,17 +2910,29 @@ function TicketDetailsPage() {
           console.warn("previous visit reschedule sync skipped:", e)
         );
       }
-      // Sync the ticket itself with this visit: schedule date, technician, slot.
-      await sbUpdateTicketAssignment(ticketNo, {
-        technician: newVisitTechnician,
-        scheduleDate: newVisitScheduleDate,
-        timeSlot: newVisitTimeSlot,
-      }).catch((e) => console.warn("assignment sync skipped:", e));
-      // Set the ticket's status from the visit's REPAIR STATUS (not the visit status).
-      if (newVisitRepairStatus) {
-        await sbUpdateTicketStatus(ticketNo, newVisitRepairStatus).catch((e) =>
-          console.warn("status update skipped:", e)
-        );
+      // Only the LATEST visit should ever drive the ticket's status/
+      // assignment — adding a new visit always qualifies (it becomes the
+      // new latest), but editing an existing one only qualifies if it's
+      // still the current latest. Without this guard, editing an older
+      // visit (e.g. fixing a typo in V1's notes on a ticket that already
+      // has V2/V3) would silently overwrite the ticket's status/schedule
+      // with that older visit's values. Older visits added before the
+      // locking feature existed were never retroactively locked, so their
+      // Edit button is still clickable — this is the real backstop.
+      const isLatestVisit = !editingVisitId || editingVisitId === visitLogEntries[0]?.id;
+      if (isLatestVisit) {
+        // Sync the ticket itself with this visit: schedule date, technician, slot.
+        await sbUpdateTicketAssignment(ticketNo, {
+          technician: newVisitTechnician,
+          scheduleDate: newVisitScheduleDate,
+          timeSlot: newVisitTimeSlot,
+        }).catch((e) => console.warn("assignment sync skipped:", e));
+        // Set the ticket's status from the visit's REPAIR STATUS (not the visit status).
+        if (newVisitRepairStatus) {
+          await sbUpdateTicketStatus(ticketNo, newVisitRepairStatus).catch((e) =>
+            console.warn("status update skipped:", e)
+          );
+        }
       }
     } catch (err) {
       console.error("Failed to save visit:", err);
@@ -2807,7 +2977,7 @@ function TicketDetailsPage() {
     setNewVisitNote("");
     setNewVisitStatus("Visited");
     setNewVisitScheduleDate("");
-    setNewVisitTechnician("Memphis Admin");
+    setNewVisitTechnician(defaultTechnicianForLocation(ticket?.location));
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
     setNewVisitActionType("SCHEDULE");
@@ -4868,7 +5038,7 @@ function TicketDetailsPage() {
         <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
         <td className="px-1 py-1.5">
           <div className="flex gap-1">
-            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className="flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Part No*" />
+            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className={`flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 ${partDraft.status ? partStatusTextClass(partDraft.status) : "text-white"}`} placeholder="Part No*" />
             <button
               type="button"
               onClick={handleMarconeLookup}
@@ -4982,6 +5152,7 @@ function TicketDetailsPage() {
             <option>RA - Qty Discrepancy</option>
             <option>SQT Received</option>
             <option>Tech Pickup</option>
+            <option>Transfer to Another Ticket</option>
             <option>Used</option>
           </select>
         </td>
@@ -5203,6 +5374,37 @@ function TicketDetailsPage() {
                         </>
                       );
                     })()}
+                    {/* Misdiagnosed — manager-tier only. Flags that the tech's
+                        diagnosis was wrong, which is why the repair ran long.
+                        Who set/unset it is captured in the Change Log via
+                        appendAuditEntry -> logTicketAuditEntry. */}
+                    {canFlagMisdiagnosed && (
+                      <>
+                        <span className="mx-3 text-slate-600">•</span>
+                        <label
+                          className={`inline-flex items-center gap-1.5 cursor-pointer select-none align-middle ${ticket.misdiagnosed ? "text-red-300" : "text-slate-400"}`}
+                          title="Flag this ticket if the technician's diagnosis was wrong — visible only to managers/admins"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={Boolean(ticket.misdiagnosed)}
+                            onChange={toggleMisdiagnosed}
+                            className="h-3.5 w-3.5 rounded border-white/30 accent-red-500"
+                          />
+                          <span className="font-semibold">Misdiagnosed</span>
+                        </label>
+                        {misdiagnosedAuditEntries.length > 0 && (
+                          <span
+                            className="ml-1.5 text-xs text-slate-500 align-middle cursor-help"
+                            title={misdiagnosedAuditEntries
+                              .map((e) => `${e.after === "Yes" ? "Flagged" : "Unflagged"} by ${e.by} — ${new Date(e.timestamp).toLocaleString()}`)
+                              .join("\n")}
+                          >
+                            ({misdiagnosedAuditEntries[0].after === "Yes" ? "flagged" : "unflagged"} by {misdiagnosedAuditEntries[0].by}, {new Date(misdiagnosedAuditEntries[0].timestamp).toLocaleDateString()})
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
@@ -6464,7 +6666,14 @@ function TicketDetailsPage() {
                         <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-8 w-12 items-center justify-center rounded-md bg-blue-500/20 text-xs font-bold text-blue-300 border border-blue-400/30">
+                              {/* Fixed inline colors, not Tailwind's theme-swept blue-*
+                                  classes — guarantees this stays readable in both dark
+                                  and light mode instead of depending on the light-mode
+                                  CSS overrides happening to land on good contrast. */}
+                              <div
+                                className="flex h-10 w-14 shrink-0 items-center justify-center rounded-md text-lg font-extrabold border-2"
+                                style={{ backgroundColor: "#2563eb", color: "#ffffff", borderColor: "#93c5fd" }}
+                              >
                                 {visitLabelById.get(entry.id) ?? entry.visitNo}
                               </div>
                               <div>
@@ -6476,29 +6685,40 @@ function TicketDetailsPage() {
                                     </span>
                                   ) : null}
                                 </div>
-                                <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
+                                <div className="text-xs text-slate-400">
+                                  {new Date(entry.timestamp).toLocaleString()}
+                                  {entry.updatedAt ? (
+                                    <span className="text-amber-300/80">
+                                      {" "}·{" "}
+                                      {entry.updatedBy
+                                        ? `Updated ${new Date(entry.updatedAt).toLocaleString()} by ${profileNameById[entry.updatedBy] || entry.updatedBy}`
+                                        : `Auto-rescheduled ${new Date(entry.updatedAt).toLocaleString()} (superseded by a newer visit)`}
+                                    </span>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                             <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
                           </div>
                           {entry.updatedAt ? (
-                            <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs">
-                              <div className="font-semibold text-amber-200">
-                                Edited: {new Date(entry.updatedAt).toLocaleString()}
-                                {entry.updatedBy ? ` by ${entry.updatedBy}` : ""}
+                            /* Schedule Information — the edited timestamp already shows at
+                               the top of the card, so this box just highlights the current
+                               schedule/tech/time slot instead of repeating it. */
+                            <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+                              <div className="grid gap-2 text-sm md:grid-cols-3">
+                                <div><span className="font-semibold text-amber-200">Schedule:</span> <span className="font-semibold text-white">{entry.scheduleDate || "—"}</span></div>
+                                <div><span className="font-semibold text-amber-200">Technician:</span> <span className="font-semibold text-white">{entry.technician || "—"}</span></div>
+                                <div><span className="font-semibold text-amber-200">Time Slot:</span> <span className="font-semibold text-white">{entry.timeSlot || "—"}</span></div>
                               </div>
-                              {entry.updateReason ? (
-                                <div className="mt-1 text-amber-100/90">{entry.updateReason}</div>
-                              ) : null}
                             </div>
-                          ) : null}
-                          
-                          {/* Schedule Information */}
-                          <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-3">
-                            <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
-                            <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
-                            <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
-                          </div>
+                          ) : (
+                            /* Schedule Information */
+                            <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-3">
+                              <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
+                              <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
+                              <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
+                            </div>
+                          )}
 
                           {/* CSR Notes - Only show if has content */}
                           {(entry.schedNotes || entry.symptomCx) ? (
@@ -6883,7 +7103,10 @@ function TicketDetailsPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Visit Details</p>
                       <h3 className="text-xl font-bold text-white">{viewingVisitEntry.actionType} / {viewingVisitEntry.repairStatus || "No status"}</h3>
-                      <p className="mt-1 text-sm text-slate-400">{new Date(viewingVisitEntry.timestamp).toLocaleString()} by {viewingVisitEntry.by}</p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        {new Date(viewingVisitEntry.timestamp).toLocaleString()}
+                        {viewingVisitEntry.by ? ` by ${viewingVisitEntry.by}` : ""}
+                      </p>
                     </div>
                     <button
                       type="button"
@@ -6897,8 +7120,9 @@ function TicketDetailsPage() {
                   {viewingVisitEntry.updatedAt ? (
                     <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm">
                       <div className="font-semibold text-amber-200">
-                        Edited: {new Date(viewingVisitEntry.updatedAt).toLocaleString()}
-                        {viewingVisitEntry.updatedBy ? ` by ${viewingVisitEntry.updatedBy}` : ""}
+                        {viewingVisitEntry.updatedBy
+                          ? `Updated: ${new Date(viewingVisitEntry.updatedAt).toLocaleString()} by ${profileNameById[viewingVisitEntry.updatedBy] || viewingVisitEntry.updatedBy}`
+                          : `Auto-rescheduled: ${new Date(viewingVisitEntry.updatedAt).toLocaleString()} (superseded by a newer visit)`}
                       </div>
                       {viewingVisitEntry.updateReason ? (
                         <div className="mt-1 text-amber-100/90">{viewingVisitEntry.updateReason}</div>
@@ -7213,7 +7437,7 @@ function TicketDetailsPage() {
                                 <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
                               ) : null}
                             </td>
-                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} text-blue-300 font-semibold`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
                             <td className={cellWrap}>
                               <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
                                 <option value="">Dist.*</option>
@@ -7279,6 +7503,7 @@ function TicketDetailsPage() {
                                 <option>RA - Qty Discrepancy</option>
                                 <option>SQT Received</option>
                                 <option>Tech Pickup</option>
+                                <option>Transfer to Another Ticket</option>
                                 <option>Used</option>
                               </select>
                             </td>
@@ -7852,14 +8077,9 @@ function TicketDetailsPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-2">
-                                  <h4 className="text-base font-semibold text-white">{part.partNo}</h4>
+                                  <h4 className={`text-base font-semibold ${part.status ? partStatusTextClass(part.status) : "text-white"}`}>{part.partNo}</h4>
                                   {part.status ? (
-                                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${
-                                      part.status === 'PO Made' ? 'bg-green-500/20 text-green-300' :
-                                      part.status === 'Need PO' ? 'bg-amber-500/20 text-amber-300' :
-                                      part.status === 'Tech Pickup' ? 'bg-blue-500/20 text-blue-300' :
-                                      'bg-slate-500/20 text-slate-300'
-                                    }`}>
+                                    <span className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-300">
                                       {part.status}
                                     </span>
                                   ) : null}
@@ -7905,7 +8125,18 @@ function TicketDetailsPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Part Details</p>
-                      <h3 className="text-xl font-bold text-white">{viewingPartEntry.partNo} — {viewingPartEntry.status || "No status"}</h3>
+                      <h3 className="flex items-center gap-2 text-xl font-bold">
+                        <span className={viewingPartEntry.status ? partStatusTextClass(viewingPartEntry.status) : "text-white"}>
+                          {viewingPartEntry.partNo}
+                        </span>
+                        {viewingPartEntry.status ? (
+                          <span className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-300">
+                            {viewingPartEntry.status}
+                          </span>
+                        ) : (
+                          <span className="text-sm font-normal text-slate-400">No status</span>
+                        )}
+                      </h3>
                       <p className="text-sm text-slate-400 mt-1">Added {new Date(viewingPartEntry.id).toLocaleString()} by {viewingPartEntry.createdBy}</p>
                     </div>
                     <button
@@ -7921,7 +8152,12 @@ function TicketDetailsPage() {
                   <div className="mt-4">
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Part Information</div>
                     <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
-                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Part No:</span> {viewingPartEntry.partNo || "—"}</div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2">
+                        <span className="font-semibold text-slate-400">Part No:</span>{" "}
+                        <span className={viewingPartEntry.status ? `font-semibold ${partStatusTextClass(viewingPartEntry.status)}` : undefined}>
+                          {viewingPartEntry.partNo || "—"}
+                        </span>
+                      </div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Distributor:</span> {viewingPartEntry.partDist || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Description:</span> {viewingPartEntry.partDesc || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Status:</span> {viewingPartEntry.status || "—"}</div>

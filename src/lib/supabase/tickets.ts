@@ -151,6 +151,7 @@ function rowToTicket(row: any): Ticket {
     status: row.status ?? "",
     phone: c.phone ?? "",
     redo: row.redo ? "Y" : "N",
+    misdiagnosed: row.misdiagnosed ? "Y" : "N",
     aging: row.aging ?? 0,
     calls: row.calls ?? 0,
     partOrder: row.part_order ?? "",
@@ -383,6 +384,22 @@ export async function updateTicketStatus(ticketNo: string, status: string): Prom
     .eq("ticket_no", ticketNo);
   if (error) {
     console.error("updateTicketStatus error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Set/clear a ticket's misdiagnosed flag. Restricted to manager-tier roles
+ * client-side (ticket.$ticketNo.tsx); who changed it and when is captured
+ * by the caller via logTicketAuditEntry, not stored on this column.
+ */
+export async function updateTicketMisdiagnosed(ticketNo: string, misdiagnosed: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("tickets")
+    .update({ misdiagnosed })
+    .eq("ticket_no", ticketNo);
+  if (error) {
+    console.error("updateTicketMisdiagnosed error:", error.message);
     throw new Error(error.message);
   }
 }
