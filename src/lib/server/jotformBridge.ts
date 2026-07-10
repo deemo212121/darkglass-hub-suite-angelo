@@ -130,15 +130,27 @@ const DATA_URI_RE = /^data:image\/(png|jpe?g|gif|webp|heic);base64,/i;
  * "this is a file, not a text answer"; only extractFileUrls' resolution
  * logic below cares about which shape it actually is.
  */
+/**
+ * Some Jotform field/widget types (seen so far: Full Name, Textarea, Date,
+ * Signature) prefix their rawRequest value with a stray leading colon —
+ * e.g. ":Daven Hodge" instead of "Daven Hodge", ":uploads/.../signature.png"
+ * instead of "uploads/...". Not something a person typed; strip it before
+ * any file-shape check or display, since a leading ":" would otherwise
+ * break the "^uploads/" / "^https?://" prefix checks below.
+ */
+function cleanJotformValue(v: string): string {
+  return v.trim().replace(/^:/, "").trim();
+}
+
 function looksLikeJotformFileValue(v: unknown): v is string {
   if (typeof v !== "string") return false;
-  const trimmed = v.trim();
+  const trimmed = cleanJotformValue(v);
   return /\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i.test(trimmed) || DATA_URI_RE.test(trimmed);
 }
 
 /** Recursively collects every string value out of a parsed rawRequest (arrays and composite objects included). */
 function collectStringValues(value: unknown, out: string[]): void {
-  if (typeof value === "string") out.push(value);
+  if (typeof value === "string") out.push(cleanJotformValue(value));
   else if (Array.isArray(value)) value.forEach((v) => collectStringValues(v, out));
   else if (value && typeof value === "object") Object.values(value as Record<string, unknown>).forEach((v) => collectStringValues(v, out));
 }
@@ -248,12 +260,14 @@ function humanizeFieldKey(key: string): string {
 function stringifyAnswerValue(value: unknown): string | null {
   if (value == null) return null;
   if (typeof value === "string") {
-    const trimmed = value.trim();
+    const trimmed = cleanJotformValue(value);
     if (!trimmed || looksLikeJotformFileValue(trimmed)) return null; // shown in Attachments instead
     return trimmed;
   }
   if (Array.isArray(value)) {
-    const parts = value.filter((v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v));
+    const parts = value
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v))
+      .map(cleanJotformValue);
     return parts.length > 0 ? parts.join(", ") : null;
   }
   if (typeof value === "object") {
@@ -262,9 +276,9 @@ function stringifyAnswerValue(value: unknown): string | null {
     // string/array branches above (a signature pad's answer is exactly this
     // shape, e.g. { url: "uploads/..." }), or its path leaks through as
     // plain text instead of becoming an Attachments thumbnail.
-    const parts = Object.values(value as Record<string, unknown>).filter(
-      (v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v)
-    );
+    const parts = Object.values(value as Record<string, unknown>)
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v))
+      .map(cleanJotformValue);
     return parts.length > 0 ? parts.join(" ") : null;
   }
   return String(value);
@@ -384,7 +398,7 @@ async function uploadFileToStorage(
 async function mirrorSubmissionFiles(
   fileUrls: string[],
   opts: { bucket: string; accessToken: string; companyId: string; formId: string; submissionId: string; jotformApiKey?: string }
-): Promise<string[]> {
+): Promise<{ photos: string[]; errors: string[] }> {
   const results = await Promise.allSettled(
     fileUrls.map(async (url, i) => {
       const dataUriMatch = url.match(DATA_URI_RE);
@@ -432,10 +446,20 @@ async function mirrorSubmissionFiles(
       return uploadFileToStorage(opts.bucket, opts.accessToken, objectPath, contentType, bytes);
     })
   );
+  const errors: string[] = [];
   results.forEach((r, i) => {
-    if (r.status === "rejected") console.error(`[jotform-webhook] file mirror failed for ${fileUrls[i]}:`, r.reason);
+    if (r.status === "rejected") {
+      console.error(`[jotform-webhook] file mirror failed for ${fileUrls[i]}:`, r.reason);
+      // Short, user-facing summary — the full stack trace above is for the
+      // server log only. Surfaced in the app so a failed attachment isn't
+      // silently invisible to whoever's looking at the submission (nobody
+      // watches production server logs day-to-day).
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      errors.push(`Attachment ${i + 1} failed: ${reason}`);
+    }
   });
-  return results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
+  const photos = results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
+  return { photos, errors };
 }
 
 // Must stay in sync with isJotformHrRole()/JOTFORM_HR_ROLES in
@@ -498,7 +522,7 @@ async function writeNotification(
   accessToken: string,
   uid: string,
   docId: string,
-  fields: { title: string; body: string; formId: string; submissionId: string; answers: string; photos: string[] }
+  fields: { title: string; body: string; formId: string; submissionId: string; answers: string; photos: string[]; attachmentErrors: string[] }
 ): Promise<"created" | "duplicate"> {
   const res = await fetch(
     `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/notifications/${uid}/items?documentId=${encodeURIComponent(docId)}`,
@@ -522,6 +546,10 @@ async function writeNotification(
           // Any file-upload answers, re-hosted in Firebase Storage under
           // companies/{companyId}/jotform-submissions/ (see mirrorSubmissionFiles).
           photos: { arrayValue: { values: fields.photos.map((p) => sv(p)) } },
+          // Short, user-facing summaries of any attachment that failed to
+          // mirror — so a failure is visible in the app instead of only in
+          // a server log nobody's watching.
+          attachmentErrors: { arrayValue: { values: fields.attachmentErrors.map((e) => sv(e)) } },
         },
       }),
     }
@@ -683,9 +711,10 @@ export async function handleJotformRequest(
       getEnv("JOTFORM_API_KEY");
     const fileUrls = extractFileUrls(rawRequest);
     let photos: string[] = [];
+    let attachmentErrors: string[] = [];
     if (fileUrls.length > 0 && storageBucket) {
       try {
-        photos = await mirrorSubmissionFiles(fileUrls, {
+        const mirrored = await mirrorSubmissionFiles(fileUrls, {
           bucket: storageBucket,
           accessToken,
           companyId,
@@ -693,8 +722,11 @@ export async function handleJotformRequest(
           submissionId: submissionID,
           jotformApiKey,
         });
+        photos = mirrored.photos;
+        attachmentErrors = mirrored.errors;
       } catch (err) {
         console.error("[jotform-webhook] file mirroring failed:", err);
+        attachmentErrors = [err instanceof Error ? err.message : "Attachment mirroring failed"];
       }
     }
 
@@ -714,6 +746,7 @@ export async function handleJotformRequest(
           submissionId: submissionID,
           answers: answersJson,
           photos,
+          attachmentErrors,
         })
       )
     );

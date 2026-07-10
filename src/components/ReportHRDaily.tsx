@@ -7,7 +7,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, type EmployeeInfo } from "@/lib/supabase/users";
-import { subscribeNotifications, markNotificationRead, type AppNotification } from "@/lib/firebase/notifications";
+import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
   addCandidate,
   deleteCandidate,
@@ -184,6 +184,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await Promise.all(unreadIds.map((id) => markNotificationRead(uid, id)));
     } catch (err) {
       console.error("Failed to mark all Jotform notifications read:", err);
+    }
+  };
+
+  const handleDeleteJotformNotification = async (n: AppNotification) => {
+    if (!uid) return;
+    if (!window.confirm(`Delete this submission notification ("${n.title}")? This can't be undone.`)) return;
+    setJotformNotifs((prev) => prev.filter((x) => x.id !== n.id));
+    if (selectedSubmission?.id === n.id) setSelectedSubmission(null);
+    try {
+      await deleteNotification(uid, n.id);
+    } catch (err) {
+      console.error("Failed to delete Jotform notification:", err);
+      setError(err instanceof Error ? err.message : "Failed to delete submission.");
     }
   };
 
@@ -1667,11 +1680,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ) : (
           <div className="divide-y divide-white/5">
             {filteredJotformNotifs.map((n) => (
-              <button
+              <div
                 key={n.id}
-                type="button"
                 onClick={() => { markJotformRead(n); setSelectedSubmission(n); }}
-                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors cursor-pointer"
               >
                 <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border text-blue-300 bg-blue-400/10 border-blue-400/20">
                   <Bell className="h-4 w-4" />
@@ -1679,12 +1691,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
                     <span className={`truncate text-sm font-semibold ${n.isRead ? "text-muted-foreground" : "text-foreground"}`}>{n.title}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString()}</span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString()}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteJotformNotification(n); }}
+                        title="Delete this submission"
+                        className="text-muted-foreground hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
                   </span>
                   <span className={`mt-0.5 block text-xs leading-5 ${n.isRead ? "text-muted-foreground" : "text-foreground/70"}`}>{n.body}</span>
                 </span>
                 {!n.isRead && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-blue-400" />}
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -1912,6 +1934,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </a>
                     ))}
                   </div>
+                </div>
+              )}
+              {selectedSubmission.attachmentErrors && selectedSubmission.attachmentErrors.length > 0 && (
+                <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2">
+                  <p className="text-[10px] font-semibold text-yellow-300 uppercase tracking-wide mb-1">
+                    {selectedSubmission.attachmentErrors.length === 1 ? "1 attachment couldn't be saved" : `${selectedSubmission.attachmentErrors.length} attachments couldn't be saved`}
+                  </p>
+                  {selectedSubmission.attachmentErrors.map((err, i) => (
+                    <p key={i} className="text-xs text-yellow-200/80">{err}</p>
+                  ))}
                 </div>
               )}
             </div>
