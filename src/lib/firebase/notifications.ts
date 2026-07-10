@@ -63,10 +63,18 @@ export async function sendNotification(
   payload: Omit<AppNotification, "id" | "uid" | "isRead" | "createdAt">
 ): Promise<void> {
   if (!isFirebaseReady() || !db) return;
+  // Firestore rejects a field explicitly set to `undefined` (unlike `null`
+  // or simply omitting it) — strip those out so callers can pass optional
+  // fields like `link`/`ticketNo` as `undefined` without the whole write
+  // failing. Without this, addDoc() throws and the notification never
+  // saves, silently, unless the caller happens to await + catch it.
+  const cleanPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, v]) => v !== undefined)
+  ) as typeof payload;
   await Promise.all(
     recipientUids.map((uid) =>
       addDoc(collection(db!, "notifications", uid, "items"), {
-        ...payload,
+        ...cleanPayload,
         uid,
         isRead: false,
         createdAt: serverTimestamp(),

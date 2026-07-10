@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   CheckCircle,
   ChevronLeft,
+  Download,
   Loader2,
   MessageSquare,
   Search,
@@ -29,7 +30,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getTicketAuditLog } from "@/lib/supabase/tickets";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { LOCATIONS, mergeLocationOptions, parseBranchAccess } from "@/lib/locations";
 
 const COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15"];
@@ -113,6 +114,17 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateTo, setDateTo] = useState("");
   const [showPieLabels, setShowPieLabels] = useState(true);
   const [showTeamComposition, setShowTeamComposition] = useState(false);
+
+  // ── Generate Report (CSV export) ──
+  // Independent of the on-screen filters above — this covers every CSR
+  // Agent/Team Leader company-wide for a chosen period, since it's meant
+  // to be a standalone downloadable record rather than a snapshot of
+  // whatever's currently on screen.
+  const [showGenerateReport, setShowGenerateReport] = useState(false);
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const locationOptions = useMemo(
     () => ["All Locations", ...mergeLocationOptions(LOCATIONS, agents.flatMap((a) => a.locations))],
@@ -233,6 +245,146 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredAgents]);
 
+  const csvEscape = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const generateReport = async () => {
+    try {
+      setGeneratingReport(true);
+      setReportError(null);
+
+      const [profiles, auditLog, composition, allNotes] = await Promise.all([
+        getCompanyUsers(),
+        getTicketAuditLog({ startDate: reportFrom || undefined, endDate: reportTo || undefined }),
+        getCsrTeamComposition().catch(() => ({ teams: [], members: [] })),
+        getAllAgentNotes().catch(() => [] as CsrAgentNote[]),
+      ]);
+
+      const teamOf = new Map(composition.members.map((m) => [m.profileId, m.teamId]));
+      const teamNameOf = new Map(composition.teams.map((t) => [t.id, t.name]));
+
+      const scheduleCount = new Map<string, number>();
+      const updateCount = new Map<string, number>();
+      for (const entry of auditLog) {
+        if (!entry.changedBy) continue;
+        if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
+        if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+      }
+
+      // Only approved notes count as the official record — same rule used
+      // everywhere else this workflow shows up.
+      const inPeriod = (iso: string) => {
+        if (reportFrom && iso < reportFrom) return false;
+        if (reportTo && iso > `${reportTo}T23:59:59`) return false;
+        return true;
+      };
+      const warningCount = new Map<string, number>();
+      const mistakeCount = new Map<string, number>();
+      for (const n of allNotes) {
+        if (n.status !== "approved" || !inPeriod(n.createdAt)) continue;
+        const bucket = n.type === "warning" ? warningCount : mistakeCount;
+        bucket.set(n.agentProfileId, (bucket.get(n.agentProfileId) ?? 0) + 1);
+      }
+
+      const isCsrRoster = (p: { role: string | null; extra_roles: string[] | null }) => {
+        const extras = p.extra_roles || [];
+        return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+      };
+
+      const roster = profiles
+        .filter((p) => p.is_active !== false && isCsrRoster(p))
+        .map((p) => {
+          const teamKey = teamOf.get(p.id) ?? null;
+          return {
+            name: p.display_name || p.username || p.email,
+            team: teamKey ? teamNameOf.get(teamKey) ?? "" : "",
+            locations: branchesOf(p.assigned_branch, p.branch_access).join("; "),
+            schedule: scheduleCount.get(p.id) ?? 0,
+            update: updateCount.get(p.id) ?? 0,
+            warnings: warningCount.get(p.id) ?? 0,
+            mistakes: mistakeCount.get(p.id) ?? 0,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      const grandTotal = roster.reduce(
+        (acc, a) => ({
+          agents: acc.agents + 1,
+          schedule: acc.schedule + a.schedule,
+          update: acc.update + a.update,
+          warnings: acc.warnings + a.warnings,
+          mistakes: acc.mistakes + a.mistakes,
+        }),
+        { agents: 0, schedule: 0, update: 0, warnings: 0, mistakes: 0 },
+      );
+
+      const teamRows = composition.teams
+        .map((t) => {
+          const ta = roster.filter((a) => a.team === t.name);
+          return {
+            name: t.name,
+            agents: ta.length,
+            schedule: ta.reduce((s, a) => s + a.schedule, 0),
+            update: ta.reduce((s, a) => s + a.update, 0),
+            warnings: ta.reduce((s, a) => s + a.warnings, 0),
+            mistakes: ta.reduce((s, a) => s + a.mistakes, 0),
+          };
+        })
+        .filter((t) => t.agents > 0);
+
+      const locationCount = new Map<string, number>();
+      for (const p of profiles) {
+        if (p.is_active === false || !isCsrRoster(p)) continue;
+        for (const loc of branchesOf(p.assigned_branch, p.branch_access)) {
+          locationCount.set(loc, (locationCount.get(loc) ?? 0) + 1);
+        }
+      }
+
+      const rows: (string | number)[][] = [
+        ["CSR Dashboard Report"],
+        [`Period: ${reportFrom || "All time"} to ${reportTo || "All time"}`],
+        [`Generated: ${new Date().toLocaleString()}`],
+        [],
+        ["Summary"],
+        ["Metric", "Value"],
+        ["Total Agents", grandTotal.agents],
+        ["Total Schedule Actions", grandTotal.schedule],
+        ["Total Update Actions", grandTotal.update],
+        ["Total Warnings (Approved)", grandTotal.warnings],
+        ["Total Mistakes (Approved)", grandTotal.mistakes],
+        [],
+        ["By Agent"],
+        ["Agent", "Team", "Location(s)", "Schedule", "Update", "Warnings", "Mistakes"],
+        ...roster.map((a) => [a.name, a.team, a.locations, a.schedule, a.update, a.warnings, a.mistakes]),
+        [],
+        ["By Team"],
+        ["Team", "Agents", "Schedule", "Update", "Warnings", "Mistakes"],
+        ...teamRows.map((t) => [t.name, t.agents, t.schedule, t.update, t.warnings, t.mistakes]),
+        [],
+        ["By Location"],
+        ["Location", "Agents"],
+        ...Array.from(locationCount.entries()).sort((a, b) => b[1] - a[1]),
+      ];
+
+      const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `csr-dashboard-report_${reportFrom || "all"}_to_${reportTo || "all"}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Failed to generate report.");
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
   // Waiting on auth to resolve, or mid-redirect to the personal dashboard —
   // don't flash the manager-only overview in either case.
   if (!ready || shouldRedirectToPersonalDashboard) {
@@ -278,10 +430,17 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           ))}
           <button
             type="button"
-            onClick={() => setShowTeamComposition((v) => !v)}
+            onClick={() => { setShowTeamComposition((v) => !v); setShowGenerateReport(false); }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
           >
             <span>👥</span>Team Composition
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowGenerateReport((v) => !v); setShowTeamComposition(false); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+          >
+            <span>📄</span>Generate Report
           </button>
         </div>
 
@@ -340,7 +499,39 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
 
         {showTeamComposition && <CsrTeamComposition />}
 
-        {!showTeamComposition && (<>
+        {showGenerateReport && (
+          <div className="panel p-4 mb-6">
+            <p className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+              <Download className="h-4 w-4" /> Generate Report
+            </p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Pick a period and download a CSV covering every CSR Agent/Team Leader company-wide — schedule &amp; update actions from the ticket audit trail, plus approved warnings/mistakes issued in that window.
+            </p>
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Period From</label>
+                <input type="date" aria-label="Period from" title="Period from" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="glass-input mt-1" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Period To</label>
+                <input type="date" aria-label="Period to" title="Period to" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="glass-input mt-1" />
+              </div>
+              <button
+                type="button"
+                onClick={generateReport}
+                disabled={generatingReport}
+                className="btn bg-primary/15 border-primary/40 text-primary hover:bg-primary/25 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {generatingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {generatingReport ? "Generating…" : "Download CSV"}
+              </button>
+            </div>
+            {reportError && <p className="mt-3 text-xs text-red-300">{reportError}</p>}
+            <p className="mt-3 text-[10px] text-muted-foreground">Leave both blank to cover all-time.</p>
+          </div>
+        )}
+
+        {!showTeamComposition && !showGenerateReport && (<>
         {error && (
           <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
         )}

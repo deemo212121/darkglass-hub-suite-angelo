@@ -122,10 +122,15 @@ export async function getPendingAgentNotes(): Promise<CsrAgentNote[]> {
  * `fastTrackToApproved` is for submitters who already hold final review
  * authority (HR/Admin/Superadmin) — routing their own submission through
  * a department manager first would be redundant, since they can already
- * make the final call. Reuses the same trigger-stamped transitions
- * `reviewAgentNote` always uses, just chained immediately after insert.
+ * make the final call. `fastTrackToManagerApproved` is for submitters who
+ * are themselves a stage-1 (department manager) reviewer but not stage-2 —
+ * their submission skips straight to 'manager_approved' (awaiting HR)
+ * instead of sitting in 'pending' for another manager to approve, since
+ * they already are that manager. Both reuse the same trigger-stamped
+ * transitions `reviewAgentNote` always uses, just chained immediately
+ * after insert.
  */
-export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; fastTrackToApproved?: boolean }): Promise<void> {
+export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; fastTrackToApproved?: boolean; fastTrackToManagerApproved?: boolean }): Promise<void> {
   const { data, error } = await supabase
     .from(TABLE)
     .insert({
@@ -141,6 +146,8 @@ export async function addAgentNote(input: { agentProfileId: string; type: "warni
   if (input.fastTrackToApproved) {
     await reviewAgentNote(data.id, "manager_approved");
     await reviewAgentNote(data.id, "approved");
+  } else if (input.fastTrackToManagerApproved) {
+    await reviewAgentNote(data.id, "manager_approved");
   }
 }
 
