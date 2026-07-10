@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search } from "lucide-react";
+import { ChevronLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser } from "@/lib/supabase/users";
+import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, type EmployeeInfo } from "@/lib/supabase/users";
+import { subscribeNotifications, markNotificationRead, type AppNotification } from "@/lib/firebase/notifications";
 import {
   addCandidate,
   deleteCandidate,
@@ -53,6 +54,7 @@ interface Employee {
   email: string;
   position: string; // raw role code
   branch: string;
+  department: string;
   country: "US" | "PH";
   birthday: string;
   address: string;
@@ -61,7 +63,49 @@ interface Employee {
   terminationDate?: string;
   terminationReason?: string;
   status: EmploymentStatus;
+  onboardingDocs: Record<string, boolean>;
 }
+
+// Onboarding Documents — per-role/country checklist columns (see the
+// "Onboarding Documents" tab). Distinct lists because each group's required
+// paperwork genuinely differs (e.g. Technicians need a Vehicle Use Agreement,
+// Parts Managers need a W4 vs PH's W-8BEN); confirmed against the company's
+// existing tracking spreadsheets rather than guessed.
+const TECHNICIAN_ONBOARDING_DOCS = [
+  "Employee Confirmation Form",
+  "Contractor Data Sheet",
+  "Direct Deposit Authorization",
+  "Contractor Off Days Policy",
+  "Vehicle Use Agreement",
+  "Technician Questions",
+  "Non-Disclosure Agreement",
+  "Plus One",
+  "Parts Responsibility Acknowledgement",
+  "W9",
+  "Driver's License",
+  "Social Security",
+  "CAR IQ",
+  "Floor Protection",
+  "Subcontractor Agreement",
+];
+const PARTS_MANAGER_ONBOARDING_DOCS = [
+  "Employee Confirmation Form",
+  "Employee Data",
+  "Direct Deposit Authorization",
+  "Employee Off Days Policy",
+  "Non-Disclosure Agreement",
+  "W4",
+  "Driver's License",
+  "Social Security",
+];
+const PH_ONBOARDING_DOCS = [
+  "Employee Data",
+  "Direct Deposit Authorization",
+  "Non-Disclosure Agreement",
+  "CSR Duty Agreement",
+  "Employee Off Days Agreement",
+  "W-8BEN",
+];
 
 const branchesOf = (assignedBranch: string | null, branchAccess: string | null): string[] => {
   const raw = [assignedBranch ?? "", ...parseBranchAccess(branchAccess)];
@@ -74,6 +118,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const isHrOrAdmin = ready && HR_ADMIN_ROLES.has(normalizedMyRole);
   const isBranchManager = ready && BRANCH_MANAGER_ROLES.has(normalizedMyRole);
 
+  // HR can also be held as a sub-role (extra_roles) rather than the primary
+  // role — useAuth().role only carries the primary, so resolve extra_roles
+  // separately to decide who can see the Jotform Submissions tab below.
+  const [hasHrSubRole, setHasHrSubRole] = useState(false);
+  useEffect(() => {
+    if (!ready || !uid) return;
+    let cancelled = false;
+    getMyRoles(uid).then(({ extraRoles }) => {
+      if (!cancelled) setHasHrSubRole(extraRoles.some((r) => normalizeRole(r) === "HR"));
+    });
+    return () => { cancelled = true; };
+  }, [ready, uid]);
+  // isJotformHrRole (not the broader isHrOrAdmin) so this stays in exact
+  // sync with findHrFirebaseUids() in jotformBridge.ts — otherwise this tab
+  // is visible to roles the webhook never actually notifies, and it just
+  // sits empty forever for them regardless of how many submissions come in.
+  const canViewJotformTab = isJotformHrRole(normalizedMyRole) || hasHrSubRole;
+
   const today = new Date().toISOString().slice(0, 10);
 
   const [error, setError] = useState<string | null>(null);
@@ -81,13 +143,207 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "onboarding" | "report">("hiring");
+
+  // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
+  // the bell icon reads (kind: "jotform_submission"), just filtered into its
+  // own tab here so HR doesn't have to hunt for form-submission pings mixed
+  // in with every other notification type. ──
+  const [jotformNotifs, setJotformNotifs] = useState<AppNotification[]>([]);
+  useEffect(() => {
+    if (!uid || !canViewJotformTab) {
+      setJotformNotifs([]);
+      return;
+    }
+    const unsubscribe = subscribeNotifications(uid, (items) => {
+      setJotformNotifs(items.filter((n) => n.kind === "jotform_submission"));
+    });
+    return unsubscribe;
+  }, [uid, canViewJotformTab]);
+  const unreadJotformCount = jotformNotifs.filter((n) => !n.isRead).length;
+
+  const markJotformRead = async (n: AppNotification) => {
+    if (n.isRead || !uid) return;
+    setJotformNotifs((prev) => prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)));
+    try {
+      await markNotificationRead(uid, n.id);
+    } catch (err) {
+      console.error("Failed to mark Jotform notification read:", err);
+    }
+  };
+
+  const markAllJotformRead = async () => {
+    if (!uid) return;
+    const unreadIds = jotformNotifs.filter((n) => !n.isRead).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+    setJotformNotifs((prev) => prev.map((x) => ({ ...x, isRead: true })));
+    try {
+      // Mark only the Jotform-kind docs — the Firestore notifications
+      // collection is shared with other alert kinds (e.g. cross-inventory
+      // requests), so a blanket "mark all read" would hide those too.
+      await Promise.all(unreadIds.map((id) => markNotificationRead(uid, id)));
+    } catch (err) {
+      console.error("Failed to mark all Jotform notifications read:", err);
+    }
+  };
+
+  // Clicking a Jotform notification opens a modal with the full submission —
+  // `answers` is Jotform's own "Label: value, Label: value…" summary string.
+  // Split on commas that precede a "Label:" pattern (rather than every comma)
+  // so a comma inside an answer itself — e.g. an address "123 Main St,
+  // Springfield" — doesn't get treated as a field separator.
+  const [selectedSubmission, setSelectedSubmission] = useState<AppNotification | null>(null);
+  const parseAnswers = (answers: string | undefined): { label: string; value: string }[] => {
+    if (!answers) return [];
+    return answers
+      .split(/,\s*(?=[^,:]+:)/)
+      .map((part) => {
+        const idx = part.indexOf(":");
+        if (idx === -1) return { label: "", value: part.trim() };
+        return { label: part.slice(0, idx).trim(), value: part.slice(idx + 1).trim() };
+      })
+      .filter((p) => p.label || p.value);
+  };
+
+  // ── Jotform Submissions filters: form title, submitter name, date ──
+  const [jotformFilters, setJotformFilters] = useState({ formTitle: "", submitter: "", date: "" });
+  const jotformFormTitles = useMemo(
+    () => Array.from(new Set(jotformNotifs.map((n) => n.title))).sort(),
+    [jotformNotifs]
+  );
+  const filteredJotformNotifs = useMemo(() => {
+    const q = jotformFilters.submitter.trim().toLowerCase();
+    return jotformNotifs.filter((n) => {
+      if (jotformFilters.formTitle && n.title !== jotformFilters.formTitle) return false;
+      if (jotformFilters.date && n.createdAt.slice(0, 10) !== jotformFilters.date) return false;
+      // body reads "Submitted by <name>" — search it directly rather than
+      // re-deriving the name, since that's the only place it's stored.
+      if (q && !n.body.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [jotformNotifs, jotformFilters]);
+
+  // "Download PDF" opens an isolated print window with just this submission
+  // (not the whole dashboard) and triggers the browser's print dialog, which
+  // every browser offers "Save as PDF" as a destination for — same approach
+  // already used elsewhere in this app (see OverallStatusPage.tsx's Printer
+  // button) rather than pulling in a PDF-generation library.
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const downloadSubmissionPdf = async (n: AppNotification) => {
+    const rows = parseAnswers(n.answers);
+    // Same container/header treatment as the payslip PDF (see
+    // generatePayslipHTML in employee.$employeeId.tsx) so every generated
+    // document in this app looks like one consistent system.
+    let logoDataUrl = "";
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      logoDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      // Logo is cosmetic — proceed without it if it fails to load.
+    }
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>${escapeHtml(n.title)}</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            .info-section .sub { font-size: 12px; color: #6b7280; font-weight: 500; margin-top: 2px; }
+            h3.section-title { font-size: 13px; font-weight: 700; color: #1f2937; margin-bottom: 8px; border-bottom: 2px solid #1e40af; padding-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            table th { background: #f3f4f6; color: #1f2937; padding: 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; border: 1px solid #e5e7eb; width: 30%; }
+            table td { padding: 8px; border: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
+            table tr:nth-child(even) { background: #fafafa; }
+            .attachments { display: flex; flex-wrap: wrap; gap: 10px; }
+            .attachments img { width: 140px; height: 140px; object-fit: cover; border: 1px solid #e5e7eb; border-radius: 6px; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, table th, .info-section { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>FORM SUBMISSION</h1>
+                <p>${escapeHtml(n.title)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Submitted By</label>
+              <span>${escapeHtml(n.body.replace(/^Submitted by /i, ""))}</span>
+              <div class="sub">${escapeHtml(new Date(n.createdAt).toLocaleString())}</div>
+            </div>
+
+            ${rows.length > 0 ? `
+            <h3 class="section-title">Submission Details</h3>
+            <table>
+              <thead><tr><th>Field</th><th>Response</th></tr></thead>
+              <tbody>
+                ${rows.map((r) => `<tr><td>${escapeHtml(r.label || "—")}</td><td>${escapeHtml(r.value || "—")}</td></tr>`).join("")}
+              </tbody>
+            </table>
+            ` : `<p style="color:#6b7280; font-size:13px; margin-bottom:20px;">No additional details available for this submission.</p>`}
+
+            ${n.photos && n.photos.length > 0 ? `
+            <h3 class="section-title">Attachments</h3>
+            <div class="attachments">
+              ${n.photos.map((p) => `<img src="${escapeHtml(p)}" />`).join("")}
+            </div>
+            ` : ""}
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    // Wait for the window to finish loading (so the logo and any attachment
+    // images are actually rendered before printing) rather than firing
+    // print() immediately, then close the tab once the print dialog is
+    // dismissed — otherwise it's left sitting there empty afterward.
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
+  };
 
   // ── Employee Directory (live) ──
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [roleByProfileId, setRoleByProfileId] = useState<Map<string, string>>(new Map());
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [myLocations, setMyLocations] = useState<string[]>([]);
+  // Full employee_info per profile, cached so Onboarding Documents can merge
+  // a toggle into the existing record instead of clobbering bank info,
+  // address, etc. with a partial save.
+  const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
   const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
 
@@ -112,6 +368,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // base64 photoDataUrl, too heavy to pull on every profile-list load)
       // — fetch hire dates etc. for just this list in one bulk query.
       const infoByProfileId = await getEmployeeInfoByProfileIds(profiles.map((p) => p.id));
+      setEmployeeInfoByProfileId(infoByProfileId);
 
       const mapped: Employee[] = profiles.map(p => {
         const info = infoByProfileId.get(p.id) || {};
@@ -122,6 +379,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           email: p.email,
           position: p.role,
           branch: p.assigned_branch || "",
+          department: p.department || "",
           country: PH_BRANCH_NAMES.has(p.assigned_branch || "") ? "PH" : "US",
           birthday: info.birthDate || "",
           address: [info.address1, info.city, info.state].filter(Boolean).join(", "),
@@ -130,6 +388,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationDate: info.employmentStatusDate || info.terminateDate || undefined,
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
+          onboardingDocs: info.onboardingDocs || {},
         };
       });
       setEmployees(mapped);
@@ -166,6 +425,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [pendingNotes, setPendingNotes] = useState<CsrAgentNote[]>([]);
   const [pendingNotesLoading, setPendingNotesLoading] = useState(true);
 
+  // Mistakes/Warnings totals shown above Pending Reviews — scoped to a date
+  // range (Today by default), same "Today" quick-select + From/To pattern as
+  // the Generate Report tab. Counts approved notes only, windowed by
+  // createdAt (same field the department trend chart below already uses).
+  const [warningsRangeFrom, setWarningsRangeFrom] = useState(today);
+  const [warningsRangeTo, setWarningsRangeTo] = useState(today);
+  const setWarningsRangeToday = () => { setWarningsRangeFrom(today); setWarningsRangeTo(today); };
+  const warningsCountKpi = useMemo(() => {
+    const inRange = (n: CsrAgentNote) => {
+      const d = n.createdAt.slice(0, 10);
+      return n.status === "approved" && d >= warningsRangeFrom && d <= warningsRangeTo;
+    };
+    return {
+      warnings: allNotes.filter((n) => n.type === "warning" && inRange(n)).length,
+      mistakes: allNotes.filter((n) => n.type === "mistake" && inRange(n)).length,
+    };
+  }, [allNotes, warningsRangeFrom, warningsRangeTo]);
+
   const loadNotes = async () => {
     try {
       const [all, awaitingReview] = await Promise.all([
@@ -173,9 +450,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         isHrOrAdmin ? getPendingAgentNotes().catch(() => []) : Promise.resolve([]),
       ]);
       setAllNotes(all);
-      // getPendingAgentNotes() returns both stages — HR's queue is stage 2
-      // only (items a department manager already approved).
-      setPendingNotes(awaitingReview.filter((n) => n.status === "manager_approved"));
+      // Show both stages here — HR/Admin can act directly on a still-pending
+      // (stage 1) submission instead of waiting on a department manager to
+      // review it first on the employee's own page. decideNote() already
+      // supports deciding from either stage.
+      setPendingNotes(awaitingReview);
     } finally {
       setPendingNotesLoading(false);
     }
@@ -266,6 +545,323 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     terminated: employees.filter((e) => e.status === "terminated").length,
     resigned: employees.filter((e) => e.status === "resigned").length,
   }), [visibleCandidates, employees]);
+
+  // ── Generate Report: same KPI breakdown as the top of the page, scoped to
+  // a date range instead of all-time. Candidates are windowed by when they
+  // applied (createdAt); terminated/resigned are windowed by terminationDate
+  // — same fields the department trend chart below already uses this way. ──
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [reportFrom, setReportFrom] = useState(todayStr);
+  const [reportTo, setReportTo] = useState(todayStr);
+  const setReportRangeToday = () => { setReportFrom(todayStr); setReportTo(todayStr); };
+
+  const reportCandidates = useMemo(
+    () => visibleCandidates.filter((c) => {
+      const d = c.createdAt.slice(0, 10);
+      return d >= reportFrom && d <= reportTo;
+    }),
+    [visibleCandidates, reportFrom, reportTo]
+  );
+  const reportTerminatedEmployees = useMemo(
+    () => employees.filter((e) => e.terminationDate && e.terminationDate >= reportFrom && e.terminationDate <= reportTo),
+    [employees, reportFrom, reportTo]
+  );
+  const hiringReportKpi = useMemo(() => ({
+    candidates: reportCandidates.length,
+    scheduled: reportCandidates.filter((c) => c.status === "interviewing").length,
+    preSelected: reportCandidates.filter((c) => c.status === "selected").length,
+    rejected: reportCandidates.filter((c) => c.status === "rejected").length,
+    hired: reportCandidates.filter((c) => c.status === "hired").length,
+    terminated: reportTerminatedEmployees.filter((e) => e.status === "terminated").length,
+    resigned: reportTerminatedEmployees.filter((e) => e.status === "resigned").length,
+  }), [reportCandidates, reportTerminatedEmployees]);
+  const reportRangeLabel = reportFrom === reportTo ? reportFrom : `${reportFrom} to ${reportTo}`;
+
+  const hiringReportRows: [string, number][] = [
+    ["Candidates", hiringReportKpi.candidates],
+    ["Scheduled for Interview", hiringReportKpi.scheduled],
+    ["Pre-Selected", hiringReportKpi.preSelected],
+    ["Rejected", hiringReportKpi.rejected],
+    ["Hired", hiringReportKpi.hired],
+    ["Terminated", hiringReportKpi.terminated],
+    ["Resigned", hiringReportKpi.resigned],
+  ];
+
+  // Metric -> the same accent color its KPI tile uses on the dashboard, so
+  // the exported sheet visually matches the on-screen tiles.
+  const hiringReportColors: Record<string, string> = {
+    "Candidates": "#2563eb",
+    "Scheduled for Interview": "#ca8a04",
+    "Pre-Selected": "#9333ea",
+    "Rejected": "#dc2626",
+    "Hired": "#16a34a",
+    "Terminated": "#dc2626",
+    "Resigned": "#475569",
+  };
+
+  /**
+   * Plain CSV can't carry color — there's no such thing as a "colored cell"
+   * in comma-separated text. Excel (and Sheets) will happily open an HTML
+   * table saved with a .xls extension and render its inline styles as real
+   * colored cells, so we build the same colored/bordered look as the PDF
+   * this way instead of pulling in a binary xlsx-writing library.
+   */
+  const downloadHiringReportExcel = () => {
+    const html = `
+      <html>
+        <head><meta charset="UTF-8"></head>
+        <body>
+          <table border="0" cellspacing="0" cellpadding="6" style="border-collapse:collapse; font-family:Arial,Helvetica,sans-serif;">
+            <tr><td colspan="2" style="background:#1e40af; color:white; font-size:18px; font-weight:bold; padding:10px;">AHS SYSTEM</td></tr>
+            <tr><td colspan="2" style="background:#1e40af; color:#e0e7ff; font-size:13px; padding:4px 10px 10px;">HIRING REPORT</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Report Range</td><td>${escapeHtml(reportRangeLabel)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Generated</td><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+            <tr><td colspan="2">&nbsp;</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Metric</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Total</td>
+            </tr>
+            ${hiringReportRows.map(([label, value], i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(label)}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:${hiringReportColors[label] ?? "#111827"};">${value}</td>
+            </tr>`).join("")}
+          </table>
+        </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hiring-report-${reportFrom}_to_${reportTo}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadHiringReportPdf = async () => {
+    // Same logo + container styling as downloadSubmissionPdf, so every
+    // generated document in this app reads as one consistent system.
+    let logoDataUrl = "";
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      logoDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      // Logo is cosmetic — proceed without it if it fails to load.
+    }
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Hiring Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            table th { background: #f3f4f6; color: #1f2937; padding: 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; border: 1px solid #e5e7eb; }
+            table td { padding: 8px; border: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
+            table td.amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+            table tr:nth-child(even) { background: #fafafa; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, table th, .info-section { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>HIRING REPORT</h1>
+                <p>${escapeHtml(reportRangeLabel)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Report Range</label>
+              <span>${escapeHtml(reportRangeLabel)}</span>
+            </div>
+
+            <table>
+              <thead><tr><th>Metric</th><th style="text-align:right;">Total</th></tr></thead>
+              <tbody>
+                ${hiringReportRows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="amount">${value}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
+  };
+
+  // ── Generate Report: Warnings & Mistakes — same date-range pattern as the
+  // Hiring report above, and the same approved-notes-by-createdAt counting
+  // the Warnings & Mistakes tab's own KPI tiles use. Independent range state
+  // from that tab's filter since this is a separate export flow. ──
+  const [wmReportFrom, setWmReportFrom] = useState(today);
+  const [wmReportTo, setWmReportTo] = useState(today);
+  const setWmReportRangeToday = () => { setWmReportFrom(today); setWmReportTo(today); };
+
+  const wmReportKpi = useMemo(() => {
+    const inRange = (n: CsrAgentNote) => {
+      const d = n.createdAt.slice(0, 10);
+      return n.status === "approved" && d >= wmReportFrom && d <= wmReportTo;
+    };
+    return {
+      warnings: allNotes.filter((n) => n.type === "warning" && inRange(n)).length,
+      mistakes: allNotes.filter((n) => n.type === "mistake" && inRange(n)).length,
+    };
+  }, [allNotes, wmReportFrom, wmReportTo]);
+  const wmReportRangeLabel = wmReportFrom === wmReportTo ? wmReportFrom : `${wmReportFrom} to ${wmReportTo}`;
+  const wmReportRows: [string, number][] = [
+    ["Warnings", wmReportKpi.warnings],
+    ["Mistakes", wmReportKpi.mistakes],
+  ];
+  const wmReportColors: Record<string, string> = { "Warnings": "#ca8a04", "Mistakes": "#ea580c" };
+
+  const downloadWmReportExcel = () => {
+    const html = `
+      <html>
+        <head><meta charset="UTF-8"></head>
+        <body>
+          <table border="0" cellspacing="0" cellpadding="6" style="border-collapse:collapse; font-family:Arial,Helvetica,sans-serif;">
+            <tr><td colspan="2" style="background:#1e40af; color:white; font-size:18px; font-weight:bold; padding:10px;">AHS SYSTEM</td></tr>
+            <tr><td colspan="2" style="background:#1e40af; color:#e0e7ff; font-size:13px; padding:4px 10px 10px;">WARNINGS &amp; MISTAKES REPORT</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Report Range</td><td>${escapeHtml(wmReportRangeLabel)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Generated</td><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+            <tr><td colspan="2">&nbsp;</td></tr>
+            <tr>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af;">Metric</td>
+              <td style="background:#1e40af; color:white; font-weight:bold; border:1px solid #1e40af; text-align:right;">Total</td>
+            </tr>
+            ${wmReportRows.map(([label, value], i) => `
+            <tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+              <td style="border:1px solid #e5e7eb;">${escapeHtml(label)}</td>
+              <td style="border:1px solid #e5e7eb; text-align:right; font-weight:bold; color:${wmReportColors[label] ?? "#111827"};">${value}</td>
+            </tr>`).join("")}
+          </table>
+        </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `warnings-mistakes-report-${wmReportFrom}_to_${wmReportTo}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadWmReportPdf = async () => {
+    let logoDataUrl = "";
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      logoDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      // Logo is cosmetic — proceed without it if it fails to load.
+    }
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Warnings & Mistakes Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 800px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            table th { background: #f3f4f6; color: #1f2937; padding: 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; border: 1px solid #e5e7eb; }
+            table td { padding: 8px; border: 1px solid #e5e7eb; font-size: 13px; color: #374151; }
+            table td.amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+            table tr:nth-child(even) { background: #fafafa; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, table th, .info-section { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>WARNINGS &amp; MISTAKES REPORT</h1>
+                <p>${escapeHtml(wmReportRangeLabel)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Report Range</label>
+              <span>${escapeHtml(wmReportRangeLabel)}</span>
+            </div>
+
+            <table>
+              <thead><tr><th>Metric</th><th style="text-align:right;">Total</th></tr></thead>
+              <tbody>
+                ${wmReportRows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="amount">${value}</td></tr>`).join("")}
+              </tbody>
+            </table>
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
+  };
 
   const handleAddCandidate = async () => {
     if (!newCandidate.name.trim()) return;
@@ -361,6 +957,49 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleCancelStatusChange = () => setConfirmDialog(null);
+
+  // ── Onboarding Documents: per-employee checklist, persisted on
+  // employee_info (same flexible JSON field bank info/address/etc. already
+  // live on) so no new table is needed. Merges into the cached full info
+  // rather than the trimmed Employee row, so a toggle never clobbers other
+  // saved fields like bank details or SSN. Grouped by role for
+  // Technician/Parts Manager (their required paperwork differs), and by
+  // country for Philippines (one shared list regardless of role there).
+  // Parts Manager is the catch-all for every other US role — not just
+  // PARTS_MANAGER — so nobody in the US falls through both tabs. ──
+  const [onboardingGroup, setOnboardingGroup] = useState<"TECHNICIAN" | "PARTS_MANAGER" | "PH">("TECHNICIAN");
+  const [onboardingSearch, setOnboardingSearch] = useState("");
+  const onboardingEmployees = useMemo(() => {
+    const byGroup =
+      onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
+      : onboardingGroup === "TECHNICIAN" ? employees.filter((e) => e.country === "US" && normalizeRole(e.position) === "TECHNICIAN")
+      : employees.filter((e) => e.country === "US" && normalizeRole(e.position) !== "TECHNICIAN");
+    const q = onboardingSearch.trim().toLowerCase();
+    return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
+  }, [employees, onboardingGroup, onboardingSearch]);
+  const onboardingDocColumns =
+    onboardingGroup === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
+    : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
+    : PH_ONBOARDING_DOCS;
+
+  const toggleOnboardingDoc = async (employeeId: string, docName: string) => {
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return;
+    const newValue = !employee.onboardingDocs[docName];
+
+    setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: newValue } } : e)));
+
+    const existingInfo = employeeInfoByProfileId.get(employeeId) || {};
+    const updatedInfo: EmployeeInfo = { ...existingInfo, onboardingDocs: { ...(existingInfo.onboardingDocs || {}), [docName]: newValue } };
+    try {
+      await saveProfileEmployeeInfo(employeeId, updatedInfo);
+      setEmployeeInfoByProfileId((prev) => new Map(prev).set(employeeId, updatedInfo));
+    } catch (err) {
+      // Revert the optimistic update on failure.
+      setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: !newValue } } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update onboarding document status.");
+    }
+  };
 
   // Warnings actually approved by HR (final stage) — not timecard-derived.
   const approvedWarningCountByProfile = useMemo(() => {
@@ -479,6 +1118,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           { key: "hiring", label: "Hiring", count: visibleCandidates.length },
           { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0 },
           { key: "directory", label: "Employee Directory", count: employees.length },
+          ...(canViewJotformTab ? [{ key: "jotform", label: "Jotform Submissions", count: unreadJotformCount }] as const : []),
+          { key: "onboarding", label: "Onboarding Documents", count: 0 },
+          { key: "report", label: "Generate Report", count: 0 },
         ] as const).map((tab) => (
           <button
             key={tab.key}
@@ -611,7 +1253,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* ── Warnings & Mistakes tab: Pending Reviews, Approved log, department trend ── */}
       {activeTab === "warnings" && (
       <>
-      {/* Pending Reviews — HR's final call (stage 2) */}
+      {/* Mistakes / Warnings totals — date-ranged, Today by default */}
+      <div className="panel p-4 mb-4">
+        <div className="flex flex-wrap items-end gap-3 mb-3">
+          <button type="button" onClick={setWarningsRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${warningsRangeFrom === today && warningsRangeTo === today ? "bg-primary/20 text-primary" : ""}`}>
+            Today
+          </button>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+            <input type="date" value={warningsRangeFrom} onChange={(e) => setWarningsRangeFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+            <input type="date" value={warningsRangeTo} onChange={(e) => setWarningsRangeTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><AlertTriangle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-yellow-300">{warningsCountKpi.warnings}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
+          </div>
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><XCircle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-orange-300">{warningsCountKpi.mistakes}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Pending Reviews — both stage 1 (pending, no department manager sign-off
+          yet) and stage 2 (manager_approved) show up here, since HR/Admin can
+          decide directly on either rather than being blocked until a
+          department manager acts first on the employee's own page. */}
       {isHrOrAdmin && (
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-1 flex items-center gap-1.5">
@@ -620,11 +1294,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-300 border border-yellow-500/25">{pendingNotes.length}</span>
             )}
           </p>
-          <p className="text-[10px] text-muted-foreground mb-3">Already approved by the employee's manager — awaiting your final decision.</p>
+          <p className="text-[10px] text-muted-foreground mb-3">Every warning/mistake awaiting a decision, at any review stage.</p>
           {pendingNotesLoading ? (
             <p className="text-xs text-muted-foreground py-2">Loading…</p>
           ) : pendingNotes.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-2">Nothing waiting on your final decision.</p>
+            <p className="text-xs text-muted-foreground py-2">Nothing waiting on a decision.</p>
           ) : (
             <div className="space-y-2">
               {pendingNotes.map((n) => {
@@ -635,7 +1309,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {n.type === "warning" ? "Warning" : "Mistake"}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs"><span className="font-semibold">{employeeName}</span> — {n.note}</p>
+                      <p className="text-xs">
+                        <span className="font-semibold">{employeeName}</span> — {n.note}{" "}
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${n.status === "manager_approved" ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" : "bg-slate-500/20 text-slate-300 border border-slate-500/30"}`}>
+                          {n.status === "manager_approved" ? "Manager-approved" : "Awaiting manager"}
+                        </span>
+                      </p>
                       <p className="text-[10px] text-muted-foreground mt-1">
                         {n.ticketNo && <>Ticket <span className="font-mono text-blue-400">{n.ticketNo}</span> · </>}
                         Submitted by {n.createdByName || "Unknown"} · {new Date(n.createdAt).toLocaleString()}
@@ -922,6 +1601,313 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </table>
         </div>
       </div>
+      )}
+
+      {/* ── Jotform Submissions ── */}
+      {activeTab === "jotform" && canViewJotformTab && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+          <div>
+            <h2 className="font-semibold text-sm flex items-center gap-1.5">
+              <Bell className="h-4 w-4 text-blue-300" /> Jotform Submissions
+              {unreadJotformCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/25">{unreadJotformCount} new</span>
+              )}
+            </h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Pings whenever someone submits a Jotform form — delivered here in real time.</p>
+          </div>
+          {unreadJotformCount > 0 && (
+            <button onClick={markAllJotformRead} className="btn text-sm px-3 py-1.5">Mark all read</button>
+          )}
+        </div>
+
+        {/* Jotform Filters */}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Form</label>
+              <select value={jotformFilters.formTitle} onChange={(e) => setJotformFilters({ ...jotformFilters, formTitle: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">All forms</option>
+                {jotformFormTitles.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Submitted By</label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input value={jotformFilters.submitter} onChange={(e) => setJotformFilters({ ...jotformFilters, submitter: e.target.value })} placeholder="Submitter name…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-48" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
+              <input type="date" value={jotformFilters.date} onChange={(e) => setJotformFilters({ ...jotformFilters, date: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            {(jotformFilters.formTitle || jotformFilters.submitter || jotformFilters.date) && (
+              <button onClick={() => setJotformFilters({ formTitle: "", submitter: "", date: "" })} className="btn text-sm px-3 mb-0.5">Clear Filters</button>
+            )}
+            <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+              {filteredJotformNotifs.length}{(jotformFilters.formTitle || jotformFilters.submitter || jotformFilters.date) ? ` of ${jotformNotifs.length}` : ""} submissions
+            </span>
+          </div>
+        </div>
+
+        {jotformNotifs.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-8 text-center">No form submissions yet.</p>
+        ) : filteredJotformNotifs.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-8 text-center">No submissions match these filters.</p>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {filteredJotformNotifs.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => { markJotformRead(n); setSelectedSubmission(n); }}
+                className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+              >
+                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border text-blue-300 bg-blue-400/10 border-blue-400/20">
+                  <Bell className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={`truncate text-sm font-semibold ${n.isRead ? "text-muted-foreground" : "text-foreground"}`}>{n.title}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString()}</span>
+                  </span>
+                  <span className={`mt-0.5 block text-xs leading-5 ${n.isRead ? "text-muted-foreground" : "text-foreground/70"}`}>{n.body}</span>
+                </span>
+                {!n.isRead && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-blue-400" />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Onboarding Documents ── */}
+      {activeTab === "onboarding" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+          <div>
+            <h2 className="font-semibold text-sm">Onboarding Documents</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Click a cell to toggle whether that document has been collected.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
+              <button type="button" onClick={() => setOnboardingGroup("TECHNICIAN")} className={`px-4 text-xs font-medium transition-colors ${onboardingGroup === "TECHNICIAN" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Technician</button>
+              <button type="button" onClick={() => setOnboardingGroup("PARTS_MANAGER")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PARTS_MANAGER" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Parts Manager</button>
+              <button type="button" onClick={() => setOnboardingGroup("PH")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${onboardingGroup === "PH" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>Philippines</button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={onboardingSearch}
+                onChange={(e) => setOnboardingSearch(e.target.value)}
+                placeholder="Search name…"
+                className="glass-input text-xs py-1.5 pl-8 pr-3 rounded-md w-40 h-7.5"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <table className="w-full table-fixed text-xs">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[9%]">Name</th>
+                <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{onboardingGroup === "PH" ? "Dept." : "Branch"}</th>
+                {onboardingDocColumns.map((doc) => (
+                  <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">{doc}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {onboardingEmployees.length === 0 ? (
+                <tr><td colSpan={2 + onboardingDocColumns.length} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : `No ${onboardingGroup === "TECHNICIAN" ? "Technician" : onboardingGroup === "PARTS_MANAGER" ? "Parts Manager" : "Philippines"} employees found.`}</td></tr>
+              ) : (
+                onboardingEmployees.map((employee) => (
+                  <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-1.5 py-1.5 font-medium truncate" title={employee.name}>{employee.name}</td>
+                    <td className="px-1.5 py-1.5 text-muted-foreground truncate" title={onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch}>
+                      {/* PH's "Department" column reads from position/role, same
+                          label the Employee Directory tab shows — not the raw
+                          department field, which is usually blank. */}
+                      {(onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch) || "—"}
+                    </td>
+                    {onboardingDocColumns.map((doc) => {
+                      const done = !!employee.onboardingDocs[doc];
+                      return (
+                        <td key={doc} className="px-0.5 py-0.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => toggleOnboardingDoc(employee.id, doc)}
+                            className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-white/5 text-muted-foreground hover:bg-white/10"}`}
+                          >
+                            {done ? "YES" : "NO"}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* ── Generate Report ── */}
+      {activeTab === "report" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Hiring Report</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of Candidates, Scheduled for Interview, Pre-Selected, Rejected, Hired, Terminated, and Resigned for the selected range.</p>
+        </div>
+
+        {/* Range filter */}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex flex-wrap items-end gap-3">
+            <button type="button" onClick={setReportRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${reportFrom === todayStr && reportTo === todayStr ? "bg-primary/20 text-primary" : ""}`}>
+              Today
+            </button>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+              <input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+              <input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="ml-auto flex gap-2">
+              <button onClick={downloadHiringReportExcel} className="btn text-sm px-3 py-1.5">Download Excel</button>
+              <button onClick={downloadHiringReportPdf} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Download PDF</button>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI tiles — same shape as the top-of-page overview, scoped to the range */}
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+          {[
+            { label: "Candidates", value: hiringReportKpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
+            { label: "Scheduled for Interview", value: hiringReportKpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
+            { label: "Pre-Selected", value: hiringReportKpi.preSelected, color: "text-purple-300", icon: <CheckCircle className="h-4 w-4" /> },
+            { label: "Rejected", value: hiringReportKpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
+            { label: "Hired", value: hiringReportKpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
+            { label: "Terminated", value: hiringReportKpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
+            { label: "Resigned", value: hiringReportKpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" /> },
+          ].map((k) => (
+            <div key={k.label} className="panel p-3 text-center">
+              <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+              <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
+      {/* ── Generate Warnings & Mistakes Report ── */}
+      {activeTab === "report" && (
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Mistakes &amp; Warnings Report</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of approved Warnings and Mistakes for the selected range.</p>
+        </div>
+
+        {/* Range filter */}
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+          <div className="flex flex-wrap items-end gap-3">
+            <button type="button" onClick={setWmReportRangeToday} className={`btn text-sm px-3 py-1.5 mb-0.5 ${wmReportFrom === today && wmReportTo === today ? "bg-primary/20 text-primary" : ""}`}>
+              Today
+            </button>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</label>
+              <input type="date" value={wmReportFrom} onChange={(e) => setWmReportFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">To</label>
+              <input type="date" value={wmReportTo} onChange={(e) => setWmReportTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="ml-auto flex gap-2">
+              <button onClick={downloadWmReportExcel} className="btn text-sm px-3 py-1.5">Download Excel</button>
+              <button onClick={downloadWmReportPdf} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Download PDF</button>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI tiles */}
+        <div className="p-4 grid grid-cols-2 gap-2">
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><AlertTriangle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-yellow-300">{wmReportKpi.warnings}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
+          </div>
+          <div className="panel p-3 text-center">
+            <div className="flex justify-center mb-1 text-muted-foreground"><XCircle className="h-4 w-4" /></div>
+            <p className="text-xl font-bold text-orange-300">{wmReportKpi.mistakes}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {/* Jotform Submission Details — floating modal, blurred backdrop */}
+      {selectedSubmission && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setSelectedSubmission(null)}
+        >
+          <div
+            className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-white/10 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold truncate">{selectedSubmission.title}</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{selectedSubmission.body} · {new Date(selectedSubmission.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => downloadSubmissionPdf(selectedSubmission)}
+                  title="Download as PDF"
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"
+                >
+                  <Download className="h-3.5 w-3.5" /> PDF
+                </button>
+                <button onClick={() => setSelectedSubmission(null)} className="text-muted-foreground hover:text-foreground px-1">✕</button>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {(() => {
+                const rows = parseAnswers(selectedSubmission.answers);
+                return rows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No additional details available for this submission.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {rows.map((r, i) => (
+                      <div key={i}>
+                        {r.label && <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{r.label}</p>}
+                        <p className="text-sm break-words">{r.value || "—"}</p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              {selectedSubmission.photos && selectedSubmission.photos.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Attachments</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {selectedSubmission.photos.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block aspect-square rounded-lg overflow-hidden border border-white/10 hover:opacity-80 transition-opacity">
+                        <img src={url} alt={`Attachment ${i + 1}`} className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Confirmation Dialog */}

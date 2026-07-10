@@ -103,3 +103,61 @@ const MISDIAGNOSED_ROLES = new Set([
 export function canManageMisdiagnosed(role: string | null | undefined): boolean {
   return MISDIAGNOSED_ROLES.has(normalizeRole(role));
 }
+
+/**
+ * Roles that may submit a warning/mistake conduct note about an employee
+ * (employee_conduct_notes — see csrAgentNotes.ts). Any manager-flavored
+ * role, not just CSR management, since the same two-stage review workflow
+ * covers every department. Shared by CsrAgentDetailPage (per-employee
+ * detail page) and the Attendance Monitoring page's Warnings tab.
+ */
+const CONDUCT_NOTE_SUBMITTER_ROLES = new Set([
+  "CSR_TEAM_LEADER", "CSR_MANAGER", "MANAGER", "ADMIN", "SUPERADMIN", "HR",
+  "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICIAN_MANAGER",
+  "CLAIMS_MANAGER", "PARTS_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
+]);
+
+export function canSubmitConductNote(role: string | null | undefined): boolean {
+  return CONDUCT_NOTE_SUBMITTER_ROLES.has(normalizeRole(role));
+}
+
+/**
+ * Stage 2 (final/HR-tier) reviewers — their own submissions fast-track
+ * straight to 'approved' since they already hold final review authority
+ * and routing through a department manager first would be redundant.
+ */
+const CONDUCT_NOTE_FAST_TRACK_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN"]);
+
+export function canFastTrackConductNote(role: string | null | undefined): boolean {
+  return CONDUCT_NOTE_FAST_TRACK_ROLES.has(normalizeRole(role));
+}
+
+/**
+ * Roles allowed to see the "Completed / Claimed / Data Closed" status-group
+ * filter option on Ticket List — revenue-sensitive since Data Closed marks
+ * a job as fully billed/closed out, so it's restricted to Admin, BizOps,
+ * and Claims rather than shown to every role that can view tickets.
+ */
+const DATA_CLOSE_FILTER_ROLES = new Set([
+  "ADMIN", "SUPERADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CLAIMS", "CLAIMS_MANAGER",
+]);
+
+export function canFilterDataClosedTickets(role: string | null | undefined): boolean {
+  return DATA_CLOSE_FILTER_ROLES.has(normalizeRole(role));
+}
+
+/**
+ * Single source of truth for "HR-tier" access to Jotform form-submission
+ * pings — shared between who can see the Jotform Submissions tab
+ * (ReportHRDaily.tsx) and who actually gets notified when a submission
+ * comes in (findHrFirebaseUids in jotformBridge.ts). These two MUST stay
+ * in sync: previously the tab was visible to HR/Admin/Superadmin/Manager
+ * but the webhook only ever notified accounts tagged exactly "HR", so
+ * every other role saw a permanently empty tab regardless of how many
+ * submissions came in.
+ */
+const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+
+export function isJotformHrRole(role: string | null | undefined): boolean {
+  return JOTFORM_HR_ROLES.has(normalizeRole(role));
+}

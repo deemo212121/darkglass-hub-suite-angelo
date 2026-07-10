@@ -16,7 +16,7 @@ import {
   getPartOrderStateByTicketIds,
 } from "@/lib/supabase/tickets";
 import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
-import { canManageMisdiagnosed } from "@/lib/roleLabels";
+import { canManageMisdiagnosed, canFilterDataClosedTickets } from "@/lib/roleLabels";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
@@ -543,6 +543,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const SAMPLE_TICKETS: TicketItem[] = tickets;
   const { email, role, allowedLocations } = useAuth();
   const canViewMisdiagnosed = canManageMisdiagnosed(role);
+  const canViewDataCloseFilter = canFilterDataClosedTickets(role);
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
@@ -965,7 +966,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               >
                 <option value="">All (Open + Closed)</option>
                 <option value="open">Open / Pending</option>
-                <option value="completed">Completed / Claimed</option>
+                {canViewDataCloseFilter && <option value="completed">Completed / Claimed / Data Closed</option>}
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
