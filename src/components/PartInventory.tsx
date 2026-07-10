@@ -9,7 +9,10 @@ import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { collection, addDoc, getDocs, serverTimestamp, query, orderBy } from "firebase/firestore";
 import { db, isFirebaseReady } from "@/lib/firebase/config";
 import { TruckStockPanel } from "@/components/TruckStockPage";
+import { TruckStockRequestsPanel } from "@/components/TruckStockRequestsPage";
 import { getPartsInventoryRows, PART_INVENTORY_STATUSES, type PartInventoryRow } from "@/lib/supabase/partsInventory";
+import { getMyRoles } from "@/lib/supabase/users";
+import { canApproveTruckStockPulls } from "@/lib/truckStockNotify";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -37,8 +40,17 @@ function usePortal(open: boolean) {
 }
 
 export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { companyId, email } = useAuth();
-  const [activeTab, setActiveTab] = useState<"inventory" | "truck-stock">("inventory");
+  const { companyId, email, role, uid } = useAuth();
+  const [activeTab, setActiveTab] = useState<"inventory" | "truck-stock" | "truck-stock-requests">("inventory");
+  // canApproveTruckStockPulls needs extra_roles too, which useAuth() doesn't
+  // carry (it only exposes the primary role) — same pattern as HR's
+  // hasHrSubRole check on the Jotform Submissions tab.
+  const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  useEffect(() => {
+    if (!uid) return;
+    getMyRoles(uid).then(({ extraRoles }) => setExtraRoles(extraRoles)).catch(() => setExtraRoles([]));
+  }, [uid]);
+  const canApproveTruckStock = canApproveTruckStockPulls(role, extraRoles);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
   const [partDist, setPartDist] = useState(""); const [distOpen, setDistOpen] = useState(false);
   const [status, setStatus] = useState(""); const [statusOpen, setStatusOpen] = useState(false);
@@ -187,9 +199,19 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           >
             Truck Stock
           </button>
+          {canApproveTruckStock && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("truck-stock-requests")}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${activeTab === "truck-stock-requests" ? "border-blue-500 text-blue-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            >
+              Truck Stock Requests
+            </button>
+          )}
         </div>
 
         {activeTab === "truck-stock" && <TruckStockPanel />}
+        {activeTab === "truck-stock-requests" && canApproveTruckStock && <TruckStockRequestsPanel />}
 
         {activeTab === "inventory" && (
         <>

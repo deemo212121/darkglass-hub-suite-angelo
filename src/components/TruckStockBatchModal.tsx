@@ -55,7 +55,7 @@ export interface TruckStockBatchModalProps {
 type RowState = {
   part: TruckStockBatchPartLine;
   /** Branches that currently have stock for this part. */
-  options: Array<{ branch: string; quantity: number; storageLocation: string }>;
+  options: Array<{ branch: string; quantity: number; storageLocation: string; description: string }>;
   /** Selected branch slug or "" for "skip / order normally". */
   branch: string;
 };
@@ -85,7 +85,7 @@ export function TruckStockBatchModal({
         const partNos = parts.map((p) => p.partNo);
         const stock = await fetchStock(partNos);
         if (!alive) return;
-        const byPart = new Map<string, Array<{ branch: string; quantity: number; storageLocation: string }>>();
+        const byPart = new Map<string, Array<{ branch: string; quantity: number; storageLocation: string; description: string }>>();
         stock.forEach((s) => {
           const key = s.partNo.toLowerCase();
           if (!byPart.has(key)) byPart.set(key, []);
@@ -93,6 +93,7 @@ export function TruckStockBatchModal({
             branch: s.branch,
             quantity: s.quantity,
             storageLocation: s.storageLocation || "",
+            description: s.description || "",
           });
         });
         setRows(parts.map((p) => {
@@ -217,7 +218,14 @@ export function TruckStockBatchModal({
                   return (
                     <tr key={r.part.id} className={`border-t border-white/5 ${noStock ? "bg-rose-500/5" : ""}`}>
                       <td className="px-3 py-2 font-mono">{r.part.partNo}</td>
-                      <td className="px-3 py-2 text-slate-300">{r.part.partDesc || "—"}</td>
+                      <td className="px-3 py-2 text-slate-300">
+                        {/* Fall back to the matched Truck Stock record's description
+                            when the ticket's own Part Transaction line has none —
+                            the ticket line and the in-house inventory row are
+                            separate records, so one can have it filled in without
+                            the other. */}
+                        {r.part.partDesc || selectedOpt?.description || r.options[0]?.description || "—"}
+                      </td>
                       <td className="px-3 py-2 text-right font-semibold">{qtyNeeded}</td>
                       <td className="px-3 py-2">
                         {noStock ? (

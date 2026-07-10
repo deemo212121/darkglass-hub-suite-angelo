@@ -13,6 +13,7 @@ import {
   addDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
   where,
@@ -49,6 +50,9 @@ export interface AppNotification {
   // Any file-upload answers, re-hosted in Firebase Storage (see
   // src/lib/server/jotformBridge.ts) — only present on jotform_submission.
   photos?: string[];
+  // Short summaries of any attachment that failed to mirror to Storage —
+  // surfaced so a failure is visible here instead of only a server log.
+  attachmentErrors?: string[];
 }
 
 // ─── Write ─────────────────────────────────────────────────────────────────
@@ -155,6 +159,11 @@ export function subscribeNotifications(
 export async function markNotificationRead(uid: string, notifId: string): Promise<void> {
   if (!isFirebaseReady() || !db) return;
   await updateDoc(doc(db!, "notifications", uid, "items", notifId), { isRead: true });
+}
+
+export async function deleteNotification(uid: string, notifId: string): Promise<void> {
+  if (!isFirebaseReady() || !db) return;
+  await deleteDoc(doc(db!, "notifications", uid, "items", notifId));
 }
 
 export async function markAllNotificationsRead(uid: string): Promise<void> {

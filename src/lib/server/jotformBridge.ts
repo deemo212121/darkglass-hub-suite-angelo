@@ -112,23 +112,223 @@ function sv(s: string) {
 // ---- Firebase Storage (file-upload answers get re-hosted here) ----
 
 /**
- * Best-effort scan of a parsed rawRequest for Jotform file-upload answers.
- * Jotform returns those as a URL string (or an array of URL strings, for
- * multi-file upload widgets) pointing at Jotform's own CDN — we mirror them
- * into Firebase Storage so they survive independent of the Jotform account.
+ * Matches a base64 data URI Jotform sometimes submits directly as a field's
+ * value — notably the signature pad's "Type" mode (as opposed to "Draw"
+ * mode, which uploads a file and gives a URL/path like the other cases
+ * below). Capture group is the extension to use when saving it.
+ */
+const DATA_URI_RE = /^data:image\/(png|jpe?g|gif|webp|heic);base64,/i;
+
+/**
+ * True for any string that *looks like a file* Jotform would have produced
+ * for an uploaded file or signature — either a filename-shaped string, or an
+ * inline base64 data URI. Jotform's rawRequest is inconsistent about how
+ * much path info it includes per field type: a full URL, a bare
+ * "uploads/{user}/{form}/{submission}/{file}" path with no domain, just the
+ * filename alone with nothing else, or — for a signature typed rather than
+ * drawn — the whole image inlined as base64. All need to be recognized as
+ * "this is a file, not a text answer"; only extractFileUrls' resolution
+ * logic below cares about which shape it actually is.
+ */
+/**
+ * Some Jotform field/widget types (seen so far: Full Name, Textarea, Date,
+ * Signature) prefix their rawRequest value with a stray leading colon —
+ * e.g. ":Daven Hodge" instead of "Daven Hodge", ":uploads/.../signature.png"
+ * instead of "uploads/...". Not something a person typed; strip it before
+ * any file-shape check or display, since a leading ":" would otherwise
+ * break the "^uploads/" / "^https?://" prefix checks below.
+ */
+function cleanJotformValue(v: string): string {
+  return v.trim().replace(/^:/, "").trim();
+}
+
+function looksLikeJotformFileValue(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const trimmed = cleanJotformValue(v);
+  return /\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i.test(trimmed) || DATA_URI_RE.test(trimmed);
+}
+
+/** Recursively collects every string value out of a parsed rawRequest (arrays and composite objects included). */
+function collectStringValues(value: unknown, out: string[]): void {
+  if (typeof value === "string") out.push(cleanJotformValue(value));
+  else if (Array.isArray(value)) value.forEach((v) => collectStringValues(v, out));
+  else if (value && typeof value === "object") Object.values(value as Record<string, unknown>).forEach((v) => collectStringValues(v, out));
+}
+
+/**
+ * Best-effort scan of a parsed rawRequest for Jotform file-upload answers
+ * (upload widgets and signature pads both surface as a URL/path/filename
+ * string, however much of it Jotform included) — we mirror them into
+ * Firebase Storage so they survive independent of the Jotform account.
  */
 function extractFileUrls(rawRequest: string | null): string[] {
   if (!rawRequest) return [];
-  const isFileUrl = (v: unknown): v is string =>
-    typeof v === "string" && /^https?:\/\//i.test(v) && /\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i.test(v);
   try {
     const parsed = JSON.parse(rawRequest) as Record<string, unknown>;
+    const allValues: string[] = [];
+    for (const val of Object.values(parsed)) collectStringValues(val, allValues);
+
+    // Some upload-widget answers in the same submission carry the full
+    // "uploads/{username}/{formId}/{submissionId}/" prefix (signature pads
+    // usually do) while others give only the bare filename with nothing
+    // else. Since every file in one submission shares the same account/
+    // form/submission, reuse whichever prefix we can find to resolve the
+    // bare ones instead of silently dropping them.
+    let uploadPrefix: string | undefined;
+    for (const v of allValues) {
+      const m = v.match(/(?:^https?:\/\/[^/]+\/)?(uploads\/[^/]+\/[^/]+\/[^/]+)\//i);
+      if (m) {
+        uploadPrefix = m[1];
+        break;
+      }
+    }
+
     const urls: string[] = [];
-    for (const val of Object.values(parsed)) {
-      if (isFileUrl(val)) urls.push(val);
-      else if (Array.isArray(val)) val.forEach((item) => isFileUrl(item) && urls.push(item));
+    for (const v of allValues) {
+      if (!looksLikeJotformFileValue(v)) continue;
+      const trimmed = v.trim();
+      // Data URIs are self-contained — fetch() can read them directly, no
+      // domain/path resolution needed (and none would make sense anyway).
+      if (DATA_URI_RE.test(trimmed)) urls.push(trimmed);
+      else if (/^https?:\/\//i.test(trimmed)) urls.push(trimmed);
+      else if (/^uploads\//i.test(trimmed)) urls.push(`https://www.jotform.com/${trimmed}`);
+      else if (uploadPrefix && !trimmed.includes("/")) urls.push(`https://www.jotform.com/${uploadPrefix}/${trimmed}`);
+      // else: a bare filename with no sibling prefix anywhere in this
+      // submission to borrow — genuinely nothing to construct a URL from.
     }
     return urls;
+  } catch {
+    return [];
+  }
+}
+
+// Cache per formId — the form's questions don't change between
+// submissions, so there's no reason to call Jotform's API on every single
+// webhook delivery for the same form.
+const formQuestionLabelsCache = new Map<string, Record<string, string>>();
+
+/**
+ * Fetches the real question titles for a form from Jotform's own API, keyed
+ * by question id (qid) — the number in a rawRequest key like "q14_...".
+ * Needed because copy-pasting a field in Jotform's builder and then editing
+ * its displayed question text does NOT change the field's internal name,
+ * which is the only thing rawRequest ever includes — so several fields can
+ * share the same internal name ("typeA") while showing completely different
+ * text to the person filling out the form. Best-effort: returns {} (falling
+ * back to humanizeFieldKey below) if the API call fails for any reason.
+ */
+async function fetchFormQuestionLabels(formId: string, apiKey: string | undefined): Promise<Record<string, string>> {
+  if (!apiKey) return {};
+  const cached = formQuestionLabelsCache.get(formId);
+  if (cached) return cached;
+  try {
+    const res = await fetch(`https://api.jotform.com/form/${encodeURIComponent(formId)}/questions?apiKey=${encodeURIComponent(apiKey)}`);
+    if (!res.ok) return {};
+    const body = (await res.json()) as { content?: Record<string, { text?: string }> };
+    const labels: Record<string, string> = {};
+    for (const [qid, q] of Object.entries(body.content ?? {})) {
+      if (q?.text) labels[qid] = q.text.replace(/<[^>]+>/g, "").trim(); // strip any HTML Jotform embeds in the title
+    }
+    formQuestionLabelsCache.set(formId, labels);
+    return labels;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Turns a Jotform rawRequest question key like "q14_technicianQuestions"
+ * into a readable label ("Technician Questions"). Best-effort heuristic,
+ * same spirit as extractSubmitterName below — used only as a fallback when
+ * fetchFormQuestionLabels above couldn't resolve the field's real title.
+ */
+function humanizeFieldKey(key: string): string {
+  const stripped = key.replace(/^q\d+_/, "");
+  const spaced = stripped
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .replace(/_/g, " ")
+    .trim();
+  return spaced
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Renders one answer value (string / array / composite object) to display text, or null to omit it. */
+function stringifyAnswerValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = cleanJotformValue(value);
+    if (!trimmed || looksLikeJotformFileValue(trimmed)) return null; // shown in Attachments instead
+    return trimmed;
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v))
+      .map(cleanJotformValue);
+    return parts.length > 0 ? parts.join(", ") : null;
+  }
+  if (typeof value === "object") {
+    // Composite widgets (name, address, signature pad) all come through as
+    // an object of sub-values — filter out file-like ones the same as the
+    // string/array branches above (a signature pad's answer is exactly this
+    // shape, e.g. { url: "uploads/..." }), or its path leaks through as
+    // plain text instead of becoming an Attachments thumbnail.
+    const parts = Object.values(value as Record<string, unknown>)
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "" && !looksLikeJotformFileValue(v))
+      .map(cleanJotformValue);
+    return parts.length > 0 ? parts.join(" ") : null;
+  }
+  return String(value);
+}
+
+/**
+ * Builds the full "every question and answer" list directly from rawRequest
+ * (structured JSON) rather than Jotform's own "pretty" summary text — the
+ * pretty string is comma-joined free text with no reliable field delimiter,
+ * so multi-select checkboxes and paragraph answers containing commas could
+ * get silently mis-split or dropped when parsed back out downstream.
+ * Returned as an array (stored JSON-encoded) instead of a string.
+ */
+async function buildAnswerRows(
+  rawRequest: string | null,
+  formId: string,
+  jotformApiKey: string | undefined
+): Promise<{ label: string; value: string }[]> {
+  if (!rawRequest) return [];
+  try {
+    const parsed = JSON.parse(rawRequest) as Record<string, unknown>;
+    const questionLabels = await fetchFormQuestionLabels(formId, jotformApiKey);
+    const rows: { label: string; value: string }[] = [];
+    for (const [key, val] of Object.entries(parsed)) {
+      // Real question answers are always keyed "qN_fieldName". rawRequest
+      // also carries Jotform's own submission bookkeeping alongside them —
+      // slug, jsExecutionTracker, submitSource, submitDate, buildDate,
+      // uploadServerUrl, etc. — which never follow that pattern. Skip
+      // anything that isn't an actual question key.
+      const qidMatch = key.match(/^q(\d+)_/);
+      if (!qidMatch) continue;
+      const value = stringifyAnswerValue(val);
+      if (value === null) continue;
+      const label = questionLabels[qidMatch[1]] || humanizeFieldKey(key);
+      rows.push({ label, value });
+    }
+    // Two questions can genuinely share the identical title in Jotform
+    // itself (e.g. several fields left as the default "Type a question"
+    // placeholder) — number the duplicates so they're still distinguishable
+    // in the list instead of silently looking like the same field repeated.
+    const labelCounts = new Map<string, number>();
+    for (const r of rows) labelCounts.set(r.label, (labelCounts.get(r.label) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    for (const r of rows) {
+      if ((labelCounts.get(r.label) ?? 0) <= 1) continue;
+      const n = (seen.get(r.label) ?? 0) + 1;
+      seen.set(r.label, n);
+      r.label = `${r.label} (${n})`;
+    }
+    return rows;
   } catch {
     return [];
   }
@@ -198,9 +398,24 @@ async function uploadFileToStorage(
 async function mirrorSubmissionFiles(
   fileUrls: string[],
   opts: { bucket: string; accessToken: string; companyId: string; formId: string; submissionId: string; jotformApiKey?: string }
-): Promise<string[]> {
+): Promise<{ photos: string[]; errors: string[] }> {
   const results = await Promise.allSettled(
     fileUrls.map(async (url, i) => {
+      const dataUriMatch = url.match(DATA_URI_RE);
+
+      if (dataUriMatch) {
+        // Self-contained — fetch() decodes a data: URI locally with no
+        // network request, so none of the Jotform-auth machinery below
+        // applies (appending ?apiKey= would corrupt the base64 payload).
+        const fileRes = await fetch(url);
+        const contentType = fileRes.headers.get("content-type") || `image/${dataUriMatch[1].toLowerCase()}`;
+        const bytes = new Uint8Array(await fileRes.arrayBuffer());
+        const ext = dataUriMatch[1].toLowerCase().replace(/^jpg$/, "jpeg");
+        const filename = `signature-${i}.${ext}`;
+        const objectPath = `companies/${opts.companyId}/jotform-submissions/${opts.formId}/${opts.submissionId}/${filename}`;
+        return uploadFileToStorage(opts.bucket, opts.accessToken, objectPath, contentType, bytes);
+      }
+
       // Jotform's uploaded-file URLs are private by default (a plain fetch
       // gets redirected to Jotform's own login page, which is the HTML
       // Jotform sends back instead of the file). Jotform's officially
@@ -231,10 +446,20 @@ async function mirrorSubmissionFiles(
       return uploadFileToStorage(opts.bucket, opts.accessToken, objectPath, contentType, bytes);
     })
   );
+  const errors: string[] = [];
   results.forEach((r, i) => {
-    if (r.status === "rejected") console.error(`[jotform-webhook] file mirror failed for ${fileUrls[i]}:`, r.reason);
+    if (r.status === "rejected") {
+      console.error(`[jotform-webhook] file mirror failed for ${fileUrls[i]}:`, r.reason);
+      // Short, user-facing summary — the full stack trace above is for the
+      // server log only. Surfaced in the app so a failed attachment isn't
+      // silently invisible to whoever's looking at the submission (nobody
+      // watches production server logs day-to-day).
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      errors.push(`Attachment ${i + 1} failed: ${reason}`);
+    }
   });
-  return results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
+  const photos = results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
+  return { photos, errors };
 }
 
 // Must stay in sync with isJotformHrRole()/JOTFORM_HR_ROLES in
@@ -297,7 +522,7 @@ async function writeNotification(
   accessToken: string,
   uid: string,
   docId: string,
-  fields: { title: string; body: string; formId: string; submissionId: string; answers: string; photos: string[] }
+  fields: { title: string; body: string; formId: string; submissionId: string; answers: string; photos: string[]; attachmentErrors: string[] }
 ): Promise<"created" | "duplicate"> {
   const res = await fetch(
     `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/notifications/${uid}/items?documentId=${encodeURIComponent(docId)}`,
@@ -321,6 +546,10 @@ async function writeNotification(
           // Any file-upload answers, re-hosted in Firebase Storage under
           // companies/{companyId}/jotform-submissions/ (see mirrorSubmissionFiles).
           photos: { arrayValue: { values: fields.photos.map((p) => sv(p)) } },
+          // Short, user-facing summaries of any attachment that failed to
+          // mirror — so a failure is visible in the app instead of only in
+          // a server log nobody's watching.
+          attachmentErrors: { arrayValue: { values: fields.attachmentErrors.map((e) => sv(e)) } },
         },
       }),
     }
@@ -482,9 +711,10 @@ export async function handleJotformRequest(
       getEnv("JOTFORM_API_KEY");
     const fileUrls = extractFileUrls(rawRequest);
     let photos: string[] = [];
+    let attachmentErrors: string[] = [];
     if (fileUrls.length > 0 && storageBucket) {
       try {
-        photos = await mirrorSubmissionFiles(fileUrls, {
+        const mirrored = await mirrorSubmissionFiles(fileUrls, {
           bucket: storageBucket,
           accessToken,
           companyId,
@@ -492,10 +722,19 @@ export async function handleJotformRequest(
           submissionId: submissionID,
           jotformApiKey,
         });
+        photos = mirrored.photos;
+        attachmentErrors = mirrored.errors;
       } catch (err) {
         console.error("[jotform-webhook] file mirroring failed:", err);
+        attachmentErrors = [err instanceof Error ? err.message : "Attachment mirroring failed"];
       }
     }
+
+    // Structured rows built straight from rawRequest (with real question
+    // titles pulled from Jotform's Form API where possible) — see
+    // buildAnswerRows for why this replaced Jotform's "pretty" text. Built
+    // once and reused for every recipient below, not per-uid.
+    const answersJson = JSON.stringify(await buildAnswerRows(rawRequest, formID, jotformApiKey));
 
     const dedupeId = submissionID ? `jotform_${submissionID}` : `jotform_${crypto.randomUUID()}`;
     const results = await Promise.all(
@@ -505,8 +744,9 @@ export async function handleJotformRequest(
           body,
           formId: formID,
           submissionId: submissionID,
-          answers: pretty ?? "",
+          answers: answersJson,
           photos,
+          attachmentErrors,
         })
       )
     );
