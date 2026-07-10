@@ -70,6 +70,17 @@ const SERVER_DEFINE = {
   "globalThis.__FIREBASE_SA_PRIVATE_KEY__": JSON.stringify(
     rootEnv.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY ?? ""
   ),
+  // Firebase Storage bucket (used by the Jotform webhook to re-host
+  // file-upload answers — see mirrorSubmissionFiles in jotformBridge.ts).
+  "globalThis.__FIREBASE_STORAGE_BUCKET__": JSON.stringify(rootEnv.VITE_FIREBASE_STORAGE_BUCKET ?? ""),
+  // Jotform API key (SERVER ONLY) — Jotform's uploaded-file URLs are private
+  // by default; this is required to actually download them for mirroring.
+  "globalThis.__JOTFORM_API_KEY__": JSON.stringify(rootEnv.JOTFORM_API_KEY ?? ""),
+  // Supabase service-role key (SERVER ONLY — the Jotform webhook uses this to
+  // read `profiles` (role + extra_roles) directly, bypassing RLS, since the
+  // webhook has no logged-in Supabase session to scope a normal query to.
+  "globalThis.__SUPABASE_URL__": JSON.stringify(rootEnv.VITE_SUPABASE_URL ?? ""),
+  "globalThis.__SUPABASE_SERVICE_KEY__": JSON.stringify(rootEnv.SUPABASE_SERVICE_KEY ?? ""),
 };
 
 // Dev-only middleware: serve /api/supabase-token locally (vite dev does not run
@@ -267,6 +278,10 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
+    // Dev-server only (never shipped in the Cloudflare production build):
+    // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
+    // server for testing webhooks (e.g. Jotform) that need a public URL.
+    server: { allowedHosts: [".trycloudflare.com"] },
     plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,

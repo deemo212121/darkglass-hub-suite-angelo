@@ -43,6 +43,12 @@ export interface AppNotification {
   ticketNo?: string;     // attach a ticket number for deep-link
   isRead: boolean;
   createdAt: string;     // ISO string
+  // Jotform's "Label: value, Label: value…" summary of every submitted
+  // answer — only present on kind: "jotform_submission" notifications.
+  answers?: string;
+  // Any file-upload answers, re-hosted in Firebase Storage (see
+  // src/lib/server/jotformBridge.ts) — only present on jotform_submission.
+  photos?: string[];
 }
 
 // ─── Write ─────────────────────────────────────────────────────────────────

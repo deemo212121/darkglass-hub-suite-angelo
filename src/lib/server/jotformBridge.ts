@@ -19,11 +19,15 @@
  *  2. We verify the shared secret (Jotform has no custom-header webhook option,
  *     so the secret travels as a query param on the configured webhook URL).
  *  3. We parse the submission (formID, submissionID, formTitle, submitter name).
- *  4. We look up HR users for the configured company (same query
- *     sendNotificationToRole() runs against users_index).
+ *  4. We look up HR users for the configured company from Supabase `profiles`
+ *     (the actual source of truth for roles — see findHrFirebaseUids below),
+ *     matching either the primary `role` or an `extra_roles` (sub-role) entry.
  *  5. We write one notification doc per HR user at
- *     notifications/{uid}/items/jotform_{submissionID} — a deterministic ID
- *     so Jotform's automatic retries of the same submission can't duplicate it.
+ *     notifications/{firebase_uid}/items/jotform_{submissionID} — a
+ *     deterministic ID so Jotform's automatic retries of the same submission
+ *     can't duplicate it. The doc path uses the Firebase uid because that's
+ *     what the client's notification listener (NotificationsMenu) subscribes
+ *     with (useAuth().uid), and profiles.firebase_uid is exactly that value.
  */
 
 // ---- base64url helpers (no Buffer dependency; Worker-safe) ----
@@ -60,7 +64,9 @@ async function getGoogleAccessToken(serviceAccountEmail: string, privateKeyPem: 
   const payloadB64 = strToB64url(
     JSON.stringify({
       iss: serviceAccountEmail,
-      scope: "https://www.googleapis.com/auth/datastore",
+      // Datastore (Firestore notifications) + Storage (Jotform file-upload
+      // answers get re-hosted in Firebase Storage — see uploadFileToStorage).
+      scope: "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/devstorage.read_write",
       aud: "https://oauth2.googleapis.com/token",
       iat: now,
       exp: now + 3600,
@@ -103,33 +109,180 @@ function sv(s: string) {
   return { stringValue: s };
 }
 
-/** Same lookup sendNotificationToRole() does (users_index by userType + companyId), via REST. */
-async function findHrUids(projectId: string, accessToken: string, companyId: string): Promise<string[]> {
+// ---- Firebase Storage (file-upload answers get re-hosted here) ----
+
+/**
+ * Best-effort scan of a parsed rawRequest for Jotform file-upload answers.
+ * Jotform returns those as a URL string (or an array of URL strings, for
+ * multi-file upload widgets) pointing at Jotform's own CDN — we mirror them
+ * into Firebase Storage so they survive independent of the Jotform account.
+ */
+function extractFileUrls(rawRequest: string | null): string[] {
+  if (!rawRequest) return [];
+  const isFileUrl = (v: unknown): v is string =>
+    typeof v === "string" && /^https?:\/\//i.test(v) && /\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i.test(v);
+  try {
+    const parsed = JSON.parse(rawRequest) as Record<string, unknown>;
+    const urls: string[] = [];
+    for (const val of Object.values(parsed)) {
+      if (isFileUrl(val)) urls.push(val);
+      else if (Array.isArray(val)) val.forEach((item) => isFileUrl(item) && urls.push(item));
+    }
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
+function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
+  const total = arrays.reduce((sum, a) => sum + a.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const a of arrays) {
+    out.set(a, offset);
+    offset += a.length;
+  }
+  return out;
+}
+
+/**
+ * Upload one file to Firebase Storage via the GCS JSON API (multipart upload
+ * in a single request: JSON metadata part + raw bytes part). Sets a
+ * `firebaseStorageDownloadTokens` value so the returned URL works the same
+ * way client-side `getDownloadURL()` calls do elsewhere in this app (see
+ * src/lib/firebase/storage.ts) — no separate auth needed to view it.
+ */
+async function uploadFileToStorage(
+  bucket: string,
+  accessToken: string,
+  objectPath: string,
+  contentType: string,
+  bytes: Uint8Array
+): Promise<string> {
+  const boundary = `jotform_${crypto.randomUUID()}`;
+  const downloadToken = crypto.randomUUID();
+  const enc = new TextEncoder();
+  const metadataJson = JSON.stringify({
+    name: objectPath,
+    contentType,
+    metadata: { firebaseStorageDownloadTokens: downloadToken },
+  });
+  const body = concatUint8Arrays([
+    enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadataJson}\r\n--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`),
+    bytes,
+    enc.encode(`\r\n--${boundary}--`),
+  ]);
+
   const res = await fetch(
-    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=multipart`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({
-        structuredQuery: {
-          from: [{ collectionId: "users_index" }],
-          where: {
-            compositeFilter: {
-              op: "AND",
-              filters: [
-                { fieldFilter: { field: { fieldPath: "userType" }, op: "EQUAL", value: sv("HR") } },
-                { fieldFilter: { field: { fieldPath: "companyId" }, op: "EQUAL", value: sv(companyId) } },
-              ],
-            },
-          },
-        },
-      }),
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+      // Cast needed: this lib's DOM types predate the generic
+      // Uint8Array<ArrayBufferLike> signature (same pre-existing mismatch as
+      // supabaseTokenBridge.ts) — the runtime value is a plain Blob either way.
+      body: new Blob([body as unknown as BlobPart]),
     }
   );
-  if (!res.ok) throw new Error(`users_index query failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as Array<{ document?: { fields?: Record<string, { stringValue?: string }> } }>;
+  if (!res.ok) throw new Error(`Storage upload failed (${res.status}): ${await res.text()}`);
+
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(objectPath)}?alt=media&token=${downloadToken}`;
+}
+
+/**
+ * Download every Jotform-hosted file answer and re-upload it into Firebase
+ * Storage under companies/{companyId}/jotform-submissions/{formId}/{submissionId}/.
+ * Best-effort: a single file failing to mirror doesn't fail the whole
+ * webhook — the notification still goes out either way.
+ */
+async function mirrorSubmissionFiles(
+  fileUrls: string[],
+  opts: { bucket: string; accessToken: string; companyId: string; formId: string; submissionId: string; jotformApiKey?: string }
+): Promise<string[]> {
+  const results = await Promise.allSettled(
+    fileUrls.map(async (url, i) => {
+      // Jotform's uploaded-file URLs are private by default (a plain fetch
+      // gets redirected to Jotform's own login page, which is the HTML
+      // Jotform sends back instead of the file). Jotform's officially
+      // supported way to fetch them programmatically is appending the
+      // account's API key as a query param.
+      const downloadUrl = opts.jotformApiKey
+        ? `${url}${url.includes("?") ? "&" : "?"}apiKey=${encodeURIComponent(opts.jotformApiKey)}`
+        : url;
+      const fileRes = await fetch(downloadUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" },
+      });
+      if (!fileRes.ok) throw new Error(`Fetching Jotform file failed (${fileRes.status}): ${url}`);
+      const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
+      // Guard against silently re-hosting an HTML error/interstitial page as
+      // if it were the real file — verify the response actually looks like
+      // the file type its URL claims before uploading it anywhere.
+      const extMatch = url.match(/\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i);
+      const expectedType = extMatch ? extMatch[1].toLowerCase() : null;
+      const looksRight =
+        !expectedType ||
+        (expectedType === "pdf" ? contentType.includes("pdf") : contentType.startsWith("image/"));
+      if (!looksRight) {
+        throw new Error(`Unexpected content-type "${contentType}" fetching ${url} — likely blocked, not a real file`);
+      }
+      const bytes = new Uint8Array(await fileRes.arrayBuffer());
+      const filename = decodeURIComponent(url.split("/").pop()?.split("?")[0] || `file-${i}`);
+      const objectPath = `companies/${opts.companyId}/jotform-submissions/${opts.formId}/${opts.submissionId}/${filename}`;
+      return uploadFileToStorage(opts.bucket, opts.accessToken, objectPath, contentType, bytes);
+    })
+  );
+  results.forEach((r, i) => {
+    if (r.status === "rejected") console.error(`[jotform-webhook] file mirror failed for ${fileUrls[i]}:`, r.reason);
+  });
+  return results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map((r) => r.value);
+}
+
+// Must stay in sync with isJotformHrRole()/JOTFORM_HR_ROLES in
+// src/lib/roleLabels.ts, which gates who sees the Jotform Submissions tab
+// on the HR & Recruitment Dashboard (ReportHRDaily.tsx) — this is who
+// actually gets notified. Inlined rather than imported: this file is
+// deliberately dependency-free so it stays portable across whatever
+// runtime ends up building it (Cloudflare Worker today, previously a
+// Vercel nodejs20.x function).
+const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+
+/**
+ * Look up HR-tier recipients from Supabase `profiles` — the app's actual
+ * source of truth for users and roles (Firestore's `users_index` is legacy
+ * and isn't written to by the current user-provisioning flow, so querying
+ * it here always returned zero recipients for any account created
+ * recently).
+ *
+ * Matches HR/Admin/Superadmin/Manager as either the primary `role` or
+ * anywhere in `extra_roles` (sub-roles), scoped to the target company and
+ * active accounts only. Uses the service-role key to bypass RLS — this
+ * webhook has no logged-in Supabase session to scope a normal query to.
+ */
+async function findHrFirebaseUids(
+  supabaseUrl: string,
+  serviceKey: string,
+  companyId: string
+): Promise<string[]> {
+  const url =
+    `${supabaseUrl}/rest/v1/profiles` +
+    `?select=firebase_uid,role,extra_roles` +
+    `&company_id=eq.${encodeURIComponent(companyId)}` +
+    `&is_active=eq.true`;
+  const res = await fetch(url, {
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+  });
+  if (!res.ok) throw new Error(`Supabase profiles query failed (${res.status}): ${await res.text()}`);
+  const rows = (await res.json()) as Array<{
+    firebase_uid: string | null;
+    role: string | null;
+    extra_roles: string[] | null;
+  }>;
   return rows
-    .map((r) => r.document?.fields?.uid?.stringValue)
+    .filter((r) => {
+      const roles = [r.role, ...(r.extra_roles ?? [])].map((v) => String(v ?? "").trim().toUpperCase());
+      return roles.some((v) => JOTFORM_HR_ROLES.has(v));
+    })
+    .map((r) => r.firebase_uid)
     .filter((uid): uid is string => Boolean(uid));
 }
 
@@ -144,7 +297,7 @@ async function writeNotification(
   accessToken: string,
   uid: string,
   docId: string,
-  fields: { title: string; body: string; formId: string; submissionId: string }
+  fields: { title: string; body: string; formId: string; submissionId: string; answers: string; photos: string[] }
 ): Promise<"created" | "duplicate"> {
   const res = await fetch(
     `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/notifications/${uid}/items?documentId=${encodeURIComponent(docId)}`,
@@ -161,6 +314,13 @@ async function writeNotification(
           createdAt: { timestampValue: new Date().toISOString() },
           formId: sv(fields.formId),
           submissionId: sv(fields.submissionId),
+          // Jotform's own human-readable "Label: value, Label: value…" summary
+          // of every answer — stashed here so the notification can be clicked
+          // open to show the full submission, without a second data store.
+          answers: sv(fields.answers),
+          // Any file-upload answers, re-hosted in Firebase Storage under
+          // companies/{companyId}/jotform-submissions/ (see mirrorSubmissionFiles).
+          photos: { arrayValue: { values: fields.photos.map((p) => sv(p)) } },
         },
       }),
     }
@@ -253,8 +413,11 @@ export async function handleJotformRequest(
     }
 
     const submitterName = extractSubmitterName(rawRequest, pretty);
-    const title = "New Form Submitted";
-    const body = `${submitterName} submitted ${formTitle || "a form"}`;
+    // Lead with the actual form's name so different forms are distinguishable
+    // at a glance in the notification list, instead of every entry reading
+    // the same generic "New Form Submitted".
+    const title = formTitle || "New Form Submitted";
+    const body = `Submitted by ${submitterName}`;
 
     // ── Recipients: HR users for the configured company ────────────────────
     const companyId = getEnv("JOTFORM_TARGET_COMPANY_ID");
@@ -284,17 +447,68 @@ export async function handleJotformRequest(
       );
     }
 
+    const supabaseUrl: string | undefined =
+      (g.__SUPABASE_URL__ && g.__SUPABASE_URL__ !== "" ? g.__SUPABASE_URL__ : undefined) ??
+      getEnv("VITE_SUPABASE_URL");
+    const supabaseServiceKey: string | undefined =
+      (g.__SUPABASE_SERVICE_KEY__ && g.__SUPABASE_SERVICE_KEY__ !== "" ? g.__SUPABASE_SERVICE_KEY__ : undefined) ??
+      getEnv("SUPABASE_SERVICE_KEY");
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      return json(
+        { error: !supabaseUrl ? "Server missing VITE_SUPABASE_URL" : "Server missing SUPABASE_SERVICE_KEY" },
+        500
+      );
+    }
+
     const accessToken = await getGoogleAccessToken(serviceAccountEmail, privateKey);
-    const hrUids = await findHrUids(projectId, accessToken, companyId);
+    const hrUids = await findHrFirebaseUids(supabaseUrl, supabaseServiceKey, companyId);
 
     if (hrUids.length === 0) {
       // Not an error — ack quickly so Jotform doesn't retry a "failed" delivery.
-      return json({ success: true, notified: 0, note: "No HR users found for companyId" });
+      return json({ success: true, notified: 0, note: "No active HR users found for companyId" });
+    }
+
+    // ── Mirror any uploaded files into Firebase Storage ─────────────────────
+    // Jotform's own file URLs require a Jotform session/API key to fetch
+    // later and can vanish if the form or account changes, so we re-host them
+    // under companies/{companyId}/jotform-submissions/ instead. Best-effort —
+    // a failed mirror never blocks the notification itself.
+    const storageBucket: string | undefined =
+      (g.__FIREBASE_STORAGE_BUCKET__ && g.__FIREBASE_STORAGE_BUCKET__ !== "" ? g.__FIREBASE_STORAGE_BUCKET__ : undefined) ??
+      getEnv("VITE_FIREBASE_STORAGE_BUCKET");
+    const jotformApiKey: string | undefined =
+      (g.__JOTFORM_API_KEY__ && g.__JOTFORM_API_KEY__ !== "" ? g.__JOTFORM_API_KEY__ : undefined) ??
+      getEnv("JOTFORM_API_KEY");
+    const fileUrls = extractFileUrls(rawRequest);
+    let photos: string[] = [];
+    if (fileUrls.length > 0 && storageBucket) {
+      try {
+        photos = await mirrorSubmissionFiles(fileUrls, {
+          bucket: storageBucket,
+          accessToken,
+          companyId,
+          formId: formID,
+          submissionId: submissionID,
+          jotformApiKey,
+        });
+      } catch (err) {
+        console.error("[jotform-webhook] file mirroring failed:", err);
+      }
     }
 
     const dedupeId = submissionID ? `jotform_${submissionID}` : `jotform_${crypto.randomUUID()}`;
     const results = await Promise.all(
-      hrUids.map((uid) => writeNotification(projectId!, accessToken, uid, dedupeId, { title, body, formId: formID, submissionId: submissionID }))
+      hrUids.map((uid) =>
+        writeNotification(projectId!, accessToken, uid, dedupeId, {
+          title,
+          body,
+          formId: formID,
+          submissionId: submissionID,
+          answers: pretty ?? "",
+          photos,
+        })
+      )
     );
 
     return json({
