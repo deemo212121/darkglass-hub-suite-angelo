@@ -107,15 +107,20 @@ interface Props {
 type Part =
   | string
   | { kind: "url"; value: string; trailing: string }
-  | { kind: "ticket"; value: string; trailing: string };
+  | { kind: "ticket"; value: string; trailing: string }
+  | { kind: "namedLink"; label: string; url: string };
 
-/** Render `text` with clickable URLs and validated `#ticket-no` references. */
-export function MessageBody({ text, className }: Props) {
-  if (!text) return null;
+// Optional named-link syntax `[label](https://...)` — e.g. for forwarding a
+// CV with the actual filename as the clickable text instead of a raw signed
+// URL. Matched as a whole-string pass BEFORE the per-token scan below (the
+// label can contain spaces, which the token scan alone can't span), so it's
+// purely additive — every plain "https://..." URL still auto-linkifies
+// exactly as before.
+const NAMED_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
 
-  const parts: Part[] = [];
+/** Runs the existing per-token URL/#ticket scan over one plain-text segment. */
+function scanPlainText(text: string, parts: Part[]): void {
   const tokens = text.split(/(\s+)/);
-
   for (const raw of tokens) {
     if (!raw) continue;
     if (/^\s+$/.test(raw)) {
@@ -148,11 +153,39 @@ export function MessageBody({ text, className }: Props) {
 
     parts.push(raw);
   }
+}
+
+/** Render `text` with clickable URLs, `[label](url)` named links, and validated `#ticket-no` references. */
+export function MessageBody({ text, className }: Props) {
+  if (!text) return null;
+
+  const parts: Part[] = [];
+  let lastIndex = 0;
+  for (const m of text.matchAll(NAMED_LINK_RE)) {
+    const idx = m.index ?? 0;
+    if (idx > lastIndex) scanPlainText(text.slice(lastIndex, idx), parts);
+    parts.push({ kind: "namedLink", label: m[1], url: m[2] });
+    lastIndex = idx + m[0].length;
+  }
+  if (lastIndex < text.length) scanPlainText(text.slice(lastIndex), parts);
 
   return (
     <p className={className}>
       {parts.map((p, i) => {
         if (typeof p === "string") return <Fragment key={i}>{p}</Fragment>;
+        if (p.kind === "namedLink") {
+          return (
+            <a
+              key={i}
+              href={p.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 text-blue-300 underline decoration-blue-300/40 hover:text-blue-200"
+            >
+              📎 {p.label}
+            </a>
+          );
+        }
         if (p.kind === "url") {
           return (
             <Fragment key={i}>

@@ -1,25 +1,35 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download } from "lucide-react";
+import { ChevronLeft, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, getMyProfileId, type EmployeeInfo } from "@/lib/supabase/users";
+import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
   addCandidate,
   deleteCandidate,
   getCandidateCvUrl,
+  getCandidateCvUrlForForwarding,
   getCandidates,
   updateCandidateStatus,
   uploadCandidateCv,
+  getEodHiringReport,
+  getEomHiringReport,
+  setStaffingTarget,
+  logCvForward,
   type Candidate,
   type CandidateStatus,
+  type EodHiringRow,
+  type CvForwardDetail,
 } from "@/lib/supabase/hrCandidates";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { parseBranchAccess } from "@/lib/locations";
+import { OnboardingApplicantDocuments } from "./OnboardingApplicantDocuments";
+import { getOnboardingDocumentCategoriesByProfileIds } from "@/lib/supabase/onboardingDocuments";
 
 const ALL_US_BRANCHES = LOCATIONS_DATA.filter(l => !l.isPhilippines).map(l => l.location).sort();
 const ALL_PH_BRANCHES = LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location).sort();
@@ -35,6 +45,8 @@ const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
   interviewing: "Interviewing",
   selected: "Selected",
+  training: "Training",
+  on_hold: "On Hold",
   hired: "Hired",
   rejected: "Rejected",
 };
@@ -42,8 +54,18 @@ const CANDIDATE_STATUS_COLOR: Record<CandidateStatus, string> = {
   applied: "bg-blue-500/20 text-blue-300",
   interviewing: "bg-yellow-500/20 text-yellow-300",
   selected: "bg-purple-500/20 text-purple-300",
+  training: "bg-cyan-500/20 text-cyan-300",
+  on_hold: "bg-slate-500/20 text-slate-300",
   hired: "bg-green-500/20 text-green-300",
   rejected: "bg-red-500/20 text-red-300",
+};
+// Statuses that require an accompanying date when selected — interview
+// date for Interviewing, training start date for Training — see
+// hr_update_candidate_status() in 0047_hr_hiring_reports.sql, which is
+// what actually persists these dates alongside the status transition.
+const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
+  interviewing: "Interview date",
+  training: "Training start date",
 };
 
 type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
@@ -113,7 +135,7 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
 };
 
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { role: myRole, ready, uid } = useAuth();
+  const { role: myRole, ready, uid, displayName, companyId } = useAuth();
   const normalizedMyRole = normalizeRole(myRole);
   const isHrOrAdmin = ready && HR_ADMIN_ROLES.has(normalizedMyRole);
   const isBranchManager = ready && BRANCH_MANAGER_ROLES.has(normalizedMyRole);
@@ -143,7 +165,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "onboarding" | "report">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "onboarding" | "hiringReports" | "report">("hiring");
 
   // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
   // the bell icon reads (kind: "jotform_submission"), just filtered into its
@@ -561,7 +583,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const kpi = useMemo(() => ({
     candidates: visibleCandidates.length,
     scheduled: visibleCandidates.filter((c) => c.status === "interviewing").length,
-    preSelected: visibleCandidates.filter((c) => c.status === "selected").length,
     rejected: visibleCandidates.filter((c) => c.status === "rejected").length,
     hired: visibleCandidates.filter((c) => c.status === "hired").length,
     terminated: employees.filter((e) => e.status === "terminated").length,
@@ -591,7 +612,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const hiringReportKpi = useMemo(() => ({
     candidates: reportCandidates.length,
     scheduled: reportCandidates.filter((c) => c.status === "interviewing").length,
-    preSelected: reportCandidates.filter((c) => c.status === "selected").length,
     rejected: reportCandidates.filter((c) => c.status === "rejected").length,
     hired: reportCandidates.filter((c) => c.status === "hired").length,
     terminated: reportTerminatedEmployees.filter((e) => e.status === "terminated").length,
@@ -602,7 +622,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const hiringReportRows: [string, number][] = [
     ["Candidates", hiringReportKpi.candidates],
     ["Scheduled for Interview", hiringReportKpi.scheduled],
-    ["Pre-Selected", hiringReportKpi.preSelected],
     ["Rejected", hiringReportKpi.rejected],
     ["Hired", hiringReportKpi.hired],
     ["Terminated", hiringReportKpi.terminated],
@@ -614,11 +633,41 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const hiringReportColors: Record<string, string> = {
     "Candidates": "#2563eb",
     "Scheduled for Interview": "#ca8a04",
-    "Pre-Selected": "#9333ea",
     "Rejected": "#dc2626",
     "Hired": "#16a34a",
     "Terminated": "#dc2626",
     "Resigned": "#475569",
+  };
+
+  // Shared by every "Download PDF" button on this page — loads the logo once
+  // as a data URL (so the print window doesn't depend on network state) and
+  // opens/prints/closes the window, so each report only needs to build its
+  // own HTML body.
+  const loadLogoDataUrl = async (): Promise<string> => {
+    try {
+      const logoModule = await import("@/assets/logo.png");
+      const res = await fetch(logoModule.default);
+      const blob = await res.blob();
+      return await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return ""; // Logo is cosmetic — proceed without it if it fails to load.
+    }
+  };
+
+  const openPrintWindow = (html: string) => {
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+    win.onafterprint = () => win.close();
   };
 
   /**
@@ -664,23 +713,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const downloadHiringReportPdf = async () => {
     // Same logo + container styling as downloadSubmissionPdf, so every
     // generated document in this app reads as one consistent system.
-    let logoDataUrl = "";
-    try {
-      const logoModule = await import("@/assets/logo.png");
-      const res = await fetch(logoModule.default);
-      const blob = await res.blob();
-      logoDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      // Logo is cosmetic — proceed without it if it fails to load.
-    }
-
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(`
+    const logoDataUrl = await loadLogoDataUrl();
+    openPrintWindow(`
       <!DOCTYPE html>
       <html>
         <head>
@@ -737,12 +771,162 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </body>
       </html>
     `);
-    win.document.close();
-    win.onload = () => {
-      win.focus();
-      win.print();
-    };
-    win.onafterprint = () => win.close();
+  };
+
+  // ── Generate Report: EOD / EOM Hiring Grid — same Position → Branch table
+  // shown on the EOD/EOM Reports tab, exportable independently of whatever
+  // date/month is currently open there. Fetches fresh on demand rather than
+  // reusing that tab's state, since a user may want to export a different
+  // day/month than the one they're currently viewing. ──
+  const [genEodDate, setGenEodDate] = useState(todayStr);
+  const [genEomMonth, setGenEomMonth] = useState(todayStr.slice(0, 7));
+  const [genEodBusy, setGenEodBusy] = useState<"excel" | "pdf" | null>(null);
+  const [genEomBusy, setGenEomBusy] = useState<"excel" | "pdf" | null>(null);
+
+  const formatTraineeCell = (r: EodHiringRow) => {
+    if (r.onHold) return "On Hold";
+    if (r.activeTrainees.length === 0) return "—";
+    return r.activeTrainees.map((t) => `${t.name}${t.date ? ` (${new Date(t.date).toLocaleDateString()})` : ""}`).join("; ");
+  };
+  const formatInterviewCell = (r: EodHiringRow) =>
+    r.scheduledInterviews.length === 0
+      ? "—"
+      : r.scheduledInterviews.map((t) => `${t.name}${t.date ? ` (${new Date(t.date).toLocaleDateString()})` : ""}`).join("; ");
+  const formatCvCell = (r: EodHiringRow) =>
+    r.cvsSentToBm.length === 0 ? "—" : r.cvsSentToBm.map((f) => `${f.candidateName} → ${f.recipientName}`).join("; ");
+
+  /** Row markup shared by the EOD and EOM grid exports — same 6 columns, grouped under Position band rows. */
+  const hiringGridTableHtml = (rows: EodHiringRow[]) => {
+    const headerCell = `background:#1e40af;color:white;font-weight:bold;border:1px solid #1e40af;padding:8px;`;
+    let html = `<tr>
+      <td style="${headerCell}">Branch</td>
+      <td style="${headerCell}">Sponsor End Date</td>
+      <td style="${headerCell}text-align:right;">Staff Needed</td>
+      <td style="${headerCell}">Active Trainee / On Hold</td>
+      <td style="${headerCell}">Scheduled Interviews</td>
+      <td style="${headerCell}">CVs Sent to BM</td>
+    </tr>`;
+    if (rows.length === 0) {
+      html += `<tr><td colspan="6" style="border:1px solid #e5e7eb; padding:8px; text-align:center; color:#6b7280;">No hiring activity or Staff Needed targets for this period.</td></tr>`;
+      return html;
+    }
+    rows.forEach((r, i) => {
+      if (i === 0 || rows[i - 1].position !== r.position) {
+        html += `<tr><td colspan="6" style="background:#dbeafe;color:#1e40af;font-weight:bold;border:1px solid #e5e7eb;padding:6px 8px;">${escapeHtml(r.position)}</td></tr>`;
+      }
+      html += `<tr style="${i % 2 === 1 ? "background:#f9fafb;" : ""}">
+        <td style="border:1px solid #e5e7eb;padding:8px;font-weight:bold;">${escapeHtml(r.branch)}</td>
+        <td style="border:1px solid #e5e7eb;padding:8px;color:#6b7280;">—</td>
+        <td style="border:1px solid #e5e7eb;padding:8px;text-align:right;">${r.staffNeeded}</td>
+        <td style="border:1px solid #e5e7eb;padding:8px;">${escapeHtml(formatTraineeCell(r))}</td>
+        <td style="border:1px solid #e5e7eb;padding:8px;">${escapeHtml(formatInterviewCell(r))}</td>
+        <td style="border:1px solid #e5e7eb;padding:8px;">${escapeHtml(formatCvCell(r))}</td>
+      </tr>`;
+    });
+    return html;
+  };
+
+  const downloadHiringGridExcel = (rows: EodHiringRow[], reportName: string, periodLabel: string, filename: string) => {
+    const html = `
+      <html>
+        <head><meta charset="UTF-8"></head>
+        <body>
+          <table border="0" cellspacing="0" cellpadding="6" style="border-collapse:collapse; font-family:Arial,Helvetica,sans-serif;">
+            <tr><td colspan="6" style="background:#1e40af; color:white; font-size:18px; font-weight:bold; padding:10px;">AHS SYSTEM</td></tr>
+            <tr><td colspan="6" style="background:#1e40af; color:#e0e7ff; font-size:13px; padding:4px 10px 10px;">${escapeHtml(reportName)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Period</td><td colspan="5">${escapeHtml(periodLabel)}</td></tr>
+            <tr><td style="font-weight:bold; color:#1e40af;">Generated</td><td colspan="5">${escapeHtml(new Date().toLocaleString())}</td></tr>
+            <tr><td colspan="6">&nbsp;</td></tr>
+            ${hiringGridTableHtml(rows)}
+          </table>
+        </body>
+      </html>
+    `;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadHiringGridPdf = async (rows: EodHiringRow[], reportName: string, periodLabel: string) => {
+    const logoDataUrl = await loadLogoDataUrl();
+    openPrintWindow(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>${escapeHtml(reportName)}</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 10px; color: #1f2937; }
+            .container { max-width: 1000px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; padding: 20px; }
+            .header { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; padding: 15px; border-radius: 8px; background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); }
+            .header img { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; }
+            .header h1 { color: white; font-size: 22px; letter-spacing: 0.5px; }
+            .header p { color: #e0e7ff; font-size: 12px; margin-top: 2px; }
+            .info-section { display: flex; flex-direction: column; gap: 4px; background: #eff6ff; border-left: 4px solid #1e40af; padding: 12px 14px; border-radius: 4px; margin-bottom: 20px; }
+            .info-section label { font-size: 11px; color: #1e40af; text-transform: uppercase; font-weight: 700; }
+            .info-section span { font-size: 15px; font-weight: 600; color: #1f2937; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
+            .footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 10px; }
+            @media print {
+              body { padding: 0; }
+              .container { border: none; padding: 20px; }
+              .header, td { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" />` : ""}
+              <div>
+                <h1>${escapeHtml(reportName.toUpperCase())}</h1>
+                <p>${escapeHtml(periodLabel)}</p>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <label>Period</label>
+              <span>${escapeHtml(periodLabel)}</span>
+            </div>
+
+            <table>${hiringGridTableHtml(rows)}</table>
+
+            <div class="footer">Generated by AHS System &middot; ${escapeHtml(new Date().toLocaleString())}</div>
+          </div>
+        </body>
+      </html>
+    `);
+  };
+
+  const downloadEodHiringReport = async (format: "excel" | "pdf") => {
+    setGenEodBusy(format);
+    try {
+      const rows = await getEodHiringReport(genEodDate);
+      if (format === "excel") downloadHiringGridExcel(rows, "EOD HIRING REPORT", genEodDate, `eod-hiring-report-${genEodDate}.xls`);
+      else await downloadHiringGridPdf(rows, "EOD Hiring Report", genEodDate);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate EOD hiring report.");
+    } finally {
+      setGenEodBusy(null);
+    }
+  };
+
+  const downloadEomHiringReport = async (format: "excel" | "pdf") => {
+    setGenEomBusy(format);
+    try {
+      const rows = await getEomHiringReport(genEomMonth);
+      if (format === "excel") downloadHiringGridExcel(rows, "EOM HIRING REPORT", genEomMonth, `eom-hiring-report-${genEomMonth}.xls`);
+      else await downloadHiringGridPdf(rows, "EOM Hiring Report", genEomMonth);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate EOM hiring report.");
+    } finally {
+      setGenEomBusy(null);
+    }
   };
 
   // ── Generate Report: Warnings & Mistakes — same date-range pattern as the
@@ -918,12 +1102,86 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Interviewing/Training require an accompanying date — instead of saving
+  // immediately, open a small dialog to collect it first.
+  const [statusDateDialog, setStatusDateDialog] = useState<{ candidateId: string; candidateName: string; status: CandidateStatus; label: string; date: string } | null>(null);
+
   const handleCandidateStatus = async (id: string, status: CandidateStatus) => {
+    const requiredLabel = STATUS_REQUIRES_DATE[status];
+    if (requiredLabel) {
+      const candidate = candidates.find((c) => c.id === id);
+      const existingDate = status === "interviewing" ? candidate?.interviewDate : candidate?.trainingStartDate;
+      setStatusDateDialog({ candidateId: id, candidateName: candidate?.name || "", status, label: requiredLabel, date: existingDate || today });
+      return;
+    }
     try {
       await updateCandidateStatus(id, status);
       await loadCandidates();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update candidate status.");
+    }
+  };
+
+  const handleConfirmStatusDate = async () => {
+    if (!statusDateDialog) return;
+    try {
+      await updateCandidateStatus(statusDateDialog.candidateId, statusDateDialog.status, statusDateDialog.date);
+      await loadCandidates();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update candidate status.");
+    } finally {
+      setStatusDateDialog(null);
+    }
+  };
+
+  // ── EOD/EOM Hiring Reports ──
+  const [hiringReportMode, setHiringReportMode] = useState<"eod" | "eom">("eod");
+  const [eodDate, setEodDate] = useState(today);
+  const [eomMonth, setEomMonth] = useState(today.slice(0, 7));
+  const [eodRows, setEodRows] = useState<EodHiringRow[]>([]);
+  const [eomRows, setEomRows] = useState<EodHiringRow[]>([]);
+  const [hiringDetailDialog, setHiringDetailDialog] = useState<{ title: string; items: { name: string; date: string | null }[] } | null>(null);
+  const [cvForwardDetailDialog, setCvForwardDetailDialog] = useState<{ title: string; items: CvForwardDetail[] } | null>(null);
+  const [eodLoading, setEodLoading] = useState(false);
+  const [eomLoading, setEomLoading] = useState(false);
+
+  const loadEodReport = async (date: string) => {
+    setEodLoading(true);
+    try {
+      setEodRows(await getEodHiringReport(date));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load EOD report.");
+    } finally {
+      setEodLoading(false);
+    }
+  };
+
+  const loadEomReport = async (yearMonth: string) => {
+    setEomLoading(true);
+    try {
+      setEomRows(await getEomHiringReport(yearMonth));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load EOM report.");
+    } finally {
+      setEomLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== "hiringReports") return;
+    if (hiringReportMode === "eod") void loadEodReport(eodDate);
+    else void loadEomReport(eomMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, hiringReportMode, eodDate, eomMonth]);
+
+  const handleStaffNeededChange = async (position: string, branch: string, value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    setEodRows((prev) => prev.map((r) => (r.position === position && r.branch === branch ? { ...r, staffNeeded: safeValue } : r)));
+    try {
+      await setStaffingTarget(position, branch, safeValue);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update Staff Needed.");
+      void loadEodReport(eodDate);
     }
   };
 
@@ -945,11 +1203,70 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Forward CV to a manager via the internal messenger ──
+  // "Manager" = any role containing "MANAGER" (Branch Manager, Parts
+  // Manager, CSR Manager, Technician Manager, etc.) — matches the same
+  // substring convention already used elsewhere in this file/app rather
+  // than a hardcoded list, so it stays correct as new manager roles appear.
+  const managerRecipients = useMemo(
+    () => employees.filter((e) => normalizeRole(e.position).includes("MANAGER")).sort((a, b) => a.name.localeCompare(b.name)),
+    [employees]
+  );
+  const [forwardCvDialog, setForwardCvDialog] = useState<Candidate | null>(null);
+  const [forwardRecipientId, setForwardRecipientId] = useState("");
+  const [forwardRecipientSearch, setForwardRecipientSearch] = useState("");
+  const [forwardRecipientDropdownOpen, setForwardRecipientDropdownOpen] = useState(false);
+  const [forwardSending, setForwardSending] = useState(false);
+  const filteredManagerRecipients = useMemo(() => {
+    const q = forwardRecipientSearch.trim().toLowerCase();
+    if (!q) return managerRecipients;
+    return managerRecipients.filter(
+      (m) => m.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(m.position)] ?? m.position).toLowerCase().includes(q)
+    );
+  }, [managerRecipients, forwardRecipientSearch]);
+
+  const handleForwardCv = async () => {
+    if (!forwardCvDialog?.cvPath || !forwardRecipientId || !uid) return;
+    setForwardSending(true);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const cvUrl = await getCandidateCvUrlForForwarding(forwardCvDialog.cvPath);
+      const thread = await getOrCreateDmThread(myProfileId, forwardRecipientId);
+      const details = [forwardCvDialog.position, forwardCvDialog.branch].filter(Boolean).join(", ");
+      // cvPath is "{companyId}/{candidateId}/{timestamp}_{originalFilename}"
+      // (see uploadCandidateCv) — strip the leading timestamp so the link
+      // label reads as the real filename, not a raw signed URL.
+      const filename = (forwardCvDialog.cvPath.split("/").pop() || "CV").replace(/^\d+_/, "");
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Candidate CV forwarded — ${forwardCvDialog.name}${details ? ` (${details})` : ""}: [${filename}](${cvUrl})`,
+      });
+      // Counted against the candidate's own Position+Branch on the EOD/EOM
+      // "CVs Sent to BM" column — best-effort, a logging failure shouldn't
+      // undo the fact the message already sent successfully.
+      try {
+        await logCvForward(forwardCvDialog.id, forwardCvDialog.position, forwardCvDialog.branch, forwardRecipientId);
+      } catch (logErr) {
+        console.error("Failed to log CV forward for reporting:", logErr);
+      }
+      setForwardCvDialog(null);
+      setForwardRecipientId("");
+      setForwardRecipientSearch("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to forward CV.");
+    } finally {
+      setForwardSending(false);
+    }
+  };
+
   // Branch Managers run the final interview and pick a candidate, but HR
   // finalizes the actual hire.
   const candidateStatusOptions = (isHrOrAdmin
-    ? ["applied", "interviewing", "selected", "hired", "rejected"]
-    : ["interviewing", "selected", "rejected"]) as CandidateStatus[];
+    ? ["applied", "interviewing", "selected", "training", "on_hold", "hired", "rejected"]
+    : ["interviewing", "selected", "training", "on_hold", "rejected"]) as CandidateStatus[];
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
@@ -991,6 +1308,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // PARTS_MANAGER — so nobody in the US falls through both tabs. ──
   const [onboardingGroup, setOnboardingGroup] = useState<"TECHNICIAN" | "PARTS_MANAGER" | "PH">("TECHNICIAN");
   const [onboardingSearch, setOnboardingSearch] = useState("");
+  // Clicking a name drills into that applicant's document repository (drag-and-drop from the Jotform inbox + manual upload) instead of the checklist grid.
+  const [onboardingSelectedEmployee, setOnboardingSelectedEmployee] = useState<{ id: string; name: string; docList: string[] } | null>(null);
+  // Same US-Technician/US-other/PH split as onboardingEmployees above, just evaluated for one specific employee — used to pick their document list regardless of whichever group tab happens to be selected at click-time.
+  const getOnboardingDocListForEmployee = (employee: { country: string; position: string }) =>
+    employee.country === "PH" ? PH_ONBOARDING_DOCS
+    : normalizeRole(employee.position) === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
+    : PARTS_MANAGER_ONBOARDING_DOCS;
   const onboardingEmployees = useMemo(() => {
     const byGroup =
       onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
@@ -1004,24 +1328,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
     : PH_ONBOARDING_DOCS;
 
-  const toggleOnboardingDoc = async (employeeId: string, docName: string) => {
-    const employee = employees.find((e) => e.id === employeeId);
-    if (!employee) return;
-    const newValue = !employee.onboardingDocs[docName];
-
-    setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: newValue } } : e)));
-
-    const existingInfo = employeeInfoByProfileId.get(employeeId) || {};
-    const updatedInfo: EmployeeInfo = { ...existingInfo, onboardingDocs: { ...(existingInfo.onboardingDocs || {}), [docName]: newValue } };
-    try {
-      await saveProfileEmployeeInfo(employeeId, updatedInfo);
-      setEmployeeInfoByProfileId((prev) => new Map(prev).set(employeeId, updatedInfo));
-    } catch (err) {
-      // Revert the optimistic update on failure.
-      setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, onboardingDocs: { ...e.onboardingDocs, [docName]: !newValue } } : e)));
-      setError(err instanceof Error ? err.message : "Failed to update onboarding document status.");
-    }
-  };
+  // YES/NO on the checklist grid reflects whether a real document has
+  // actually been filed (uploaded, linked, or dragged in from Jotform) for
+  // that applicant + category in onboarding_documents — not a manually
+  // toggled flag — so the grid can never claim "YES" for a document nobody
+  // attached. Re-fetched whenever the currently-visible employee list
+  // changes (group/search), keyed by profile id.
+  const [onboardingDocCategoriesByProfile, setOnboardingDocCategoriesByProfile] = useState<Map<string, Set<string>>>(new Map());
+  useEffect(() => {
+    if (activeTab !== "onboarding" || onboardingEmployees.length === 0) return;
+    let cancelled = false;
+    getOnboardingDocumentCategoriesByProfileIds(onboardingEmployees.map((e) => e.id))
+      .then((map) => { if (!cancelled) setOnboardingDocCategoriesByProfile(map); })
+      .catch((err) => console.error("Failed to load onboarding document status:", err));
+    return () => { cancelled = true; };
+  }, [activeTab, onboardingEmployees]);
 
   // Warnings actually approved by HR (final stage) — not timecard-derived.
   const approvedWarningCountByProfile = useMemo(() => {
@@ -1116,11 +1437,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
 
       {/* ── KPI overview ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 mb-4">
         {[
           { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
           { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
-          { label: "Pre-Selected", value: kpi.preSelected, color: "text-purple-300", icon: <CheckCircle className="h-4 w-4" /> },
           { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
           { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
           { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
@@ -1142,6 +1462,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           { key: "directory", label: "Employee Directory", count: employees.length },
           ...(canViewJotformTab ? [{ key: "jotform", label: "Jotform Submissions", count: unreadJotformCount }] as const : []),
           { key: "onboarding", label: "Onboarding Documents", count: 0 },
+          { key: "hiringReports", label: "EOD/EOM Reports", count: 0 },
           { key: "report", label: "Generate Report", count: 0 },
         ] as const).map((tab) => (
           <button
@@ -1232,14 +1553,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Contact</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">CV</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Applied</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
               {candidatesLoading ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading candidates…</td></tr>
               ) : filteredCandidates.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground text-sm">{visibleCandidates.length === 0 ? "No candidates yet." : "No candidates match these filters."}</td></tr>
               ) : (
                 filteredCandidates.map((c) => (
                   <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
@@ -1258,10 +1580,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {candidateStatusOptions.map((s) => <option key={s} value={s}>{CANDIDATE_STATUS_LABEL[s]}</option>)}
                       </select>
                     </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}
+                    </td>
                     <td className="px-4 py-3">
-                      {isHrOrAdmin && (
-                        <button onClick={() => handleDeleteCandidate(c.id)} className="btn text-red-400 hover:text-red-300 text-sm p-1"><Trash2 className="h-4 w-4" /></button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {c.cvPath && (
+                          <button
+                            onClick={() => { setForwardCvDialog(c); setForwardRecipientId(""); setForwardRecipientSearch(""); }}
+                            title="Forward CV to a manager"
+                            className="btn text-blue-400 hover:text-blue-300 text-sm p-1"
+                          >
+                            <Forward className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isHrOrAdmin && (
+                          <button onClick={() => handleDeleteCandidate(c.id)} className="btn text-red-400 hover:text-red-300 text-sm p-1"><Trash2 className="h-4 w-4" /></button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1714,7 +2050,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* ── Onboarding Documents ── */}
-      {activeTab === "onboarding" && (
+      {activeTab === "onboarding" && onboardingSelectedEmployee && (
+        <OnboardingApplicantDocuments
+          companyId={companyId ?? ""}
+          profileId={onboardingSelectedEmployee.id}
+          profileName={onboardingSelectedEmployee.name}
+          categories={onboardingSelectedEmployee.docList}
+          onBack={() => setOnboardingSelectedEmployee(null)}
+        />
+      )}
+      {activeTab === "onboarding" && !onboardingSelectedEmployee && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
           <div>
@@ -1757,7 +2102,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               ) : (
                 onboardingEmployees.map((employee) => (
                   <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-1.5 py-1.5 font-medium truncate" title={employee.name}>{employee.name}</td>
+                    <td className="px-1.5 py-1.5 font-medium truncate" title={employee.name}>
+                      <button
+                        type="button"
+                        onClick={() => setOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getOnboardingDocListForEmployee(employee) })}
+                        className="text-blue-300 hover:text-blue-200 hover:underline truncate text-left"
+                      >
+                        {employee.name}
+                      </button>
+                    </td>
                     <td className="px-1.5 py-1.5 text-muted-foreground truncate" title={onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch}>
                       {/* PH's "Department" column reads from position/role, same
                           label the Employee Directory tab shows — not the raw
@@ -1765,12 +2118,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       {(onboardingGroup === "PH" ? (ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position) : employee.branch) || "—"}
                     </td>
                     {onboardingDocColumns.map((doc) => {
-                      const done = !!employee.onboardingDocs[doc];
+                      const done = !!onboardingDocCategoriesByProfile.get(employee.id)?.has(doc);
                       return (
                         <td key={doc} className="px-0.5 py-0.5 text-center">
                           <button
                             type="button"
-                            onClick={() => toggleOnboardingDoc(employee.id, doc)}
+                            title={done ? `${doc} is filed — click to view` : `${doc} is missing — click to upload or link it`}
+                            onClick={() => setOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getOnboardingDocListForEmployee(employee) })}
                             className={`w-full px-1 py-1.5 rounded text-[9px] font-bold transition-colors ${done ? "bg-green-500/20 text-green-300 hover:bg-green-500/30" : "bg-white/5 text-muted-foreground hover:bg-white/10"}`}
                           >
                             {done ? "YES" : "NO"}
@@ -1787,12 +2141,157 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       )}
 
+      {/* ── EOD/EOM Hiring Reports ── */}
+      {activeTab === "hiringReports" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">EOD / EOM Hiring Reports</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Grouped by Position → Branch. Staff Needed is manually entered and moves ±1 automatically when a candidate is hired or a hire is reversed.</p>
+          </div>
+          <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5">
+            <button type="button" onClick={() => setHiringReportMode("eod")} className={`px-4 text-xs font-medium transition-colors ${hiringReportMode === "eod" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>EOD (Daily)</button>
+            <button type="button" onClick={() => setHiringReportMode("eom")} className={`px-4 text-xs font-medium transition-colors border-l border-white/15 ${hiringReportMode === "eom" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>EOM (Monthly)</button>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-end gap-3">
+          {hiringReportMode === "eod" ? (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
+              <input type="date" value={eodDate} onChange={(e) => setEodDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Month</label>
+              <input type="month" value={eomMonth} onChange={(e) => setEomMonth(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-x-auto">
+          {(() => {
+            const rows = hiringReportMode === "eod" ? eodRows : eomRows;
+            const loading = hiringReportMode === "eod" ? eodLoading : eomLoading;
+            const emptyMessage =
+              hiringReportMode === "eod" ? "No hiring activity or Staff Needed targets yet." : "No hiring activity recorded for this month.";
+            return (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5">
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Branch</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sponsor End Date</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Staff Needed</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Active Trainee / On Hold</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Scheduled Interviews</th>
+                  <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">CVs Sent to BM</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+                ) : rows.length === 0 ? (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{emptyMessage}</td></tr>
+                ) : (
+                  rows.map((r, i) => {
+                    const showPositionBand = i === 0 || rows[i - 1].position !== r.position;
+                    const trainee = r.activeTrainees[0];
+                    const traineeText = r.onHold
+                      ? "On Hold"
+                      : r.activeTrainees.length > 0
+                      ? `${r.activeTrainees.length}${trainee?.date ? ` on ${new Date(trainee.date).toLocaleDateString()}` : ""}`
+                      : null;
+                    const interview = r.scheduledInterviews[0];
+                    const interviewText =
+                      r.scheduledInterviews.length > 0
+                        ? `${r.scheduledInterviews.length}${interview?.date ? ` on ${new Date(interview.date).toLocaleDateString()}` : ""}`
+                        : null;
+                    return (
+                      <Fragment key={`${r.position}||${r.branch}`}>
+                        {showPositionBand && (
+                          <tr key={`${r.position}-band`} className="bg-blue-500/10">
+                            <td colSpan={6} className="px-4 py-2 font-semibold text-blue-300 text-xs uppercase tracking-wide">{r.position}</td>
+                          </tr>
+                        )}
+                        <tr key={`${r.position}||${r.branch}`} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-4 py-3 font-medium">{r.branch}</td>
+                          {/* Placeholder — not wired to any data source yet, pending definition. */}
+                          <td className="px-4 py-3 text-muted-foreground text-xs">—</td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              min={0}
+                              defaultValue={r.staffNeeded}
+                              key={`${r.position}||${r.branch}||${r.staffNeeded}`}
+                              onBlur={(e) => {
+                                const v = Number(e.target.value);
+                                if (v !== r.staffNeeded) handleStaffNeededChange(r.position, r.branch, v);
+                              }}
+                              className="glass-input text-sm w-20 py-1 px-2 rounded-md"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            {traineeText ? (
+                              r.onHold ? (
+                                <span className="px-2 py-1 rounded text-xs font-semibold bg-slate-500/20 text-slate-300">{traineeText}</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setHiringDetailDialog({ title: `${r.position} — ${r.branch} — Active Trainees`, items: r.activeTrainees })}
+                                  className="px-2 py-1 rounded text-xs font-semibold bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 transition-colors"
+                                >
+                                  {traineeText}
+                                </button>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {interviewText ? (
+                              <button
+                                type="button"
+                                onClick={() => setHiringDetailDialog({ title: `${r.position} — ${r.branch} — Scheduled Interviews`, items: r.scheduledInterviews })}
+                                className="px-2 py-1 rounded text-xs font-semibold bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 transition-colors"
+                              >
+                                {interviewText}
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {r.cvsSentToBm.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setCvForwardDetailDialog({ title: `${r.position} — ${r.branch} — CVs Sent to BM`, items: r.cvsSentToBm })}
+                                className="px-2 py-1 rounded text-xs font-semibold bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 transition-colors"
+                              >
+                                {r.cvsSentToBm.length}
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      </Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+            );
+          })()}
+        </div>
+      </div>
+      )}
+
       {/* ── Generate Report ── */}
       {activeTab === "report" && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Generate Hiring Report</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of Candidates, Scheduled for Interview, Pre-Selected, Rejected, Hired, Terminated, and Resigned for the selected range.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of Candidates, Scheduled for Interview, Rejected, Hired, Terminated, and Resigned for the selected range.</p>
         </div>
 
         {/* Range filter */}
@@ -1817,11 +2316,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
 
         {/* KPI tiles — same shape as the top-of-page overview, scoped to the range */}
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
           {[
             { label: "Candidates", value: hiringReportKpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
             { label: "Scheduled for Interview", value: hiringReportKpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
-            { label: "Pre-Selected", value: hiringReportKpi.preSelected, color: "text-purple-300", icon: <CheckCircle className="h-4 w-4" /> },
             { label: "Rejected", value: hiringReportKpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
             { label: "Hired", value: hiringReportKpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
             { label: "Terminated", value: hiringReportKpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
@@ -1833,6 +2331,60 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
             </div>
           ))}
+        </div>
+      </div>
+      )}
+
+      {/* ── Generate EOD / EOM Hiring Grid Report ── */}
+      {activeTab === "report" && (
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate EOD / EOM Hiring Report</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Same Position → Branch grid as the EOD/EOM Reports tab (Staff Needed, Active Trainee/On Hold, Scheduled Interviews, CVs Sent to BM), exported for a specific day or month.</p>
+        </div>
+
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-6">
+          <div className="flex items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOD Date</label>
+              <input type="date" value={genEodDate} onChange={(e) => setGenEodDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <button
+              onClick={() => downloadEodHiringReport("excel")}
+              disabled={genEodBusy !== null}
+              className="btn text-sm px-3 py-1.5 disabled:opacity-50"
+            >
+              {genEodBusy === "excel" ? "Generating…" : "Download EOD Excel"}
+            </button>
+            <button
+              onClick={() => downloadEodHiringReport("pdf")}
+              disabled={genEodBusy !== null}
+              className="btn text-sm px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" /> {genEodBusy === "pdf" ? "Generating…" : "Download EOD PDF"}
+            </button>
+          </div>
+
+          <div className="flex items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">EOM Month</label>
+              <input type="month" value={genEomMonth} onChange={(e) => setGenEomMonth(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <button
+              onClick={() => downloadEomHiringReport("excel")}
+              disabled={genEomBusy !== null}
+              className="btn text-sm px-3 py-1.5 disabled:opacity-50"
+            >
+              {genEomBusy === "excel" ? "Generating…" : "Download EOM Excel"}
+            </button>
+            <button
+              onClick={() => downloadEomHiringReport("pdf")}
+              disabled={genEomBusy !== null}
+              className="btn text-sm px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" /> {genEomBusy === "pdf" ? "Generating…" : "Download EOM PDF"}
+            </button>
+          </div>
         </div>
       </div>
       )}
@@ -1964,6 +2516,133 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <button onClick={handleConfirmStatusChange} className={`btn text-sm px-4 py-2 text-white ${confirmDialog.newStatus === "terminated" ? "bg-red-600 hover:bg-red-700" : "bg-orange-600 hover:bg-orange-700"}`}>
                 Confirm {confirmDialog.newStatus === "terminated" ? "Termination" : "Resignation"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interviewing/Training require a date — collected here before the status actually saves */}
+      {statusDateDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">{CANDIDATE_STATUS_LABEL[statusDateDialog.status]}</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              <span className="font-semibold text-white">{statusDateDialog.candidateName}</span> — set the {statusDateDialog.label.toLowerCase()}:
+            </p>
+            <input
+              type="date"
+              value={statusDateDialog.date}
+              onChange={(e) => setStatusDateDialog({ ...statusDateDialog, date: e.target.value })}
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setStatusDateDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button onClick={handleConfirmStatusDate} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward CV to a manager — sends a link via the internal messenger (Team Messenger) */}
+      {forwardCvDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Forward CV</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Send <span className="font-semibold text-white">{forwardCvDialog.name}</span>'s CV to a manager via the internal messenger.
+            </p>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <div className="relative mt-1 mb-4">
+              <input
+                type="text"
+                value={forwardRecipientSearch}
+                onChange={(e) => {
+                  setForwardRecipientSearch(e.target.value);
+                  setForwardRecipientId("");
+                  setForwardRecipientDropdownOpen(true);
+                }}
+                onFocus={() => setForwardRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setForwardRecipientDropdownOpen(false), 150)}
+                placeholder="Search a manager…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+              />
+              {forwardRecipientDropdownOpen && (
+                <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                  {filteredManagerRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching managers.</p>
+                  ) : (
+                    filteredManagerRecipients.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setForwardRecipientId(m.id);
+                          setForwardRecipientSearch(`${m.name} — ${ROLE_LABELS[normalizeRole(m.position)] ?? m.position}`);
+                          setForwardRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${forwardRecipientId === m.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {m.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(m.position)] ?? m.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {managerRecipients.length === 0 && (
+              <p className="text-xs text-yellow-300 mb-4">No manager accounts found in this company.</p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setForwardCvDialog(null); setForwardRecipientId(""); setForwardRecipientSearch(""); }} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleForwardCv}
+                disabled={!forwardRecipientId || forwardSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {forwardSending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* EOD detail popover — lists candidate names/dates behind a Scheduled Interviews / Active Trainees count badge */}
+      {hiringDetailDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setHiringDetailDialog(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">{hiringDetailDialog.title}</h3>
+            <ul className="space-y-2 max-h-80 overflow-y-auto">
+              {hiringDetailDialog.items.map((it, idx) => (
+                <li key={idx} className="flex items-center justify-between gap-3 text-sm border-b border-white/5 pb-2 last:border-0">
+                  <span className="font-medium">{it.name}</span>
+                  <span className="text-muted-foreground text-xs">{it.date ? new Date(it.date).toLocaleDateString() : "—"}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setHiringDetailDialog(null)} className="btn text-sm px-4 py-2">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CVs Sent to BM detail popover — candidate name, who received it, and when */}
+      {cvForwardDetailDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setCvForwardDetailDialog(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">{cvForwardDetailDialog.title}</h3>
+            <ul className="space-y-2 max-h-80 overflow-y-auto">
+              {cvForwardDetailDialog.items.map((it, idx) => (
+                <li key={idx} className="text-sm border-b border-white/5 pb-2 last:border-0">
+                  <div className="font-medium">{it.candidateName}</div>
+                  <div className="text-muted-foreground text-xs">
+                    Sent to <span className="text-foreground">{it.recipientName}</span> — {new Date(it.date).toLocaleString()}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setCvForwardDetailDialog(null)} className="btn text-sm px-4 py-2">Close</button>
             </div>
           </div>
         </div>
