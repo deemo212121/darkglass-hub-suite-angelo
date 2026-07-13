@@ -17,6 +17,10 @@ import {
   canReviewPtoStage,
   isEligibleForPto,
   ptoEligibleDate,
+  ptoYearWindow,
+  ptoDaysUsed,
+  ptoRequestsInYear,
+  weekdayCount,
   type PtoRequestRow,
   type PtoType,
   type PtoStage,
@@ -91,6 +95,14 @@ function formatClockTime(t: string): string {
   const period = h >= 12 ? "PM" : "AM";
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return `${hour12}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")} ${period}`;
+}
+
+// Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
+// strings, so this catches the classic native <input type="time"> mistake
+// of leaving the AM/PM half wrong (e.g. typing "08:24" but submitting
+// "20:24") without needing to parse into Date objects.
+function isCheckOutBeforeCheckIn(checkIn: string, checkOut: string): boolean {
+  return !!checkIn && !!checkOut && checkOut <= checkIn;
 }
 
 interface EmployeePayslipData {
@@ -452,6 +464,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [submitting, setSubmitting] = useState(false);
   const [responseNote, setResponseNote] = useState<Record<string, string>>({});
   const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+  const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | null>(null);
 
   const [formData, setFormData] = useState({
     leaveType: "Vacation",
@@ -628,6 +641,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const ptoEligible = isEligibleForPto(myHireDate, myCreatedAt);
   const ptoEligibleOn = ptoEligibleDate(myHireDate, myCreatedAt);
 
+  // Annual PTO allowance: 5 days in the employee's first eligible year, +1
+  // each following year (6, 7, 8, ...), resetting on their hire anniversary
+  // rather than the calendar year. `unpaid` requests don't count against it.
+  const myPtoYear = ptoYearWindow(myHireDate, myCreatedAt);
+  const myPtoYearRequests = useMemo(
+    () => (myPtoYear ? ptoRequestsInYear(myPtoRequests, myPtoYear) : []),
+    [myPtoRequests, myPtoYear]
+  );
+  const myPtoUsed = myPtoYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const myPtoRemaining = myPtoYear ? Math.max(0, myPtoYear.allowance - myPtoUsed) : 0;
+  const myPtoYearRequestIds = useMemo(
+    () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
+    [myPtoYearRequests]
+  );
+
   // Deep link from a bell-icon notification straight into a specific tab
   // (e.g. PTO/correction outcome -> "requests", new request submitted ->
   // "manage", payroll generated -> "payroll").
@@ -681,6 +709,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const handleCorrectionAction = async (correction: TimecardCorrectionRow, approve: boolean) => {
     try {
       if (approve) {
+        const effectiveCheckIn = correction.correctedCheckIn || correction.originalCheckIn || "";
+        const effectiveCheckOut = correction.correctedCheckOut || correction.originalCheckOut || "";
+        const effectiveMealStart = correction.correctedMealStart || correction.originalMealStart || "";
+        const effectiveMealEnd = correction.correctedMealEnd || correction.originalMealEnd || "";
+        if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
+          alert(`Can't approve: check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
+          return;
+        }
+        if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
+          alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
+          return;
+        }
         await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, displayName || "HR", correction.correctedMealStart, correction.correctedMealEnd);
       } else {
         await rejectTimecardCorrection(correction, myProfileId, displayName || "HR");
@@ -757,6 +797,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          const requestedDays = weekdayCount(formData.startDate, formData.endDate);
+          if (myPtoYear && requestedDays > myPtoRemaining) {
+            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${myPtoRemaining} of ${myPtoYear.allowance} days left for Year ${myPtoYear.tenureYear} (resets ${myPtoYear.end}).`);
+            setSubmitting(false);
+            return;
+          }
           const ptoTypeMap: Record<string, PtoType> = {
             Vacation: "vacation",
             "Sick Leave": "sick",
@@ -814,6 +860,20 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             return;
           }
           const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
+          const effectiveCheckIn = formData.correctedCheckIn || existing?.clockIn || "";
+          const effectiveCheckOut = formData.correctedCheckOut || existing?.clockOut || "";
+          if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
+            alert(`Check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). Double-check the AM/PM on the time picker.`);
+            setSubmitting(false);
+            return;
+          }
+          const effectiveMealStart = formData.correctedMealStart || existing?.mealStart || "";
+          const effectiveMealEnd = formData.correctedMealEnd || existing?.mealEnd || "";
+          if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
+            alert(`Meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). Double-check the AM/PM on the time picker.`);
+            setSubmitting(false);
+            return;
+          }
           await createTimecardCorrection({
             profileId: myProfileId,
             workDate: formData.correctionDate,
@@ -1043,8 +1103,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">PTO Remaining</p>
-                <p className="text-2xl font-bold text-blue-300">25 days</p>
-                <p className="text-xs text-slate-400 mt-1">All types combined</p>
+                <p className="text-2xl font-bold text-blue-300">
+                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance} days` : "—"}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
+                </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Attendance Rate</p>
@@ -1380,23 +1444,52 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+            <div className="grid gap-4 md:grid-cols-5">
+              <button
+                type="button"
+                onClick={() => setSummaryModal("pto")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-blue-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">PTO Remaining</p>
+                <p className="text-2xl font-bold text-blue-300">
+                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance}` : "—"}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("pending")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-yellow-400/40 hover:bg-slate-900/80 transition"
+              >
                 <p className="text-xs text-slate-400 mb-1">Pending</p>
                 <p className="text-2xl font-bold text-yellow-300">{filteredMyRequests.filter(r => r.status === "pending").length}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("approved")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-green-400/40 hover:bg-slate-900/80 transition"
+              >
                 <p className="text-xs text-slate-400 mb-1">Approved</p>
                 <p className="text-2xl font-bold text-green-300">{filteredMyRequests.filter(r => r.status === "approved").length}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("rejected")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-red-400/40 hover:bg-slate-900/80 transition"
+              >
                 <p className="text-xs text-slate-400 mb-1">Rejected</p>
                 <p className="text-2xl font-bold text-red-300">{filteredMyRequests.filter(r => r.status === "rejected").length}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("closed")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-slate-400/40 hover:bg-slate-900/80 transition"
+              >
                 <p className="text-xs text-slate-400 mb-1">Closed</p>
                 <p className="text-2xl font-bold text-slate-300">{filteredMyRequests.filter(r => r.status === "closed").length}</p>
-              </div>
+              </button>
             </div>
 
             {/* Requests List */}
@@ -1873,6 +1966,56 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           </div>
         </div>
       )}
+
+      {/* Request Summary Modal — drill into one of the Track Status counts */}
+      {summaryModal && (() => {
+        const titles: Record<typeof summaryModal & string, string> = {
+          pto: `PTO Requests — Year ${myPtoYear?.tenureYear ?? "—"}`,
+          pending: "Pending Requests",
+          approved: "Approved Requests",
+          rejected: "Rejected Requests",
+          closed: "Closed Requests",
+        };
+        const items =
+          summaryModal === "pto"
+            ? myRequests.filter((r) => myPtoYearRequestIds.has(r.id))
+            : filteredMyRequests.filter((r) => r.status === summaryModal);
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSummaryModal(null)}>
+            <div
+              className="bg-slate-900 border border-white/10 rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <h3 className="text-sm font-bold text-white">{titles[summaryModal]}</h3>
+                <button type="button" onClick={() => setSummaryModal(null)} className="text-slate-400 hover:text-white transition p-1">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto space-y-3">
+                {items.length === 0 ? (
+                  <p className="text-sm text-slate-400">Nothing here.</p>
+                ) : (
+                  items.map((request) => (
+                    <div key={request.id} className="border border-white/10 rounded-lg p-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-white">{request.type}</p>
+                          <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
+                          <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap ml-3 ${getStatusColor(request.status)}`}>
+                          {getStatusIcon(request.status)} {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Payslip Modal */}
       {payslipModalOpen && payslipData && (
