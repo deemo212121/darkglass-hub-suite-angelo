@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0047 — HR Hiring Reports: EOD/EOM reporting on top of hr_candidates
+-- 0048 — HR Hiring Reports: EOD/EOM reporting on top of hr_candidates
 --
 -- Adds two new statuses to the existing candidate pipeline (training,
 -- on_hold), a per-Position+Branch "Staff Needed" counter HR maintains by
@@ -17,7 +17,7 @@
 -- no-op "change" (same status re-saved) never logs a duplicate transition
 -- or double-counts a hire.
 --
--- Run once in the Supabase SQL Editor, after 0046.
+-- Run once in the Supabase SQL Editor, after 0047.
 -- =====================================================================
 
 -- ---------- hr_candidates: new statuses + training start date ----------

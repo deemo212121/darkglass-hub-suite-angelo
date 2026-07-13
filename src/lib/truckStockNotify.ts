@@ -1,120 +1,123 @@
 /**
- * Truck Stock — usage notifications for the Parts Manager.
+ * Truck Stock — Parts Manager approval-workflow notifications.
  *
- * When a Triage or Parts (non-manager) user pulls inventory from the
- * Truck Stock, the Parts Manager should hear about it so they can
- * keep the field stock topped up. Admins / Parts Managers /
- * Naveen / Ian / Tina are also looped in for visibility.
+ * Every Truck Stock pull now goes through a Parts Manager / Admin approval
+ * step (see truckStockRequests.ts) instead of completing immediately, no
+ * matter who requests it — submitting and approving are always separate
+ * steps, even for the same person. This module pings the approvers when a
+ * new request needs review, and pings the requester back once it's
+ * approved or rejected.
  *
- * This is a thin wrapper on top of the existing Firestore notification
- * helpers in `src/lib/firebase/notifications.ts`. Fire-and-forget by
- * design — the caller never awaits and we never throw.
+ * Previously this used sendNotificationToRole()/sendNotificationToUsers()
+ * (Firestore's `users_index` collection) — legacy, and never populated by
+ * this app's actual Supabase-based user provisioning, so it silently
+ * delivered to zero recipients. Rewritten to use the real bell-icon
+ * notifications table (src/lib/supabase/notifications.ts), the same one
+ * NotificationsMenu.tsx actually reads from.
  */
 
-import type { NotifKind } from "./firebase/notifications";
+import { supabase } from "./supabase/client";
+import { createNotification } from "./supabase/notifications";
 
-/**
- * Canonical UserRole codes that should trigger a "truck stock pulled"
- * notification when they confirm the Truck Stock modal. Parts Manager,
- * Admin, Manager and Claims (and anyone above) don't trigger because
- * they're either the notification target or already privileged.
- */
-const TRIGGERING_ROLE_CODES = new Set<string>([
-  "TRIAGE_USER",
-  "TRIAGE_MANAGER",
-  "PARTS",
-]);
+/** Roles that can approve/reject Truck Stock pull requests — gates both the
+ * Truck Stock Requests tab and who gets notified about a new request. */
+const APPROVER_ROLE_CODES = new Set<string>(["PARTS_MANAGER", "ADMIN", "SUPERADMIN"]);
 
-/**
- * Returns true when the actor's role (primary + extras) is one we want
- * to notify the Parts Manager about. Case-insensitive on the input.
- */
-export function shouldNotifyOnTruckStockUse(
+/** Roles allowed to approve/reject Truck Stock pull requests — the Truck Stock Requests tab. */
+export function canApproveTruckStockPulls(
   primaryRole: string | null | undefined,
   extraRoles: string[] | null | undefined,
 ): boolean {
   const all = [primaryRole, ...(extraRoles ?? [])]
     .map((r) => String(r ?? "").trim().toUpperCase())
     .filter(Boolean);
-  if (all.length === 0) return false;
-  // If the user already holds a Parts Manager / Admin / Manager role
-  // we don't need to ping the parts manager — they ARE the audience.
-  const PRIVILEGED = new Set([
-    "PARTS_MANAGER",
-    "ADMIN",
-    "SUPERADMIN",
-    "MANAGER",
-    "BIZOPS_MANAGER",
-    "BIZOPS_SENIOR_MANAGER",
-    "BRANCH_MANAGER",
-    "SENIOR_BRANCH_MANAGER",
-  ]);
-  if (all.some((r) => PRIVILEGED.has(r))) return false;
-  return all.some((r) => TRIGGERING_ROLE_CODES.has(r));
+  return all.some((r) => APPROVER_ROLE_CODES.has(r));
 }
 
-export interface TruckStockUsagePayload {
-  /** Display name of the user pulling the stock. */
+async function findApproverProfileIds(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, role, extra_roles")
+    .eq("is_active", true);
+  if (error) {
+    console.warn("[truckStockNotify] findApproverProfileIds error:", error.message);
+    return [];
+  }
+  return (data ?? [])
+    .filter((r: any) => {
+      const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
+      return roles.some((v) => APPROVER_ROLE_CODES.has(v));
+    })
+    .map((r: any) => r.id as string);
+}
+
+/** Ping every Parts Manager in the company that a pull request needs review. Fire-and-forget. */
+export async function notifyPartsManagerOfPullRequest(payload: {
   actorName: string;
-  /** Email of the user pulling the stock (fallback when actorName blank). */
-  actorEmail: string;
-  /** Canonical UserRole code of the user pulling the stock. */
-  actorRole: string;
-  /** The work order this stock is being pulled for. */
   ticketNo: string;
-  /** Branch (truck stock owner) the parts were drawn from. */
+  partNo: string;
+  qty: number;
   branch: string;
-  /** One line per part: "PARTNO ×2 (Birmingham)" etc. */
-  items: Array<{ partNo: string; qty: number; branch: string; storageLocation?: string }>;
-  /** Company id used to scope the Firestore notification lookup. */
-  companyId: string;
+  storageLocation?: string;
+  /** The truck_stock_pull_requests.id this notification is about — lets the
+   * Truck Stock Requests tab scroll to and highlight this exact row instead
+   * of just landing on the general Pending list. */
+  requestId?: string;
+}): Promise<void> {
+  try {
+    const recipientIds = await findApproverProfileIds();
+    if (recipientIds.length === 0) return;
+    const body =
+      `${payload.actorName} requested to pull ${payload.qty} × ${payload.partNo} from Truck Stock ` +
+      `(${payload.branch}${payload.storageLocation ? ` @ ${payload.storageLocation}` : ""}) for ticket ` +
+      `${payload.ticketNo}. Needs your approval.`;
+    const linkTo = payload.requestId
+      ? `/m/parts/part-inventory?tab=truck-stock-requests&requestId=${encodeURIComponent(payload.requestId)}`
+      : "/m/parts/part-inventory?tab=truck-stock-requests";
+    await Promise.all(
+      recipientIds.map((id) =>
+        createNotification({
+          recipientId: id,
+          senderId: null,
+          senderName: payload.actorName,
+          body,
+          // Deep-links straight into the Truck Stock Requests tab (see the
+          // ?tab=/?requestId= handling in PartInventory.tsx) instead of just
+          // landing on Part Inventory's default tab, where the pending
+          // request isn't visible at all.
+          linkTo,
+        }).catch((e) => console.warn("[truckStockNotify] notify parts manager failed:", e)),
+      ),
+    );
+  } catch (err) {
+    console.warn("[truckStockNotify] notifyPartsManagerOfPullRequest skipped:", err);
+  }
 }
 
-/** Roles that should receive a truck-stock-usage alert in addition to named users. */
-const ALERT_ROLES = ["Parts Manager", "Admin", "Manager"];
-/** Named users always copied (parts ops leadership). */
-const ALERT_USERS = ["Naveen", "Ian", "Tina"];
-
-/**
- * Send the in-app notification. Fire-and-forget — never throws.
- */
-export async function notifyPartsManagerOfTruckStockUse(
-  payload: TruckStockUsagePayload,
-): Promise<void> {
+/** Ping the requester once their pull request has been approved or rejected. Fire-and-forget. */
+export async function notifyRequesterOfPullDecision(payload: {
+  requesterId: string | null;
+  approved: boolean;
+  partNo: string;
+  qty: number;
+  ticketNo: string;
+  reason?: string;
+}): Promise<void> {
   try {
-    if (!payload.companyId) return;
-    const { sendNotificationToRole, sendNotificationToUsers } = await import(
-      "./firebase/notifications"
-    );
-    const lines = payload.items.map(
-      (i) =>
-        `• ${i.partNo} ×${i.qty} from ${i.branch}${
-          i.storageLocation ? ` @ ${i.storageLocation}` : ""
-        }`,
-    );
-    const actorLabel = payload.actorName?.trim() || payload.actorEmail || "Unknown user";
-    const body =
-      `${actorLabel} (${payload.actorRole || "—"}) pulled from Truck Stock for ` +
-      `ticket ${payload.ticketNo}:\n${lines.join("\n")}\n` +
-      `Source branch: ${payload.branch}.`;
-    const data = {
-      kind: "system" as NotifKind,
-      title: `Truck Stock used by ${actorLabel}`,
+    if (!payload.requesterId) return;
+    const qtyLabel = `${payload.qty} unit${payload.qty === 1 ? "" : "s"}`;
+    const body = payload.approved
+      ? `Part ${payload.partNo} for Ticket ${payload.ticketNo} is Approved. Your Truck Stock request (${qtyLabel}) is now PO Made.`
+      : `Part ${payload.partNo} for Ticket ${payload.ticketNo} is Rejected.` +
+        `${payload.reason ? ` Reason: ${payload.reason}` : ""} Please order it from a distributor instead.`;
+    await createNotification({
+      recipientId: payload.requesterId,
+      senderId: null,
+      senderName: "Parts Manager",
       body,
-      ticketNo: payload.ticketNo,
-      link: `/ticket/${payload.ticketNo}`,
-    };
-    await Promise.all([
-      ...ALERT_ROLES.map((role) =>
-        sendNotificationToRole(role, payload.companyId, data).catch((e) =>
-          console.warn(`[truckStockNotify] role ${role} failed:`, e),
-        ),
-      ),
-      sendNotificationToUsers(ALERT_USERS, payload.companyId, data).catch((e) =>
-        console.warn("[truckStockNotify] users failed:", e),
-      ),
-    ]);
+      linkTo: `/ticket/${payload.ticketNo}`,
+    });
   } catch (err) {
-    console.warn("[truckStockNotify] notification skipped:", err);
+    console.warn("[truckStockNotify] notifyRequesterOfPullDecision skipped:", err);
   }
 }

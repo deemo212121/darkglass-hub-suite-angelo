@@ -3515,18 +3515,26 @@ function TicketDetailsPage() {
     setTruckStockModal({ open: true, parts: candidates });
   };
 
-  // Pull the requested parts from truck_stock and stamp PO Made + auto
-  // PO No on each affected row. Quantities are decremented atomically
-  // inside decrementTruckStock so two open tabs can't oversell.
+  // Pull the requested parts from truck_stock. Every pull — regardless of
+  // who requests it, including Admin/Parts Manager themselves — reserves
+  // the stock immediately (so a second requester can't also claim the same
+  // units) but leaves the Part Transaction line "Need PO" and lands a
+  // pending row in truck_stock_pull_requests. It only becomes PO Made once
+  // someone with approval authority acts on it from the Truck Stock
+  // Requests tab (see migration 0047 / truckStockRequests.ts) — submitting
+  // and approving are always separate steps, even for the same person.
   const handleTruckStockBatchConfirm = async (selections: TruckStockBatchSelection[]) => {
+    if (!ticketDbId) return;
     const { decrementTruckStock } = await import("@/lib/supabase/truckStock");
+    const { createTruckStockPullRequest } = await import("@/lib/supabase/truckStockRequests");
+    const { notifyPartsManagerOfPullRequest } = await import("@/lib/truckStockNotify");
     const today = new Date().toISOString().slice(0, 10);
-    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string }> = [];
+    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string }> = [];
 
-    // Step 1: decrement stock for each selection. If any one fails we
-    // stop and surface the error — earlier successful decrements stay
-    // applied (Supabase doesn't have a multi-row transactional client
-    // here, and the source rows are independent).
+    // Step 1: reserve stock for each selection. If any one fails we stop
+    // and surface the error — earlier successful decrements stay applied
+    // (Supabase doesn't have a multi-row transactional client here, and
+    // the source rows are independent).
     for (const sel of selections) {
       const part = truckStockModal.parts.find((p) => p.id === sel.partId);
       if (!part) continue;
@@ -3540,19 +3548,27 @@ function TicketDetailsPage() {
         throw new Error(`${part.partNo}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      const autoPo = `INH-${sel.branch.replace(/\s+/g, "").slice(0, 4).toUpperCase()}-${Date.now().toString().slice(-6)}-${updates.length}`;
-      const noteAdd = `Pulled ${sel.quantity} from ${sel.branch}${sel.storageLocation ? ` @ ${sel.storageLocation}` : ""} on ${today}.`;
+      const noteAdd = `Truck Stock pull requested: ${sel.quantity} from ${sel.branch}${sel.storageLocation ? ` @ ${sel.storageLocation}` : ""} on ${today} — pending Parts Manager approval.`;
       const nextRow: PartTransactionRow = {
         ...part,
-        partDist: `In-House (${sel.branch})`,
-        status: "PO Made",
-        poNo: part.poNo || autoPo,
-        poDate: part.poDate || today,
-        quantity: String(sel.quantity),
         note: part.note ? `${part.note}\n${noteAdd}` : noteAdd,
         lastModifiedBy: currentEditor,
       };
-      updates.push({ partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation });
+      const update: { partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string } =
+        { partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation };
+      updates.push(update);
+      try {
+        update.requestId = await createTruckStockPullRequest({
+          ticketId: ticketDbId,
+          partId: part.id,
+          partNo: part.partNo,
+          branch: sel.branch,
+          storageLocation: sel.storageLocation,
+          quantity: sel.quantity,
+        });
+      } catch (err) {
+        console.error(`Failed to create Truck Stock pull request for ${part.partNo}:`, err);
+      }
     }
 
     // Step 2: persist each updated part row to Supabase.
@@ -3564,10 +3580,10 @@ function TicketDetailsPage() {
       }
       appendAuditEntry({
         by: currentEditor,
-        action: "Pulled from Truck Stock",
+        action: "Requested Truck Stock Pull",
         field: PART_FIELD_LABELS.status,
         before: "Need PO",
-        after: `${u.nextRow.partNo} - Status: PO Made - PO #: ${u.nextRow.poNo} - From: ${u.branch}${u.storage ? ` @ ${u.storage}` : ""}`,
+        after: `${u.nextRow.partNo} - Pending Parts Manager approval - From: ${u.branch}${u.storage ? ` @ ${u.storage}` : ""}`,
       });
     }
 
@@ -3580,47 +3596,22 @@ function TicketDetailsPage() {
     );
     setTruckStockModal({ open: false, parts: [] });
 
-    // Step 4: notify the Parts Manager when the actor is Triage or a
-    // non-manager Parts user. Privileged roles (Parts Manager, Admin,
-    // etc.) don't trigger the alert since they're the audience. Fire
-    // one notification per unique source branch in this batch so the
-    // message is specific enough to act on.
-    try {
-      const { shouldNotifyOnTruckStockUse, notifyPartsManagerOfTruckStockUse } =
-        await import("@/lib/truckStockNotify");
-      if (
-        shouldNotifyOnTruckStockUse(currentUserRole, currentUserExtraRoles) &&
-        currentCompanyId &&
-        updates.length > 0
-      ) {
-        const byBranch = new Map<string, typeof updates>();
-        for (const u of updates) {
-          const arr = byBranch.get(u.branch) ?? [];
-          arr.push(u);
-          byBranch.set(u.branch, arr);
-        }
-        for (const [branch, group] of byBranch) {
-          void notifyPartsManagerOfTruckStockUse({
-            actorName: currentUserName ?? "",
-            actorEmail: currentUserEmail ?? "",
-            actorRole: String(currentUserRole ?? ""),
-            ticketNo,
-            branch,
-            items: group.map((g) => ({
-              partNo: g.nextRow.partNo,
-              qty: g.pulled,
-              branch: g.branch,
-              storageLocation: g.storage,
-            })),
-            companyId: currentCompanyId,
-          });
-        }
-      }
-    } catch (notifyErr) {
-      console.warn("Truck Stock parts-manager notify skipped:", notifyErr);
+    // Step 4: notify every Parts Manager a decision is needed.
+    for (const u of updates) {
+      void notifyPartsManagerOfPullRequest({
+        actorName: currentUserName || currentUserEmail || "Someone",
+        ticketNo,
+        partNo: u.nextRow.partNo,
+        qty: u.pulled,
+        branch: u.branch,
+        storageLocation: u.storage,
+        requestId: u.requestId,
+      });
     }
 
-    alert(`Pulled ${updates.length} part${updates.length === 1 ? "" : "s"} from Truck Stock. Each is now PO Made with an INH-… PO number.`);
+    alert(
+      `Requested ${updates.length} part${updates.length === 1 ? "" : "s"} from Truck Stock. The Parts Manager has been notified and needs to approve before ${updates.length === 1 ? "it's" : "they're"} marked PO Made.`,
+    );
   };
 
   // ── Sync parts from ServicePower running notes ──
@@ -5160,7 +5151,12 @@ function TicketDetailsPage() {
           <input value={partDraft.note} onChange={(e) => setPartDraft((d) => ({ ...d, note: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
         </td>
         <td className="px-1 py-1.5">
-          <input value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Visit ID*" />
+          <select value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+            <option value="">Visit ID*</option>
+            {visitLogEntries.map((entry) => (
+              <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
+            ))}
+          </select>
         </td>
         <td className="px-1 py-1.5">
           <input value={partDraft.orderNo} onChange={(e) => setPartDraft((d) => ({ ...d, orderNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Order #" />
@@ -7508,7 +7504,20 @@ function TicketDetailsPage() {
                               </select>
                             </td>
                             <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Note" /></td>
-                            <td className={cellWrap}><input value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Visit ID*" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                                <option value="">Visit ID*</option>
+                                {visitLogEntries.map((entry) => (
+                                  <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
+                                ))}
+                                {/* Stale value from before this became a dropdown, or a
+                                    since-deleted visit — keep it selectable so it isn't
+                                    silently blanked out. */}
+                                {String(val("visitId") ?? "") && !visitLogEntries.some((entry) => entry.visitNo === String(val("visitId") ?? "")) && (
+                                  <option value={String(val("visitId") ?? "")}>{String(val("visitId"))} (not found)</option>
+                                )}
+                              </select>
+                            </td>
                             <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Order #" /></td>
                             <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
                             <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="In Track #" /></td>

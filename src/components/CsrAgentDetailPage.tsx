@@ -3,11 +3,14 @@
  * tab from the CSR Team Dashboard's member list or the HR Employee
  * Directory. Any manager-flavored role can attach a warning or mistake
  * note here, optionally referencing a ticket number; a department
- * manager reviews it first, then HR makes the final call — except HR/
- * Admin/Superadmin submissions, which fast-track straight to approved
- * since they already hold final authority. Works for any employee, not
- * just CSR staff — Recent Activity is empty for non-CSR roles since it
- * reflects ticket audit-trail activity.
+ * manager reviews it first, then HR makes the final call. Submitters who
+ * are themselves a department manager (stage-1 reviewer) skip that first
+ * step — their own submission goes straight to "awaiting HR" instead of
+ * asking another manager to bless it — and HR/Admin/Superadmin
+ * submissions fast-track straight to approved since they already hold
+ * final authority. Works for any employee, not just CSR staff — Recent
+ * Activity is empty for non-CSR roles since it reflects ticket
+ * audit-trail activity.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -171,6 +174,10 @@ export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
         // HR/Admin/Superadmin already hold final review authority — no need
         // to route their own submission through a department manager first.
         fastTrackToApproved: canStage2Review,
+        // A stage-1 (department manager) submitter is already the manager
+        // review step — skip straight to awaiting HR instead of sitting in
+        // 'pending' for another manager to approve.
+        fastTrackToManagerApproved: canStage1Review && !canStage2Review,
       });
       setNoteTicket("");
       setNoteText("");
@@ -324,11 +331,19 @@ export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
                     disabled={savingNote || !noteText.trim()}
                     className="btn bg-primary/15 border-primary/40 text-primary hover:bg-primary/25 text-xs disabled:opacity-50"
                   >
-                    {savingNote ? "Sending…" : canStage2Review ? `Issue ${noteTypeTab === "warning" ? "Warning" : "Mistake"}` : "Send to Manager for Review"}
+                    {savingNote
+                      ? "Sending…"
+                      : canStage2Review
+                      ? `Issue ${noteTypeTab === "warning" ? "Warning" : "Mistake"}`
+                      : canStage1Review
+                      ? "Send to HR for Verification"
+                      : "Send to Manager for Review"}
                   </button>
                   <p className="text-[10px] text-muted-foreground">
                     {canStage2Review
                       ? `This counts against ${name.split(" ")[0] || "this employee"} immediately — you have final review authority.`
+                      : canStage1Review
+                      ? `This won't count against ${name.split(" ")[0] || "this employee"} until HR verifies it.`
                       : `This won't count against ${name.split(" ")[0] || "this employee"} until a manager approves it.`}
                   </p>
                 </div>

@@ -2,13 +2,15 @@ import { useMemo, useState, useEffect } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Home, ListFilter, Search } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { LOCATIONS, TECHS_FULL, pad, pick } from "@/components/shared";
-import { TICKET_SEARCH_INDEX } from "@/lib/ticket-search";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
+import type { Ticket } from "@/lib/ticketData";
+import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
+import { ALL_TECHNICIANS } from "@/lib/locations";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 type CalendarRow = {
-  engineer: string;
+  technician: string;
   ticketNo: string;
   customer: string;
   type: string;
@@ -24,12 +26,6 @@ type CalendarRow = {
   repairType: string;
 };
 
-const ENGINEERS = ["Josh Malloch", "R. Mendoza", "M. Navarro", ...TECHS_FULL];
-const SOURCE_TYPES = ["Delivery", "Installation", "Repair", "Maintenance", "Follow Up", "Inspection"];
-const REPAIR_TYPES = ["Warranty", "Out of Warranty", "Claim", "Parts Hold", "Return Visit"];
-const STATUS_TYPES = ["Scheduled", "In Progress", "Waiting Parts", "Complete", "Deferred"];
-const MODEL_CODES = ["FRN-01", "WSH-02", "DRY-03", "RNG-04", "D/W-05", "MW-06"];
-const STREET_NAMES = ["Main St", "Oak Ave", "Pine Rd", "Cedar Ln", "Market Dr", "Summit Way"];
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function buildCalendarWeeks(monthValue: string) {
@@ -69,6 +65,9 @@ function monthLabel(monthValue: string) {
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
+// monthValue is always "YYYY-MM" (day-of-month is never part of the state),
+// and shifting always starts from the 1st, so this can never roll over into
+// the wrong month the way `date.setMonth()` can on e.g. Jan 31 + 1 month.
 function shiftMonth(monthValue: string, offset: number) {
   if (!monthValue) return monthValue;
   const date = new Date(`${monthValue}-01T00:00:00`);
@@ -82,59 +81,80 @@ function formatDate(date: Date) {
   return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${date.getFullYear()}`;
 }
 
-function parseDate(dateValue: string) {
-  const [month, day, year] = dateValue.split("/").map(Number);
-  if (!month || !day || !year) return null;
+/** `ticket.schedule` is a Postgres `YYYY-MM-DD` string (tickets.schedule_date) — parse as local, not UTC, so it lands on the right calendar cell regardless of timezone. */
+function parseScheduleDate(schedule: string): Date | null {
+  if (!schedule) return null;
+  const [year, month, day] = schedule.split("-").map(Number);
+  if (!year || !month || !day) return null;
   return new Date(year, month - 1, day);
 }
 
-function generateRows(monthValue: string): CalendarRow[] {
-  const base = monthValue ? new Date(`${monthValue}-01T00:00:00`) : new Date();
-  const year = base.getFullYear();
-  const month = base.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const locations = LOCATIONS.slice(1);
-  const ticketEntries = TICKET_SEARCH_INDEX.length
-    ? TICKET_SEARCH_INDEX
-    : [{ ticketNo: "TK-2026-0001", customer: "Sample Customer", city: "Asheville", zip: "", status: "Scheduled" }];
+/** A ticket's time_slot is a Work Planner frame ("8-12", "1-5", "ANYTIME", or a raw ServicePower window) — bucket it into this calendar's two rows using the frame's representative start time. */
+function slotFor(schedulePeriod: string | undefined): { slot: "AM" | "PM"; label: string } {
+  const frame = normalizeTimePeriod(schedulePeriod) ?? "ANYTIME";
+  const start = FRAME_START_TIME[frame] ?? FRAME_START_TIME.ANYTIME;
+  const hour = Number(start.slice(0, 2));
+  return { slot: hour < 12 ? "AM" : "PM", label: frame };
+}
 
-  return Array.from({ length: ticketEntries.length }, (_, index) => {
-    const entry = ticketEntries[index % ticketEntries.length];
-    const scheduleDay = 1 + ((index * 2 + month) % daysInMonth);
-    const scheduleDate = new Date(year, month, scheduleDay);
-    const postingDate = new Date(scheduleDate);
-    postingDate.setDate(postingDate.getDate() - (2 + (index % 11)));
-    const engineer = ENGINEERS[index % ENGINEERS.length];
-    const city = pick(locations, index);
-    const slot: "AM" | "PM" = index % 2 === 0 ? "AM" : "PM";
-    const status = entry.status || pick(STATUS_TYPES, index);
-    return {
-      engineer,
-      ticketNo: entry.ticketNo,
-      customer: entry.customer,
-      type: pick(SOURCE_TYPES, index),
-      postingDate: formatDate(postingDate),
-      schedule: formatDate(scheduleDate),
-      slot,
-      scheduleTime: slot === "AM" ? "09:30" : "14:30",
-      status,
-      modelCode: pick(MODEL_CODES, index),
-      serial: `SN-${pad(3000 + index)}`,
-      address: `${100 + index * 3} ${pick(STREET_NAMES, index)}, ${city}${entry.zip ? ` ${entry.zip}` : ""}`,
-      aging: Math.max(0, Math.floor((Date.now() - postingDate.getTime()) / 86400000)),
-      repairType: pick(REPAIR_TYPES, index),
-    };
-  });
+function buildRowsFromTickets(tickets: Ticket[]): CalendarRow[] {
+  return tickets
+    .filter((t) => !!t.schedule)
+    .map((t) => {
+      const scheduleDate = parseScheduleDate(t.schedule);
+      const { slot, label } = slotFor(t.schedulePeriod);
+      const addressParts = [t.address, t.city, t.zip].filter(Boolean);
+      return {
+        technician: t.technician || "Unassigned",
+        ticketNo: t.ticketNo,
+        customer: t.customer || "",
+        type: t.type || "",
+        postingDate: t.created ? formatDate(new Date(`${t.created}T00:00:00`)) : "",
+        schedule: scheduleDate ? formatDate(scheduleDate) : "",
+        slot,
+        scheduleTime: label,
+        status: t.status || "",
+        modelCode: t.model || "",
+        serial: t.serial || "",
+        address: addressParts.join(", "),
+        aging: t.aging || 0,
+        repairType: t.warranty || "",
+      };
+    })
+    .filter((row) => !!row.schedule);
 }
 
 export function WorkCalendarPage({ mod, sub }: Props) {
   const now = new Date();
-  const [engineer, setEngineer] = useState("Josh Malloch");
+  const [technician, setTechnician] = useState("");
   const [monthValue, setMonthValue] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [monthDraft, setMonthDraft] = useState(monthValue);
   const [showTicketNo, setShowTicketNo] = useState(true);
   const [showAddress, setShowAddress] = useState(true);
   const [view, setView] = useState<"list" | "calendar">("list");
   const [search, setSearch] = useState("");
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setLoading(true);
+        setLoadError(null);
+        const rows = await getCompanyTickets();
+        if (!alive) return;
+        setTickets(rows);
+      } catch (err) {
+        if (!alive) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -150,13 +170,36 @@ export function WorkCalendarPage({ mod, sub }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const rows = useMemo(() => generateRows(monthValue), [monthValue]);
+  // Keep the free-text month field in sync when monthValue changes via the
+  // prev/next buttons or Alt+Arrow shortcuts (not just from direct typing).
+  useEffect(() => {
+    setMonthDraft(monthValue);
+  }, [monthValue]);
+
+  const allRows = useMemo(() => buildRowsFromTickets(tickets), [tickets]);
+
+  // Full company technician roster (src/lib/locations.ts), not just techs
+  // with a scheduled ticket in view — otherwise the dropdown would shrink
+  // to whoever happens to have work booked this month.
+  const technicianOptions = useMemo(() => {
+    const fromTickets = allRows.map((r) => r.technician).filter((name) => name && name !== "Unassigned");
+    return Array.from(new Set([...ALL_TECHNICIANS, ...fromTickets])).sort((a, b) => a.localeCompare(b));
+  }, [allRows]);
+
+  const monthRows = useMemo(() => {
+    return allRows.filter((row) => {
+      const [mm, , yyyy] = row.schedule.split("/");
+      if (!mm || !yyyy) return false;
+      return `${yyyy}-${mm}` === monthValue;
+    });
+  }, [allRows, monthValue]);
+
   const calendarWeeks = useMemo(() => buildCalendarWeeks(monthValue), [monthValue]);
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (engineer && row.engineer !== engineer) return false;
+    return monthRows.filter((row) => {
+      if (technician && row.technician !== technician) return false;
       if (!query) return true;
       const haystack = [
         row.ticketNo,
@@ -172,7 +215,7 @@ export function WorkCalendarPage({ mod, sub }: Props) {
       ].join(" ").toLowerCase();
       return haystack.includes(query);
     });
-  }, [rows, engineer, search]);
+  }, [monthRows, technician, search]);
 
   const rowsByDateAndSlot = useMemo(() => {
     return filteredRows.reduce<Record<string, CalendarRow[]>>((accumulator, row) => {
@@ -212,14 +255,15 @@ export function WorkCalendarPage({ mod, sub }: Props) {
       <div className="calendar-panel mb-5">
         <div className="control-grid">
           <div className="control-group">
-            <label htmlFor="engineer">Engineer</label>
+            <label htmlFor="technician">Technician</label>
             <select
-              id="engineer"
-              value={engineer}
-              onChange={(event) => setEngineer(event.target.value)}
+              id="technician"
+              value={technician}
+              onChange={(event) => setTechnician(event.target.value)}
               className="glass-input"
             >
-              {ENGINEERS.map((name) => (
+              <option value="">All Technicians</option>
+              {technicianOptions.map((name) => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
@@ -239,11 +283,18 @@ export function WorkCalendarPage({ mod, sub }: Props) {
               <input
                 id="monthPicker"
                 type="text"
-                value={monthValue}
-                onChange={(event) => setMonthValue(event.target.value.slice(0, 7))}
                 inputMode="numeric"
-                pattern="\\d{4}-\\d{2}"
+                pattern="\d{4}-\d{2}"
                 placeholder="YYYY-MM"
+                value={monthDraft}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setMonthDraft(next);
+                  if (/^\d{4}-\d{2}$/.test(next)) setMonthValue(next);
+                }}
+                onBlur={(event) => {
+                  if (!/^\d{4}-\d{2}$/.test(event.target.value)) setMonthDraft(monthValue);
+                }}
                 className="glass-input"
               />
               <button
@@ -294,7 +345,7 @@ export function WorkCalendarPage({ mod, sub }: Props) {
 
         <div className="meta-row">
           <div id="recordCount" className="count-text">
-            {filteredRows.length} records found
+            {loading ? "Loading…" : `${filteredRows.length} records found`}
           </div>
           <div className="relative min-w-[220px] flex-1 sm:flex-none sm:min-w-[260px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -309,6 +360,10 @@ export function WorkCalendarPage({ mod, sub }: Props) {
             />
           </div>
         </div>
+
+        {loadError && (
+          <div className="mb-3 rounded border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">{loadError}</div>
+        )}
 
         {view === "list" ? (
           <div id="listView" className="table-wrap">
@@ -328,7 +383,11 @@ export function WorkCalendarPage({ mod, sub }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={10} className="py-8 text-center text-slate-500 italic">Loading…</td>
+                  </tr>
+                ) : filteredRows.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="py-8 text-center text-slate-500 italic">No records found</td>
                   </tr>

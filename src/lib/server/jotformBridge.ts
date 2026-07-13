@@ -202,6 +202,50 @@ function extractFileUrls(rawRequest: string | null): string[] {
   }
 }
 
+/**
+ * Anchors a Jotform file path/URL to an absolute, fetchable URL. Jotform's
+ * signature widget (and occasionally other upload widgets) answer with a
+ * path relative to their own CDN — e.g. "uploads/usihs_IT/261.../signature_
+ * 19.png" — instead of a full URL. Returns null if the result doesn't look
+ * like a file at all (used by fetchJotformFileUrls below to skip non-file
+ * answer values the Submission API might still hand back).
+ */
+function normalizeJotformFileUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const absolute = /^https?:\/\//i.test(trimmed) ? trimmed : `https://www.jotform.com/${trimmed.replace(/^\/+/, "")}`;
+  return /\.(png|jpe?g|gif|webp|heic|pdf)(\?|$)/i.test(absolute) ? absolute : null;
+}
+
+/**
+ * Authoritative file-URL source: Jotform's Submission API returns each
+ * answer with its widget `type` (e.g. "control_fileupload",
+ * "control_signature") and a clean `answer` value, instead of the webhook
+ * payload's inconsistently-shaped `rawRequest`/`pretty` fields — far more
+ * reliable than guessing a field is a file from its string shape (which is
+ * what extractFileUrls below has to do). Requires JOTFORM_API_KEY; the
+ * caller falls back to extractFileUrls(rawRequest) when this throws or
+ * finds nothing (no key configured, submission not found yet, etc.).
+ */
+async function fetchJotformFileUrls(submissionId: string, apiKey: string): Promise<string[]> {
+  const res = await fetch(`https://api.jotform.com/submission/${encodeURIComponent(submissionId)}?apiKey=${encodeURIComponent(apiKey)}`);
+  if (!res.ok) throw new Error(`Jotform submission fetch failed (${res.status}): ${await res.text()}`);
+  const body = (await res.json()) as { content?: { answers?: Record<string, { type?: string; answer?: unknown }> } };
+  const answers = body.content?.answers ?? {};
+  const urls: string[] = [];
+  for (const field of Object.values(answers)) {
+    const isFileField = field.type === "control_fileupload" || field.type === "control_signature";
+    if (!isFileField || field.answer == null) continue;
+    const values = Array.isArray(field.answer) ? field.answer : [field.answer];
+    for (const v of values) {
+      if (typeof v !== "string") continue;
+      const normalized = normalizeJotformFileUrl(v);
+      if (normalized) urls.push(normalized);
+    }
+  }
+  return urls;
+}
+
 // Cache per formId — the form's questions don't change between
 // submissions, so there's no reason to call Jotform's API on every single
 // webhook delivery for the same form.
@@ -537,6 +581,12 @@ async function writeNotification(
           uid: sv(uid),
           isRead: { booleanValue: false },
           createdAt: { timestampValue: new Date().toISOString() },
+          // Lets NotificationsMenu's bell-dropdown click handler
+          // (`if (n.linkTo) navigate(...)`) jump straight to the HR
+          // Dashboard's Jotform Submissions tab instead of doing nothing —
+          // this field was missing entirely before, so clicking a Jotform
+          // notification from the bell never navigated anywhere.
+          link: sv("/m/dashboard/hr-dashboard"),
           formId: sv(fields.formId),
           submissionId: sv(fields.submissionId),
           // Jotform's own human-readable "Label: value, Label: value…" summary
@@ -709,7 +759,20 @@ export async function handleJotformRequest(
     const jotformApiKey: string | undefined =
       (g.__JOTFORM_API_KEY__ && g.__JOTFORM_API_KEY__ !== "" ? g.__JOTFORM_API_KEY__ : undefined) ??
       getEnv("JOTFORM_API_KEY");
-    const fileUrls = extractFileUrls(rawRequest);
+    // The Submission API (when an API key is configured) returns each
+    // answer's widget type + a clean URL, far more reliable than guessing
+    // from the webhook payload's rawRequest/pretty text. Fall back to the
+    // heuristic scan if the key isn't set or the request fails, so nothing
+    // regresses either way.
+    let fileUrls: string[] = [];
+    if (jotformApiKey && submissionID) {
+      try {
+        fileUrls = await fetchJotformFileUrls(submissionID, jotformApiKey);
+      } catch (err) {
+        console.error("[jotform-webhook] Submission API file lookup failed, falling back to rawRequest scan:", err);
+      }
+    }
+    if (fileUrls.length === 0) fileUrls = extractFileUrls(rawRequest);
     let photos: string[] = [];
     let attachmentErrors: string[] = [];
     if (fileUrls.length > 0 && storageBucket) {

@@ -40,6 +40,93 @@ export function isEligibleForPto(hireDate: string | null | undefined, createdAt:
   return new Date().toISOString().slice(0, 10) >= eligibleDate;
 }
 
+/**
+ * Annual PTO allowance by tenure year. Tenure year 1 is the employee's first
+ * PTO-eligible year (the year starting at their 1-year hire anniversary) and
+ * grants 5 days; each following tenure year adds 1 (year 2 -> 6, year 3 -> 7,
+ * ...), uncapped, per HR policy. `unpaid` PTO doesn't draw against this — it
+ * exists for time off once the allowance is exhausted.
+ */
+export function ptoAllowanceForTenureYear(tenureYear: number): number {
+  return tenureYear < 1 ? 0 : 4 + tenureYear;
+}
+
+/** How many whole years have elapsed from `from` to `to` (anniversary-based, not calendar-year). */
+function fullYearsElapsed(from: Date, to: Date): number {
+  let years = to.getFullYear() - from.getFullYear();
+  const fromMonthDay = from.getMonth() * 100 + from.getDate();
+  const toMonthDay = to.getMonth() * 100 + to.getDate();
+  if (toMonthDay < fromMonthDay) years -= 1;
+  return years;
+}
+
+export interface PtoYearWindow {
+  tenureYear: number;
+  start: string; // "YYYY-MM-DD", inclusive
+  end: string; // "YYYY-MM-DD", exclusive — the next anniversary
+  allowance: number;
+}
+
+/**
+ * Which PTO tenure-year `onDate` falls in, anchored to the employee's hire
+ * anniversary (not the calendar year) — so the allowance resets on their
+ * anniversary each year, not every Jan 1. Returns null before the employee
+ * is PTO-eligible (see isEligibleForPto).
+ */
+export function ptoYearWindow(
+  hireDate: string | null | undefined,
+  createdAt: string | null | undefined,
+  onDate: string = new Date().toISOString().slice(0, 10)
+): PtoYearWindow | null {
+  const base = (hireDate || createdAt || "").slice(0, 10);
+  if (!base) return null;
+  const hire = new Date(base + "T00:00:00");
+  const target = new Date(onDate + "T00:00:00");
+  if (Number.isNaN(hire.getTime()) || Number.isNaN(target.getTime())) return null;
+
+  const tenureYear = fullYearsElapsed(hire, target);
+  if (tenureYear < 1) return null;
+
+  const start = new Date(hire);
+  start.setFullYear(hire.getFullYear() + tenureYear);
+  const end = new Date(hire);
+  end.setFullYear(hire.getFullYear() + tenureYear + 1);
+
+  return {
+    tenureYear,
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+    allowance: ptoAllowanceForTenureYear(tenureYear),
+  };
+}
+
+/**
+ * Requests that count against a PTO year window — pending or approved,
+ * dated inside the window, excluding `unpaid` (which doesn't draw against
+ * the allowance).
+ */
+export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">>(
+  requests: T[],
+  window: Pick<PtoYearWindow, "start" | "end">
+): T[] {
+  return requests.filter(
+    (r) =>
+      r.ptoType !== "unpaid" &&
+      r.status !== "denied" &&
+      r.status !== "cancelled" &&
+      r.startDate >= window.start &&
+      r.startDate < window.end
+  );
+}
+
+/** Days already spoken for (pending or approved) inside a PTO year window. */
+export function ptoDaysUsed(
+  requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
+  window: Pick<PtoYearWindow, "start" | "end">
+): number {
+  return ptoRequestsInYear(requests, window).reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+}
+
 export interface PtoRequestRow {
   id: string;
   profileId: string;
@@ -130,7 +217,7 @@ export function canReviewPtoStage(
 }
 
 /** Count weekdays (Mon–Fri) in an inclusive date range — used for the default hours estimate. */
-function weekdayCount(startDate: string, endDate: string): number {
+export function weekdayCount(startDate: string, endDate: string): number {
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   let count = 0;

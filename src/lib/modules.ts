@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "attendance-monitoring"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "attendance-monitoring" | "claims-dashboard"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -263,6 +263,15 @@ const dashboardMod: ModuleDef = {
       title: "Parts Dashboard",
       description: "Parts operations overview — PO queue, collections, receives and distributor breakdown.",
       custom: "parts-dashboard",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "claims-dashboard",
+      title: "Claims Dashboard",
+      description: "Claims pipeline overview — brand/status breakdown, pre-authorization aging, and Claims staff.",
+      custom: "claims-dashboard",
       fields: [],
       count: 0,
       seed: () => ({}),

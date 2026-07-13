@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0048 — Onboarding Documents: per-applicant document repository
+-- 0049 — Onboarding Documents: per-applicant document repository
 --
 -- Actual files (Resume, IDs, Medical, etc.) live in Firebase Storage, not
 -- here — this table is purely the "which file belongs to which applicant's
@@ -20,7 +20,7 @@
 -- notification it came from so it can be marked processed) or manually
 -- uploaded by HR for legacy applicants (source = 'manual').
 --
--- Run once in the Supabase SQL Editor, after 0047.
+-- Run once in the Supabase SQL Editor, after 0048.
 -- =====================================================================
 
 create table if not exists onboarding_documents (
