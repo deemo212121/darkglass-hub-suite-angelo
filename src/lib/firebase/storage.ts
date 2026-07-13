@@ -118,6 +118,45 @@ export async function deleteTicketPhoto(fullPath: string): Promise<void> {
 
 
 /**
+ * Upload one onboarding document file for an applicant/employee. Stored
+ * under companies/{companyId}/onboarding-documents/{profileId}/{category}/,
+ * so files are naturally namespaced per company + applicant + category —
+ * same convention as ticket photos above. The Supabase `onboarding_documents`
+ * table tracks which category/applicant a given upload belongs to; this
+ * function only puts the bytes in Storage and returns the download URL +
+ * full path for that table row.
+ */
+export async function uploadOnboardingDocument(
+  companyId: string,
+  profileId: string,
+  category: string,
+  file: File
+): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/onboarding-documents/${profileId}/${category}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, {
+    contentType: file.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
+/**
+ * Delete an onboarding document file by its full storage path.
+ */
+export async function deleteOnboardingDocumentFile(fullPath: string): Promise<void> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  await deleteObject(ref(storage, fullPath));
+}
+
+/**
  * Upload a customer signature PNG (from a canvas data URL) for a ticket.
  * Stored under companies/{companyId}/tickets/{ticketNo}/signatures/.
  * Returns the public download URL (store this in the billing record).
