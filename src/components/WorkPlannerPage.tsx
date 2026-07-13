@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
@@ -15,8 +17,8 @@ import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagemen
 import type { TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
-
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type TicketRecord = Record<string, any> & {
   ticketNo: string;
@@ -242,6 +244,19 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const geocodeCacheRef = useRef<Map<string, { lat: number; lng: number } | null>>(new Map());
   const dragSourceRef = useRef<{ ticketNo: string; slot: PlannerTicket["slot"]; technician: string } | null>(null);
 
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+  const leafletContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletMarkersRef = useRef<L.Marker[]>([]);
+  const leafletPolylinesRef = useRef<L.Polyline[]>([]);
+  const leafletArrowsRef = useRef<L.Marker[]>([]);
+
   // Manual order within a single (date, technician, slot) cell. Keyed by
   // `${date}|${technician}|${slot}` → array of ticket numbers in the order
   // dispatch wants them rendered. Anything not in the array sorts to the
@@ -431,79 +446,78 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
   const unverifiedTickets = useMemo(() => visibleTickets.filter((ticket) => !String(ticket.address || ticket.customer_address || "").trim()), [visibleTickets]);
 
+  // Instantiate the Google map once Google is the active provider.
   useEffect(() => {
+    if (mapProvider !== "google") return;
     let cancelled = false;
-
-    const initializeMap = () => {
-      if (cancelled || !mapContainerRef.current) return;
-      const maps = (window as Window & { google?: any }).google?.maps;
-      if (!maps) return;
-
-      if (!mapRef.current) {
-        mapRef.current = new maps.Map(mapContainerRef.current, {
-          center: { lat: 37.0902, lng: -95.7129 },
-          zoom: 4,
-          mapTypeId: maps.MapTypeId.ROADMAP,
-          disableDefaultUI: true,
-          gestureHandling: "greedy",
-        });
-      }
-
-      setMapReady(true);
-      setMapError(null);
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !mapContainerRef.current) return;
+        const maps = (window as Window & { google?: any }).google?.maps;
+        if (!maps) return;
+        if (!mapRef.current) {
+          mapRef.current = new maps.Map(mapContainerRef.current, {
+            center: { lat: 37.0902, lng: -95.7129 },
+            zoom: 4,
+            mapTypeId: maps.MapTypeId.ROADMAP,
+            disableDefaultUI: true,
+            gestureHandling: "greedy",
+          });
+        }
+        setMapReady(true);
+        setMapError(null);
+      })
+      .catch(() => { if (!cancelled) setMapError("Google Maps failed to load."); });
+    return () => {
+      cancelled = true;
+      mapRef.current = null;
+      setMapReady(false);
     };
+  }, [mapProvider]);
 
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps="work-planner"]');
-    if ((window as Window & { google?: any }).google?.maps) {
-      initializeMap();
-      return () => { cancelled = true; };
-    }
-
-    if (existingScript) {
-      existingScript.addEventListener("load", initializeMap, { once: true });
-      existingScript.addEventListener("error", () => { if (!cancelled) setMapError("Google Maps failed to load."); }, { once: true });
-      return () => { cancelled = true; };
-    } else {
-      const script = document.createElement("script");
-      script.dataset.googleMaps = "work-planner";
-      script.async = true;
-      script.defer = true;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-      script.onload = initializeMap;
-      script.onerror = () => { if (!cancelled) setMapError("Google Maps failed to load."); };
-      document.head.appendChild(script);
-    }
-
-    return () => { cancelled = true; };
-  }, []);
+  // Instantiate the Leaflet map once Leaflet is the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    const container = leafletContainerRef.current;
+    const map = L.map(container, {
+      center: [37.0902, -95.7129],
+      zoom: 4,
+    });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setMapReady(true);
+    setMapError(null);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletMapRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider]);
 
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
+    if (!mapReady || !mapProvider) return;
+    const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
+    if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
-    if (!maps) return;
+    if (mapProvider === "google" && !maps) return;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
     polylinesRef.current.forEach((line) => line.setMap(null));
     polylinesRef.current = [];
+    leafletMarkersRef.current.forEach((m) => m.remove());
+    leafletMarkersRef.current = [];
+    leafletPolylinesRef.current.forEach((l) => l.remove());
+    leafletPolylinesRef.current = [];
+    leafletArrowsRef.current.forEach((m) => m.remove());
+    leafletArrowsRef.current = [];
 
     // Ordered geocoded stops per technician, for drawing route lines.
     const routePointsByTech = new Map<string, Array<{ order: number; position: { lat: number; lng: number } }>>();
 
-    const geocoder = new maps.Geocoder();
-    
-    // Enhanced geocoding with fallback strategy
-    const geocode = (address: string) => new Promise<{ lat: number; lng: number } | null>((resolve) => {
-      geocoder.geocode({ address }, (results: any, status: string) => {
-        if (status === "OK" && results?.[0]) {
-          const position = results[0].geometry.location;
-          resolve({ lat: position.lat(), lng: position.lng() });
-          return;
-        }
-        console.warn(`Geocoding failed for: ${address}, status: ${status}`);
-        resolve(null);
-      });
-    });
+    const geocode = makeGeocoder(mapProvider);
 
     // Resolve an office location's position: use explicit Location Management
     // coordinates when set (more precise, no geocoding), otherwise geocode the
@@ -514,8 +528,143 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       return geocode(getLocationManagementZoomAddress(loc));
     };
 
+    // Marker/polyline helpers, dual-provider. Leaflet approximates each
+    // custom Google SVG marker (ticket badge / office pin / house icon)
+    // with a divIcon; exact pixel parity isn't the goal, just the same
+    // color-coding + label content.
+    const addTicketMarker = (pos: { lat: number; lng: number }, opts: { label: string; color: string; title: string; onClick: () => void }) => {
+      if (mapProvider === "google") {
+        const marker = new maps.Marker({
+          map: activeMap,
+          position: pos,
+          title: opts.title,
+          icon: {
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+            fillColor: opts.color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1.8,
+            anchor: new maps.Point(20, 22),
+            labelOrigin: new maps.Point(20, 10),
+          },
+          label: { text: opts.label, color: "#ffffff", fontSize: "13px", fontWeight: "bold" },
+        });
+        marker.addListener("click", opts.onClick);
+        markersRef.current.push(marker);
+      } else {
+        const marker = L.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(
+            `<div style="background:${opts.color};color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${opts.label}</div>`,
+            { className: "wp-ticket-marker", anchor: "bottom" },
+          ),
+        }).addTo(activeMap as L.Map);
+        marker.on("click", opts.onClick);
+        leafletMarkersRef.current.push(marker);
+      }
+    };
+
+    const addOfficeMarker = (pos: { lat: number; lng: number }, title: string) => {
+      if (mapProvider === "google") {
+        const officeMarker = new maps.Marker({
+          map: activeMap,
+          position: pos,
+          title,
+          icon: {
+            path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
+            fillColor: "#0f172a",
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2.5,
+            scale: 1.3,
+            anchor: new maps.Point(12, 34),
+            labelOrigin: new maps.Point(12, 12),
+          },
+          label: { text: "🏢", fontSize: "14px" },
+          zIndex: 99999,
+        });
+        markersRef.current.push(officeMarker);
+      } else {
+        const marker = L.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(`<span style="font-size:20px;">🏢</span>`, { className: "wp-office-marker", anchor: "bottom" }),
+          zIndexOffset: 1000,
+        }).bindTooltip(title).addTo(activeMap as L.Map);
+        leafletMarkersRef.current.push(marker);
+      }
+    };
+
+    const addHouseMarker = (pos: { lat: number; lng: number }, opts: { color: string; initials: string; title: string }) => {
+      if (mapProvider === "google") {
+        const houseMarker = new maps.Marker({
+          map: activeMap,
+          position: pos,
+          title: opts.title,
+          icon: {
+            path: "M12 2 L1 11 L4 11 L4 21 L9 21 L9 15 L15 15 L15 21 L20 21 L20 11 L23 11 Z",
+            fillColor: opts.color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1.6,
+            anchor: new maps.Point(12, 21),
+            labelOrigin: new maps.Point(12, 26),
+          },
+          label: { text: `🏠 ${opts.initials}`, color: "#ffffff", fontSize: "11px", fontWeight: "bold", className: "wp-house-label" },
+          zIndex: 99998,
+        });
+        markersRef.current.push(houseMarker);
+      } else {
+        const marker = L.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(
+            `<div style="font-size:11px;font-weight:bold;color:${opts.color};white-space:nowrap;">🏠 ${opts.initials}</div>`,
+            { className: "wp-house-marker", anchor: "bottom" },
+          ),
+          zIndexOffset: 998,
+        }).bindTooltip(opts.title).addTo(activeMap as L.Map);
+        leafletMarkersRef.current.push(marker);
+      }
+    };
+
+    const addRoutePolyline = (points: Array<{ lat: number; lng: number }>, color: string) => {
+      if (mapProvider === "google") {
+        const line = new maps.Polyline({
+          path: points,
+          geodesic: true,
+          strokeColor: color,
+          strokeOpacity: 0.9,
+          strokeWeight: 3,
+          map: activeMap,
+          icons: [{ icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 }, offset: "60%" }],
+        });
+        polylinesRef.current.push(line);
+      } else {
+        const line = L.polyline(points.map((p) => [p.lat, p.lng] as [number, number]), {
+          color,
+          opacity: 0.9,
+          weight: 3,
+        }).addTo(activeMap as L.Map);
+        leafletPolylinesRef.current.push(line);
+        const arrow = addRouteDirectionArrow(activeMap as L.Map, points, color);
+        if (arrow) leafletArrowsRef.current.push(arrow);
+      }
+    };
+
     let cancelled = false;
-    const bounds = new maps.LatLngBounds();
+    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+    const extendBounds = (pos: { lat: number; lng: number }) =>
+      mapProvider === "google" ? bounds.extend(pos) : bounds.extend([pos.lat, pos.lng]);
+    const setMapCenterZoom = (pos: { lat: number; lng: number }, zoom: number) => {
+      if (mapProvider === "google") {
+        activeMap.setCenter(pos);
+        activeMap.setZoom(zoom);
+      } else {
+        (activeMap as L.Map).setView([pos.lat, pos.lng], zoom);
+      }
+    };
+    const fitMapBounds = () => {
+      if (mapProvider === "google") activeMap.fitBounds(bounds);
+      else (activeMap as L.Map).fitBounds(bounds, { padding: [40, 40] });
+    };
 
     Promise.all(
       visibleTickets.map(async (ticket) => {
@@ -563,7 +712,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         return { ticket, position };
       }),
     ).then((results) => {
-      if (cancelled || !mapRef.current) return;
+      if (cancelled || !activeMap) return;
 
       // Order stops by time slot so route numbering follows the daily schedule
       // (e.g. 8-12 before 1-5 before ANYTIME). SLOT_TIMES maps a slot to a
@@ -581,7 +730,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
       // Group tickets by technician to determine hierarchy numbers
       const ticketsByTech = new Map<string, number>();
-      
+
       orderedResults.forEach(({ ticket, position }, index) => {
         if (!position) {
           console.warn(`No position found for ticket ${ticket.ticketNo}, skipping marker`);
@@ -596,10 +745,10 @@ export function WorkPlannerPage({ mod, sub }: Props) {
 
         // Get technician initials
         const initials = ticket.technician ? getInitials(ticket.technician) : "??";
-        
+
         // Create label text: initials + number (e.g., "JR1", "AM2")
         const labelText = `${initials}${hierarchyNumber}`;
-        
+
         // Determine color based on technician (shared with house pin + route).
         const markerColor = techColor(selectedTechRoster, techName);
 
@@ -607,39 +756,17 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
         routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
 
-        // Create custom marker with badge/text box icon with pointer at bottom
-        const svgMarker = {
-          // SVG path for a rounded rectangle with a pointer at the bottom center
-          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
-          fillColor: markerColor,
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-          scale: 1.8, // Increased from 1 to 1.8 for better visibility
-          anchor: new maps.Point(20, 22), // Anchor at the pointer tip
-          labelOrigin: new maps.Point(20, 10), // Center label in the badge
-        };
-
-        const marker = new maps.Marker({
-          map: mapRef.current,
-          position,
+        addTicketMarker(position, {
+          label: labelText,
+          color: markerColor,
           title: `${ticket.ticketNo} - ${ticket.customer}\n${techName} - Ticket #${hierarchyNumber}`,
-          icon: svgMarker,
-          label: {
-            text: labelText,
-            color: "#ffffff",
-            fontSize: "13px", // Increased from 11px to 13px
-            fontWeight: "bold",
+          onClick: () => {
+            setSelectedTicket(ticket);
+            setSelectedMarkerIndex(index);
           },
         });
 
-        marker.addListener("click", () => {
-          setSelectedTicket(ticket);
-          setSelectedMarkerIndex(index);
-        });
-
-        markersRef.current.push(marker);
-        bounds.extend(position);
+        extendBounds(position);
       });
 
       // Draw a route line per technician connecting their stops in order
@@ -647,46 +774,14 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       routePointsByTech.forEach((points, techName) => {
         if (points.length < 2) return;
         const ordered = [...points].sort((a, b) => a.order - b.order);
-        const line = new maps.Polyline({
-          path: ordered.map((p) => p.position),
-          geodesic: true,
-          strokeColor: techColor(selectedTechRoster, techName),
-          strokeOpacity: 0.9,
-          strokeWeight: 3,
-          map: mapRef.current,
-          icons: [
-            {
-              icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 },
-              offset: "60%",
-            },
-          ],
-        });
-        polylinesRef.current.push(line);
+        addRoutePolyline(ordered.map((p) => p.position), techColor(selectedTechRoster, techName));
       });
 
       // Pin the OFFICE for the selected branch — large dark pin with 🏢 label.
       if (location) {
         geocodeOfficeLocation(location).then((officePos) => {
-          if (cancelled || !officePos || !mapRef.current) return;
-          const officeMarker = new maps.Marker({
-            map: mapRef.current,
-            position: officePos,
-            title: `${location} Office`,
-            icon: {
-              // Classic teardrop map pin.
-              path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
-              fillColor: "#0f172a",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2.5,
-              scale: 1.3,
-              anchor: new maps.Point(12, 34),
-              labelOrigin: new maps.Point(12, 12),
-            },
-            label: { text: "🏢", fontSize: "14px" },
-            zIndex: 99999,
-          });
-          markersRef.current.push(officeMarker);
+          if (cancelled || !officePos || !activeMap) return;
+          addOfficeMarker(officePos, `${location} Office`);
         });
       }
 
@@ -712,87 +807,69 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         const color = techColor(selectedTechRoster, home.name);
         const initials = getInitials(home.name);
         geocode(homeAddr).then((pos) => {
-          if (cancelled || !pos || !mapRef.current) return;
-          const houseMarker = new maps.Marker({
-            map: mapRef.current,
-            position: pos,
-            title: `${home.name} — home`,
-            icon: {
-              // House silhouette (roof + body), clearly different from the
-              // ticket badge markers.
-              path: "M12 2 L1 11 L4 11 L4 21 L9 21 L9 15 L15 15 L15 21 L20 21 L20 11 L23 11 Z",
-              fillColor: color,
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2,
-              scale: 1.6,
-              anchor: new maps.Point(12, 21),
-              labelOrigin: new maps.Point(12, 26),
-            },
-            label: { text: `🏠 ${initials}`, color: "#ffffff", fontSize: "11px", fontWeight: "bold", className: "wp-house-label" },
-            zIndex: 99998,
-          });
-          markersRef.current.push(houseMarker);
+          if (cancelled || !pos || !activeMap) return;
+          addHouseMarker(pos, { color, initials, title: `${home.name} — home` });
         });
       });
 
       if (location) {
         geocodeOfficeLocation(location).then((position) => {
-          if (position && mapRef.current) {
-            mapRef.current.setCenter(position);
-            mapRef.current.setZoom(10);
+          if (position && activeMap) {
+            setMapCenterZoom(position, 10);
             return;
           }
-
-          if (!bounds.isEmpty() && mapRef.current) {
-            mapRef.current.fitBounds(bounds);
+          if (mapProvider === "google" ? !bounds.isEmpty() : bounds.isValid()) {
+            if (activeMap) fitMapBounds();
           }
         });
-      } else if (!bounds.isEmpty()) {
-        mapRef.current.fitBounds(bounds);
+      } else if (mapProvider === "google" ? !bounds.isEmpty() : bounds.isValid()) {
+        fitMapBounds();
       } else {
         const fallbackLocation = visibleTickets[0]?.location || selectedTechRoster[0] || location;
         geocodeOfficeLocation(fallbackLocation).then((position) => {
-          if (position && mapRef.current) {
-            mapRef.current.setCenter(position);
-            mapRef.current.setZoom(10);
-          } else {
-            mapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
-            mapRef.current.setZoom(4);
+          if (position && activeMap) {
+            setMapCenterZoom(position, 10);
+          } else if (activeMap) {
+            setMapCenterZoom({ lat: 37.0902, lng: -95.7129 }, 4);
           }
         });
       }
     });
 
     return () => { cancelled = true; };
-  }, [mapReady, visibleTickets, techHomes]);
+  }, [mapReady, mapProvider, visibleTickets, techHomes]);
 
+  // Satellite view is Google-only (plain OSM tiles have no free satellite
+  // layer) — this effect is a no-op in Leaflet mode.
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
+    if (!mapReady || mapProvider !== "google" || !mapRef.current) return;
     const maps = (window as Window & { google?: any }).google?.maps;
     if (!maps) return;
     mapRef.current.setMapTypeId(mapMode === "satellite" ? maps.MapTypeId.SATELLITE : maps.MapTypeId.ROADMAP);
-  }, [mapMode, mapReady]);
+  }, [mapMode, mapReady, mapProvider]);
 
   useEffect(() => {
-    if (!mapReady || !mapRef.current || !location) return;
-    const maps = (window as Window & { google?: any }).google?.maps;
-    if (!maps) return;
+    if (!mapReady || !mapProvider || !location) return;
+    const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
+    if (!activeMap) return;
 
-    const geocoder = new maps.Geocoder();
     const explicitCoords = getLocationManagementCoordinates(location);
-    if (explicitCoords && mapRef.current) {
-      mapRef.current.setCenter(explicitCoords);
-      mapRef.current.setZoom(10);
+    const setCenterZoom = (pos: { lat: number; lng: number }) => {
+      if (mapProvider === "google") {
+        activeMap.setCenter(pos);
+        activeMap.setZoom(10);
+      } else {
+        (activeMap as L.Map).setView([pos.lat, pos.lng], 10);
+      }
+    };
+    if (explicitCoords) {
+      setCenterZoom(explicitCoords);
       return;
     }
-    geocoder.geocode({ address: getLocationManagementZoomAddress(location) }, (results: any, status: string) => {
-      if (status === "OK" && results?.[0] && mapRef.current) {
-        mapRef.current.setCenter(results[0].geometry.location);
-        mapRef.current.setZoom(10);
-      }
+    makeGeocoder(mapProvider)(getLocationManagementZoomAddress(location)).then((pos) => {
+      if (pos) setCenterZoom(pos);
     });
-  }, [location, mapReady]);
+  }, [location, mapReady, mapProvider]);
 
   const handleDragStart = (ticketNo: string, slot: PlannerTicket["slot"], technician: string) => {
     dragSourceRef.current = { ticketNo, slot, technician };
@@ -1057,20 +1134,26 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         <div className="map-section">
           <div className="map-section-title">Assigned Locations Map</div>
           <div className="map-shell">
-            <div className="map-type-toggle">
-              <button className={`map-type-btn ${mapMode === "map" ? "active" : ""}`} type="button" onClick={() => setMapMode("map")}>Map</button>
-              <button className={`map-type-btn ${mapMode === "satellite" ? "active" : ""}`} type="button" onClick={() => setMapMode("satellite")}>Satellite</button>
-            </div>
+            {mapProvider === "google" && (
+              <div className="map-type-toggle">
+                <button className={`map-type-btn ${mapMode === "map" ? "active" : ""}`} type="button" onClick={() => setMapMode("map")}>Map</button>
+                <button className={`map-type-btn ${mapMode === "satellite" ? "active" : ""}`} type="button" onClick={() => setMapMode("satellite")}>Satellite</button>
+              </div>
+            )}
             <div className="pin-navigator">
               <button className="pin-nav-btn" type="button" title="Previous pin" onClick={() => setSelectedMarkerIndex((current) => (visibleTickets.length ? (current - 1 + visibleTickets.length) % visibleTickets.length : 0))}>❮</button>
               <span className="pin-nav-info">{visibleTickets.length ? `${selectedMarkerIndex + 1} / ${visibleTickets.length}` : "—"}</span>
               <button className="pin-nav-btn" type="button" title="Next pin" onClick={() => setSelectedMarkerIndex((current) => (visibleTickets.length ? (current + 1) % visibleTickets.length : 0))}>❯</button>
             </div>
-            <div ref={mapContainerRef} className="google-map-canvas" aria-label="Google map" />
+            {mapProvider === "leaflet" ? (
+              <div ref={leafletContainerRef} className="google-map-canvas" aria-label="Map" />
+            ) : (
+              <div ref={mapContainerRef} className="google-map-canvas" aria-label="Map" />
+            )}
             {!mapReady && (
               <div className="map-placeholder-inner">
                 <MapPin className="map-placeholder-icon h-16 w-16 text-slate-600" />
-                <div className="text-sm text-slate-500">Loading Google Maps...</div>
+                <div className="text-sm text-slate-500">Loading map...</div>
                 {mapError ? <div className="text-xs text-rose-300 mt-2">{mapError}</div> : null}
               </div>
             )}

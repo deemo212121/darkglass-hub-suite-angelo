@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
@@ -9,13 +11,13 @@ import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicia
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
 
 type TicketRecord = Record<string, any>;
-
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 const STATUS_OPTIONS = [
   "CL-Need Cancel",
@@ -130,11 +132,27 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const polylinesRef = useRef<any[]>([]);
-  // Holds the Google Maps InfoWindow + the React-managed DOM node it
-  // renders inside, so the detail card can stay anchored to the ticket's
-  // pin while the user pans/zooms the map.
+  // Holds the Google Maps InfoWindow (or, in Leaflet mode, the Leaflet
+  // Popup) + the React-managed DOM node it renders inside, so the detail
+  // card can stay anchored to the ticket's pin while the user pans/zooms.
   const infoWindowRef = useRef<any>(null);
   const infoContentRef = useRef<HTMLDivElement | null>(null);
+
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+  const leafletContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletMarkersRef = useRef<L.Marker[]>([]);
+  const leafletPolylinesRef = useRef<L.Polyline[]>([]);
+  const leafletArrowsRef = useRef<L.Marker[]>([]);
+  const leafletMarkerByTicketRef = useRef<Map<string, L.Marker>>(new Map());
+  const leafletPopupRef = useRef<L.Popup | null>(null);
+  const leafletSwitchingPopupRef = useRef(false);
   // Re-render trigger so the portal mounts on the first selection (when
   // infoContentRef has just been created).
   const [infoHostReady, setInfoHostReady] = useState(false);
@@ -234,65 +252,55 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     return () => { cancelled = true; };
   }, [authReady]);
 
+  // Instantiate the Google map once Google is the active provider.
   useEffect(() => {
+    if (!ready || mapProvider !== "google") return;
     let cancelled = false;
-
-    const initializeMap = () => {
-      if (cancelled || !mapContainerRef.current || !ready) return;
-      const maps = (window as Window & { google?: any }).google?.maps;
-      if (!maps) return;
-
-      if (!mapRef.current) {
-        mapRef.current = new maps.Map(mapContainerRef.current, {
-          center: { lat: 37.0902, lng: -95.7129 },
-          zoom: 4,
-          mapTypeId: maps.MapTypeId.ROADMAP,
-          disableDefaultUI: true,
-          gestureHandling: "greedy",
-        });
-      }
-
-      setMapReady(true);
-      setMapError(null);
-    };
-
-    // If data isn't ready yet, wait
-    if (!ready) return;
-
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps="work-map"]');
-    if ((window as Window & { google?: any }).google?.maps) {
-      initializeMap();
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    if (existingScript) {
-      existingScript.addEventListener("load", initializeMap, { once: true });
-      existingScript.addEventListener("error", () => {
-        if (!cancelled) setMapError("Google Maps failed to load.");
-      }, { once: true });
-      return () => {
-        cancelled = true;
-        existingScript.removeEventListener("load", initializeMap);
-      };
-    }
-
-    const script = document.createElement("script");
-    script.dataset.googleMaps = "work-map";
-    script.async = true;
-    script.defer = true;
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-    script.onload = initializeMap;
-    script.onerror = () => {
-      if (!cancelled) setMapError("Google Maps failed to load.");
-    };
-    document.head.appendChild(script);
-
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !mapContainerRef.current) return;
+        const maps = (window as Window & { google?: any }).google?.maps;
+        if (!maps) return;
+        if (!mapRef.current) {
+          mapRef.current = new maps.Map(mapContainerRef.current, {
+            center: { lat: 37.0902, lng: -95.7129 },
+            zoom: 4,
+            mapTypeId: maps.MapTypeId.ROADMAP,
+            disableDefaultUI: true,
+            gestureHandling: "greedy",
+          });
+        }
+        setMapReady(true);
+        setMapError(null);
+      })
+      .catch(() => { if (!cancelled) setMapError("Google Maps failed to load."); });
     return () => {
       cancelled = true;
+      mapRef.current = null;
+      setMapReady(false);
     };
-  }, [ready]); // Add ready as dependency
+  }, [ready, mapProvider]);
+
+  // Instantiate the Leaflet map once Leaflet is the active provider.
+  useEffect(() => {
+    if (!ready || mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    const container = leafletContainerRef.current;
+    const map = L.map(container, {
+      center: [37.0902, -95.7129],
+      zoom: 4,
+    });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setMapReady(true);
+    setMapError(null);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletMapRef.current = null;
+      setMapReady(false);
+    };
+  }, [ready, mapProvider]);
 
   const locationData = useMemo<LocationTickets[]>(() => {
     const locationMap = new Map<string, TicketRecord[]>();
@@ -322,13 +330,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     }
   }, [locationData, selectedLocation]);
 
+  // Satellite view is Google-only (plain OSM tiles have no free satellite
+  // layer) — this effect is a no-op in Leaflet mode.
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
+    if (!mapReady || mapProvider !== "google" || !mapRef.current) return;
     const maps = (window as Window & { google?: any }).google?.maps;
     if (!maps) return;
-
     mapRef.current.setMapTypeId(mapMode === "satellite" ? maps.MapTypeId.SATELLITE : maps.MapTypeId.ROADMAP);
-  }, [mapMode, mapReady]);
+  }, [mapMode, mapReady, mapProvider]);
 
   const visibleTickets = useMemo(() => {
     const filtered = selectedLocation
@@ -475,35 +484,32 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   };
 
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-
+    if (!mapReady || !mapProvider) return;
+    const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
+    if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
-    if (!maps) return;
+    if (mapProvider === "google" && !maps) return;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
     polylinesRef.current.forEach((line) => line.setMap(null));
     polylinesRef.current = [];
+    leafletMarkersRef.current.forEach((m) => m.remove());
+    leafletMarkersRef.current = [];
+    leafletPolylinesRef.current.forEach((l) => l.remove());
+    leafletPolylinesRef.current = [];
+    leafletArrowsRef.current.forEach((m) => m.remove());
+    leafletArrowsRef.current = [];
+    leafletMarkerByTicketRef.current.clear();
 
-    const geocoder = new maps.Geocoder();
-    const geocode = (address: string) => new Promise<any | null>((resolve) => {
-      geocoder.geocode({ address }, (results: any, status: string) => {
-        if (status === "OK" && results?.[0]) {
-          resolve(results[0].geometry.location);
-          return;
-        }
-        resolve(null);
-      });
-    });
+    const geocode = makeGeocoder(mapProvider);
 
     // Resolve an office location's position: prefer explicit Location Management
     // coordinates, otherwise geocode the saved office address.
     const geocodeOfficeLocation = (loc: string): Promise<{ lat: number; lng: number } | null> => {
       const coords = getLocationManagementCoordinates(loc);
       if (coords) return Promise.resolve(coords);
-      return geocode(getLocationManagementZoomAddress(loc)).then((pos) =>
-        pos ? { lat: pos.lat(), lng: pos.lng() } : null,
-      );
+      return geocode(getLocationManagementZoomAddress(loc));
     };
 
     let cancelled = false;
@@ -537,9 +543,11 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     });
 
     Promise.all(ticketPositions).then((results) => {
-      if (cancelled || !mapRef.current) return;
+      if (cancelled || !activeMap) return;
 
-      const bounds = new maps.LatLngBounds();
+      const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+      const extendBounds = (pos: { lat: number; lng: number }) =>
+        mapProvider === "google" ? bounds.extend(pos) : bounds.extend([pos.lat, pos.lng]);
 
       // Order stops by time slot so route numbering follows the daily schedule.
       const slotRank = (t: any): number => {
@@ -583,7 +591,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
         let hierarchyNumber = 0;
         let labelText = "";
-        let svgMarker: any;
 
         if (onDay) {
           // Today's stop — numbered badge + route line.
@@ -592,63 +599,60 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           ticketsByTech.set(techName, hierarchyNumber);
           if (!routePointsByTech.has(techName)) routePointsByTech.set(techName, []);
           routePointsByTech.get(techName)!.push({ order: hierarchyNumber, position });
-
           labelText = `${initials}${hierarchyNumber}`;
-          svgMarker = {
-            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
-            fillColor: markerColor,
-            fillOpacity: 1,
-            strokeColor: "#ffffff",
-            strokeWeight: 2,
-            scale: 1.8,
-            anchor: new maps.Point(20, 22),
-            labelOrigin: new maps.Point(20, 10),
-          };
         } else {
-          // Other-day stop in the window — same teardrop badge as today
-          // but labeled with just the technician initials (no order
-          // number) so it can't be mistaken for part of today's route.
-          // Bigger and bolder per dispatch's request — they should be
-          // readable from the same zoom level as today's pins.
+          // Other-day stop in the window — same badge as today but labeled
+          // with just the technician initials (no order number) so it
+          // can't be mistaken for part of today's route, and dimmer.
           labelText = initials;
-          svgMarker = {
-            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
-            fillColor: markerColor,
-            fillOpacity: 0.75,
-            strokeColor: "#ffffff",
-            strokeWeight: 2,
-            strokeOpacity: 0.85,
-            scale: 1.5,
-            anchor: new maps.Point(20, 22),
-            labelOrigin: new maps.Point(20, 10),
-          };
         }
 
+        const ticketNoStr = String(ticket.ticketNo || ticket.ticket_no || "").trim();
         const ticketDateStr = String(ticket.schedule || ticket.schedule_date || "").slice(0, 10);
-        const marker = new maps.Marker({
-          map: mapRef.current,
-          position,
-          title:
-            `${ticket.ticketNo || ticket.ticket_no || `Ticket ${index + 1}`} - ` +
-            `${ticket.customer || ticket.customer_name || 'Unknown'}\n` +
-            `${techName}${onDay ? ` - Ticket #${hierarchyNumber}` : " (other day)"}` +
-            (ticketDateStr ? `\nScheduled: ${ticketDateStr}` : ""),
-          icon: svgMarker,
-          label: labelText
-            ? {
-                text: labelText,
-                color: "#ffffff",
-                fontSize: onDay ? "13px" : "12px",
-                fontWeight: "bold",
-              }
-            : undefined,
-          zIndex: onDay ? 5 : 1,
-        });
-        (marker as any).__ticketNo = String(ticket.ticketNo || ticket.ticket_no || "").trim();
+        const title =
+          `${ticket.ticketNo || ticket.ticket_no || `Ticket ${index + 1}`} - ` +
+          `${ticket.customer || ticket.customer_name || 'Unknown'}\n` +
+          `${techName}${onDay ? ` - Ticket #${hierarchyNumber}` : " (other day)"}` +
+          (ticketDateStr ? `\nScheduled: ${ticketDateStr}` : "");
 
-        marker.addListener("click", () => setSelectedTicket(ticket));
-        markersRef.current.push(marker);
-        bounds.extend(position);
+        if (mapProvider === "google") {
+          const svgMarker = {
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+            fillColor: markerColor,
+            fillOpacity: onDay ? 1 : 0.75,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            strokeOpacity: onDay ? 1 : 0.85,
+            scale: onDay ? 1.8 : 1.5,
+            anchor: new maps.Point(20, 22),
+            labelOrigin: new maps.Point(20, 10),
+          };
+          const marker = new maps.Marker({
+            map: activeMap,
+            position,
+            title,
+            icon: svgMarker,
+            label: labelText ? { text: labelText, color: "#ffffff", fontSize: onDay ? "13px" : "12px", fontWeight: "bold" } : undefined,
+            zIndex: onDay ? 5 : 1,
+          });
+          (marker as any).__ticketNo = ticketNoStr;
+          marker.addListener("click", () => setSelectedTicket(ticket));
+          markersRef.current.push(marker);
+        } else {
+          const marker = L.marker([position.lat, position.lng], {
+            icon: createBadgeDivIcon(
+              `<div style="background:${markerColor};opacity:${onDay ? 1 : 0.75};color:#fff;font-size:${onDay ? "13px" : "12px"};font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${labelText}</div>`,
+              { className: "wm-ticket-marker", anchor: "bottom" },
+            ),
+            zIndexOffset: onDay ? 500 : 100,
+            title,
+          }).addTo(activeMap as L.Map);
+          marker.on("click", () => setSelectedTicket(ticket));
+          leafletMarkersRef.current.push(marker);
+          if (ticketNoStr) leafletMarkerByTicketRef.current.set(ticketNoStr, marker);
+        }
+
+        extendBounds(position);
       });
 
       // Draw a route line per technician connecting their stops in order
@@ -659,55 +663,76 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         if (points.length < 2) return;
         if (techName === "Unassigned") return;
         const ordered = [...points].sort((a, b) => a.order - b.order);
-        const line = new maps.Polyline({
-          path: ordered.map((p) => p.position),
-          geodesic: true,
-          strokeColor: getTechColor(techName),
-          strokeOpacity: 0.9,
-          strokeWeight: 3,
-          map: mapRef.current,
-          icons: [
-            {
-              icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 },
-              offset: "60%",
-            },
-          ],
-        });
-        polylinesRef.current.push(line);
+        const color = getTechColor(techName);
+        if (mapProvider === "google") {
+          const line = new maps.Polyline({
+            path: ordered.map((p) => p.position),
+            geodesic: true,
+            strokeColor: color,
+            strokeOpacity: 0.9,
+            strokeWeight: 3,
+            map: activeMap,
+            icons: [{ icon: { path: maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2.5 }, offset: "60%" }],
+          });
+          polylinesRef.current.push(line);
+        } else {
+          const positions = ordered.map((p) => p.position);
+          const line = L.polyline(positions.map((p) => [p.lat, p.lng] as [number, number]), {
+            color,
+            opacity: 0.9,
+            weight: 3,
+          }).addTo(activeMap as L.Map);
+          leafletPolylinesRef.current.push(line);
+          const arrow = addRouteDirectionArrow(activeMap as L.Map, positions, color);
+          if (arrow) leafletArrowsRef.current.push(arrow);
+        }
       });
 
       // Pin the OFFICE for the selected branch — dark teardrop pin with 🏢.
       if (selectedLocation) {
         geocodeOfficeLocation(selectedLocation).then((officePos) => {
-          if (cancelled || !officePos || !mapRef.current) return;
-          const officeMarker = new maps.Marker({
-            map: mapRef.current,
-            position: officePos,
-            title: `${selectedLocation} Office`,
-            icon: {
-              path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
-              fillColor: "#0f172a",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2.5,
-              scale: 1.3,
-              anchor: new maps.Point(12, 34),
-              labelOrigin: new maps.Point(12, 12),
-            },
-            label: { text: "🏢", fontSize: "14px" },
-            zIndex: 99999,
-          });
-          markersRef.current.push(officeMarker);
+          if (cancelled || !officePos || !activeMap) return;
+          if (mapProvider === "google") {
+            const officeMarker = new maps.Marker({
+              map: activeMap,
+              position: officePos,
+              title: `${selectedLocation} Office`,
+              icon: {
+                path: "M12 0 C5.4 0 0 5.4 0 12 C0 21 12 34 12 34 C12 34 24 21 24 12 C24 5.4 18.6 0 12 0 Z",
+                fillColor: "#0f172a",
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 2.5,
+                scale: 1.3,
+                anchor: new maps.Point(12, 34),
+                labelOrigin: new maps.Point(12, 12),
+              },
+              label: { text: "🏢", fontSize: "14px" },
+              zIndex: 99999,
+            });
+            markersRef.current.push(officeMarker);
+          } else {
+            const officeMarker = L.marker([officePos.lat, officePos.lng], {
+              icon: createBadgeDivIcon(`<span style="font-size:20px;">🏢</span>`, { className: "wm-office-marker", anchor: "bottom" }),
+              zIndexOffset: 1000,
+            }).bindTooltip(`${selectedLocation} Office`).addTo(activeMap as L.Map);
+            leafletMarkersRef.current.push(officeMarker);
+          }
         });
       }
 
-      if (!bounds.isEmpty()) {
-        mapRef.current.fitBounds(bounds);
+      const boundsEmpty = mapProvider === "google" ? bounds.isEmpty() : !bounds.isValid();
+      if (!boundsEmpty) {
+        if (mapProvider === "google") activeMap.fitBounds(bounds);
+        else (activeMap as L.Map).fitBounds(bounds, { padding: [40, 40] });
       } else if (selectedLocation) {
         geocodeOfficeLocation(selectedLocation).then((position) => {
-          if (position && mapRef.current) {
-            mapRef.current.setCenter(position);
-            mapRef.current.setZoom(10);
+          if (!position || !activeMap) return;
+          if (mapProvider === "google") {
+            activeMap.setCenter(position);
+            activeMap.setZoom(10);
+          } else {
+            (activeMap as L.Map).setView([position.lat, position.lng], 10);
           }
         });
       }
@@ -716,7 +741,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     return () => {
       cancelled = true;
     };
-  }, [mapReady, selectedLocation, visibleTickets]);
+  }, [mapReady, mapProvider, selectedLocation, visibleTickets]);
 
   // When the user selects a ticket (marker OR sidebar card), open an
   // anchored InfoWindow at that ticket's pin. The InfoWindow is created
@@ -725,48 +750,81 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   // as the InfoWindow is open it stays glued to the marker — panning or
   // zooming the map keeps the card anchored on the location.
   useEffect(() => {
-    if (!selectedTicket || !mapRef.current) return;
-    const w = window as any;
-    const maps = w.google?.maps;
-    if (!maps) return;
+    if (!selectedTicket || !mapProvider) return;
     const target = String(selectedTicket.ticketNo || selectedTicket.ticket_no || "").trim();
     if (!target) return;
-    const marker = markersRef.current.find((m: any) => m?.__ticketNo === target);
-    if (!marker) return;
 
-    // Lazy-create the InfoWindow + its host node.
-    if (!infoWindowRef.current) {
-      infoContentRef.current = document.createElement("div");
-      infoContentRef.current.className = "ahs-ticket-iw-host";
-      infoWindowRef.current = new maps.InfoWindow({
-        content: infoContentRef.current,
-        // Push the card above the marker so it doesn't hide the pin.
-        pixelOffset: new maps.Size(0, -8),
-        // We want max readable width without pushing the map controls.
-        maxWidth: 480,
-      });
-      // When the user clicks the X on the InfoWindow itself, clear state.
-      maps.event.addListener(infoWindowRef.current, "closeclick", () => setSelectedTicket(null));
-      // Trigger a render so the portal can mount into the new host node.
-      setInfoHostReady(true);
+    if (mapProvider === "google") {
+      if (!mapRef.current) return;
+      const maps = (window as any).google?.maps;
+      if (!maps) return;
+      const marker = markersRef.current.find((m: any) => m?.__ticketNo === target);
+      if (!marker) return;
+
+      // Lazy-create the InfoWindow + its host node.
+      if (!infoWindowRef.current) {
+        infoContentRef.current = document.createElement("div");
+        infoContentRef.current.className = "ahs-ticket-iw-host";
+        infoWindowRef.current = new maps.InfoWindow({
+          content: infoContentRef.current,
+          // Push the card above the marker so it doesn't hide the pin.
+          pixelOffset: new maps.Size(0, -8),
+          // We want max readable width without pushing the map controls.
+          maxWidth: 480,
+        });
+        // When the user clicks the X on the InfoWindow itself, clear state.
+        maps.event.addListener(infoWindowRef.current, "closeclick", () => setSelectedTicket(null));
+        // Trigger a render so the portal can mount into the new host node.
+        setInfoHostReady(true);
+      }
+
+      infoWindowRef.current.open({ map: mapRef.current, anchor: marker });
+
+      // Pan / gentle zoom so the marker is centered next to the bubble.
+      const pos = marker.getPosition?.();
+      if (pos) {
+        mapRef.current.panTo(pos);
+        const currentZoom = mapRef.current.getZoom?.() ?? 8;
+        if (currentZoom < 12) mapRef.current.setZoom(12);
+      }
+    } else {
+      const map = leafletMapRef.current;
+      const marker = leafletMarkerByTicketRef.current.get(target);
+      if (!map || !marker) return;
+
+      if (!infoContentRef.current) {
+        infoContentRef.current = document.createElement("div");
+        infoContentRef.current.className = "ahs-ticket-iw-host";
+      }
+      if (!leafletPopupRef.current) {
+        leafletPopupRef.current = L.popup({ maxWidth: 480, offset: [0, -8] }).setContent(infoContentRef.current);
+        // Re-binding the popup to a different marker closes the previous
+        // one first, which also fires "popupclose" — the guard flag below
+        // (set around openPopup) tells us to ignore that internal close
+        // and only clear selection on a genuine user dismissal (the "x").
+        map.on("popupclose", () => {
+          if (leafletSwitchingPopupRef.current) return;
+          setSelectedTicket(null);
+        });
+        setInfoHostReady(true);
+      }
+
+      leafletSwitchingPopupRef.current = true;
+      marker.bindPopup(leafletPopupRef.current).openPopup();
+      setTimeout(() => { leafletSwitchingPopupRef.current = false; }, 0);
+
+      const pos = marker.getLatLng();
+      map.panTo(pos);
+      if (map.getZoom() < 12) map.setZoom(12);
     }
+  }, [selectedTicket, mapProvider]);
 
-    infoWindowRef.current.open({ map: mapRef.current, anchor: marker });
-
-    // Pan / gentle zoom so the marker is centered next to the bubble.
-    const pos = marker.getPosition?.();
-    if (pos) {
-      mapRef.current.panTo(pos);
-      const currentZoom = mapRef.current.getZoom?.() ?? 8;
-      if (currentZoom < 12) mapRef.current.setZoom(12);
-    }
-  }, [selectedTicket]);
-
-  // Close + tear down the InfoWindow when the user dismisses or navigates
-  // away.
+  // Close + tear down the InfoWindow/Popup when the user dismisses or
+  // navigates away.
   useEffect(() => {
-    if (!selectedTicket && infoWindowRef.current) {
-      infoWindowRef.current.close();
+    if (!selectedTicket) {
+      infoWindowRef.current?.close();
+      leafletMapRef.current?.closePopup();
     }
   }, [selectedTicket]);
 
@@ -927,17 +985,23 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
               </aside>
 
               <section className={`map-area ${mapMode === "satellite" ? "satellite-mode" : ""}`}>
-                <div className="map-type-toggle">
-                  <button className={`map-type-btn ${mapMode === "map" ? "active" : ""}`} type="button" onClick={() => setMapMode("map")}>Map</button>
-                  <button className={`map-type-btn ${mapMode === "satellite" ? "active" : ""}`} type="button" onClick={() => setMapMode("satellite")}>Satellite</button>
-                </div>
+                {mapProvider === "google" && (
+                  <div className="map-type-toggle">
+                    <button className={`map-type-btn ${mapMode === "map" ? "active" : ""}`} type="button" onClick={() => setMapMode("map")}>Map</button>
+                    <button className={`map-type-btn ${mapMode === "satellite" ? "active" : ""}`} type="button" onClick={() => setMapMode("satellite")}>Satellite</button>
+                  </div>
+                )}
 
-                <div ref={mapContainerRef} className="google-map-canvas" aria-label="Google map" />
+                {mapProvider === "leaflet" ? (
+                  <div ref={leafletContainerRef} className="google-map-canvas" aria-label="Map" />
+                ) : (
+                  <div ref={mapContainerRef} className="google-map-canvas" aria-label="Map" />
+                )}
 
                 {!mapReady && (
                   <div className="map-placeholder-inner">
                     <MapPin className="map-placeholder-icon h-16 w-16 text-slate-600" />
-                    <div className="text-sm text-slate-500">Loading Google Maps...</div>
+                    <div className="text-sm text-slate-500">Loading map...</div>
                     {mapError ? <div className="text-xs text-rose-300 mt-2">{mapError}</div> : null}
                   </div>
                 )}
@@ -1287,12 +1351,12 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .legend-caption { font-size: 0.82rem; }
         .color-legend { display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; position: absolute; right: 1rem; }
         .color-legend label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; color: #cbd5e1; }
-        .map-body { display: flex; flex: 1; position: relative; min-height: 620px; }
+        .map-body { display: flex; flex: 1; position: relative; height: 620px; }
         .ticket-sidebar { width: 230px; min-width: 200px; background: rgba(15,23,42,0.96); border-right: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; z-index: 10; }
         .sidebar-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .sidebar-tab { flex: 1; padding: 0.6rem; text-align: center; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: none; background: transparent; color: #64748b; }
         .sidebar-tab.active { color: #fff; border-bottom: 2px solid #60a5fa; }
-        .ticket-list { overflow-y: auto; flex: 1; display: none; }
+        .ticket-list { overflow-y: auto; flex: 1; max-height: 410px; display: none; }
         .ticket-list.visible { display: flex; flex-direction: column; }
         .ticket-card { display: flex; flex-direction: column; padding: 0.55rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.07); cursor: pointer; border-left: 4px solid transparent; background: transparent; text-align: left; }
         .ticket-card:hover { background: rgba(255,255,255,0.05); }
@@ -1335,6 +1399,25 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .gm-style .gm-style-iw-d { overflow: hidden !important; padding: 0 !important; }
         .gm-style .gm-style-iw-tc::after { background: rgba(15,23,42,0.97) !important; }
         .gm-style .gm-style-iw button[aria-label="Close"] { filter: invert(0.85); }
+
+        /* Same card, inside Leaflet's Popup instead. Leaflet's own CSS
+           defaults .leaflet-popup-content-wrapper/.leaflet-popup-tip to a
+           plain white fill (background: white) with no dark-theme option —
+           since .detail-modal below is intentionally transparent (it relies
+           on whichever bubble chrome is underneath), that left near-white
+           text sitting on white with no contrast. Mirrors the .gm-style-iw-c
+           override above so the card looks the same on both providers. */
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+          background: rgba(15,23,42,0.97);
+          color: #f1f5f9;
+        }
+        .leaflet-popup-content-wrapper {
+          border: 1px solid rgba(255,255,255,0.18);
+          border-radius: 10px;
+          box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+        }
+        .leaflet-popup-content { margin: 0; width: auto !important; }
+        .leaflet-popup-close-button { color: #94a3b8 !important; }
         .ahs-ticket-iw-host .detail-modal { background: transparent; border: none; border-radius: 0; width: 460px; max-width: 80vw; max-height: 70vh; overflow: hidden; color: #f1f5f9; box-shadow: none; display: flex; flex-direction: column; }
         .ahs-ticket-iw-host .detail-body { overflow-y: auto; }
         .detail-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 0.85rem 1.1rem; background: #0f172a; border-bottom: 1px solid rgba(255,255,255,0.1); position: sticky; top: 0; z-index: 1; }
@@ -1357,7 +1440,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         .internal-note-box { font-size: 0.82rem; color: #cbd5e1; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 0.65rem 0.9rem; line-height: 1.65; white-space: pre-wrap; width: 100%; box-sizing: border-box; }
         .selected-day-panel, .map-panel, .ticket-sidebar, .detail-modal { animation: fadeIn 180ms ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        @media (max-width: 768px) { .ticket-sidebar { width: 175px; min-width: 150px; } .color-legend { position: static; right: auto; } .selected-day-panel { width: 220px; } .map-body { min-height: 480px; } }
+        @media (max-width: 768px) { .ticket-sidebar { width: 175px; min-width: 150px; } .color-legend { position: static; right: auto; } .selected-day-panel { width: 220px; } .map-body { height: 480px; } }
       `}</style>
     </div>
   );

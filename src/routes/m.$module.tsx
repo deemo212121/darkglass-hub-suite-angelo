@@ -2,11 +2,13 @@ import { createFileRoute, Link, Navigate, notFound, Outlet } from "@tanstack/rea
 import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
 import { getMyRoles } from "@/lib/supabase/users";
+import { getCompanyMapProvider, setCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
@@ -41,6 +43,34 @@ function ModuleIndex() {
   const { ready, email, role, uid } = useAuth();
   const { module: m } = Route.useLoaderData();
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  const isAdmin = ["ADMIN", "SUPERADMIN"].includes((role || "").toUpperCase());
+
+  // Company-wide map provider (see migration 0050) — every map-bearing page
+  // in the system (Ticket Map, Work Planner, Work Map, Location Management
+  // coverage, Add Branch, the mobile tech route view) reads this same
+  // setting, so changing it here changes all of them at once.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  const [savingMapProvider, setSavingMapProvider] = useState(false);
+
+  useEffect(() => {
+    if (!ready || !email || m.slug !== "admin") return;
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, [ready, email, m.slug]);
+
+  const handleMapProviderChange = async (next: MapProvider) => {
+    if (next === mapProvider || savingMapProvider) return;
+    setSavingMapProvider(true);
+    try {
+      await setCompanyMapProvider(next);
+      setMapProvider(next);
+    } catch (err) {
+      alert(`Failed to change map provider: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingMapProvider(false);
+    }
+  };
 
   useEffect(() => {
     if (!ready || !uid || m.slug !== "dashboard") return;
@@ -142,6 +172,18 @@ function ModuleIndex() {
             <p className="text-sm text-muted-foreground">{m.tagline}</p>
           </div>
         </div>
+        {m.slug === "admin" && isAdmin && mapProvider && (
+          <div className="panel mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">Map Provider</h3>
+              <p className="text-xs text-muted-foreground">
+                Controls every map in the system (Ticket Map, Work Planner, Work Map, Location
+                Management coverage, Add Branch, and the mobile tech route view) at once.
+              </p>
+            </div>
+            <MapProviderToggle value={mapProvider} onChange={handleMapProviderChange} disabled={savingMapProvider} />
+          </div>
+        )}
         {m.slug === "dashboard" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules

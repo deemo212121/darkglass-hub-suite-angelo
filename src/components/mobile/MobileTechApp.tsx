@@ -25,7 +25,10 @@ import {
   type UIPartRow,
 } from "@/lib/supabase/tickets";
 import { getMyProfileId } from "@/lib/supabase/users";
-import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import {
   getDmMessages,
   getOrCreateDmThread,
@@ -43,8 +46,6 @@ import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
 type View =
   | "roster"
@@ -782,6 +783,19 @@ function RouteMapView({
   const mapRef = useRef<any>(null);
   const dirRendererRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
+
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletMarkersRef = useRef<L.Marker[]>([]);
+  const leafletRouteLineRef = useRef<L.Layer | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
   const [stops, setStops] = useState<Array<{ ticket: Ticket; pos: { lat: number; lng: number } }>>([]);
@@ -794,29 +808,41 @@ function RouteMapView({
   // controls are visible. Handy for eyeballing pin positions or showing
   // the route to a customer without the surrounding chrome.
   const [expanded, setExpanded] = useState(false);
-  // When the map container resizes (expand toggle) tell Google Maps to
+  // When the map container resizes (expand toggle) tell the map engine to
   // recompute so the tiles fill the new dimensions and the route stays
   // centered.
   useEffect(() => {
-    const map = mapRef.current;
-    const maps = (window as any).google?.maps;
-    if (!map || !maps) return;
-    // Give the DOM a beat to flip classes / re-layout before Maps recalc.
+    if (!mapProvider) return;
+    // Give the DOM a beat to flip classes / re-layout before recalculating.
     const t = window.setTimeout(() => {
       try {
-        maps.event.trigger(map, "resize");
-        if (stops.length > 0) {
-          const bounds = new maps.LatLngBounds();
-          for (const s of stops) bounds.extend(s.pos);
-          if (origin) bounds.extend(origin);
-          map.fitBounds(bounds, 40);
+        if (mapProvider === "google") {
+          const map = mapRef.current;
+          const maps = (window as any).google?.maps;
+          if (!map || !maps) return;
+          maps.event.trigger(map, "resize");
+          if (stops.length > 0) {
+            const bounds = new maps.LatLngBounds();
+            for (const s of stops) bounds.extend(s.pos);
+            if (origin) bounds.extend(origin);
+            map.fitBounds(bounds, 40);
+          }
+        } else {
+          const map = leafletMapRef.current;
+          if (!map) return;
+          map.invalidateSize();
+          if (stops.length > 0) {
+            const points = stops.map((s) => [s.pos.lat, s.pos.lng] as [number, number]);
+            if (origin) points.push([origin.lat, origin.lng]);
+            map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+          }
         }
       } catch (err) {
         console.warn("map resize skipped", err);
       }
     }, 120);
     return () => window.clearTimeout(t);
-  }, [expanded, stops, origin]);
+  }, [expanded, stops, origin, mapProvider]);
 
   // Try to get the technician's current location for the route origin.
   useEffect(() => {
@@ -830,51 +856,73 @@ function RouteMapView({
     );
   }, []);
 
-  // Load Google Maps script + init map, then build a driving route.
+  // Instantiate the Google map once Google is the active provider.
   useEffect(() => {
+    if (mapProvider !== "google") return;
+    let cancelled = false;
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !mapEl.current) return;
+        const g = (window as any).google;
+        if (!g?.maps) return;
+        if (!mapRef.current) {
+          mapRef.current = new g.maps.Map(mapEl.current, {
+            zoom: 9,
+            center: { lat: 39.5, lng: -98.35 },
+            disableDefaultUI: true,
+            zoomControl: true,
+            gestureHandling: "greedy",
+          });
+          dirRendererRef.current = new g.maps.DirectionsRenderer({
+            map: mapRef.current,
+            suppressMarkers: true,
+            polylineOptions: { strokeColor: "#5b7eff", strokeWeight: 5 },
+          });
+        }
+        setMapReady(true);
+      })
+      .catch(() => { if (!cancelled) setError("Google Maps failed to load."); });
+    return () => {
+      cancelled = true;
+      mapRef.current = null;
+      dirRendererRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider]);
+
+  // Instantiate the Leaflet map once Leaflet is the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || !mapEl.current) return;
+    const container = mapEl.current;
+    const map = L.map(container, { zoom: 9, center: [39.5, -98.35], zoomControl: true });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setMapReady(true);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletMapRef.current = null;
+      leafletRouteLineRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider]);
+
+  // Geocode stops + build the route once the map is ready. Google mode uses
+  // real turn-by-turn driving directions (DirectionsService); Leaflet mode
+  // uses Geoapify's Routing API (same key as geocoding) for real driving
+  // distance/routes too — only falls back to a straight line if that
+  // routing call itself fails.
+  useEffect(() => {
+    if (!mapProvider) return;
+    const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
+    if (!activeMap) return;
     let cancelled = false;
 
-    const init = () => {
-      const g = (window as any).google;
-      if (!g?.maps || !mapEl.current) return;
-      if (!mapRef.current) {
-        mapRef.current = new g.maps.Map(mapEl.current, {
-          zoom: 9,
-          center: { lat: 39.5, lng: -98.35 },
-          disableDefaultUI: true,
-          zoomControl: true,
-          gestureHandling: "greedy",
-        });
-        dirRendererRef.current = new g.maps.DirectionsRenderer({
-          map: mapRef.current,
-          suppressMarkers: true,
-          polylineOptions: { strokeColor: "#5b7eff", strokeWeight: 5 },
-        });
-      }
-      void buildRoute(g);
-    };
-
-    const buildRoute = async (g: any) => {
+    const buildRoute = async () => {
       setRouting(true);
       setError(null);
-      const geocoder = new g.maps.Geocoder();
-      const geocode = async (address: string) => {
-        // --- Cache check first (free, instant) ---
-        const cached = await lookupGeocode(address);
-        if (cached) return cached;
-        // --- Cache miss: call Google Geocoding API ---
-        const result = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
-          geocoder.geocode({ address }, (results: any, status: string) => {
-            if (status === "OK" && results?.[0]) {
-              const p = results[0].geometry.location;
-              resolve({ lat: p.lat(), lng: p.lng() });
-            } else resolve(null);
-          });
-        });
-        // --- Store in cache for next time ---
-        if (result) void storeGeocode(address, result);
-        return result;
-      };
+      const geocode = makeGeocoder(mapProvider);
 
       // Geocode each ticket stop in ticket order.
       const resolved: Array<{ ticket: Ticket; pos: { lat: number; lng: number } }> = [];
@@ -891,32 +939,44 @@ function RouteMapView({
       // border, technician initials + stop number) for each stop.
       markersRef.current.forEach((m) => m.setMap(null));
       markersRef.current = [];
+      leafletMarkersRef.current.forEach((m) => m.remove());
+      leafletMarkersRef.current = [];
       const badgeColors = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899"];
       resolved.forEach((s, i) => {
         const initials = getInitials(s.ticket.technician);
-        const svgMarker = {
-          path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
-          fillColor: badgeColors[i % badgeColors.length],
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-          scale: 1.8,
-          anchor: new g.maps.Point(20, 22),
-          labelOrigin: new g.maps.Point(20, 10),
-        };
-        const marker = new g.maps.Marker({
-          map: mapRef.current,
-          position: s.pos,
-          title: `${s.ticket.ticketNo} - ${s.ticket.customer}`,
-          icon: svgMarker,
-          label: {
-            text: `${initials}${i + 1}`,
-            color: "#ffffff",
-            fontSize: "13px",
-            fontWeight: "bold",
-          },
-        });
-        markersRef.current.push(marker);
+        const label = `${initials}${i + 1}`;
+        const color = badgeColors[i % badgeColors.length];
+        const title = `${s.ticket.ticketNo} - ${s.ticket.customer}`;
+        if (mapProvider === "google") {
+          const g = (window as any).google;
+          const svgMarker = {
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+            fillColor: color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1.8,
+            anchor: new g.maps.Point(20, 22),
+            labelOrigin: new g.maps.Point(20, 10),
+          };
+          const marker = new g.maps.Marker({
+            map: mapRef.current,
+            position: s.pos,
+            title,
+            icon: svgMarker,
+            label: { text: label, color: "#ffffff", fontSize: "13px", fontWeight: "bold" },
+          });
+          markersRef.current.push(marker);
+        } else {
+          const marker = L.marker([s.pos.lat, s.pos.lng], {
+            icon: createBadgeDivIcon(
+              `<div style="background:${color};color:#fff;font-size:13px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${label}</div>`,
+              { className: "mtech-stop-marker", anchor: "bottom" },
+            ),
+            title,
+          }).addTo(activeMap as L.Map);
+          leafletMarkersRef.current.push(marker);
+        }
       });
 
       if (resolved.length === 0) {
@@ -930,8 +990,12 @@ function RouteMapView({
       const start = origin || resolved[0].pos;
       const points = origin ? resolved : resolved.slice(1);
       if (points.length === 0) {
-        mapRef.current.setCenter(resolved[0].pos);
-        mapRef.current.setZoom(13);
+        if (mapProvider === "google") {
+          mapRef.current.setCenter(resolved[0].pos);
+          mapRef.current.setZoom(13);
+        } else {
+          (activeMap as L.Map).setView([resolved[0].pos.lat, resolved[0].pos.lng], 13);
+        }
         setLegs([
           {
             ticketNo: resolved[0].ticket.ticketNo,
@@ -947,70 +1011,99 @@ function RouteMapView({
       }
 
       const destination = points[points.length - 1].pos;
-      const waypoints = points.slice(0, -1).map((p) => ({ location: p.pos, stopover: true }));
 
-      const ds = new g.maps.DirectionsService();
-      ds.route(
-        {
-          origin: start,
-          destination,
-          waypoints,
-          optimizeWaypoints: false,
-          travelMode: g.maps.TravelMode.DRIVING,
-        },
-        (result: any, status: string) => {
-          if (cancelled) return;
-          if (status === "OK" && result) {
-            dirRendererRef.current.setDirections(result);
-            const route = result.routes[0];
-            const legInfo = route.legs.map((leg: any, i: number) => {
-              const t = points[i]?.ticket;
-              return {
-                ticketNo: t?.ticketNo || "",
-                customer: t?.customer || "",
-                address: leg.end_address || "",
-                distance: leg.distance?.text || "",
-                duration: leg.duration?.text || "",
-                pos: points[i]?.pos,
-              };
-            });
-            setLegs(legInfo);
-          } else {
-            setError("Could not build a driving route. Showing stops only.");
-            // Badge markers are already placed; just fit the map to them.
-            const bounds = new g.maps.LatLngBounds();
-            resolved.forEach((s) => bounds.extend(s.pos));
-            mapRef.current.fitBounds(bounds);
+      if (mapProvider === "google") {
+        const g = (window as any).google;
+        const waypoints = points.slice(0, -1).map((p) => ({ location: p.pos, stopover: true }));
+        const ds = new g.maps.DirectionsService();
+        ds.route(
+          {
+            origin: start,
+            destination,
+            waypoints,
+            optimizeWaypoints: false,
+            travelMode: g.maps.TravelMode.DRIVING,
+          },
+          (result: any, status: string) => {
+            if (cancelled) return;
+            if (status === "OK" && result) {
+              dirRendererRef.current.setDirections(result);
+              const route = result.routes[0];
+              const legInfo = route.legs.map((leg: any, i: number) => {
+                const t = points[i]?.ticket;
+                return {
+                  ticketNo: t?.ticketNo || "",
+                  customer: t?.customer || "",
+                  address: leg.end_address || "",
+                  distance: leg.distance?.text || "",
+                  duration: leg.duration?.text || "",
+                  pos: points[i]?.pos,
+                };
+              });
+              setLegs(legInfo);
+            } else {
+              setError("Could not build a driving route. Showing stops only.");
+              const bounds = new g.maps.LatLngBounds();
+              resolved.forEach((s) => bounds.extend(s.pos));
+              mapRef.current.fitBounds(bounds);
+            }
+            setRouting(false);
           }
-          setRouting(false);
-        }
-      );
+        );
+      } else {
+        // Real driving route via Geoapify's Routing API (Leaflet-mode
+        // equivalent of Google's DirectionsService) — falls back to a
+        // straight line only if the routing call itself fails.
+        const routePoints = [start, ...points.map((p) => p.pos)];
+        const route = await routeGeoapify(routePoints, "drive");
+        if (cancelled) return;
+
+        leafletRouteLineRef.current?.remove();
+        leafletRouteLineRef.current = route
+          ? L.geoJSON(route.geometry, { style: { color: "#5b7eff", weight: 5 } }).addTo(activeMap as L.Map)
+          : L.polyline(routePoints.map((p) => [p.lat, p.lng] as [number, number]), { color: "#5b7eff", weight: 5 }).addTo(activeMap as L.Map);
+
+        const legInfo = points.map((p, i) => {
+          const leg = route?.legs[i];
+          if (leg) {
+            return {
+              ticketNo: p.ticket.ticketNo,
+              customer: p.ticket.customer || "",
+              address: fmtAddress(p.ticket),
+              distance: `${metersToMiles(leg.distanceMeters).toFixed(1)} mi`,
+              duration: formatDuration(leg.durationSeconds),
+              pos: p.pos,
+            };
+          }
+          const from = i === 0 ? start : points[i - 1].pos;
+          const miles = haversineMiles(from, p.pos);
+          return {
+            ticketNo: p.ticket.ticketNo,
+            customer: p.ticket.customer || "",
+            address: fmtAddress(p.ticket),
+            distance: `${miles.toFixed(1)} mi (straight-line)`,
+            duration: "",
+            pos: p.pos,
+          };
+        });
+        setLegs(legInfo);
+        if (!route) setError("Could not build a driving route. Showing straight-line stops only.");
+        (activeMap as L.Map).fitBounds(L.latLngBounds(routePoints.map((p) => [p.lat, p.lng] as [number, number])), { padding: [40, 40] });
+        setRouting(false);
+      }
     };
 
-    const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="mobile"]');
-    if ((window as any).google?.maps) {
-      init();
-    } else if (existing) {
-      existing.addEventListener("load", init, { once: true });
-      existing.addEventListener("error", () => setError("Google Maps failed to load."), { once: true });
-    } else {
-      const s = document.createElement("script");
-      s.dataset.googleMaps = "mobile";
-      s.async = true;
-      s.defer = true;
-      s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-      s.onload = init;
-      s.onerror = () => setError("Google Maps failed to load.");
-      document.head.appendChild(s);
-    }
+    void buildRoute();
 
     return () => {
       cancelled = true;
       markersRef.current.forEach((m) => m.setMap(null));
       markersRef.current = [];
+      leafletMarkersRef.current.forEach((m) => m.remove());
+      leafletMarkersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, origin]);
+  }, [tickets, origin, mapProvider, mapReady]);
 
   // Format a stop's destination string for the Google Maps deep link.
   // Passing the real street address makes Google Maps drop a properly

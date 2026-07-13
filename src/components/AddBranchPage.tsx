@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ZIP_COVERAGE } from "@/lib/zipCoverage";
 import {
   upsertLocation as sbUpsertLocation,
   insertCoverageBulk as sbInsertCoverageBulk,
 } from "@/lib/supabase/locationManagement";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
@@ -120,11 +124,26 @@ interface AddBranchPageProps {
 }
 
 export function AddBranchPage({ sub }: AddBranchPageProps) {
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const centerMarkerRef = useRef<any>(null);
-  const circleRef = useRef<any>(null);
-  const zipMarkersRef = useRef<any[]>([]);
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const googleContainerRef = useRef<HTMLDivElement | null>(null);
+  const googleMapRef = useRef<any>(null);
+  const googleCenterMarkerRef = useRef<any>(null);
+  const googleCircleRef = useRef<any>(null);
+  const googleZipMarkersRef = useRef<any[]>([]);
+
+  const leafletContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletCenterMarkerRef = useRef<L.Marker | null>(null);
+  const leafletCircleRef = useRef<L.Circle | null>(null);
+  const leafletZipLayerRef = useRef<L.LayerGroup | null>(null);
+
   const zipGeoCacheRef = useRef<Map<string, any>>(new Map());
 
   const [mapReady, setMapReady] = useState(false);
@@ -140,19 +159,20 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-  // Load the Maps SDK once.
+  // Instantiate the Google map once Google is the active provider.
   useEffect(() => {
+    if (mapProvider !== "google") return;
     if (!GOOGLE_MAPS_API_KEY) {
       setMapError("Set VITE_GOOGLE_MAPS_API_KEY to enable the map.");
       return;
     }
     let cancelled = false;
-    const init = () => {
-      if (cancelled || !mapContainerRef.current) return;
-      const maps = (window as any).google?.maps;
-      if (!maps) return;
-      if (!mapRef.current || mapRef.current.getDiv() !== mapContainerRef.current) {
-        mapRef.current = new maps.Map(mapContainerRef.current, {
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !googleContainerRef.current) return;
+        const maps = (window as any).google?.maps;
+        if (!maps) return;
+        googleMapRef.current = new maps.Map(googleContainerRef.current, {
           center: { lat: 37.0902, lng: -95.7129 },
           zoom: 4,
           mapTypeControl: true,
@@ -160,92 +180,138 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
           fullscreenControl: true,
           gestureHandling: "greedy",
         });
-        mapRef.current.addListener("click", (e: any) => {
+        googleMapRef.current.addListener("click", (e: any) => {
           const lat = e?.latLng?.lat?.();
           const lng = e?.latLng?.lng?.();
-          if (typeof lat === "number" && typeof lng === "number") {
-            setCenter({ lat, lng });
-          }
+          if (typeof lat === "number" && typeof lng === "number") setCenter({ lat, lng });
         });
-      }
-      setMapReady(true);
-      setMapError(null);
-    };
-    const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="add-branch"]');
-    if ((window as any).google?.maps) {
-      init();
-    } else if (existing) {
-      existing.addEventListener("load", init, { once: true });
-      existing.addEventListener("error", () => setMapError("Google Maps failed to load."), { once: true });
-    } else {
-      const s = document.createElement("script");
-      s.dataset.googleMaps = "add-branch";
-      s.async = true;
-      s.defer = true;
-      s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-      s.onload = init;
-      s.onerror = () => setMapError("Google Maps failed to load.");
-      document.head.appendChild(s);
-    }
+        setMapReady(true);
+        setMapError(null);
+      })
+      .catch(() => { if (!cancelled) setMapError("Google Maps failed to load."); });
     return () => {
       cancelled = true;
+      googleMapRef.current = null;
+      setMapReady(false);
     };
-  }, []);
+  }, [mapProvider]);
+
+  // Instantiate the Leaflet map once Leaflet is the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    const container = leafletContainerRef.current;
+    const map = L.map(container, {
+      center: [37.0902, -95.7129],
+      zoom: 4,
+    });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      setCenter({ lat: e.latlng.lat, lng: e.latlng.lng });
+    });
+    leafletZipLayerRef.current = L.layerGroup().addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setMapReady(true);
+    setMapError(null);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletMapRef.current = null;
+      leafletZipLayerRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider]);
 
   // Sync the center marker + radius circle to state.
   useEffect(() => {
     if (!mapReady) return;
-    const maps = (window as any).google?.maps;
-    if (!maps || !mapRef.current) return;
 
-    if (!center) {
-      centerMarkerRef.current?.setMap(null);
-      centerMarkerRef.current = null;
-      circleRef.current?.setMap(null);
-      circleRef.current = null;
-      return;
+    if (mapProvider === "google") {
+      const maps = (window as any).google?.maps;
+      if (!maps || !googleMapRef.current) return;
+
+      if (!center) {
+        googleCenterMarkerRef.current?.setMap(null);
+        googleCenterMarkerRef.current = null;
+        googleCircleRef.current?.setMap(null);
+        googleCircleRef.current = null;
+        return;
+      }
+
+      if (!googleCenterMarkerRef.current) {
+        googleCenterMarkerRef.current = new maps.Marker({
+          position: center,
+          map: googleMapRef.current,
+          draggable: true,
+          title: "Branch center",
+        });
+        googleCenterMarkerRef.current.addListener("dragend", (e: any) => {
+          const lat = e?.latLng?.lat?.();
+          const lng = e?.latLng?.lng?.();
+          if (typeof lat === "number" && typeof lng === "number") setCenter({ lat, lng });
+        });
+      } else {
+        googleCenterMarkerRef.current.setPosition(center);
+      }
+
+      if (!googleCircleRef.current) {
+        googleCircleRef.current = new maps.Circle({
+          strokeColor: "#0ea5e9",
+          strokeOpacity: 0.9,
+          strokeWeight: 2,
+          fillColor: "#38bdf8",
+          fillOpacity: 0.12,
+          map: googleMapRef.current,
+          center,
+          radius: radius * MILES_TO_METERS,
+          editable: false,
+          clickable: false,
+        });
+      } else {
+        googleCircleRef.current.setCenter(center);
+        googleCircleRef.current.setRadius(radius * MILES_TO_METERS);
+      }
+
+      const bounds = googleCircleRef.current.getBounds();
+      if (bounds) googleMapRef.current.fitBounds(bounds, 40);
+    } else if (mapProvider === "leaflet") {
+      const map = leafletMapRef.current;
+      if (!map) return;
+
+      if (!center) {
+        if (leafletCenterMarkerRef.current) { map.removeLayer(leafletCenterMarkerRef.current); leafletCenterMarkerRef.current = null; }
+        if (leafletCircleRef.current) { map.removeLayer(leafletCircleRef.current); leafletCircleRef.current = null; }
+        return;
+      }
+
+      if (!leafletCenterMarkerRef.current) {
+        const marker = L.marker([center.lat, center.lng], { draggable: true }).addTo(map);
+        marker.on("dragend", () => {
+          const pos = marker.getLatLng();
+          setCenter({ lat: pos.lat, lng: pos.lng });
+        });
+        leafletCenterMarkerRef.current = marker;
+      } else {
+        leafletCenterMarkerRef.current.setLatLng([center.lat, center.lng]);
+      }
+
+      if (!leafletCircleRef.current) {
+        leafletCircleRef.current = L.circle([center.lat, center.lng], {
+          color: "#0ea5e9",
+          opacity: 0.9,
+          weight: 2,
+          fillColor: "#38bdf8",
+          fillOpacity: 0.12,
+          radius: radius * MILES_TO_METERS,
+        }).addTo(map);
+      } else {
+        leafletCircleRef.current.setLatLng([center.lat, center.lng]);
+        leafletCircleRef.current.setRadius(radius * MILES_TO_METERS);
+      }
+
+      map.fitBounds(leafletCircleRef.current.getBounds(), { padding: [40, 40] });
     }
-
-    if (!centerMarkerRef.current) {
-      centerMarkerRef.current = new maps.Marker({
-        position: center,
-        map: mapRef.current,
-        draggable: true,
-        title: "Branch center",
-      });
-      centerMarkerRef.current.addListener("dragend", (e: any) => {
-        const lat = e?.latLng?.lat?.();
-        const lng = e?.latLng?.lng?.();
-        if (typeof lat === "number" && typeof lng === "number") {
-          setCenter({ lat, lng });
-        }
-      });
-    } else {
-      centerMarkerRef.current.setPosition(center);
-    }
-
-    if (!circleRef.current) {
-      circleRef.current = new maps.Circle({
-        strokeColor: "#0ea5e9",
-        strokeOpacity: 0.9,
-        strokeWeight: 2,
-        fillColor: "#38bdf8",
-        fillOpacity: 0.12,
-        map: mapRef.current,
-        center,
-        radius: radius * MILES_TO_METERS,
-        editable: false,
-        clickable: false,
-      });
-    } else {
-      circleRef.current.setCenter(center);
-      circleRef.current.setRadius(radius * MILES_TO_METERS);
-    }
-
-    // Zoom so the whole circle is visible.
-    const bounds = circleRef.current.getBounds();
-    if (bounds) mapRef.current.fitBounds(bounds, 40);
-  }, [center, radius, mapReady]);
+  }, [center, radius, mapReady, mapProvider]);
 
   // Fetch zips whenever center/radius changes.
   useEffect(() => {
@@ -276,71 +342,97 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
 
   // Overlay zip polygons + centroid labels on the map.
   useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-    const maps = (window as any).google?.maps;
-    if (!maps) return;
+    if (!mapReady) return;
 
-    // Clear any prior zip labels.
-    zipMarkersRef.current.forEach((m) => m.setMap(null));
-    zipMarkersRef.current = [];
+    if (mapProvider === "google") {
+      const maps = (window as any).google?.maps;
+      if (!maps || !googleMapRef.current) return;
 
-    // Reset the Data layer style / features.
-    const dataLayer = mapRef.current.data as any;
-    dataLayer.setStyle({
-      fillColor: "#22c55e",
-      fillOpacity: 0.15,
-      strokeColor: "#065f46",
-      strokeOpacity: 0.7,
-      strokeWeight: 1,
-    });
-    dataLayer.forEach((f: any) => dataLayer.remove(f));
+      googleZipMarkersRef.current.forEach((m) => m.setMap(null));
+      googleZipMarkersRef.current = [];
 
-    if (!zipHits.length) return;
+      const dataLayer = googleMapRef.current.data as any;
+      dataLayer.setStyle({
+        fillColor: "#22c55e",
+        fillOpacity: 0.15,
+        strokeColor: "#065f46",
+        strokeOpacity: 0.7,
+        strokeWeight: 1,
+      });
+      dataLayer.forEach((f: any) => dataLayer.remove(f));
 
-    let cancelled = false;
-    (async () => {
-      for (const hit of zipHits) {
-        if (cancelled) return;
+      if (!zipHits.length) return;
 
-        // Centroid label (transparent icon, text-only marker).
-        try {
-          const marker = new maps.Marker({
-            position: { lat: hit.lat, lng: hit.lng },
-            map: mapRef.current,
-            clickable: false,
-            icon: {
-              url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-              scaledSize: new maps.Size(1, 1),
-              anchor: new maps.Point(0, 0),
-              labelOrigin: new maps.Point(0, 0),
-            },
-            label: {
-              text: hit.zip,
-              color: "#052e16",
-              fontSize: "11px",
-              fontWeight: "700",
-            },
-            zIndex: 500,
-          });
-          zipMarkersRef.current.push(marker);
-        } catch {
-          // Marker label is decorative — polygon fill still renders.
+      let cancelled = false;
+      (async () => {
+        for (const hit of zipHits) {
+          if (cancelled) return;
+          try {
+            const marker = new maps.Marker({
+              position: { lat: hit.lat, lng: hit.lng },
+              map: googleMapRef.current,
+              clickable: false,
+              icon: {
+                url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+                scaledSize: new maps.Size(1, 1),
+                anchor: new maps.Point(0, 0),
+                labelOrigin: new maps.Point(0, 0),
+              },
+              label: { text: hit.zip, color: "#052e16", fontSize: "11px", fontWeight: "700" },
+              zIndex: 500,
+            });
+            googleZipMarkersRef.current.push(marker);
+          } catch {
+            // Marker label is decorative — polygon fill still renders.
+          }
+
+          let geojson = zipGeoCacheRef.current.get(hit.zip);
+          if (!geojson) {
+            geojson = await fetchZipGeoJson(hit.zip);
+            if (geojson) zipGeoCacheRef.current.set(hit.zip, geojson);
+          }
+          if (!cancelled && geojson) dataLayer.addGeoJson(geojson);
         }
+      })();
 
-        // Polygon fill.
-        let geojson = zipGeoCacheRef.current.get(hit.zip);
-        if (!geojson) {
-          geojson = await fetchZipGeoJson(hit.zip);
-          if (geojson) zipGeoCacheRef.current.set(hit.zip, geojson);
+      return () => { cancelled = true; };
+    }
+
+    if (mapProvider === "leaflet") {
+      const layer = leafletZipLayerRef.current;
+      if (!layer) return;
+      layer.clearLayers();
+      if (!zipHits.length) return;
+
+      let cancelled = false;
+      (async () => {
+        for (const hit of zipHits) {
+          if (cancelled) return;
+
+          L.marker([hit.lat, hit.lng], {
+            icon: createBadgeDivIcon(
+              `<span style="font-size:11px;font-weight:700;color:#052e16;white-space:nowrap;">${hit.zip}</span>`,
+              { className: "add-branch-zip-label" },
+            ),
+            interactive: false,
+          }).addTo(layer);
+
+          let geojson = zipGeoCacheRef.current.get(hit.zip);
+          if (!geojson) {
+            geojson = await fetchZipGeoJson(hit.zip);
+            if (geojson) zipGeoCacheRef.current.set(hit.zip, geojson);
+          }
+          if (!cancelled && geojson) {
+            L.geoJSON(geojson, {
+              style: { fillColor: "#22c55e", fillOpacity: 0.15, color: "#065f46", opacity: 0.7, weight: 1 },
+            }).addTo(layer);
+          }
         }
-        if (!cancelled && geojson) dataLayer.addGeoJson(geojson);
-      }
-    })();
+      })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [zipHits, mapReady]);
+      return () => { cancelled = true; };
+    }
+  }, [zipHits, mapReady, mapProvider]);
 
   const handleSave = useCallback(async () => {
     if (!center || !branchName.trim()) return;
@@ -479,7 +571,11 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
           </div>
 
           <div className="relative overflow-hidden rounded-xl border border-white/10 bg-slate-900" style={{ height: "70vh" }}>
-            <div ref={mapContainerRef} className="absolute inset-0" />
+            {mapProvider === "leaflet" ? (
+              <div ref={leafletContainerRef} className="absolute inset-0" />
+            ) : (
+              <div ref={googleContainerRef} className="absolute inset-0" />
+            )}
             {mapError && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 text-sm text-rose-300">
                 {mapError}

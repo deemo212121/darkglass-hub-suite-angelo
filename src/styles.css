@@ -4,6 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Leaflet's own CSS gives its internal panes/controls z-index values up to
+   1000 (.leaflet-top/.leaflet-bottom controls: 1000, popup pane: 700,
+   marker pane: 600) — all higher than several of this app's own overlays
+   (e.g. .detail-overlay at 200), so a Leaflet map could visually cover a
+   modal that's supposed to sit in front of it. Google Maps never hit this
+   since its internal elements don't escape that high. Rather than hunt
+   down and bump z-index on every modal in the app, this contains Leaflet's
+   stacking to its own box: with isolation: isolate, none of its internal
+   z-index values can ever compete with anything outside the map container,
+   on any page, regardless of how high they are. */
+.leaflet-container {
+  isolation: isolate;
+}
+
 @layer utilities {
   .animate-spin-reverse {
     animation: spin 1s linear infinite reverse;
@@ -3184,15 +3198,24 @@
 :root[data-theme="light"] [class*="text-red-3"],
 :root[data-theme="light"] [class*="text-red-4"] { color: #dc2626 !important; }
 
-/* Inline-style dark backgrounds (some components use style={{background:"#1.."}}) */
+/* Inline-style dark backgrounds (some components use style={{background:"#1.."}}
+   or the shared dropdown-menu background style={{background:"rgb(22,28,52)"}}).
+   IMPORTANT: match the dropdown navy by its exact value, not a bare "rgb(2"
+   prefix — that prefix also matches any bright color whose red channel is in
+   the 200s (e.g. #fb923c -> rgb(251,146,60), #facc15 -> rgb(250,204,21)),
+   which was silently wiping chart/legend swatch colors in light mode. */
 :root[data-theme="light"] [style*="background:#1"],
 :root[data-theme="light"] [style*="background: #1"],
-:root[data-theme="light"] [style*="background:rgb(2"],
-:root[data-theme="light"] [style*="background: rgb(2"],
+:root[data-theme="light"] [style*="background:rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background: rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background:rgb(22, 28, 52)"],
+:root[data-theme="light"] [style*="background: rgb(22, 28, 52)"],
 :root[data-theme="light"] [style*="background-color:#1"],
 :root[data-theme="light"] [style*="background-color: #1"],
-:root[data-theme="light"] [style*="background-color:rgb(2"],
-:root[data-theme="light"] [style*="background-color: rgb(2"] {
+:root[data-theme="light"] [style*="background-color:rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background-color: rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background-color:rgb(22, 28, 52)"],
+:root[data-theme="light"] [style*="background-color: rgb(22, 28, 52)"] {
   background-color: var(--lt-surface) !important;
   background-image: none !important;
 }
@@ -4433,6 +4456,120 @@
 :root[data-theme="light"] .month-banner,
 :root[data-theme="light"] .count-text {
   color: #1d4ed8 !important;
+}
+
+/* ── Ticket detail card (WorkPlannerPage's popup modal, and the same card
+   reused inside a Google InfoWindow / Leaflet Popup on the Work Map) — all
+   hardcoded to a dark navy card + near-white text with no light variant,
+   so it stayed dark even after switching the app to light mode. ──────── */
+:root[data-theme="light"] .detail-modal {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-modal-header {
+  background: var(--lt-surface-3) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .detail-ticket-no {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-label {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .detail-value {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-divider {
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .modal-close-btn {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .modal-close-btn:hover {
+  color: var(--lt-text) !important;
+}
+
+/* Map-embedded version of the same card. Google's InfoWindow chrome was
+   hardcoded dark (.gm-style-iw-c); Leaflet's Popup chrome defaults to a
+   plain white fill with no dark OR light "mode" of its own - both need an
+   explicit light variant here. */
+:root[data-theme="light"] .gm-style .gm-style-iw-c {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .gm-style .gm-style-iw-tc::after {
+  background: var(--lt-surface) !important;
+}
+:root[data-theme="light"] .gm-style .gm-style-iw button[aria-label="Close"] {
+  filter: none;
+}
+:root[data-theme="light"] .leaflet-popup-content-wrapper,
+:root[data-theme="light"] .leaflet-popup-tip {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .leaflet-popup-close-button {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .ahs-ticket-iw-host .detail-modal {
+  color: var(--lt-text) !important;
+}
+
+/* ── TicketsMapWorkMap.tsx (Work Map) — the whole page is a "glass panel
+   over a dark background" build: translucent-white panel fill (invisible
+   on a light page), plus a left ticket sidebar and a right "Selected Day's
+   Tickets" panel both hardcoded to dark navy with white/near-white text,
+   none of it theme-aware. ──────────────────────────────────────────── */
+:root[data-theme="light"] .map-panel {
+  background: var(--color-card) !important;
+  border-color: var(--color-panel-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-sidebar {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .sidebar-tab.active {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-card:hover {
+  background: var(--lt-surface-3) !important;
+}
+:root[data-theme="light"] .ticket-card-no {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-card-addr {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .selected-day-panel {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .selected-day-header {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .filter-chip {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .map-topbar {
+  background: var(--lt-surface-3) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .topbar-location-group select,
+:root[data-theme="light"] #mapDate {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .topbar-label,
+:root[data-theme="light"] .legend-caption {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .color-legend label {
+  color: var(--lt-text) !important;
 }
 
 /* ── Section-level fixes for TruckStockBatchModal & MarconePartsOrderModal
@@ -8561,15 +8698,24 @@
 :root[data-theme="light"] [class*="text-red-3"],
 :root[data-theme="light"] [class*="text-red-4"] { color: #dc2626 !important; }
 
-/* Inline-style dark backgrounds (some components use style={{background:"#1.."}}) */
+/* Inline-style dark backgrounds (some components use style={{background:"#1.."}}
+   or the shared dropdown-menu background style={{background:"rgb(22,28,52)"}}).
+   IMPORTANT: match the dropdown navy by its exact value, not a bare "rgb(2"
+   prefix — that prefix also matches any bright color whose red channel is in
+   the 200s (e.g. #fb923c -> rgb(251,146,60), #facc15 -> rgb(250,204,21)),
+   which was silently wiping chart/legend swatch colors in light mode. */
 :root[data-theme="light"] [style*="background:#1"],
 :root[data-theme="light"] [style*="background: #1"],
-:root[data-theme="light"] [style*="background:rgb(2"],
-:root[data-theme="light"] [style*="background: rgb(2"],
+:root[data-theme="light"] [style*="background:rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background: rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background:rgb(22, 28, 52)"],
+:root[data-theme="light"] [style*="background: rgb(22, 28, 52)"],
 :root[data-theme="light"] [style*="background-color:#1"],
 :root[data-theme="light"] [style*="background-color: #1"],
-:root[data-theme="light"] [style*="background-color:rgb(2"],
-:root[data-theme="light"] [style*="background-color: rgb(2"] {
+:root[data-theme="light"] [style*="background-color:rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background-color: rgb(22,28,52)"],
+:root[data-theme="light"] [style*="background-color:rgb(22, 28, 52)"],
+:root[data-theme="light"] [style*="background-color: rgb(22, 28, 52)"] {
   background-color: var(--lt-surface) !important;
   background-image: none !important;
 }
@@ -9809,6 +9955,120 @@
 :root[data-theme="light"] .month-banner,
 :root[data-theme="light"] .count-text {
   color: #1d4ed8 !important;
+}
+
+/* ── Ticket detail card (WorkPlannerPage's popup modal, and the same card
+   reused inside a Google InfoWindow / Leaflet Popup on the Work Map) — all
+   hardcoded to a dark navy card + near-white text with no light variant,
+   so it stayed dark even after switching the app to light mode. ──────── */
+:root[data-theme="light"] .detail-modal {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-modal-header {
+  background: var(--lt-surface-3) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .detail-ticket-no {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-label {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .detail-value {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .detail-divider {
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .modal-close-btn {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .modal-close-btn:hover {
+  color: var(--lt-text) !important;
+}
+
+/* Map-embedded version of the same card. Google's InfoWindow chrome was
+   hardcoded dark (.gm-style-iw-c); Leaflet's Popup chrome defaults to a
+   plain white fill with no dark OR light "mode" of its own - both need an
+   explicit light variant here. */
+:root[data-theme="light"] .gm-style .gm-style-iw-c {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .gm-style .gm-style-iw-tc::after {
+  background: var(--lt-surface) !important;
+}
+:root[data-theme="light"] .gm-style .gm-style-iw button[aria-label="Close"] {
+  filter: none;
+}
+:root[data-theme="light"] .leaflet-popup-content-wrapper,
+:root[data-theme="light"] .leaflet-popup-tip {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .leaflet-popup-close-button {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .ahs-ticket-iw-host .detail-modal {
+  color: var(--lt-text) !important;
+}
+
+/* ── TicketsMapWorkMap.tsx (Work Map) — the whole page is a "glass panel
+   over a dark background" build: translucent-white panel fill (invisible
+   on a light page), plus a left ticket sidebar and a right "Selected Day's
+   Tickets" panel both hardcoded to dark navy with white/near-white text,
+   none of it theme-aware. ──────────────────────────────────────────── */
+:root[data-theme="light"] .map-panel {
+  background: var(--color-card) !important;
+  border-color: var(--color-panel-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-sidebar {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .sidebar-tab.active {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-card:hover {
+  background: var(--lt-surface-3) !important;
+}
+:root[data-theme="light"] .ticket-card-no {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .ticket-card-addr {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .selected-day-panel {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .selected-day-header {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .filter-chip {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .map-topbar {
+  background: var(--lt-surface-3) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .topbar-location-group select,
+:root[data-theme="light"] #mapDate {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .topbar-label,
+:root[data-theme="light"] .legend-caption {
+  color: var(--lt-text-3) !important;
+}
+:root[data-theme="light"] .color-legend label {
+  color: var(--lt-text) !important;
 }
 
 /* ── Section-level fixes for TruckStockBatchModal & MarconePartsOrderModal

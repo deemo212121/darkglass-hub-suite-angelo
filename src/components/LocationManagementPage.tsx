@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
-import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import {
   getLocations as sbGetLocations,
   upsertLocation as sbUpsertLocation,
@@ -967,6 +970,18 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const coverageZipGeoJsonCacheRef = useRef(new Map<string, CoverageZipGeoJson | null>());
   const coverageOverlayRefs = useRef<any[]>([]);
 
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+  const leafletCoverageContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletCoverageMapRef = useRef<L.Map | null>(null);
+  const leafletCoverageLayerRef = useRef<L.LayerGroup | null>(null);
+  const leafletZipLabelMarkersRef = useRef<L.Marker[]>([]);
+
   const filteredLocations = useMemo(() => {
     const query = locationSearch.trim().toLowerCase();
     return locationRows.filter((row) =>
@@ -1121,139 +1136,90 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
   const minimumReadableZoom = selectedCoverageLocation === "Memphis" ? 6 : 7;
 
   useEffect(() => {
-    if (activeTab !== "coverage") return;
-
+    if (activeTab !== "coverage" || mapProvider !== "google") return;
     if (!GOOGLE_MAPS_API_KEY) {
       setCoverageMapError("Set VITE_GOOGLE_MAPS_API_KEY to enable the Google coverage map.");
       return;
     }
 
     let cancelled = false;
-
-    const initializeMap = () => {
-      if (cancelled || !coverageMapContainerRef.current) return;
-      const maps = (window as Window & { google?: any }).google?.maps;
-      if (!maps) return;
-
-      const MapConstructor = maps.Map;
-      const mapTypeId = maps.MapTypeId?.ROADMAP ?? "roadmap";
-
-      if (typeof MapConstructor !== "function") {
-        if (!cancelled) setCoverageMapError("Google Maps did not expose a Map constructor.");
-        return;
-      }
-
-      // Always re-create the map if the container div has changed (tab remount)
-      if (
-        !coverageMapRef.current ||
-        coverageMapRef.current.getDiv() !== coverageMapContainerRef.current
-      ) {
-        coverageMapRef.current = new MapConstructor(coverageMapContainerRef.current, {
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !coverageMapContainerRef.current) return;
+        const maps = (window as Window & { google?: any }).google?.maps;
+        if (!maps) return;
+        coverageMapRef.current = new maps.Map(coverageMapContainerRef.current, {
           center: { lat: 37.0902, lng: -95.7129 },
           zoom: 4,
-          mapTypeId,
+          mapTypeId: maps.MapTypeId?.ROADMAP ?? "roadmap",
           disableDefaultUI: false,
           zoomControl: true,
           mapTypeControl: true,
           gestureHandling: "greedy",
         });
-      }
-
-      if (!cancelled) {
         setCoverageMapReady(true);
         setCoverageMapError(null);
-      }
-    };
-
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps="location-coverage"]');
-    if ((window as Window & { google?: any }).google?.maps) {
-      initializeMap();
-    } else if (existingScript) {
-      (window as Window & { initCoverageMap?: () => void }).initCoverageMap = initializeMap;
-      existingScript.addEventListener(
-        "error",
-        () => {
-          if (!cancelled) setCoverageMapError("Google Maps failed to load.");
-        },
-        { once: true },
-      );
-    } else {
-      (window as Window & { initCoverageMap?: () => void }).initCoverageMap = initializeMap;
-      const script = document.createElement("script");
-      script.dataset.googleMaps = "location-coverage";
-      script.async = true;
-      script.defer = true;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&loading=async&v=weekly&callback=initCoverageMap`;
-      script.onerror = () => {
-        if (!cancelled) setCoverageMapError("Google Maps failed to load.");
-      };
-      document.head.appendChild(script);
-    }
+      })
+      .catch(() => { if (!cancelled) setCoverageMapError("Google Maps failed to load."); });
 
     return () => {
       cancelled = true;
       // Reset so map re-attaches correctly on next tab visit
       coverageMapRef.current = null;
       setCoverageMapReady(false);
-      delete (window as Window & { initCoverageMap?: () => void }).initCoverageMap;
     };
-  }, [activeTab]);
+  }, [activeTab, mapProvider]);
+
+  // Leaflet counterpart of the effect above.
+  useEffect(() => {
+    if (activeTab !== "coverage" || mapProvider !== "leaflet" || !leafletCoverageContainerRef.current) return;
+    const container = leafletCoverageContainerRef.current;
+    const map = L.map(container, {
+      center: [37.0902, -95.7129],
+      zoom: 4,
+    });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletCoverageLayerRef.current = L.layerGroup().addTo(map);
+    leafletCoverageMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setCoverageMapReady(true);
+    setCoverageMapError(null);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletCoverageMapRef.current = null;
+      leafletCoverageLayerRef.current = null;
+      setCoverageMapReady(false);
+    };
+  }, [activeTab, mapProvider]);
 
   useEffect(() => {
-    if (activeTab !== "coverage" || !coverageMapReady || !coverageMapRef.current) return;
-
+    if (activeTab !== "coverage" || !coverageMapReady || !mapProvider) return;
+    const activeMap = mapProvider === "google" ? coverageMapRef.current : leafletCoverageMapRef.current;
+    if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
-    if (!maps) return;
+    if (mapProvider === "google" && !maps) return;
 
     coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
     coverageOverlayRefs.current = [];
+    leafletCoverageLayerRef.current?.clearLayers();
 
-    const mapData = coverageMapRef.current.data as any;
-    mapData.forEach((feature: any) => mapData.remove(feature));
+    const mapData = mapProvider === "google" ? (coverageMapRef.current.data as any) : null;
+    mapData?.forEach((feature: any) => mapData.remove(feature));
 
     let cancelled = false;
-    const bounds = new maps.LatLngBounds();
-    const geocoder = new maps.Geocoder();
+    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+    const geocode = makeGeocoder(mapProvider);
 
-    const geocodeZip = (zipCode: string) =>
-      new Promise<MapZipGeometry | null>((resolve) => {
-        geocoder.geocode({ address: `${zipCode}, USA` }, (results: any, status: string) => {
-          if (status === "OK" && results?.[0]?.geometry?.location) {
-            const location = results[0].geometry.location;
-            const viewport = results[0].geometry.viewport;
-            resolve({
-              center: { lat: location.lat(), lng: location.lng() },
-              viewport: viewport
-                ? {
-                    north: viewport.getNorthEast().lat(),
-                    east: viewport.getNorthEast().lng(),
-                    south: viewport.getSouthWest().lat(),
-                    west: viewport.getSouthWest().lng(),
-                  }
-                : null,
-            });
-            return;
-          }
-          resolve(null);
-        });
-      });
-
+    // fetchZipPoint keeps the existing coverageGeocodeCacheRef as a fast
+    // in-memory layer in front of makeGeocoder's own cache-then-provider
+    // logic (Supabase cache, then Google Geocoder or Geoapify per provider).
     const fetchZipPoint = async (zipCode: string): Promise<MapZipGeometry | null> => {
       if (coverageGeocodeCacheRef.current.has(zipCode)) {
         return coverageGeocodeCacheRef.current.get(zipCode) ?? null;
       }
-      // Check Supabase persistent cache first — free and instant
-      const addr = `${zipCode}, USA`;
-      const cached = await lookupGeocode(addr);
-      if (cached) {
-        const point: MapZipGeometry = { center: cached, viewport: null };
-        coverageGeocodeCacheRef.current.set(zipCode, point);
-        return point;
-      }
-      // Miss — call Google Geocoding API
-      const point = await geocodeZip(zipCode);
-      // Persist to Supabase so we never pay for this zip again
-      if (point) void storeGeocode(addr, point.center);
+      const center = await geocode(`${zipCode}, USA`);
+      const point: MapZipGeometry | null = center ? { center, viewport: null } : null;
       coverageGeocodeCacheRef.current.set(zipCode, point);
       return point;
     };
@@ -1296,33 +1262,44 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       "#2f855a",
       "#3f8f7a",
     ];
+    const fillColorFor = (zip: string) => {
+      const index = uniqueZipCodes.indexOf(zip);
+      return fillPalette[(index >= 0 ? index : 0) % fillPalette.length];
+    };
 
     setCoverageMapLoading(true);
     setCoverageMapError(null);
 
-    mapData.setStyle((feature: any) => {
-      const zip = String(feature.getProperty("ZCTA5") ?? "");
-      const index = uniqueZipCodes.indexOf(zip);
-      const fillColor = fillPalette[(index >= 0 ? index : 0) % fillPalette.length];
-      return {
-        fillColor,
+    if (mapProvider === "google") {
+      mapData.setStyle((feature: any) => ({
+        fillColor: fillColorFor(String(feature.getProperty("ZCTA5") ?? "")),
         fillOpacity: 0.35,
         strokeColor: "#0f172a",
         strokeOpacity: 0.6,
         strokeWeight: 1,
-      };
-    });
+      }));
+    } else {
+      leafletZipLabelMarkersRef.current = [];
+    }
+
+    const resetToDefaultView = (message: string) => {
+      setCoverageMapLoading(false);
+      setCoverageMapError(message);
+      if (mapProvider === "google") {
+        coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
+        coverageMapRef.current.setZoom(4);
+      } else {
+        leafletCoverageMapRef.current?.setView([37.0902, -95.7129], 4);
+      }
+    };
 
     if (!uniqueZipCodes.length) {
-      setCoverageMapLoading(false);
-      coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
-      coverageMapRef.current.setZoom(4);
-      setCoverageMapError("No geocodable zip codes found for this location.");
+      resetToDefaultView("No geocodable zip codes found for this location.");
       return () => {
         cancelled = true;
         coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
         coverageOverlayRefs.current = [];
-        mapData.forEach((feature: any) => mapData.remove(feature));
+        mapData?.forEach((feature: any) => mapData.remove(feature));
       };
     }
 
@@ -1332,75 +1309,98 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     uniqueZipCodes.forEach((zipCode, index) => {
       void (async () => {
         const [point, geojson] = await Promise.all([fetchZipPoint(zipCode), fetchZipGeoJson(zipCode)]);
-        if (cancelled || !coverageMapRef.current) return;
+        if (cancelled || !activeMap) return;
 
         if (point) {
           hasAnyValidPoints = true;
-          bounds.extend(point.center);
+          bounds.extend(mapProvider === "google" ? point.center : [point.center.lat, point.center.lng]);
 
-          // Plot a clickable, label-only marker at the centroid of every
-          // zip so dispatchers can read which polygon is which without
-          // hovering. A transparent 1×1 PNG keeps the marker invisible;
-          // the `label` carries the zip code text directly. We push the
-          // marker onto coverageOverlayRefs so the next render clears it.
-          try {
-            const marker = new maps.Marker({
-              position: point.center,
-              map: coverageMapRef.current,
-              clickable: false,
-              visible: showZipLabels,
-              icon: {
-                // 1×1 transparent gif — keeps the marker dot from rendering
-                // while still letting Google Maps position the label.
-                url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-                scaledSize: new maps.Size(1, 1),
-                anchor: new maps.Point(0, 0),
-                labelOrigin: new maps.Point(0, 0),
-              },
-              label: {
-                text: zipCode,
-                color: "#0f172a",
-                fontSize: "11px",
-                fontWeight: "700",
-                className: "coverage-zip-label",
-              },
-              zIndex: 1000,
-            });
-            coverageOverlayRefs.current.push(marker);
-          } catch (err) {
-            // Marker overlay is purely decorative — if Google Maps refuses
-            // it (e.g. AdvancedMarker migration), the polygon still renders.
-            console.warn(`coverage zip label failed for ${zipCode}:`, err);
+          // Plot a label-only marker at the centroid of every zip so
+          // dispatchers can read which polygon is which without hovering.
+          if (mapProvider === "google") {
+            try {
+              const marker = new maps.Marker({
+                position: point.center,
+                map: coverageMapRef.current,
+                clickable: false,
+                visible: showZipLabels,
+                icon: {
+                  // 1×1 transparent gif — keeps the marker dot from rendering
+                  // while still letting Google Maps position the label.
+                  url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+                  scaledSize: new maps.Size(1, 1),
+                  anchor: new maps.Point(0, 0),
+                  labelOrigin: new maps.Point(0, 0),
+                },
+                label: {
+                  text: zipCode,
+                  color: "#0f172a",
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  className: "coverage-zip-label",
+                },
+                zIndex: 1000,
+              });
+              coverageOverlayRefs.current.push(marker);
+            } catch (err) {
+              // Marker overlay is purely decorative — if Google Maps refuses
+              // it (e.g. AdvancedMarker migration), the polygon still renders.
+              console.warn(`coverage zip label failed for ${zipCode}:`, err);
+            }
+          } else if (leafletCoverageLayerRef.current) {
+            const marker = L.marker([point.center.lat, point.center.lng], {
+              icon: createBadgeDivIcon(
+                `<span style="font-size:11px;font-weight:700;color:#0f172a;white-space:nowrap;">${zipCode}</span>`,
+                { className: "coverage-zip-label" },
+              ),
+              interactive: false,
+              opacity: showZipLabels ? 1 : 0,
+            }).addTo(leafletCoverageLayerRef.current);
+            leafletZipLabelMarkersRef.current.push(marker);
           }
         }
 
         if (geojson) {
-          mapData.addGeoJson(geojson);
+          if (mapProvider === "google") {
+            mapData.addGeoJson(geojson);
+          } else if (leafletCoverageLayerRef.current) {
+            L.geoJSON(geojson, {
+              style: { fillColor: fillColorFor(zipCode), fillOpacity: 0.35, color: "#0f172a", opacity: 0.6, weight: 1 },
+            }).addTo(leafletCoverageLayerRef.current);
+          }
         }
 
         pendingZipCount -= 1;
 
         // On first resolved point, immediately zoom to the area so the map isn't blank
         if (index === 0 && point) {
-          coverageMapRef.current.setCenter(point.center);
-          coverageMapRef.current.setZoom(Math.max(minimumReadableZoom, 8));
+          if (mapProvider === "google") {
+            coverageMapRef.current.setCenter(point.center);
+            coverageMapRef.current.setZoom(Math.max(minimumReadableZoom, 8));
+          } else {
+            leafletCoverageMapRef.current?.setView([point.center.lat, point.center.lng], Math.max(minimumReadableZoom, 8));
+          }
         }
 
         if (pendingZipCount === 0) {
           setCoverageMapLoading(false);
           if (hasAnyValidPoints && !bounds.isEmpty()) {
-            coverageMapRef.current.fitBounds(bounds, { padding: 40 });
-            maps.event.addListenerOnce(coverageMapRef.current, "idle", () => {
-              if (!coverageMapRef.current) return;
-              const currentZoom = coverageMapRef.current.getZoom?.();
-              if (typeof currentZoom === "number" && currentZoom < minimumReadableZoom) {
-                coverageMapRef.current.setZoom(minimumReadableZoom);
-              }
-            });
+            if (mapProvider === "google") {
+              coverageMapRef.current.fitBounds(bounds, { padding: 40 });
+              maps.event.addListenerOnce(coverageMapRef.current, "idle", () => {
+                if (!coverageMapRef.current) return;
+                const currentZoom = coverageMapRef.current.getZoom?.();
+                if (typeof currentZoom === "number" && currentZoom < minimumReadableZoom) {
+                  coverageMapRef.current.setZoom(minimumReadableZoom);
+                }
+              });
+            } else if (leafletCoverageMapRef.current) {
+              leafletCoverageMapRef.current.fitBounds(bounds, { padding: [40, 40] });
+              const currentZoom = leafletCoverageMapRef.current.getZoom();
+              if (currentZoom < minimumReadableZoom) leafletCoverageMapRef.current.setZoom(minimumReadableZoom);
+            }
           } else {
-            coverageMapRef.current.setCenter({ lat: 37.0902, lng: -95.7129 });
-            coverageMapRef.current.setZoom(4);
-            setCoverageMapError("No geocodable zip codes found for this location.");
+            resetToDefaultView("No geocodable zip codes found for this location.");
           }
         }
       })();
@@ -1410,9 +1410,9 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       cancelled = true;
       coverageOverlayRefs.current.forEach((overlay) => overlay.setMap(null));
       coverageOverlayRefs.current = [];
-      mapData.forEach((feature: any) => mapData.remove(feature));
+      mapData?.forEach((feature: any) => mapData.remove(feature));
     };
-  }, [activeTab, coverageMapReady, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation]);
+  }, [activeTab, coverageMapReady, mapProvider, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation]);
 
   // Toggle the zip-code labels on/off without rebuilding the map. The map
   // effect above tracks every label marker in coverageOverlayRefs; we just
@@ -1424,6 +1424,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
         overlay.setVisible(showZipLabels);
       }
     });
+    leafletZipLabelMarkersRef.current.forEach((marker) => marker.setOpacity(showZipLabels ? 1 : 0));
   }, [showZipLabels]);
 
   const addLocationRow = () => {
@@ -2164,7 +2165,11 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                 </label>
               </div>
               <div className="relative mt-3 min-h-[580px] overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-blue-500/10 via-slate-900 to-cyan-500/10">
-                <div ref={coverageMapContainerRef} className="google-map-canvas" aria-label="Google coverage map" />
+                {mapProvider === "leaflet" ? (
+                  <div ref={leafletCoverageContainerRef} className="google-map-canvas" aria-label="Coverage map" />
+                ) : (
+                  <div ref={coverageMapContainerRef} className="google-map-canvas" aria-label="Coverage map" />
+                )}
                 {(!coverageMapReady || coverageMapLoading) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/75 text-center backdrop-blur-sm">
                     <div className="relative flex h-14 w-14 items-center justify-center">
@@ -2172,7 +2177,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
                       <span className="absolute inline-block h-8 w-8 animate-spin-fast animate-spin-reverse rounded-full border-4 border-white/10 border-t-cyan-400" />
                     </div>
                     <div className="text-sm font-medium text-slate-200">
-                      {coverageMapReady ? `Loading ${selectedCoverageLocation} coverage…` : "Loading Google coverage map…"}
+                      {coverageMapReady ? `Loading ${selectedCoverageLocation} coverage…` : "Loading coverage map…"}
                     </div>
                     {coverageMapError ? <div className="max-w-sm text-xs text-rose-300">{coverageMapError}</div> : null}
                   </div>

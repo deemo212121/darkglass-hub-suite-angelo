@@ -12,16 +12,26 @@
  *    ticket # / customer / status / scheduled date.
  *  - Sidebar lets you tweak each filter in-page; changes write back to
  *    the URL so the view is shareable / refreshable.
+ *  - Renders on either Google Maps or Leaflet+OpenStreetMap, per a
+ *    company-wide setting (companies.settings.mapProvider, migration
+ *    0050) that only an Admin/Superadmin can change. Geocoding is
+ *    provider-matched too (Google Geocoder vs Geoapify, see
+ *    @/lib/mapEngine) - toggling to Leaflet means no reliance on any
+ *    Google API, not just a different-looking basemap.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, MapPin } from "lucide-react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { Footer } from "@/components/Footer";
 import { AppHeader } from "@/components/Header";
+import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
-import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
+import { getCompanyMapProvider, setCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import {
   getLocationManagementCoordinates,
   getLocationManagementZoomAddress,
@@ -29,7 +39,7 @@ import {
 
 type AnyTicket = Record<string, any>;
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+const OFFICE_EMOJI = String.fromCodePoint(0x1f3e2); // 🏢
 
 // Buckets shared with Ticket List (Open/Pending vs Completed/Claimed vs Cancelled).
 type StatusGroup = "open" | "completed" | "cancelled";
@@ -110,15 +120,52 @@ export function TicketListMap() {
   const [startDate, setStartDate] = useState(search.startDate ?? week.start);
   const [endDate, setEndDate] = useState(search.endDate ?? week.end);
 
-  const { ready, email } = useAuth();
+  const { ready, email, role } = useAuth();
+  const isAdmin = ["ADMIN", "SUPERADMIN"].includes((role || "").toUpperCase());
   const [tickets, setTickets] = useState<AnyTicket[]>([]);
   const [loading, setLoading] = useState(true);
-  const mapRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const markersRef = useRef<any[]>([]);
-  const officeMarkersRef = useRef<any[]>([]);
+
+  // Which basemap the whole company currently renders the Ticket Map with
+  // (see migration 0050) — null while still loading, so we don't flash the
+  // Google container before we know the real setting.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [googleScriptReady, setGoogleScriptReady] = useState(false);
+
+  const googleMapRef = useRef<any>(null);
+  const googleContainerRef = useRef<HTMLDivElement | null>(null);
+  const googleMarkersRef = useRef<any[]>([]);
+  const googleOfficeMarkersRef = useRef<any[]>([]);
+
+  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMarkersRef = useRef<L.CircleMarker[]>([]);
+  const leafletOfficeMarkersRef = useRef<L.Marker[]>([]);
+
   const [mapError, setMapError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AnyTicket | null>(null);
+  const [plottedCount, setPlottedCount] = useState(0);
+
+  // Load the company's chosen map provider once.
+  useEffect(() => {
+    if (!ready || !email) return;
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, [ready, email]);
+
+  const handleProviderChange = async (next: MapProvider) => {
+    if (next === mapProvider || savingProvider) return;
+    setSavingProvider(true);
+    try {
+      await setCompanyMapProvider(next);
+      setMapProvider(next);
+    } catch (err) {
+      alert(`Failed to change map provider: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingProvider(false);
+    }
+  };
 
   // Hydrate the Location Management cache (localStorage) so the helper
   // functions can resolve office addresses + coords from Supabase data.
@@ -220,76 +267,133 @@ export function TicketListMap() {
     });
   }, [tickets, repairStatus, location, source, group, startDate, endDate]);
 
-  // Load Google Maps script once, then init the map.
+  // Load the Google Maps script only when Google is the active provider —
+  // Leaflet mode has zero reliance on any Google API, geocoding included
+  // (see @/lib/mapEngine's Geoapify path).
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const w = window as any;
+    if (mapProvider !== "google") return;
     let cancelled = false;
-    const init = () => {
-      if (cancelled || !containerRef.current || mapRef.current) return;
-      const maps = w.google?.maps;
-      if (!maps) return;
-      mapRef.current = new maps.Map(containerRef.current, {
-        center: { lat: 33.5, lng: -86.5 },
-        zoom: 5,
-        mapTypeControl: false,
-        streetViewControl: false,
-      });
-    };
-    if (w.google?.maps) { init(); return; }
-    const existing = document.querySelector('script[data-google-maps="ticket-list-map"]') as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener("load", init, { once: true });
-      return () => { cancelled = true; };
-    }
-    const s = document.createElement("script");
-    s.dataset.googleMaps = "ticket-list-map";
-    s.async = true; s.defer = true;
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&v=3.52`;
-    s.onload = init;
-    s.onerror = () => { if (!cancelled) setMapError("Google Maps failed to load."); };
-    document.head.appendChild(s);
+    loadGoogleMapsScript()
+      .then(() => { if (!cancelled) setGoogleScriptReady(true); })
+      .catch(() => { if (!cancelled) setMapError("Google Maps failed to load."); });
     return () => { cancelled = true; };
-  }, []);
+  }, [mapProvider]);
 
-  // Geocode and plot filtered tickets whenever the filter set changes.
+  // Instantiate the Google map object once its container is mounted (i.e.
+  // once mapProvider === "google"). Cleans up on unmount/provider-switch so
+  // switching back to Google later starts fresh in the new container.
   useEffect(() => {
-    const w = window as any;
-    const maps = w.google?.maps;
-    const map = mapRef.current;
-    if (!maps || !map) return;
+    if (mapProvider !== "google" || !googleScriptReady) return;
+    const maps = (window as any).google?.maps;
+    if (!maps || !googleContainerRef.current) return;
+    googleMapRef.current = new maps.Map(googleContainerRef.current, {
+      center: { lat: 33.5, lng: -86.5 },
+      zoom: 5,
+      mapTypeControl: false,
+      streetViewControl: false,
+    });
+    return () => { googleMapRef.current = null; };
+  }, [mapProvider, googleScriptReady]);
+
+  // Instantiate the Leaflet map object once its container is mounted.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    const container = leafletContainerRef.current;
+    const map = L.map(container, {
+      center: [33.5, -86.5],
+      zoom: 5,
+    });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    return () => { detachResizeFix(); map.remove(); leafletMapRef.current = null; };
+  }, [mapProvider]);
+
+  // Geocode and plot filtered tickets whenever the filter set (or the
+  // active map provider) changes. Geocoding is provider-matched (Google
+  // Geocoder vs Geoapify, see @/lib/mapEngine) so Leaflet mode never calls
+  // any Google API.
+  useEffect(() => {
+    if (!mapProvider) return;
+    const activeMap = mapProvider === "google" ? googleMapRef.current : leafletMapRef.current;
+    if (mapProvider === "google" && !googleScriptReady) return;
+    if (!activeMap) return;
     let cancelled = false;
 
-    // Clear old markers.
-    markersRef.current.forEach((m) => m.setMap(null));
-    markersRef.current = [];
-    officeMarkersRef.current.forEach((m) => m.setMap(null));
-    officeMarkersRef.current = [];
+    // Clear old markers from both providers — only one is ever active, but
+    // this keeps stale markers from leaking across a provider switch.
+    googleMarkersRef.current.forEach((m) => m.setMap(null));
+    googleMarkersRef.current = [];
+    googleOfficeMarkersRef.current.forEach((m) => m.setMap(null));
+    googleOfficeMarkersRef.current = [];
+    leafletMarkersRef.current.forEach((m) => m.remove());
+    leafletMarkersRef.current = [];
+    leafletOfficeMarkersRef.current.forEach((m) => m.remove());
+    leafletOfficeMarkersRef.current = [];
+    setPlottedCount(0);
 
     if (filtered.length === 0) return;
 
-    const geocoder = new maps.Geocoder();
-    const cache = new Map<string, { lat: number; lng: number } | null>();
-    const geocode = (q: string) => new Promise<{ lat: number; lng: number } | null>(async (resolve) => {
-      // Layer 1: in-memory cache (free, instant — avoids duplicate calls in same render)
-      if (cache.has(q)) { resolve(cache.get(q)!); return; }
-      // Layer 2: Supabase DB cache (free — only pay Google once per unique address ever)
-      const dbHit = await lookupGeocode(q);
-      if (dbHit) { cache.set(q, dbHit); resolve(dbHit); return; }
-      // Layer 3: Google Geocoding API (costs money — store result after)
-      geocoder.geocode({ address: q }, (results: any, status: string) => {
-        if (status === "OK" && results?.[0]) {
-          const pos = results[0].geometry.location;
-          const out = { lat: pos.lat(), lng: pos.lng() };
-          cache.set(q, out);
-          void storeGeocode(q, out); // fire-and-forget — persist for next time
-          resolve(out);
-        } else {
-          cache.set(q, null);
-          resolve(null);
-        }
-      });
-    });
+    const geocode = makeGeocoder(mapProvider);
+    const maps = (window as any).google?.maps;
+
+    const addOfficeMarker = (pos: { lat: number; lng: number }, loc: string) => {
+      if (mapProvider === "google") {
+        const office = new maps.Marker({
+          position: pos,
+          map: activeMap,
+          title: `${loc} Office`,
+          zIndex: 9999,
+          icon: {
+            path: "M -10 0 C -10 -10 10 -10 10 0 L 10 6 L 0 14 L -10 6 Z",
+            fillColor: "#0ea5e9",
+            fillOpacity: 1,
+            strokeColor: "#0f172a",
+            strokeWeight: 2,
+            scale: 1.1,
+            anchor: new maps.Point(0, 14),
+          },
+          label: { text: OFFICE_EMOJI, fontSize: "12px" },
+        });
+        googleOfficeMarkersRef.current.push(office);
+      } else {
+        const office = L.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(`<span style="font-size:20px;">${OFFICE_EMOJI}</span>`, { className: "ticket-map-office-marker", anchor: "bottom" }),
+          zIndexOffset: 1000,
+        }).bindTooltip(`${loc} Office`).addTo(activeMap as L.Map);
+        leafletOfficeMarkersRef.current.push(office);
+      }
+    };
+
+    const addTicketMarker = (pos: { lat: number; lng: number }, ticket: AnyTicket, color: string) => {
+      if (mapProvider === "google") {
+        const marker = new maps.Marker({
+          position: pos,
+          map: activeMap,
+          title: `${ticket.ticketNo ?? ticket.ticket_no} · ${ticket.customer ?? ticket.customer_name ?? ""}`,
+          icon: {
+            path: maps.SymbolPath.CIRCLE,
+            scale: 8,
+            fillColor: color,
+            fillOpacity: 0.95,
+            strokeColor: "#0f172a",
+            strokeWeight: 2,
+          },
+        });
+        marker.addListener("click", () => setSelected(ticket));
+        googleMarkersRef.current.push(marker);
+      } else {
+        const marker = L.circleMarker([pos.lat, pos.lng], {
+          radius: 8,
+          color: "#0f172a",
+          weight: 2,
+          fillColor: color,
+          fillOpacity: 0.95,
+        }).addTo(activeMap as L.Map);
+        marker.on("click", () => setSelected(ticket));
+        leafletMarkersRef.current.push(marker);
+      }
+    };
 
     // Office markers — one per distinct location in the filtered set.
     // Prefers explicit Location Management coordinates; falls back to
@@ -306,39 +410,21 @@ export function TicketListMap() {
         if (addr) pos = await geocode(addr);
       }
       if (!pos || cancelled) return null;
-      const office = new maps.Marker({
-        position: pos,
-        map,
-        title: `${loc} Office`,
-        zIndex: 9999,
-        icon: {
-          path: "M -10 0 C -10 -10 10 -10 10 0 L 10 6 L 0 14 L -10 6 Z",
-          fillColor: "#0ea5e9",
-          fillOpacity: 1,
-          strokeColor: "#0f172a",
-          strokeWeight: 2,
-          scale: 1.1,
-          anchor: new maps.Point(0, 14),
-        },
-        label: {
-          text: "\uD83C\uDFE2", // 🏢 office building
-          fontSize: "12px",
-        },
-      });
-      officeMarkersRef.current.push(office);
+      addOfficeMarker(pos, loc);
       return pos;
     };
 
     (async () => {
-      const bounds = new maps.LatLngBounds();
+      const positions: Array<{ lat: number; lng: number }> = [];
       // Plot office markers first so they sit underneath the tickets in
       // case of overlap. Their positions go into the bounds calc too so
       // small clusters of tickets stay zoomed in nicely with the office.
       for (const loc of officeLocations) {
         if (cancelled) return;
         const pos = await plotOffice(loc);
-        if (pos) bounds.extend(pos);
+        if (pos) positions.push(pos);
       }
+      let ticketsPlotted = 0;
       for (const ticket of filtered) {
         if (cancelled) return;
         const street = ticket.address || ticket.customer_address || "";
@@ -349,31 +435,25 @@ export function TicketListMap() {
         if (!query) continue;
         const pos = await geocode(query);
         if (!pos || cancelled) continue;
-        const color = statusColorHex(ticket.status);
-        const marker = new maps.Marker({
-          position: pos,
-          map,
-          title: `${ticket.ticketNo ?? ticket.ticket_no} · ${ticket.customer ?? ticket.customer_name ?? ""}`,
-          icon: {
-            path: maps.SymbolPath.CIRCLE,
-            scale: 8,
-            fillColor: color,
-            fillOpacity: 0.95,
-            strokeColor: "#0f172a",
-            strokeWeight: 2,
-          },
-        });
-        marker.addListener("click", () => setSelected(ticket));
-        markersRef.current.push(marker);
-        bounds.extend(pos);
+        addTicketMarker(pos, ticket, statusColorHex(ticket.status));
+        positions.push(pos);
+        ticketsPlotted += 1;
       }
-      if (!cancelled && (markersRef.current.length > 0 || officeMarkersRef.current.length > 0)) {
-        map.fitBounds(bounds, 48);
+      if (cancelled) return;
+      setPlottedCount(ticketsPlotted);
+      if (positions.length === 0) return;
+      if (mapProvider === "google") {
+        const bounds = new maps.LatLngBounds();
+        positions.forEach((p) => bounds.extend(p));
+        activeMap.fitBounds(bounds, 48);
+      } else {
+        const bounds = L.latLngBounds(positions.map((p) => [p.lat, p.lng] as [number, number]));
+        (activeMap as L.Map).fitBounds(bounds, { padding: [48, 48] });
       }
     })();
 
     return () => { cancelled = true; };
-  }, [filtered]);
+  }, [filtered, mapProvider, googleScriptReady]);
 
   // Pull distinct values from the loaded ticket set for the dropdowns.
   const distinct = (key: string) => {
@@ -411,6 +491,14 @@ export function TicketListMap() {
               <h1 className="text-2xl font-bold tracking-tight">Ticket Map</h1>
               <p className="text-sm text-muted-foreground">Geographic view of filtered tickets for the selected week.</p>
             </div>
+            {isAdmin && mapProvider && (
+              <MapProviderToggle
+                value={mapProvider}
+                onChange={handleProviderChange}
+                disabled={savingProvider}
+                className="ml-auto"
+              />
+            )}
           </div>
 
           {/* Filters */}
@@ -442,10 +530,14 @@ export function TicketListMap() {
             {mapError && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/80 text-rose-200 text-sm">{mapError}</div>
             )}
-            <div ref={containerRef} className="h-full w-full" />
+            {mapProvider === "leaflet" ? (
+              <div ref={leafletContainerRef} className="h-full w-full" />
+            ) : (
+              <div ref={googleContainerRef} className="h-full w-full" />
+            )}
             {/* Status legend / count overlay */}
             <div className="absolute top-3 left-3 rounded-lg border border-white/15 bg-slate-900/85 backdrop-blur px-3 py-1.5 text-[11px] text-slate-200">
-              {loading ? "Loading tickets…" : `${markersRef.current.length || filtered.length} ticket${filtered.length === 1 ? "" : "s"} plotted`}
+              {loading ? "Loading tickets…" : `${plottedCount || filtered.length} ticket${filtered.length === 1 ? "" : "s"} plotted`}
             </div>
 
             {selected && (

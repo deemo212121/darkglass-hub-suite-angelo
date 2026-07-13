@@ -18,6 +18,8 @@ import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getLocationManagementCoordinates } from "@/components/LocationManagementPage";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, makeGeocoder, routeGeoapify, metersToMiles } from "@/lib/mapEngine";
 import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
@@ -1367,6 +1369,17 @@ function TicketDetailsPage() {
   // Distance (miles) from the office location to this ticket's address.
   const [officeDistanceMiles, setOfficeDistanceMiles] = useState<number | null>(null);
 
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  // This page has no embedded map, but the mileage figure below still goes
+  // through Google's Distance Matrix (real driving miles) in Google mode,
+  // or straight-line distance via Geoapify geocoding in Leaflet mode.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+
   // Edit mode state for customer information
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
@@ -2300,7 +2313,7 @@ function TicketDetailsPage() {
   // through progressively looser destination strings so a slightly-off address
   // still resolves instead of showing "— mi".
   useEffect(() => {
-    if (!ticket) { setOfficeDistanceMiles(null); return; }
+    if (!ticket || !mapProvider) { setOfficeDistanceMiles(null); return; }
     const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(ticket);
     const office = overrideOrigin ? null : getOfficeCoordinates(ticket.location || ticket.city || "");
     if (!overrideOrigin && !office) { setOfficeDistanceMiles(null); return; }
@@ -2318,6 +2331,32 @@ function TicketDetailsPage() {
     if (destinationCandidates.length === 0) { setOfficeDistanceMiles(null); return; }
 
     let cancelled = false;
+
+    // Leaflet mode: geocode via Geoapify, then get real driving distance via
+    // Geoapify's Routing API (same key) — falls back to straight-line only
+    // if the routing call itself fails.
+    if (mapProvider === "leaflet") {
+      const geocode = makeGeocoder("leaflet");
+      (async () => {
+        let destCoords: { lat: number; lng: number } | null = null;
+        for (const candidate of destinationCandidates) {
+          if (cancelled) return;
+          destCoords = await geocode(candidate);
+          if (destCoords) break;
+        }
+        if (cancelled || !destCoords) { if (!cancelled) setOfficeDistanceMiles(null); return; }
+
+        const originCoords = overrideOrigin ? await geocode(overrideOrigin) : office!;
+        if (cancelled) return;
+        if (!originCoords) { setOfficeDistanceMiles(null); return; }
+
+        const route = await routeGeoapify([originCoords, destCoords], "drive");
+        if (cancelled) return;
+        setOfficeDistanceMiles(route ? metersToMiles(route.totalDistanceMeters) : milesBetween(originCoords, destCoords));
+      })();
+      return () => { cancelled = true; };
+    }
+
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
     const computeDistance = () => {
@@ -2382,25 +2421,14 @@ function TicketDetailsPage() {
       tryCandidate(0);
     };
 
-    if ((window as Window & { google?: any }).google?.maps) {
-      computeDistance();
-    } else if (apiKey) {
-      const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="ticket-distance"]');
-      if (existing) {
-        existing.addEventListener("load", computeDistance, { once: true });
-      } else {
-        const script = document.createElement("script");
-        script.dataset.googleMaps = "ticket-distance";
-        script.async = true;
-        script.defer = true;
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&v=3.52`;
-        script.onload = computeDistance;
-        document.head.appendChild(script);
-      }
+    if (apiKey) {
+      loadGoogleMapsScript()
+        .then(() => { if (!cancelled) computeDistance(); })
+        .catch(() => { if (!cancelled) setOfficeDistanceMiles(null); });
     }
 
     return () => { cancelled = true; };
-  }, [ticket?.account, ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip]);
+  }, [ticket?.account, ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip, mapProvider]);
 
   // Compute related tickets: any OTHER company ticket sharing a key field with
   // this one (email, phone, zip, customer name, address, model, or serial).
