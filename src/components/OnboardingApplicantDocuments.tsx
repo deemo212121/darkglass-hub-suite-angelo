@@ -23,6 +23,7 @@ import {
   type OnboardingDocCategory,
 } from "@/lib/supabase/onboardingDocuments";
 import { uploadOnboardingDocument, deleteOnboardingDocumentFile } from "@/lib/firebase/storage";
+import { logActivity } from "@/lib/supabase/hrActivityLog";
 
 interface Props {
   companyId: string;
@@ -84,6 +85,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
         source: "manual",
       });
       await loadDocuments();
+      void logActivity({ action: "onboarding_document_added", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category, fileName: file.name } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload file.");
     } finally {
@@ -124,6 +126,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
         source: "manual",
       });
       await loadDocuments();
+      void logActivity({ action: "onboarding_document_added", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category: linkDialogCategory, fileName: linkName.trim() || "Google Drive Link" } });
       if (linkDialogPendingId) setPendingLinks((prev) => prev.filter((l) => l.id !== linkDialogPendingId));
       closeLinkDialog();
     } catch (err) {
@@ -167,6 +170,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     try {
       await deleteOnboardingDocument(doc.id);
       if (doc.storagePath) await deleteOnboardingDocumentFile(doc.storagePath).catch(() => {});
+      void logActivity({ action: "onboarding_document_deleted", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category: doc.category, fileName: doc.fileName } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove document.");
       await loadDocuments();

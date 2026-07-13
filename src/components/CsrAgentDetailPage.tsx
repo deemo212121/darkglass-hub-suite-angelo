@@ -189,9 +189,13 @@ export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
     }
   };
 
-  const removeNote = async (id: string) => {
+  const removeNote = async (note: CsrAgentNote) => {
+    // Retracting an already-approved note removes the official record
+    // entirely (unlike a still-pending one, which was never final to begin
+    // with) — confirm first so this can't happen from an accidental click.
+    if (note.status === "approved" && !window.confirm("Retract this approved warning/mistake? This permanently removes the official record.")) return;
     try {
-      await deleteAgentNote(id);
+      await deleteAgentNote(note.id);
       await loadNotes();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete note.");
@@ -396,7 +400,12 @@ export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
                       </div>
                     )}
                     {canManage && n.status === "pending" && (
-                      <button type="button" onClick={() => removeNote(n.id)} title="Retract" className="shrink-0 text-muted-foreground hover:text-red-400 transition-colors">
+                      <button type="button" onClick={() => removeNote(n)} title="Retract" className="shrink-0 text-muted-foreground hover:text-red-400 transition-colors">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {canStage2Review && n.status === "approved" && (
+                      <button type="button" onClick={() => removeNote(n)} title="Retract this approved record" className="shrink-0 text-muted-foreground hover:text-red-400 transition-colors">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}

@@ -130,7 +130,7 @@ export async function getPendingAgentNotes(): Promise<CsrAgentNote[]> {
  * transitions `reviewAgentNote` always uses, just chained immediately
  * after insert.
  */
-export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; fastTrackToApproved?: boolean; fastTrackToManagerApproved?: boolean }): Promise<void> {
+export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; fastTrackToApproved?: boolean; fastTrackToManagerApproved?: boolean }): Promise<string> {
   const { data, error } = await supabase
     .from(TABLE)
     .insert({
@@ -149,6 +149,8 @@ export async function addAgentNote(input: { agentProfileId: string; type: "warni
   } else if (input.fastTrackToManagerApproved) {
     await reviewAgentNote(data.id, "manager_approved");
   }
+
+  return data.id;
 }
 
 /**

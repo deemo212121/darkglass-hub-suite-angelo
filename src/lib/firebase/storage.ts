@@ -157,6 +157,54 @@ export async function deleteOnboardingDocumentFile(fullPath: string): Promise<vo
 }
 
 /**
+ * Upload a generated Certificate of Employment PDF so it can be linked in a
+ * Team Messenger message — same "generate client-side, upload, share a
+ * link" pattern as the CV-forwarding feature on the Hiring tab.
+ */
+export async function uploadCoeCertificate(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/coe-certificates`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "certificate")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Upload a generated Employee Warning Form PDF so it can be linked in a
+ * Team Messenger message — same pattern as uploadCoeCertificate above.
+ */
+export async function uploadWarningForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/warning-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "warning-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Upload a drawn signature (PNG data URL from a canvas — same capture
+ * pattern as the ticket customer-signature pad in MobileTechApp.tsx) for a
+ * signable HR document.
+ */
+export async function uploadSignableDocumentSignature(companyId: string, docId: string, slot: string, dataUrl: string): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const folder = `companies/${companyId}/signable-documents/${docId}`;
+  const objectRef = ref(storage, `${folder}/${slot}-${Date.now()}.png`);
+  const snapshot = await uploadBytes(objectRef, blob, { contentType: "image/png" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
  * Upload a customer signature PNG (from a canvas data URL) for a ticket.
  * Stored under companies/{companyId}/tickets/{ticketNo}/signatures/.
  * Returns the public download URL (store this in the billing record).
