@@ -4410,6 +4410,31 @@
   color: var(--lt-text) !important;
 }
 
+/* ── WorkCalendarPage.tsx — same rgba(255,255,255,0.08) glass-panel
+   anti-pattern, plus a few hardcoded dark navy chrome pieces (month
+   nav arrows, view toggle buttons) and pale-blue accent text that
+   disappear on a light background. ───────────────────────────────── */
+:root[data-theme="light"] .calendar-panel {
+  background: var(--color-card) !important;
+  border-color: var(--color-panel-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .month-arrow,
+:root[data-theme="light"] .toggle-btn {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .toggle-btn.active {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e40af !important;
+}
+:root[data-theme="light"] .month-banner,
+:root[data-theme="light"] .count-text {
+  color: #1d4ed8 !important;
+}
+
 /* ── Section-level fixes for TruckStockBatchModal & MarconePartsOrderModal
    ─ heavy Tailwind slate usage. The existing generic overrides catch most
    of it, but re-emphasize the modal container to make sure the dialog
@@ -9759,6 +9784,31 @@
 /* Table wrap in Po Status */
 :root[data-theme="light"] .table-wrap {
   color: var(--lt-text) !important;
+}
+
+/* ── WorkCalendarPage.tsx — same rgba(255,255,255,0.08) glass-panel
+   anti-pattern, plus a few hardcoded dark navy chrome pieces (month
+   nav arrows, view toggle buttons) and pale-blue accent text that
+   disappear on a light background. ───────────────────────────────── */
+:root[data-theme="light"] .calendar-panel {
+  background: var(--color-card) !important;
+  border-color: var(--color-panel-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .month-arrow,
+:root[data-theme="light"] .toggle-btn {
+  background: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .toggle-btn.active {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e40af !important;
+}
+:root[data-theme="light"] .month-banner,
+:root[data-theme="light"] .count-text {
+  color: #1d4ed8 !important;
 }
 
 /* ── Section-level fixes for TruckStockBatchModal & MarconePartsOrderModal
