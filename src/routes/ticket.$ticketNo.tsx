@@ -3529,7 +3529,7 @@ function TicketDetailsPage() {
     const { createTruckStockPullRequest } = await import("@/lib/supabase/truckStockRequests");
     const { notifyPartsManagerOfPullRequest } = await import("@/lib/truckStockNotify");
     const today = new Date().toISOString().slice(0, 10);
-    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string }> = [];
+    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string }> = [];
 
     // Step 1: reserve stock for each selection. If any one fails we stop
     // and surface the error — earlier successful decrements stay applied
@@ -3554,9 +3554,11 @@ function TicketDetailsPage() {
         note: part.note ? `${part.note}\n${noteAdd}` : noteAdd,
         lastModifiedBy: currentEditor,
       };
-      updates.push({ partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation });
+      const update: { partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string } =
+        { partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation };
+      updates.push(update);
       try {
-        await createTruckStockPullRequest({
+        update.requestId = await createTruckStockPullRequest({
           ticketId: ticketDbId,
           partId: part.id,
           partNo: part.partNo,
@@ -3603,6 +3605,7 @@ function TicketDetailsPage() {
         qty: u.pulled,
         branch: u.branch,
         storageLocation: u.storage,
+        requestId: u.requestId,
       });
     }
 

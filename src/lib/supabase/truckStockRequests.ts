@@ -64,19 +64,24 @@ export async function createTruckStockPullRequest(input: {
   branch: string;
   storageLocation?: string;
   quantity: number;
-}): Promise<void> {
-  const { error } = await supabase.from("truck_stock_pull_requests").insert({
-    ticket_id: input.ticketId,
-    part_id: input.partId,
-    part_no: input.partNo,
-    branch: input.branch,
-    storage_location: input.storageLocation || null,
-    quantity: Math.max(1, Math.trunc(input.quantity || 1)),
-  });
+}): Promise<string> {
+  const { data, error } = await supabase
+    .from("truck_stock_pull_requests")
+    .insert({
+      ticket_id: input.ticketId,
+      part_id: input.partId,
+      part_no: input.partNo,
+      branch: input.branch,
+      storage_location: input.storageLocation || null,
+      quantity: Math.max(1, Math.trunc(input.quantity || 1)),
+    })
+    .select("id")
+    .single();
   if (error) {
     console.error("createTruckStockPullRequest error:", error.message);
     throw new Error(error.message);
   }
+  return data.id as string;
 }
 
 export async function getTruckStockPullRequests(status?: TruckStockPullRequestStatus): Promise<TruckStockPullRequestRow[]> {

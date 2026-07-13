@@ -27,7 +27,7 @@ import {
   type TruckStockPullRequestRow,
 } from "@/lib/supabase/truckStockRequests";
 
-export function TruckStockRequestsPanel() {
+export function TruckStockRequestsPanel({ highlightRequestId }: { highlightRequestId?: string } = {}) {
   const { uid } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<"pending" | "approved" | "rejected">("pending");
@@ -40,6 +40,10 @@ export function TruckStockRequestsPanel() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<TruckStockPullRequestRow | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  // Arrived here from a bell-icon notification about a specific request —
+  // once data loads, jump to whichever sub-tab actually has it and flash a
+  // highlight so it isn't just "somewhere in this list."
+  const [flashId, setFlashId] = useState<string | null>(null);
 
   useEffect(() => {
     if (uid) getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
@@ -69,6 +73,21 @@ export function TruckStockRequestsPanel() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!highlightRequestId || loading) return;
+    const inPending = pending.some((r) => r.id === highlightRequestId);
+    const inApproved = approved.some((r) => r.id === highlightRequestId);
+    const inRejected = rejected.some((r) => r.id === highlightRequestId);
+    if (!inPending && !inApproved && !inRejected) return;
+    setSubTab(inPending ? "pending" : inApproved ? "approved" : "rejected");
+    setFlashId(highlightRequestId);
+    const scroll = () => document.getElementById(`truck-stock-request-${highlightRequestId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t1 = setTimeout(scroll, 50);
+    const t2 = setTimeout(() => setFlashId(null), 3000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightRequestId, loading, pending, approved, rejected]);
 
   const stats = useMemo(() => {
     const available = stock.filter((s) => s.status === "in_stock").reduce((sum, s) => sum + s.quantity, 0);
@@ -221,7 +240,11 @@ export function TruckStockRequestsPanel() {
               <tr><td colSpan={colCount} className="px-3 py-8 text-center text-slate-400">{subTab === "pending" ? "No pending requests." : subTab === "approved" ? "No approved requests yet." : "No rejected requests yet."}</td></tr>
             ) : (
               rows.map((r) => (
-                <tr key={r.id} className="border-t border-white/5 hover:bg-white/5">
+                <tr
+                  key={r.id}
+                  id={`truck-stock-request-${r.id}`}
+                  className={`border-t border-white/5 hover:bg-white/5 transition-colors duration-500 ${flashId === r.id ? "bg-amber-500/20" : ""}`}
+                >
                   <td className="px-3 py-2 font-mono">{r.partNo}</td>
                   <td className="px-3 py-2 font-mono">
                     {r.ticketNo ? (

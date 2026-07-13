@@ -59,6 +59,10 @@ export async function notifyPartsManagerOfPullRequest(payload: {
   qty: number;
   branch: string;
   storageLocation?: string;
+  /** The truck_stock_pull_requests.id this notification is about — lets the
+   * Truck Stock Requests tab scroll to and highlight this exact row instead
+   * of just landing on the general Pending list. */
+  requestId?: string;
 }): Promise<void> {
   try {
     const recipientIds = await findApproverProfileIds();
@@ -67,6 +71,9 @@ export async function notifyPartsManagerOfPullRequest(payload: {
       `${payload.actorName} requested to pull ${payload.qty} × ${payload.partNo} from Truck Stock ` +
       `(${payload.branch}${payload.storageLocation ? ` @ ${payload.storageLocation}` : ""}) for ticket ` +
       `${payload.ticketNo}. Needs your approval.`;
+    const linkTo = payload.requestId
+      ? `/m/parts/part-inventory?tab=truck-stock-requests&requestId=${encodeURIComponent(payload.requestId)}`
+      : "/m/parts/part-inventory?tab=truck-stock-requests";
     await Promise.all(
       recipientIds.map((id) =>
         createNotification({
@@ -74,7 +81,11 @@ export async function notifyPartsManagerOfPullRequest(payload: {
           senderId: null,
           senderName: payload.actorName,
           body,
-          linkTo: "/m/parts/part-inventory",
+          // Deep-links straight into the Truck Stock Requests tab (see the
+          // ?tab=/?requestId= handling in PartInventory.tsx) instead of just
+          // landing on Part Inventory's default tab, where the pending
+          // request isn't visible at all.
+          linkTo,
         }).catch((e) => console.warn("[truckStockNotify] notify parts manager failed:", e)),
       ),
     );

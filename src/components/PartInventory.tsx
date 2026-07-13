@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, Truck, AlertTriangle, X } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -41,6 +41,7 @@ function usePortal(open: boolean) {
 
 export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { companyId, email, role, uid } = useAuth();
+  const routeSearch = (useSearch({ strict: false }) as { tab?: string; requestId?: string }) ?? {};
   const [activeTab, setActiveTab] = useState<"inventory" | "truck-stock" | "truck-stock-requests">("inventory");
   // canApproveTruckStockPulls needs extra_roles too, which useAuth() doesn't
   // carry (it only exposes the primary role) — same pattern as HR's
@@ -51,6 +52,15 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     getMyRoles(uid).then(({ extraRoles }) => setExtraRoles(extraRoles)).catch(() => setExtraRoles([]));
   }, [uid]);
   const canApproveTruckStock = canApproveTruckStockPulls(role, extraRoles);
+
+  // Deep link from a bell-icon notification straight into the Truck Stock
+  // Requests tab (a new pull request needs review, or one was approved/
+  // rejected) — same ?tab= convention as Employee Self-Service.
+  useEffect(() => {
+    if (routeSearch.tab === "truck-stock-requests" && canApproveTruckStock) {
+      setActiveTab("truck-stock-requests");
+    }
+  }, [routeSearch.tab, canApproveTruckStock]);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
   const [partDist, setPartDist] = useState(""); const [distOpen, setDistOpen] = useState(false);
   const [status, setStatus] = useState(""); const [statusOpen, setStatusOpen] = useState(false);
@@ -211,7 +221,7 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
 
         {activeTab === "truck-stock" && <TruckStockPanel />}
-        {activeTab === "truck-stock-requests" && canApproveTruckStock && <TruckStockRequestsPanel />}
+        {activeTab === "truck-stock-requests" && canApproveTruckStock && <TruckStockRequestsPanel highlightRequestId={routeSearch.requestId} />}
 
         {activeTab === "inventory" && (
         <>

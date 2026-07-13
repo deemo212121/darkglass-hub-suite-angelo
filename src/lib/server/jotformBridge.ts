@@ -581,6 +581,12 @@ async function writeNotification(
           uid: sv(uid),
           isRead: { booleanValue: false },
           createdAt: { timestampValue: new Date().toISOString() },
+          // Lets NotificationsMenu's bell-dropdown click handler
+          // (`if (n.linkTo) navigate(...)`) jump straight to the HR
+          // Dashboard's Jotform Submissions tab instead of doing nothing —
+          // this field was missing entirely before, so clicking a Jotform
+          // notification from the bell never navigated anywhere.
+          link: sv("/m/dashboard/hr-dashboard"),
           formId: sv(fields.formId),
           submissionId: sv(fields.submissionId),
           // Jotform's own human-readable "Label: value, Label: value…" summary
