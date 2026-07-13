@@ -499,7 +499,17 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                     <td className="px-3 py-2.5 text-xs whitespace-nowrap text-muted-foreground">
                       {a.role === "Team Leader" ? "Team Leader" : "CSR Agent"}
                     </td>
-                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">{a.name}</td>
+                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">
+                      <a
+                        href={`/csr-agent/${a.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-blue-300 hover:underline transition"
+                        title={`View ${a.name}'s statistics — issue a Warning or Mistake here`}
+                      >
+                        {a.name}
+                      </a>
+                    </td>
                     <td className="px-3 py-2.5 text-right text-green-400 w-24">{a.schedule}</td>
                     <td className="px-3 py-2.5 text-right w-24">{a.update}</td>
                     <td className="px-3 py-2.5 text-center w-20">

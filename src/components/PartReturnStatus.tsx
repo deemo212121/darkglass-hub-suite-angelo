@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 
 type ReturnRow = {
   raNo: string;
@@ -147,6 +148,30 @@ function loadState() {
 
 function saveState(regular: ReturnRow[], core: ReturnRow[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ regular, core }));
+}
+
+/** Export the rows currently on screen (whatever filters/search are active) as a real .xlsx workbook. */
+function exportReturnsToXlsx(rows: ReturnRow[], sheetName: string, filenamePrefix: string) {
+  const data = rows.map((row) => ({
+    "RA No": row.raNo,
+    "PO No": row.poNo,
+    "Unique ID": row.uniqueId,
+    "Part No": row.partNo,
+    "Description": row.description,
+    "Return Type": row.returnType,
+    "Return Reason": row.returnReason,
+    "Status": row.status,
+    "Return Date": row.returnDate,
+    "Returned By": row.returnedBy,
+    "Qty": row.qty,
+    "Unit Price": Number(row.unitPrice || 0),
+    "Core Value": Number(row.coreValue || 0),
+    "Return Label": row.returnLabel,
+  }));
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, `${filenamePrefix}_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export function PartReturnStatusPage() {
@@ -512,7 +537,12 @@ export function PartReturnStatusPage() {
           <div className="panel">
             <div className="meta-row">
               <div id="recordInfo" className="result-info">{filteredRegular.length} records found</div>
-              <input id="resultSearch" className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(event) => setResultSearch(event.target.value)} />
+              <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+                <input id="resultSearch" className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(event) => setResultSearch(event.target.value)} />
+                <button type="button" className="btn" onClick={() => exportReturnsToXlsx(filteredRegular, "Part Return", "part-return-status")}>
+                  <Download className="h-3.5 w-3.5" /> Download XLSX
+                </button>
+              </div>
             </div>
 
             <div id="regularTableWrap" className="table-wrap" ref={regularTableWrapRef}>
@@ -584,7 +614,12 @@ export function PartReturnStatusPage() {
           <div className="panel">
             <div className="meta-row">
               <div id="coreRecordInfo" className="result-info">{filteredCore.length} records found</div>
-              <input id="coreResultSearch" className="search-input" type="text" placeholder="search in result" value={coreResultSearch} onChange={(event) => setCoreResultSearch(event.target.value)} />
+              <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+                <input id="coreResultSearch" className="search-input" type="text" placeholder="search in result" value={coreResultSearch} onChange={(event) => setCoreResultSearch(event.target.value)} />
+                <button type="button" className="btn" onClick={() => exportReturnsToXlsx(filteredCore, "Core Part Return", "core-part-return-status")}>
+                  <Download className="h-3.5 w-3.5" /> Download XLSX
+                </button>
+              </div>
             </div>
 
             <div id="coreTableWrap" className="table-wrap" ref={coreTableWrapRef}>

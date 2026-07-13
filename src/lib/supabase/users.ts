@@ -185,7 +185,7 @@ export async function getMyRoles(firebaseUid: string): Promise<{ role: string | 
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, required_check_in, required_check_out, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 
