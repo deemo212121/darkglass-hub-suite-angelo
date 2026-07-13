@@ -699,7 +699,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     try {
-      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Reviewer");
+      await reviewPtoStage(request, stage, decision, myProfileId || "");
       await refreshRequests();
     } catch (err) {
       alert(`Failed to update PTO request: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -721,9 +721,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
           return;
         }
-        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, displayName || "HR", correction.correctedMealStart, correction.correctedMealEnd);
+        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, correction.correctedMealStart, correction.correctedMealEnd);
       } else {
-        await rejectTimecardCorrection(correction, myProfileId, displayName || "HR");
+        await rejectTimecardCorrection(correction, myProfileId);
       }
       await refreshRequests();
     } catch (err) {

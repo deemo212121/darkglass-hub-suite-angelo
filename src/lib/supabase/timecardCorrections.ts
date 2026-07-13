@@ -145,7 +145,6 @@ export async function approveTimecardCorrection(
   correctedCheckIn: string,
   correctedCheckOut: string,
   reviewerId?: string | null,
-  reviewerName?: string | null,
   correctedMealStart?: string,
   correctedMealEnd?: string
 ): Promise<void> {
@@ -192,7 +191,7 @@ export async function approveTimecardCorrection(
   await createNotification({
     recipientId: correction.profileId,
     senderId: reviewerId || null,
-    senderName: reviewerName || "HR",
+    senderName: null,
     body: `✅ Your time correction request for ${correction.workDate} was approved.`,
     linkTo: "/m/dashboard/employee-self-service?tab=requests",
   }).catch((err) => console.error("Failed to notify correction approval:", err));
@@ -201,8 +200,7 @@ export async function approveTimecardCorrection(
 /** Reject a correction — history is auto-logged by the DB trigger. Notifies the employee. */
 export async function rejectTimecardCorrection(
   correction: Pick<TimecardCorrectionRow, "id" | "profileId" | "workDate">,
-  reviewerId?: string | null,
-  reviewerName?: string | null
+  reviewerId?: string | null
 ): Promise<void> {
   const { error } = await supabase
     .from("timecard_corrections")
@@ -215,7 +213,7 @@ export async function rejectTimecardCorrection(
   await createNotification({
     recipientId: correction.profileId,
     senderId: reviewerId || null,
-    senderName: reviewerName || "HR",
+    senderName: null,
     body: `❌ Your time correction request for ${correction.workDate} was rejected.`,
     linkTo: "/m/dashboard/employee-self-service?tab=requests",
   }).catch((err) => console.error("Failed to notify correction rejection:", err));

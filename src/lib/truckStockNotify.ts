@@ -102,6 +102,8 @@ export async function notifyRequesterOfPullDecision(payload: {
   qty: number;
   ticketNo: string;
   reason?: string;
+  reviewerName?: string | null;
+  reviewerId?: string | null;
 }): Promise<void> {
   try {
     if (!payload.requesterId) return;
@@ -112,8 +114,8 @@ export async function notifyRequesterOfPullDecision(payload: {
         `${payload.reason ? ` Reason: ${payload.reason}` : ""} Please order it from a distributor instead.`;
     await createNotification({
       recipientId: payload.requesterId,
-      senderId: null,
-      senderName: "Parts Manager",
+      senderId: payload.reviewerId ?? null,
+      senderName: payload.reviewerName || "Parts Manager",
       body,
       linkTo: `/ticket/${payload.ticketNo}`,
     });

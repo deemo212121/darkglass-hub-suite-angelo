@@ -510,7 +510,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     try {
-      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Reviewer");
+      await reviewPtoStage(request, stage, decision, myProfileId || "");
       setPtoRequests(await getCompanyPtoRequests());
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -560,7 +560,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         correctionTimecardData.checkIn,
         correctionTimecardData.checkOut,
         myProfileId,
-        displayName || "HR",
         correctionTimecardData.mealStart,
         correctionTimecardData.mealEnd
       );
@@ -576,7 +575,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const handleRejectCorrection = async () => {
     if (!selectedCorrection) return;
     try {
-      await rejectTimecardCorrection(selectedCorrection, myProfileId, displayName || "HR");
+      await rejectTimecardCorrection(selectedCorrection, myProfileId);
       await refreshCorrections();
       setSelectedCorrection(null);
     } catch (error) {

@@ -28,7 +28,7 @@ import {
 } from "@/lib/supabase/truckStockRequests";
 
 export function TruckStockRequestsPanel({ highlightRequestId }: { highlightRequestId?: string } = {}) {
-  const { uid } = useAuth();
+  const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [pending, setPending] = useState<TruckStockPullRequestRow[]>([]);
@@ -126,6 +126,8 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
         partNo: req.partNo,
         qty: req.quantity,
         ticketNo: req.ticketNo,
+        reviewerName: displayName,
+        reviewerId: myProfileId,
       });
       await load();
     } catch (err) {
@@ -157,6 +159,8 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
         qty: rejectTarget.quantity,
         ticketNo: rejectTarget.ticketNo,
         reason: rejectReason,
+        reviewerName: displayName,
+        reviewerId: myProfileId,
       });
       setRejectTarget(null);
       setRejectReason("");

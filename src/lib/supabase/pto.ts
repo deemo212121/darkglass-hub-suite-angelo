@@ -289,8 +289,7 @@ export async function reviewPtoStage(
   request: Pick<PtoRequestRow, "id" | "profileId" | "managerId" | "managerStatus" | "hrStatus" | "startDate" | "endDate">,
   stage: PtoStage,
   decision: "approved" | "rejected",
-  reviewerId: string,
-  reviewerName: string
+  reviewerId: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const payload =
@@ -310,7 +309,7 @@ export async function reviewPtoStage(
     await createNotification({
       recipientId: request.profileId,
       senderId: reviewerId,
-      senderName: reviewerName,
+      senderName: null,
       body: `❌ Your PTO request (${dateRange}) was rejected by ${stageLabel}.`,
       linkTo: "/m/dashboard/employee-self-service?tab=requests",
     }).catch((err) => console.error("Failed to notify PTO rejection:", err));
@@ -322,7 +321,7 @@ export async function reviewPtoStage(
     await createNotification({
       recipientId: request.profileId,
       senderId: reviewerId,
-      senderName: reviewerName,
+      senderName: null,
       body: `✅ Your PTO request (${dateRange}) has been fully approved!`,
       linkTo: "/m/dashboard/employee-self-service?tab=requests",
     }).catch((err) => console.error("Failed to notify PTO approval:", err));
@@ -340,7 +339,7 @@ export async function reviewPtoStage(
           createNotification({
             recipientId: hr.id,
             senderId: reviewerId,
-            senderName: reviewerName,
+            senderName: null,
             body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by the manager — awaiting your HR review.`,
             linkTo: "/m/dashboard/employee-self-service?tab=manage",
           })
@@ -350,7 +349,7 @@ export async function reviewPtoStage(
       await createNotification({
         recipientId: request.managerId,
         senderId: reviewerId,
-        senderName: reviewerName,
+        senderName: null,
         body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by HR — awaiting your manager review.`,
         linkTo: "/m/dashboard/employee-self-service?tab=manage",
       });
