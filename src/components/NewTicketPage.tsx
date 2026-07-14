@@ -53,6 +53,7 @@ const WARRANTY_TYPES = [
 const DEFAULT_FORM = {
   ticketNo: "",
   originalTicketNo: "",
+  caseNumber: "",
   isRedo: false,
   fakeTicket: false,
   source: "",
@@ -119,6 +120,7 @@ export function NewTicketPage({ mod, sub }: Props) {
         const newForm = {
           ticketNo: `RE-${payload.ticketNo}`,
           originalTicketNo: payload.ticketNo,
+          caseNumber: payload.caseNumber || "",
           isRedo: true,
           fakeTicket: false,
           source: payload.source || "",
@@ -261,7 +263,18 @@ export function NewTicketPage({ mod, sub }: Props) {
       diagnosed: form.problemDescription,
       internalNote: "",
       status: createdTicketStatus,
-      schedule: form.cxPreferredDate ? new Date(form.cxPreferredDate).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : "",
+      // Reformat the <input type="date"> value ("YYYY-MM-DD") to "MM/DD/YY"
+      // with plain string slicing — NOT `new Date(str).toLocaleDateString()`.
+      // A date-only ISO string is parsed as UTC midnight; formatting it back
+      // out in the browser's local timezone (anything behind UTC, i.e. all
+      // of the US) rolls it back a day — picking July 7 silently saved as
+      // July 6.
+      schedule: form.cxPreferredDate
+        ? (() => {
+            const [y, m, d] = form.cxPreferredDate.split("-");
+            return `${m}/${d}/${y.slice(2)}`;
+          })()
+        : "",
       technician: "",
       customerPref: form.cxPreferredDate ? "Yes" : "No",
       redo: form.isRedo ? "Yes" : "No",
@@ -272,6 +285,7 @@ export function NewTicketPage({ mod, sub }: Props) {
       statusChangedAt: new Date().toISOString(),
       fakeTicket: form.fakeTicket,
       originalTicketNo: form.originalTicketNo || undefined,
+      caseNumber: form.caseNumber || undefined,
       callReceivedDate: form.callTakenDate,
     };
 
@@ -335,7 +349,7 @@ export function NewTicketPage({ mod, sub }: Props) {
               </div>
             </div>
 
-            <div className="ticket-form-grid">
+            <div className="ticket-form-grid ticket-form-grid-3">
               <div className="form-group">
                 <label className="form-label required" htmlFor="source">Source</label>
                 <select id="source" className="form-select" value={form.source} onChange={(event) => update("source", event.target.value)} required>
@@ -346,6 +360,10 @@ export function NewTicketPage({ mod, sub }: Props) {
               <div className="form-group">
                 <label className="form-label required" htmlFor="customerName">Name</label>
                 <input id="customerName" className="form-input" value={form.customerName} onChange={(event) => update("customerName", event.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="caseNumber">Case Number <span className="text-muted-foreground font-normal">(Optional)</span></label>
+                <input id="caseNumber" className="form-input" value={form.caseNumber} onChange={(event) => update("caseNumber", event.target.value)} />
               </div>
             </div>
 

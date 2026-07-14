@@ -180,8 +180,21 @@ function rowToTicket(row: any): Ticket {
     // tracking
     fakeTicket: row.fake_ticket ?? false,
     originalTicketNo: row.original_ticket_no ?? "",
+    caseNumber: row.case_number ?? "",
     callReceivedDate: row.call_received_date ?? "",
     claimCompany: row.claim_company ?? "",
+    nsaStatus: row.nsa_status ?? "",
+    nsaRouteName: row.nsa_route_name ?? "",
+    nsaGroupName: row.nsa_group_name ?? "",
+    nsaDeductible: row.nsa_deductible ?? "",
+    nsaScheduleAck: row.nsa_schedule_ack ?? "",
+    nsaSpecialInstructions: row.nsa_special_instructions ?? "",
+    nsaValidCoverage: row.nsa_valid_coverage ?? "",
+    nsaRequiredCoverage: row.nsa_required_coverage ?? "",
+    nsaRequiredPart: row.nsa_required_part ?? "",
+    nsaPreAuth: row.nsa_pre_auth ?? "",
+    nsaMasterCode: row.nsa_master_code ?? "",
+    nsaCoverageExclusions: row.nsa_coverage_exclusions ?? "",
     // planner slot (persisted)
     // @ts-expect-error extra field consumed by the Work Planner
     slot: row.time_slot ?? undefined,
@@ -363,6 +376,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
       problem_description: input.problemDescription ?? null,
       fake_ticket: input.fakeTicket ?? false,
       original_ticket_no: input.originalTicketNo ?? null,
+      case_number: input.caseNumber ?? null,
     })
     .select(SELECT)
     .single();
@@ -563,6 +577,7 @@ export async function updateTicketFields(
     warranty?: string;
     claimCompany?: string;
     originalTicketNo?: string;
+    caseNumber?: string;
   }
 ): Promise<void> {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -580,6 +595,7 @@ export async function updateTicketFields(
     "warranty",
     "claimCompany",
     "originalTicketNo",
+    "caseNumber",
   ];
   const touchedProductInfo = productKeys.some((k) => fields[k] !== undefined);
 
@@ -595,6 +611,7 @@ export async function updateTicketFields(
   if (fields.warranty !== undefined) payload.warranty = fields.warranty;
   if (fields.claimCompany !== undefined) payload.claim_company = fields.claimCompany;
   if (fields.originalTicketNo !== undefined) payload.original_ticket_no = fields.originalTicketNo;
+  if (fields.caseNumber !== undefined) payload.case_number = fields.caseNumber;
   if (touchedProductInfo) payload.product_edited_by_user = true;
 
   const { error } = await supabase.from("tickets").update(payload).eq("ticket_no", ticketNo);
@@ -1303,6 +1320,31 @@ async function upsertTicketFromServicePowerImpl(
     customer_pref: bool(input.customerPref),
     redo: bool(input.redo),
     problem_description: input.problemDescription ?? input.internalNote ?? null,
+    // Case number (migration 0056) — nsaSync.ts computes this from the NSA
+    // dispatch's caseNumber, but this payload never read input.caseNumber
+    // (or, before 0056, input.originalTicketNo, which is what it used to
+    // be called) at all, so it silently never made it to Supabase. The
+    // ticket detail page only ever showed it correctly for NSA tickets
+    // because of a separate live re-fetch straight from the NSA API on
+    // every page view — every other view (Work Map, Ticket List, reports)
+    // never saw it.
+    case_number: input.caseNumber || null,
+    // NSA dispatch fields (see migration 0055) — nsaSync.ts has always
+    // computed these from the NSA API response, but they were silently
+    // dropped here before, since this payload had no handling for any
+    // nsa*-prefixed field.
+    nsa_status: input.nsaStatus || null,
+    nsa_route_name: input.nsaRouteName || null,
+    nsa_group_name: input.nsaGroupName || null,
+    nsa_deductible: input.nsaDeductible || null,
+    nsa_schedule_ack: input.nsaScheduleAck || null,
+    nsa_special_instructions: input.nsaSpecialInstructions || null,
+    nsa_valid_coverage: input.nsaValidCoverage || null,
+    nsa_required_coverage: input.nsaRequiredCoverage || null,
+    nsa_required_part: input.nsaRequiredPart || null,
+    nsa_pre_auth: input.nsaPreAuth || null,
+    nsa_master_code: input.nsaMasterCode || null,
+    nsa_coverage_exclusions: input.nsaCoverageExclusions || null,
     updated_at: new Date().toISOString(),
   };
 

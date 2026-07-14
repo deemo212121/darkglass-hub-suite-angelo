@@ -6,7 +6,9 @@
  *
  * Field mapping (based on actual NSA API response):
  *   NSA dispatchNumber        → tickets.ticket_no
- *   NSA caseNumber            → tickets.original_ticket_no
+ *   NSA caseNumber            → tickets.case_number (0056 — was
+ *                                original_ticket_no, which is "Redo
+ *                                Ticket #"; a dispatch is never a redo)
  *   NSA brand                 → tickets.manufacturer
  *   NSA model                 → tickets.model
  *   NSA serial                → tickets.serial
@@ -87,7 +89,7 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
     ticketSource: "NSA",
     claimCompany: "NSA",
     account: "NSA",
-    originalTicketNo: d.caseNumber ?? "",
+    caseNumber: d.caseNumber ?? "",
     // Product
     manufacturer: d.brand ?? "",
     model: d.model ?? "",
@@ -129,8 +131,8 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
     nsaRequiredCoverage: requiredCoverage,
     nsaRequiredPart: requiredPart,
     nsaPreAuth: preAuth,
-    nsaCaseNumber: d.caseNumber ?? "",
     nsaMasterCode: d.masterCode ?? "",
+    nsaCoverageExclusions: d.coverageExclusions ?? "",
   };
 }
 
