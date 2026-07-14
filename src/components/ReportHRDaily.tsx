@@ -47,6 +47,17 @@ import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getAppUrl } from "@/lib/appUrl";
 
+// Formats a <input type="date"> value ("YYYY-MM-DD") as "M/D/YYYY" via plain
+// string slicing — NOT `new Date(str).toLocaleDateString()`. A date-only ISO
+// string is parsed as UTC midnight; formatting it back out in the browser's
+// local timezone (anything behind UTC, i.e. all of the US) rolls it back a
+// day, e.g. printing "since 7/5/2026" on a COE for an employee who actually
+// started 7/6.
+function formatDateOnlyString(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-");
+  return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+}
+
 const ALL_US_BRANCHES = LOCATIONS_DATA.filter(l => !l.isPhilippines).map(l => l.location).sort();
 const ALL_PH_BRANCHES = LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location).sort();
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location));
@@ -814,11 +825,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
         <h1>CERTIFICATE OF EMPLOYMENT<br/>US IN HOME SERVICES</h1>
 
-        <p>Date: <strong>${blank(f.date ? new Date(f.date).toLocaleDateString() : "")}</strong></p>
+        <p>Date: <strong>${blank(f.date ? formatDateOnlyString(f.date) : "")}</strong></p>
 
         <p>To Whom It May Concern,</p>
 
-        <p>This is to certify that <strong>${blank(f.employeeName)}</strong> has been employed with US IN HOME SERVICES since ${blank(f.employeeStartDate ? new Date(f.employeeStartDate).toLocaleDateString() : "")}.</p>
+        <p>This is to certify that <strong>${blank(f.employeeName)}</strong> has been employed with US IN HOME SERVICES since ${blank(f.employeeStartDate ? formatDateOnlyString(f.employeeStartDate) : "")}.</p>
 
         <p>During their employment, ${blank(f.employeeName)} has been serving as <strong>${blank(f.jobTitle)}</strong> and has been a member of our organization in good standing. The employee receives a gross compensation of $${blank(f.amount)} per <strong>${blank(f.month)}</strong>, subject to applicable deductions and company policies.</p>
 
