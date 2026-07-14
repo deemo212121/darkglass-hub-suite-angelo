@@ -66,6 +66,65 @@ export const LOCATIONS = [
   "Wilmington",
 ] as const;
 
+// Region groupings for branch-level reporting (Operations Daily Report).
+// Keyed on the canonical LOCATIONS spellings above, since that's what's
+// actually stored in tickets.location — not the loosely-formatted names a
+// business user might type (e.g. "Dallas TX", "Jackson MS").
+export const REGIONS = ["CENTRAL", "WEST", "EAST"] as const;
+export type Region = (typeof REGIONS)[number];
+
+export const REGION_LOCATIONS: Record<Region, string[]> = {
+  CENTRAL: [
+    "Birmingham",
+    "Chattanooga",
+    "Columbus",
+    "Destin",
+    "Knoxville",
+    "Mobile",
+    "Montgomery",
+    "Nashville",
+    "Tallahassee",
+  ],
+  WEST: [
+    "Cape Girardeau",
+    "Dallas",
+    "Jackson, MS",
+    "Jackson, TN",
+    "Jonesboro",
+    "Lake Charles",
+    "Little Rock",
+    "Memphis",
+    "New Orleans",
+    "San Antonio",
+    "St. Louis",
+  ],
+  EAST: [
+    "Asheville",
+    "Atlanta",
+    "Huntsville",
+    "Jacksonville",
+    "Norfolk",
+    "Raleigh",
+    "Richmond",
+    "Savannah",
+    "Wilmington",
+  ],
+};
+
+// Real synced ticket.location values sometimes drop the space after a
+// comma (e.g. "Jackson,MS" instead of "Jackson, MS") — match loosely.
+function normalizeLocationForRegionMatch(v: string): string {
+  return (v || "").trim().replace(/,\s+/g, ",");
+}
+
+export function locationRegion(location: string): Region | null {
+  const v = normalizeLocationForRegionMatch(location);
+  for (const region of REGIONS) {
+    if (REGION_LOCATIONS[region].some((loc) => normalizeLocationForRegionMatch(loc) === v)) return region;
+  }
+  return null;
+}
+
 export const TECHNICIANS_BY_LOCATION: Record<string, readonly string[]> = {
   Atlanta: ["Abel Severino", "Abraham Im", "Gerrell Berg", "Jordan Brown", "Joshua Silva", "Kevin Khaiphanliane", "Nathan Napora"],
   Birmingham: ["David Sims", "Kenny Shin", "Zonate Grant"],

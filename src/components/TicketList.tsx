@@ -5,10 +5,11 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Clock, History, X, User, Columns3, Map as MapIcon } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
-import { 
-  TICKET_SOURCES, 
-  REPAIR_STATUS_OPTIONS, 
-  type Ticket 
+import {
+  TICKET_SOURCES,
+  REPAIR_STATUS_OPTIONS,
+  statusGroupOf,
+  type Ticket
 } from "@/lib/ticketData";
 import {
   getCompanyTickets,
@@ -135,43 +136,8 @@ interface StatusLogEntry {
   note?: string;
 }
 
-// Bucket a raw repair status into one of the high-level groups shown in the
-// Tech Daily Report legend. Completed and Claimed are treated as one bucket
-// because a Claimed ticket is functionally a completed/closed job for the
-// reporting we care about here.
-type StatusGroup = "open" | "completed" | "cancelled";
-
-function statusGroupOf(status: string): StatusGroup | "other" {
-  const v = String(status || "").trim().toLowerCase();
-  if (!v) return "other";
-  // "Need Cancel" is still an OPEN/Pending work item — CSR is asking the
-  // warranty company to cancel; the ticket isn't actually cancelled yet.
-  // Treat it as Open BEFORE the cancelled bucket so it doesn't get caught
-  // by the broader "cancel" match.
-  if (v.includes("need cancel")) return "open";
-  // Cancelled (the actual terminal state).
-  if (v === "cl-cancelled" || v === "cancelled" || /\bcancell?ed\b/.test(v)) return "cancelled";
-  // Completed / Claimed bucket — CL-Completed, CL-Claimed, CL-Data-Closed all
-  // count as a finished job.
-  if (
-    v === "cl-completed" ||
-    v === "completed" ||
-    v === "cl-claimed" ||
-    v === "claimed" ||
-    v.includes("data closed") ||
-    v.includes("data-closed")
-  ) return "completed";
-  // Everything else that flows through CSR / OP / PT / TR / CL-* (Ready, Need PO,
-  // Need Cancel, Parts Back Ordered, etc.) is still in-progress = Pending/Open.
-  if (
-    v.startsWith("csr-") ||
-    v.startsWith("op-") ||
-    v.startsWith("pt-") ||
-    v.startsWith("tr-") ||
-    v.startsWith("cl-")
-  ) return "open";
-  return "other";
-}
+// statusGroupOf is now the shared helper imported from @/lib/ticketData —
+// used below for the Tech Daily Report legend / status-group filter.
 
 interface TicketVisit {
   ticketNo: string;

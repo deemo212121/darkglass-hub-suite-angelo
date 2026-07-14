@@ -90,82 +90,13 @@ export const partsReportData: Record<string, any> = {
   },
 };
 
-export const operationsReportData: Record<string, any> = {
-  "602": {
-    staff: [
-      { name: "Operations Staff 1", tasks: 35, mishandled: 2, pending: 5 },
-      { name: "Operations Staff 2", tasks: 42, mishandled: 1, pending: 3 },
-    ],
-    summary: {
-      totalTasks: 280,
-      totalMishandled: 8,
-      totalPending: 35,
-    },
-  },
-};
+// Operations Daily Report's Overview tab now comes from real BizOps
+// Manager/Senior Manager profiles + the live Warnings/Mistakes notes
+// workflow (see ReportOperationsDaily.tsx) — the mock operationsReportData/
+// opsReportData structures that used to live here have been removed.
 
-export const opsReportData: Record<string, any> = {
-  "602": {
-    agents: [
-      { name: "Maverick Nieto", startDate: "01/15/26", hr: "HR1", workHours: "8-5", tasks: "Task list", mishandled: null, warning: 0, remarks: "" },
-      { name: "Wincel Carusca", startDate: "02/01/26", hr: "HR1", workHours: "8-5", tasks: "Task list", mishandled: null, warning: 0, remarks: "" },
-    ],
-  },
-};
-
-// TX Daily Report Data Structures
-export const eastReportData = {
-  summary: {
-    ltpTotal: 145,
-    completionRate: 87,
-    branches: 5,
-  },
-  branches: [
-    { branch: "Houston HQ", ltp: 45, completed: 39, rate: 87, techs: 12 },
-    { branch: "Dallas", ltp: 38, completed: 33, rate: 87, techs: 10 },
-    { branch: "Austin", ltp: 35, completed: 31, rate: 89, techs: 9 },
-    { branch: "San Antonio", ltp: 27, completed: 23, rate: 85, techs: 7 },
-  ],
-  technicians: [
-    { name: "Tech A", branch: "Houston HQ", ltp: 15, completed: 14, rate: 93 },
-    { name: "Tech B", branch: "Houston HQ", ltp: 12, completed: 10, rate: 83 },
-    { name: "Tech C", branch: "Dallas", ltp: 14, completed: 12, rate: 86 },
-  ],
-};
-
-export const westReportData = {
-  summary: {
-    ltpTotal: 98,
-    completionRate: 85,
-    branches: 3,
-  },
-  branches: [
-    { branch: "El Paso", ltp: 42, completed: 36, rate: 86, techs: 8 },
-    { branch: "Lubbock", ltp: 35, completed: 29, rate: 83, techs: 7 },
-    { branch: "Midland", ltp: 21, completed: 18, rate: 86, techs: 5 },
-  ],
-  technicians: [
-    { name: "Tech D", branch: "El Paso", ltp: 16, completed: 14, rate: 88 },
-    { name: "Tech E", branch: "El Paso", ltp: 13, completed: 11, rate: 85 },
-    { name: "Tech F", branch: "Lubbock", ltp: 12, completed: 10, rate: 83 },
-  ],
-};
-
-export const centralReportData = {
-  summary: {
-    ltpTotal: 112,
-    completionRate: 89,
-    branches: 4,
-  },
-  branches: [
-    { branch: "Waco", ltp: 38, completed: 34, rate: 89, techs: 8 },
-    { branch: "Temple", ltp: 32, completed: 29, rate: 91, techs: 7 },
-    { branch: "Killeen", ltp: 25, completed: 22, rate: 88, techs: 6 },
-    { branch: "Bryan", ltp: 17, completed: 15, rate: 88, techs: 4 },
-  ],
-  technicians: [
-    { name: "Tech G", branch: "Waco", ltp: 14, completed: 13, rate: 93 },
-    { name: "Tech H", branch: "Waco", ltp: 12, completed: 11, rate: 92 },
-    { name: "Tech I", branch: "Temple", ltp: 13, completed: 12, rate: 92 },
-  ],
-};
+// Eastern/Western/Central TX branch data now comes from live tickets via
+// src/lib/operationsBranchMetrics.ts (see ReportBranchBase.tsx) — the mock
+// eastReportData/westReportData/centralReportData structures that used to
+// live here (fictional cities like "Houston HQ", "El Paso", "Waco") have
+// been removed.

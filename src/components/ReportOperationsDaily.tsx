@@ -1,92 +1,232 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend, LineChart, Line } from "recharts";
-import { opsReportData } from "@/lib/reportData";
+import * as XLSX from "xlsx";
+import { ChevronLeft, Loader2, Users, AlertTriangle, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getCompanyTickets } from "@/lib/supabase/tickets";
+import type { Ticket } from "@/lib/ticketData";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
+import { ReportBranchBase } from "./ReportBranchBase";
 
-const ALL_DATES=Object.keys(opsReportData).filter(k=>k!=='Staff list').sort();
-const KNOWN_AGENTS=["Maverick Nieto","Wincel Carusca","Lloyd Tombiga","Frederick Cabilao","Jerich Bolico"];
-const COLORS=["#3b82f6","#34d399","#a78bfa","#fb923c","#f472b6"];
-const fmtDate=(s:string)=>{const c=s.trim();return c.length===3?`${c[0]}/${c.slice(1)}/26`:`${c.slice(0,-2)}/${c.slice(-2)}/26`;};
+// Operations staff — BizOps Manager / Senior Manager roles, same live-staff
+// pattern used on Claims/Parts Dashboards (real profiles + real
+// Warnings/Mistakes from the company-wide notes workflow, not a hardcoded
+// name list). Checks both the primary role AND extra_roles (profiles.
+// extra_roles, migration 0020) — this app supports dual-role users (e.g. a
+// CSR Agent who is also a BizOps Manager), and every comparable roster
+// elsewhere (CSR Team Leader Dashboard, CSR Dashboard, HR) ORs both fields.
+const BIZOPS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
 
-export function ReportOperationsDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
-  const [date,setDate]=useState(ALL_DATES[0]);
-  const [agentFilter,setAgentFilter]=useState("");
-  const [mishandledFilter,setMishandledFilter]=useState("");
+function isBizOpsProfile(p: ProfileRow): boolean {
+  if (BIZOPS_ROLES.has(normalizeRole(p.role))) return true;
+  return (p.extra_roles || []).some((r) => BIZOPS_ROLES.has(normalizeRole(r)));
+}
 
-  const allAgents:any[]=useMemo(()=>((opsReportData as any)[date]?.agents||[]).filter((x:any)=>KNOWN_AGENTS.some(n=>x.name?.includes(n.split(' ')[0]))),[date]);
-  const filtered=useMemo(()=>{let a=allAgents;if(agentFilter)a=a.filter((x:any)=>x.name?.includes(agentFilter));if(mishandledFilter==="has")a=a.filter((x:any)=>x.mishandled&&x.mishandled!=="null");return a;},[allAgents,agentFilter,mishandledFilter]);
+const ALL_REGION_GROUPS = REGIONS.map((region) => ({ region, locations: REGION_LOCATIONS[region] }));
 
-  const agentBarData=filtered.map((a:any,i:number)=>({name:a.name.split(' ')[0],mishandled:a.mishandled&&a.mishandled!=="null"?1:0,warning:a.warning||0}));
-  const trendData=ALL_DATES.slice(-10).map(dt=>{
-    const agents=((opsReportData as any)[dt]?.agents||[]).filter((x:any)=>KNOWN_AGENTS.some(n=>x.name?.includes(n.split(' ')[0])));
-    return{date:fmtDate(dt),agents:agents.length,mishandled:agents.filter((a:any)=>a.mishandled&&a.mishandled!=="null").length,warnings:agents.reduce((s:number,a:any)=>s+(a.warning||0),0)};
-  });
+type TabKey = "overview" | "east" | "west" | "central";
 
-  return(
-    <div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
-      <div className="flex items-center gap-3 mb-6"><Link to="/m/$module" params={{module:mod.slug}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
-      <div className="panel mb-6"><div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
-          <select value={date} onChange={e=>setDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">{ALL_DATES.map(d=><option key={d} value={d}>{fmtDate(d)}</option>)}</select></div>
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</label>
-          <select value={agentFilter} onChange={e=>setAgentFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">All Agents</option>{KNOWN_AGENTS.map(n=><option key={n} value={n.split(' ')[0]}>{n}</option>)}</select></div>
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mishandled</label>
-          <select value={mishandledFilter} onChange={e=>setMishandledFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">All</option><option value="has">Has Mishandled</option></select></div>
-        {(agentFilter||mishandledFilter)&&<button onClick={()=>{setAgentFilter("");setMishandledFilter("");}} className="btn text-sm px-3 mb-0.5">Clear</button>}
-        <span className="text-sm text-muted-foreground mb-0.5">{filtered.length} agents</span>
-      </div></div>
+function exportStaffToXlsx(rows: { name: string; role: string; branch: string; warnings: number; mistakes: number }[]) {
+  const data = rows.map((r) => ({
+    Name: r.name,
+    Role: r.role,
+    Branch: r.branch,
+    Warnings: r.warnings,
+    Mistakes: r.mistakes,
+  }));
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "BizOps Staff");
+  XLSX.writeFile(workbook, `operations-bizops-staff_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[["Active Staff",filtered.length,"text-blue-300"],["With Mishandled",filtered.filter((a:any)=>a.mishandled&&a.mishandled!=="null").length,"text-red-300"],["With Warnings",filtered.filter((a:any)=>a.warning&&a.warning>0).length,"text-yellow-300"]].map(([l,v,c])=>(
-          <div key={l as string} className="panel p-4 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{l}</p><p className={`text-3xl font-bold ${c}`}>{v}</p></div>
-        ))}
-      </div>
+export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <div className="panel p-4">
-          <p className="text-sm font-semibold mb-4">Mishandled & Warnings per Agent</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={agentBarData} margin={{left:-10}}>
-              <XAxis dataKey="name" tick={{fill:"#94a3b8",fontSize:11}}/>
-              <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-              <Legend wrapperStyle={{fontSize:11,color:"#94a3b8"}}/>
-              <Bar dataKey="mishandled" fill="#f87171" radius={[4,4,0,0]} name="Mishandled"/>
-              <Bar dataKey="warning" fill="#facc15" radius={[4,4,0,0]} name="Warning"/>
-            </BarChart>
-          </ResponsiveContainer>
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [staff, setStaff] = useState<ProfileRow[]>([]);
+  const [notes, setNotes] = useState<CsrAgentNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [ticketData, profiles, allNotes] = await Promise.all([
+          getCompanyTickets(),
+          getCompanyUsers(),
+          getAllAgentNotes().catch((err) => {
+            console.error("Failed to load agent notes:", err);
+            return [];
+          }),
+        ]);
+        if (cancelled) return;
+        setTickets(ticketData);
+        setStaff(profiles.filter(isBizOpsProfile));
+        setNotes(allNotes);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Operations Daily Report.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Only approved notes count as an employee's official record — same rule
+  // used everywhere else this workflow shows up (CSR/Claims/Parts dashboards).
+  const warningCountByProfile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of notes) {
+      if (n.status !== "approved" || n.type !== "warning") continue;
+      map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1);
+    }
+    return map;
+  }, [notes]);
+  const mistakeCountByProfile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of notes) {
+      if (n.status !== "approved" || n.type !== "mistake") continue;
+      map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1);
+    }
+    return map;
+  }, [notes]);
+
+  const staffRows = useMemo(() => {
+    return staff
+      .map((p) => ({
+        id: p.id,
+        name: p.display_name || p.username || p.email,
+        role: ROLE_LABELS[normalizeRole(p.role)] ?? p.role,
+        branch: p.assigned_branch || "—",
+        warnings: warningCountByProfile.get(p.id) ?? 0,
+        mistakes: mistakeCountByProfile.get(p.id) ?? 0,
+      }))
+      .sort((a, b) => b.warnings + b.mistakes - (a.warnings + a.mistakes));
+  }, [staff, warningCountByProfile, mistakeCountByProfile]);
+
+  const totalWarnings = staffRows.reduce((s, r) => s + r.warnings, 0);
+  const totalMistakes = staffRows.reduce((s, r) => s + r.mistakes, 0);
+
+  const TABS: { key: TabKey; label: string }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "east", label: "Eastern TX Daily Report" },
+    { key: "west", label: "Western TX Daily Report" },
+    { key: "central", label: "Central TX Daily Report" },
+  ];
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <ChevronLeft className="h-4 w-4" />
+          </Link>
+          <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
-        <div className="panel p-4">
-          <p className="text-sm font-semibold mb-4">Mishandled Trend — Last 10 Days</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={trendData} margin={{left:-10}}>
-              <XAxis dataKey="date" tick={{fill:"#94a3b8",fontSize:10}}/>
-              <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-              <Legend wrapperStyle={{fontSize:11,color:"#94a3b8"}}/>
-              <Line type="monotone" dataKey="mishandled" stroke="#f87171" strokeWidth={2} dot={{r:3}} name="Mishandled"/>
-              <Line type="monotone" dataKey="warnings" stroke="#facc15" strokeWidth={2} dot={{r:3}} name="Warnings"/>
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
 
-      <div className="panel overflow-x-auto p-0">
-        <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between"><span>Agent Detail</span><span className="text-xs text-muted-foreground">{filtered.length} agents</span></div>
-        <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5">{["Name","Start Date","HR","Work Hours","Tasks","Mishandled Tickets","Warning","Remarks"].map(h=><th key={h} className="px-3 py-3 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}</tr></thead>
-        <tbody>{filtered.length===0?<tr><td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">No records match filters.</td></tr>:filtered.map((a:any,i:number)=>(
-          <tr key={i} className={`border-b border-white/5 hover:bg-white/5 ${i%2!==0?"bg-white/[0.02]":""}`}>
-            <td className="px-3 py-2.5 font-medium whitespace-nowrap">{a.name}</td><td className="px-3 py-2.5 text-xs text-muted-foreground">{a.startDate||'—'}</td>
-            <td className="px-3 py-2.5 text-muted-foreground">{a.hr||'—'}</td><td className="px-3 py-2.5 text-xs text-muted-foreground">{a.workHours||'—'}</td>
-            <td className="px-3 py-2.5 text-xs max-w-[200px] truncate" title={a.tasks||''}>{a.tasks||'—'}</td>
-            <td className="px-3 py-2.5 text-xs">{a.mishandled?<span className="text-red-400 text-xs">{String(a.mishandled).slice(0,60)}{String(a.mishandled).length>60?'…':''}</span>:'—'}</td>
-            <td className="px-3 py-2.5 text-center">{a.warning&&a.warning>0?<span className="px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">{a.warning}</span>:'—'}</td>
-            <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[150px] truncate" title={a.remarks||''}>{a.remarks||'—'}</td>
-          </tr>
-        ))}</tbody></table>
-      </div>
-    </main></div>
+        <div className="flex gap-1 mb-6 border-b border-white/10">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === tab.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {error ? (
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
+        ) : loading ? (
+          <div className="panel p-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading Operations Daily Report…
+          </div>
+        ) : (
+          <>
+            {activeTab === "overview" && (
+              <>
+                <p className="text-xs text-muted-foreground mb-4">Overall status across all regions and locations — Eastern, Western, and Central TX combined.</p>
+                <ReportBranchBase tickets={tickets} regionGroups={ALL_REGION_GROUPS} exportFilePrefix="operations-overview" />
+
+                <div className="flex items-center justify-between mt-8 mb-3">
+                  <h2 className="text-lg font-semibold">BizOps Staff</h2>
+                  <button onClick={() => exportStaffToXlsx(staffRows)} className="btn text-sm px-3 flex items-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Download XLSX
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                  {[
+                    { label: "BizOps Staff", value: staffRows.length, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
+                    { label: "Warnings", value: totalWarnings, color: "text-yellow-300", icon: <AlertTriangle className="h-4 w-4" /> },
+                    { label: "Mistakes", value: totalMistakes, color: "text-orange-300", icon: <AlertTriangle className="h-4 w-4" /> },
+                  ].map((k) => (
+                    <div key={k.label} className="panel p-4 text-center">
+                      <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+                      <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="panel p-0 overflow-hidden">
+                  <div className="px-4 py-4 border-b border-white/10">
+                    <h3 className="font-semibold text-sm">BizOps Staff</h3>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Everyone currently holding a BizOps Manager or BizOps Senior Manager role — click a name for their full stats, mistakes &amp; warnings.</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-white/5 border-b border-white/10">
+                          <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Name</th>
+                          <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Role</th>
+                          <th className="px-3 py-2 text-left font-semibold text-muted-foreground">Branch</th>
+                          <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Warnings</th>
+                          <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Mistakes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staffRows.length === 0 ? (
+                          <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">No one currently holds a BizOps Manager or BizOps Senior Manager role.</td></tr>
+                        ) : staffRows.map((s) => (
+                          <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-3 py-2 font-medium">
+                              <a href={`/csr-agent/${s.id}`} target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 hover:underline transition" title={`View ${s.name}'s statistics`}>
+                                {s.name}
+                              </a>
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">{s.role}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{s.branch}</td>
+                            <td className="px-3 py-2 text-right">
+                              {s.warnings > 0 ? <span className="bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded font-semibold">{s.warnings}</span> : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {s.mistakes > 0 ? <span className="bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded font-semibold">{s.mistakes}</span> : <span className="text-muted-foreground">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === "east" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "EAST", locations: REGION_LOCATIONS.EAST }]} exportFilePrefix="operations-eastern-tx" />}
+            {activeTab === "west" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "WEST", locations: REGION_LOCATIONS.WEST }]} exportFilePrefix="operations-western-tx" />}
+            {activeTab === "central" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "CENTRAL", locations: REGION_LOCATIONS.CENTRAL }]} exportFilePrefix="operations-central-tx" />}
+          </>
+        )}
+      </main>
+    </div>
   );
 }

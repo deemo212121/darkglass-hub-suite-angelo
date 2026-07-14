@@ -88,9 +88,29 @@ export interface Ticket {
   // Additional tracking fields
   fakeTicket?: boolean;
   originalTicketNo?: string;
+  // A claim/reference number from the source (NSA dispatch, or manually
+  // entered on New Ticket) — see migration 0056. Deliberately its own
+  // column, separate from originalTicketNo above ("Redo Ticket #"); the
+  // two used to share one column, which meant a ticket could never have
+  // both, and the ticket detail page had to guess which one a stored
+  // value actually meant.
+  caseNumber?: string;
   callReceivedDate?: string;
   addressNote?: string;
   claimCompany?: string;
+  // NSA dispatch fields (see nsaSync.ts / migration 0055).
+  nsaStatus?: string;
+  nsaRouteName?: string;
+  nsaGroupName?: string;
+  nsaDeductible?: string;
+  nsaScheduleAck?: string;
+  nsaSpecialInstructions?: string;
+  nsaValidCoverage?: string;
+  nsaRequiredCoverage?: string;
+  nsaRequiredPart?: string;
+  nsaPreAuth?: string;
+  nsaMasterCode?: string;
+  nsaCoverageExclusions?: string;
   // Service tracking data - visits and parts integrated into ticket
   visits?: Array<{
     id: string;
@@ -1054,4 +1074,53 @@ export function getTicketVisits(ticketNo: string): Ticket['visits'] {
 export function getTicketParts(ticketNo: string): Ticket['parts'] {
   const ticket = getTicketByNumber(ticketNo);
   return ticket?.parts || [];
+}
+
+// Bucket a raw repair status into one of the high-level groups used across
+// the app's ticket-status filtering/reporting (Ticket List's "Open/Pending"
+// filter, Overall Status dashboard, Operations Daily Report, etc). This is
+// the single source of truth — it used to be copy-pasted separately in
+// TicketList.tsx and overallStatusData.ts, which had already drifted once
+// (a bare "Acknowledged" status with no csr-/op-/pt-/tr-/cl- prefix was
+// bucketed differently by each copy).
+export type StatusGroup = "open" | "completed" | "cancelled";
+
+export function statusGroupOf(status: string): StatusGroup | "other" {
+  const v = String(status || "").trim().toLowerCase();
+  if (!v) return "other";
+  // "Need Cancel" is still an OPEN/Pending work item — CSR is asking the
+  // warranty company to cancel; the ticket isn't actually cancelled yet.
+  // Treat it as Open BEFORE the cancelled bucket so it doesn't get caught
+  // by the broader "cancel" match.
+  if (v.includes("need cancel")) return "open";
+  // Cancelled (the actual terminal state).
+  if (v === "cl-cancelled" || v === "cancelled" || /\bcancell?ed\b/.test(v)) return "cancelled";
+  // Completed / Claimed bucket — CL-Completed, CL-Claimed, CL-Data-Closed all
+  // count as a finished job.
+  if (
+    v === "cl-completed" ||
+    v === "completed" ||
+    v === "cl-claimed" ||
+    v === "claimed" ||
+    v.includes("data closed") ||
+    v.includes("data-closed")
+  ) return "completed";
+  // Everything else that flows through CSR / OP / PT / TR / CL-* (Ready, Need PO,
+  // Need Cancel, Parts Back Ordered, etc.) is still in-progress = Pending/Open.
+  if (
+    v.startsWith("csr-") ||
+    v.startsWith("op-") ||
+    v.startsWith("pt-") ||
+    v.startsWith("tr-") ||
+    v.startsWith("cl-")
+  ) return "open";
+  return "other";
+}
+
+export function isPendingStatus(status: string): boolean {
+  return statusGroupOf(status) === "open";
+}
+
+export function isClosedStatus(status: string): boolean {
+  return statusGroupOf(status) === "completed" || statusGroupOf(status) === "cancelled";
 }

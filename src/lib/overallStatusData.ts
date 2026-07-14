@@ -21,7 +21,7 @@
 
 import { getCompanyTickets, getTicketAuditLog } from "./supabase/tickets";
 import { getCompanyUsers } from "./supabase/users";
-import type { Ticket } from "./ticketData";
+import { isPendingStatus, isClosedStatus, type Ticket } from "./ticketData";
 
 export interface RankingRow {
   rank: number;
@@ -129,50 +129,11 @@ function statusColor(name: string, idx: number): string {
   return STATUS_COLOR[key] ?? DONUT_PALETTE[idx % DONUT_PALETTE.length];
 }
 
-// Kept byte-for-byte in sync with `statusGroupOf` in TicketList.tsx. That
-// function is the source of truth for what "Open / Pending" means in this
-// app; this dashboard must bucket tickets the exact same way or its counts
-// will silently drift from the Ticket List's "Open / Pending" filter (this
-// caused a real mismatch: statuses like "Acknowledged" have no csr-/op-/pt-/
-// tr-/cl- prefix, so the old blacklist-based check here counted them as
-// pending while TicketList's whitelist-based check put them in "other" and
-// excluded them from Open/Pending).
-type StatusGroup = "open" | "completed" | "cancelled";
-
-function statusGroupOf(status: string): StatusGroup | "other" {
-  const v = String(status || "").trim().toLowerCase();
-  if (!v) return "other";
-  if (v.includes("need cancel")) return "open";
-  if (v === "cl-cancelled" || v === "cancelled" || /\bcancell?ed\b/.test(v)) return "cancelled";
-  if (
-    v === "cl-completed" ||
-    v === "completed" ||
-    v === "cl-claimed" ||
-    v === "claimed" ||
-    v.includes("data closed") ||
-    v.includes("data-closed")
-  ) return "completed";
-  if (
-    v.startsWith("csr-") ||
-    v.startsWith("op-") ||
-    v.startsWith("pt-") ||
-    v.startsWith("tr-") ||
-    v.startsWith("cl-")
-  ) return "open";
-  return "other";
-}
-
-function isClosedStatus(status: string): boolean {
-  return statusGroupOf(status) === "completed" || statusGroupOf(status) === "cancelled";
-}
-
-// "Pending" now means exactly what TicketList's "Open / Pending" filter
-// means: statusGroupOf(status) === "open". Statuses that fall into "other"
-// (no recognized prefix, e.g. a bare "Acknowledged") are excluded from both,
-// instead of being silently swept into "pending" here.
-function isPendingStatus(status: string): boolean {
-  return statusGroupOf(status) === "open";
-}
+// isPendingStatus / isClosedStatus are now the shared helpers imported from
+// ./ticketData — the single source of truth for what "Open / Pending" means
+// across Ticket List, this dashboard, and Operations Daily Report, after a
+// prior drift bug where two separately-copied versions disagreed on statuses
+// with no csr-/op-/pt-/tr-/cl- prefix (e.g. a bare "Acknowledged").
 
 function ticketSourceName(ticket: Ticket): string {
   // Prefer the explicit Ticket Source; fall back to manufacturer / account so
