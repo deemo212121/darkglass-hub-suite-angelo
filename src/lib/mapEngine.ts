@@ -20,10 +20,38 @@
  * fallback for the rare case the routing call itself fails.
  */
 
-import L from "leaflet";
+import type * as Leaflet from "leaflet";
 import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
 
 export type LatLng = { lat: number; lng: number };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Leaflet is a browser-only library — its module touches `window` the
+// moment it's loaded, not just when its API is called. A static top-level
+// `import L from "leaflet"` therefore gets pulled into the SSR bundle too
+// (every map-bearing page is server-rendered), and Cloudflare Workers has
+// no `window` — the whole Worker fails to even start, before any request
+// is handled. This lazy loader is the only way to touch Leaflet: the
+// dynamic import() is code-split into a chunk that's never evaluated
+// unless something actually awaits getLeaflet(), which only ever happens
+// client-side (inside useEffect). Every caller keeps `import type * as
+// Leaflet from "leaflet"` for type positions (erased at compile time, so
+// it never reaches the SSR bundle) and gets the real module from here.
+// ─────────────────────────────────────────────────────────────────────────
+let leafletPromise: Promise<typeof Leaflet> | null = null;
+export function getLeaflet(): Promise<typeof Leaflet> {
+  if (typeof window === "undefined") return Promise.reject(new Error("Leaflet is client-only"));
+  // The CSS side-effect import is bundled here too, not as a static import in
+  // each caller — Vite ties a CSS chunk to whichever JS chunk shares its
+  // name, and a static `import "leaflet/dist/leaflet.css"` anywhere was
+  // enough to pull a static reference to the *JS* chunk back in too,
+  // defeating the lazy-load above.
+  // CSS and JS don't depend on each other — load them in parallel instead
+  // of chaining, so switching to Leaflet doesn't pay for both round-trips
+  // back to back.
+  if (!leafletPromise) leafletPromise = Promise.all([import("leaflet/dist/leaflet.css"), import("leaflet")]).then(([, mod]) => mod);
+  return leafletPromise;
+}
 
 export const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 export const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY as string;
@@ -44,7 +72,7 @@ export const OSM_ATTRIBUTION =
  * a ResizeObserver for every subsequent size change. Call once right after
  * `L.map(...)`; the returned function disconnects the observer on cleanup.
  */
-export function attachLeafletResizeFix(map: L.Map, container: HTMLElement): () => void {
+export function attachLeafletResizeFix(map: Leaflet.Map, container: HTMLElement): () => void {
   const t = window.setTimeout(() => map.invalidateSize(), 0);
   const observer = new ResizeObserver(() => map.invalidateSize());
   observer.observe(container);
@@ -71,9 +99,10 @@ export function attachLeafletResizeFix(map: L.Map, container: HTMLElement): () =
  *    pointing down at its location (ticket badges, house/office pins)
  */
 export function createBadgeDivIcon(
+  L: typeof Leaflet,
   innerHtml: string,
   opts: { className?: string; anchor?: "center" | "bottom" } = {},
-): L.DivIcon {
+): Leaflet.DivIcon {
   const transform = opts.anchor === "bottom" ? "translate(-50%, -100%)" : "translate(-50%, -50%)";
   return L.divIcon({
     html: `<div style="position:absolute;transform:${transform};">${innerHtml}</div>`,
@@ -124,7 +153,11 @@ async function geocodeWithGoogle(query: string): Promise<LatLng | null> {
   if (!maps) return null;
   const geocoder = new maps.Geocoder();
   return new Promise((resolve) => {
-    geocoder.geocode({ address: query }, (results: any, status: string) => {
+    // Every ticket/office address in this app is US-only — without this,
+    // a small town that happens to share a name with a well-known place
+    // abroad (e.g. "Canton, NC" vs. Guangzhou, historically "Canton") can
+    // resolve to entirely the wrong country.
+    geocoder.geocode({ address: query, componentRestrictions: { country: "US" } }, (results: any, status: string) => {
       if (status === "OK" && results?.[0]) {
         const pos = results[0].geometry.location;
         resolve({ lat: pos.lat(), lng: pos.lng() });
@@ -140,7 +173,12 @@ async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
     console.warn("geocodeWithGeoapify: VITE_GEOAPIFY_API_KEY is not set — cannot geocode in Leaflet mode.");
     return null;
   }
-  const url = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(query)}&limit=1&apiKey=${GEOAPIFY_API_KEY}`;
+  // Every ticket/office address in this app is US-only. Without this filter,
+  // a small town whose name coincides with a much more prominent place
+  // abroad — e.g. "Canton, NC" vs. Guangzhou (historically "Canton" in
+  // English) — can resolve to the wrong country entirely, which is exactly
+  // what put a technician's actual route on the map somewhere overseas.
+  const url = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(query)}&filter=countrycode:us&limit=1&apiKey=${GEOAPIFY_API_KEY}`;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -157,11 +195,15 @@ async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
 
 /**
  * Resolve an address string to coordinates. Checks the in-memory `cache`
- * (caller-provided, scoped to one render pass) then the Supabase DB cache
+ * (module-level by default, so it survives across re-renders and page
+ * navigations within the same tab — every call site used to pass its own
+ * fresh `new Map()`, so the same address got re-looked-up from Supabase on
+ * every single page visit even seconds apart) then the Supabase DB cache
  * before hitting the live provider — a given address is only ever geocoded
  * once, ever, regardless of which provider does it.
  */
-export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, LatLng | null> = new Map()) {
+const sessionGeocodeCache = new Map<string, LatLng | null>();
+export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, LatLng | null> = sessionGeocodeCache) {
   return async function geocode(query: string): Promise<LatLng | null> {
     if (!query) return null;
     if (cache.has(query)) return cache.get(query)!;
@@ -309,7 +351,7 @@ function pointAlongPath(points: LatLng[], fraction: number): { pos: LatLng; bear
  * to place one. Caller owns the returned marker's lifecycle (remove it
  * alongside the route line on redraw).
  */
-export function addRouteDirectionArrow(map: L.Map, points: LatLng[], color: string, fraction = 0.6): L.Marker | null {
+export function addRouteDirectionArrow(L: typeof Leaflet, map: Leaflet.Map, points: LatLng[], color: string, fraction = 0.6): Leaflet.Marker | null {
   const hit = pointAlongPath(points, fraction);
   if (!hit) return null;
   return L.marker([hit.pos.lat, hit.pos.lng], {

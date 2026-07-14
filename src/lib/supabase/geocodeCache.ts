@@ -83,7 +83,13 @@ export async function storeGeocode(address: string, point: GeoPoint): Promise<vo
         lng: point.lng,
         cached_at: new Date().toISOString(),
       },
-      { onConflict: "address_hash", ignoreDuplicates: true }
+      // Must match the actual unique constraint (company_id, address_hash)
+      // from 0026 — "address_hash" alone isn't a real constraint and
+      // PostgREST rejects the upsert with a 400 if the target doesn't
+      // match one exactly. company_id itself is left off the payload
+      // deliberately; 0054 defaults it to auth_company_id() at the DB
+      // level, since RLS scopes reads per-company anyway.
+      { onConflict: "company_id,address_hash", ignoreDuplicates: true }
     );
   } catch (err) {
     // Non-fatal — worst case we geocode the same address again next time.

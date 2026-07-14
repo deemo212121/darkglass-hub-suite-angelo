@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
@@ -18,7 +17,7 @@ import type { TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type TicketRecord = Record<string, any> & {
   ticketNo: string;
@@ -252,10 +251,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => { cancelled = true; };
   }, []);
   const leafletContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletMapRef = useRef<L.Map | null>(null);
-  const leafletMarkersRef = useRef<L.Marker[]>([]);
-  const leafletPolylinesRef = useRef<L.Polyline[]>([]);
-  const leafletArrowsRef = useRef<L.Marker[]>([]);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const leafletPolylinesRef = useRef<Leaflet.Polyline[]>([]);
+  const leafletArrowsRef = useRef<Leaflet.Marker[]>([]);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
 
   // Manual order within a single (date, technician, slot) cell. Keyed by
   // `${date}|${technician}|${slot}` → array of ticket numbers in the order
@@ -475,9 +475,17 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     };
   }, [mapProvider]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Instantiate the Leaflet map once Leaflet is the active provider.
   useEffect(() => {
-    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    if (mapProvider !== "leaflet" || !L || !leafletContainerRef.current) return;
     const container = leafletContainerRef.current;
     const map = L.map(container, {
       center: [37.0902, -95.7129],
@@ -494,7 +502,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       leafletMapRef.current = null;
       setMapReady(false);
     };
-  }, [mapProvider]);
+  }, [mapProvider, L]);
 
   useEffect(() => {
     if (!mapReady || !mapProvider) return;
@@ -502,6 +510,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
     if (mapProvider === "google" && !maps) return;
+    if (mapProvider === "leaflet" && !L) return;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
@@ -553,12 +562,13 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         marker.addListener("click", opts.onClick);
         markersRef.current.push(marker);
       } else {
-        const marker = L.marker([pos.lat, pos.lng], {
+        const marker = L!.marker([pos.lat, pos.lng], {
           icon: createBadgeDivIcon(
+            L!,
             `<div style="background:${opts.color};color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${opts.label}</div>`,
             { className: "wp-ticket-marker", anchor: "bottom" },
           ),
-        }).addTo(activeMap as L.Map);
+        }).addTo(activeMap as Leaflet.Map);
         marker.on("click", opts.onClick);
         leafletMarkersRef.current.push(marker);
       }
@@ -585,10 +595,10 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         });
         markersRef.current.push(officeMarker);
       } else {
-        const marker = L.marker([pos.lat, pos.lng], {
-          icon: createBadgeDivIcon(`<span style="font-size:20px;">🏢</span>`, { className: "wp-office-marker", anchor: "bottom" }),
+        const marker = L!.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(L!, `<span style="font-size:20px;">🏢</span>`, { className: "wp-office-marker", anchor: "bottom" }),
           zIndexOffset: 1000,
-        }).bindTooltip(title).addTo(activeMap as L.Map);
+        }).bindTooltip(title).addTo(activeMap as Leaflet.Map);
         leafletMarkersRef.current.push(marker);
       }
     };
@@ -614,13 +624,14 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         });
         markersRef.current.push(houseMarker);
       } else {
-        const marker = L.marker([pos.lat, pos.lng], {
+        const marker = L!.marker([pos.lat, pos.lng], {
           icon: createBadgeDivIcon(
+            L!,
             `<div style="font-size:11px;font-weight:bold;color:${opts.color};white-space:nowrap;">🏠 ${opts.initials}</div>`,
             { className: "wp-house-marker", anchor: "bottom" },
           ),
           zIndexOffset: 998,
-        }).bindTooltip(opts.title).addTo(activeMap as L.Map);
+        }).bindTooltip(opts.title).addTo(activeMap as Leaflet.Map);
         leafletMarkersRef.current.push(marker);
       }
     };
@@ -638,19 +649,19 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         });
         polylinesRef.current.push(line);
       } else {
-        const line = L.polyline(points.map((p) => [p.lat, p.lng] as [number, number]), {
+        const line = L!.polyline(points.map((p) => [p.lat, p.lng] as [number, number]), {
           color,
           opacity: 0.9,
           weight: 3,
-        }).addTo(activeMap as L.Map);
+        }).addTo(activeMap as Leaflet.Map);
         leafletPolylinesRef.current.push(line);
-        const arrow = addRouteDirectionArrow(activeMap as L.Map, points, color);
+        const arrow = addRouteDirectionArrow(L!, activeMap as Leaflet.Map, points, color);
         if (arrow) leafletArrowsRef.current.push(arrow);
       }
     };
 
     let cancelled = false;
-    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L!.latLngBounds([]);
     const extendBounds = (pos: { lat: number; lng: number }) =>
       mapProvider === "google" ? bounds.extend(pos) : bounds.extend([pos.lat, pos.lng]);
     const setMapCenterZoom = (pos: { lat: number; lng: number }, zoom: number) => {
@@ -658,12 +669,12 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         activeMap.setCenter(pos);
         activeMap.setZoom(zoom);
       } else {
-        (activeMap as L.Map).setView([pos.lat, pos.lng], zoom);
+        (activeMap as Leaflet.Map).setView([pos.lat, pos.lng], zoom);
       }
     };
     const fitMapBounds = () => {
       if (mapProvider === "google") activeMap.fitBounds(bounds);
-      else (activeMap as L.Map).fitBounds(bounds, { padding: [40, 40] });
+      else (activeMap as Leaflet.Map).fitBounds(bounds, { padding: [40, 40] });
     };
 
     Promise.all(
@@ -837,7 +848,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     });
 
     return () => { cancelled = true; };
-  }, [mapReady, mapProvider, visibleTickets, techHomes]);
+  }, [mapReady, mapProvider, visibleTickets, techHomes, L]);
 
   // Satellite view is Google-only (plain OSM tiles have no free satellite
   // layer) — this effect is a no-op in Leaflet mode.
@@ -859,7 +870,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         activeMap.setCenter(pos);
         activeMap.setZoom(10);
       } else {
-        (activeMap as L.Map).setView([pos.lat, pos.lng], 10);
+        (activeMap as Leaflet.Map).setView([pos.lat, pos.lng], 10);
       }
     };
     if (explicitCoords) {

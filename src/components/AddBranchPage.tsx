@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ZIP_COVERAGE } from "@/lib/zipCoverage";
 import {
@@ -8,7 +7,7 @@ import {
   insertCoverageBulk as sbInsertCoverageBulk,
 } from "@/lib/supabase/locationManagement";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
@@ -139,10 +138,11 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
   const googleZipMarkersRef = useRef<any[]>([]);
 
   const leafletContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletMapRef = useRef<L.Map | null>(null);
-  const leafletCenterMarkerRef = useRef<L.Marker | null>(null);
-  const leafletCircleRef = useRef<L.Circle | null>(null);
-  const leafletZipLayerRef = useRef<L.LayerGroup | null>(null);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletCenterMarkerRef = useRef<Leaflet.Marker | null>(null);
+  const leafletCircleRef = useRef<Leaflet.Circle | null>(null);
+  const leafletZipLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
 
   const zipGeoCacheRef = useRef<Map<string, any>>(new Map());
 
@@ -196,16 +196,24 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
     };
   }, [mapProvider]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Instantiate the Leaflet map once Leaflet is the active provider.
   useEffect(() => {
-    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    if (mapProvider !== "leaflet" || !L || !leafletContainerRef.current) return;
     const container = leafletContainerRef.current;
     const map = L.map(container, {
       center: [37.0902, -95.7129],
       zoom: 4,
     });
     L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
-    map.on("click", (e: L.LeafletMouseEvent) => {
+    map.on("click", (e: Leaflet.LeafletMouseEvent) => {
       setCenter({ lat: e.latlng.lat, lng: e.latlng.lng });
     });
     leafletZipLayerRef.current = L.layerGroup().addTo(map);
@@ -220,7 +228,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
       leafletZipLayerRef.current = null;
       setMapReady(false);
     };
-  }, [mapProvider]);
+  }, [mapProvider, L]);
 
   // Sync the center marker + radius circle to state.
   useEffect(() => {
@@ -276,7 +284,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
       if (bounds) googleMapRef.current.fitBounds(bounds, 40);
     } else if (mapProvider === "leaflet") {
       const map = leafletMapRef.current;
-      if (!map) return;
+      if (!map || !L) return;
 
       if (!center) {
         if (leafletCenterMarkerRef.current) { map.removeLayer(leafletCenterMarkerRef.current); leafletCenterMarkerRef.current = null; }
@@ -311,7 +319,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
 
       map.fitBounds(leafletCircleRef.current.getBounds(), { padding: [40, 40] });
     }
-  }, [center, radius, mapReady, mapProvider]);
+  }, [center, radius, mapReady, mapProvider, L]);
 
   // Fetch zips whenever center/radius changes.
   useEffect(() => {
@@ -400,7 +408,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
 
     if (mapProvider === "leaflet") {
       const layer = leafletZipLayerRef.current;
-      if (!layer) return;
+      if (!layer || !L) return;
       layer.clearLayers();
       if (!zipHits.length) return;
 
@@ -411,6 +419,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
 
           L.marker([hit.lat, hit.lng], {
             icon: createBadgeDivIcon(
+              L,
               `<span style="font-size:11px;font-weight:700;color:#052e16;white-space:nowrap;">${hit.zip}</span>`,
               { className: "add-branch-zip-label" },
             ),
@@ -432,7 +441,7 @@ export function AddBranchPage({ sub }: AddBranchPageProps) {
 
       return () => { cancelled = true; };
     }
-  }, [zipHits, mapReady, mapProvider]);
+  }, [zipHits, mapReady, mapProvider, L]);
 
   const handleSave = useCallback(async () => {
     if (!center || !branchName.trim()) return;

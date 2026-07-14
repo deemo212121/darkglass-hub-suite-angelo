@@ -22,8 +22,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, MapPin } from "lucide-react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type * as Leaflet from "leaflet";
 import { Footer } from "@/components/Footer";
 import { AppHeader } from "@/components/Header";
 import { MapProviderToggle } from "@/components/MapProviderToggle";
@@ -31,7 +30,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getCompanyMapProvider, setCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import {
   getLocationManagementCoordinates,
   getLocationManagementZoomAddress,
@@ -137,10 +136,11 @@ export function TicketListMap() {
   const googleMarkersRef = useRef<any[]>([]);
   const googleOfficeMarkersRef = useRef<any[]>([]);
 
-  const leafletMapRef = useRef<L.Map | null>(null);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
   const leafletContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletMarkersRef = useRef<L.CircleMarker[]>([]);
-  const leafletOfficeMarkersRef = useRef<L.Marker[]>([]);
+  const leafletMarkersRef = useRef<Leaflet.CircleMarker[]>([]);
+  const leafletOfficeMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
 
   const [mapError, setMapError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AnyTicket | null>(null);
@@ -295,9 +295,17 @@ export function TicketListMap() {
     return () => { googleMapRef.current = null; };
   }, [mapProvider, googleScriptReady]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Instantiate the Leaflet map object once its container is mounted.
   useEffect(() => {
-    if (mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    if (mapProvider !== "leaflet" || !L || !leafletContainerRef.current) return;
     const container = leafletContainerRef.current;
     const map = L.map(container, {
       center: [33.5, -86.5],
@@ -307,7 +315,7 @@ export function TicketListMap() {
     leafletMapRef.current = map;
     const detachResizeFix = attachLeafletResizeFix(map, container);
     return () => { detachResizeFix(); map.remove(); leafletMapRef.current = null; };
-  }, [mapProvider]);
+  }, [mapProvider, L]);
 
   // Geocode and plot filtered tickets whenever the filter set (or the
   // active map provider) changes. Geocoding is provider-matched (Google
@@ -317,6 +325,7 @@ export function TicketListMap() {
     if (!mapProvider) return;
     const activeMap = mapProvider === "google" ? googleMapRef.current : leafletMapRef.current;
     if (mapProvider === "google" && !googleScriptReady) return;
+    if (mapProvider === "leaflet" && !L) return;
     if (!activeMap) return;
     let cancelled = false;
 
@@ -357,10 +366,10 @@ export function TicketListMap() {
         });
         googleOfficeMarkersRef.current.push(office);
       } else {
-        const office = L.marker([pos.lat, pos.lng], {
-          icon: createBadgeDivIcon(`<span style="font-size:20px;">${OFFICE_EMOJI}</span>`, { className: "ticket-map-office-marker", anchor: "bottom" }),
+        const office = L!.marker([pos.lat, pos.lng], {
+          icon: createBadgeDivIcon(L!, `<span style="font-size:20px;">${OFFICE_EMOJI}</span>`, { className: "ticket-map-office-marker", anchor: "bottom" }),
           zIndexOffset: 1000,
-        }).bindTooltip(`${loc} Office`).addTo(activeMap as L.Map);
+        }).bindTooltip(`${loc} Office`).addTo(activeMap as Leaflet.Map);
         leafletOfficeMarkersRef.current.push(office);
       }
     };
@@ -383,13 +392,13 @@ export function TicketListMap() {
         marker.addListener("click", () => setSelected(ticket));
         googleMarkersRef.current.push(marker);
       } else {
-        const marker = L.circleMarker([pos.lat, pos.lng], {
+        const marker = L!.circleMarker([pos.lat, pos.lng], {
           radius: 8,
           color: "#0f172a",
           weight: 2,
           fillColor: color,
           fillOpacity: 0.95,
-        }).addTo(activeMap as L.Map);
+        }).addTo(activeMap as Leaflet.Map);
         marker.on("click", () => setSelected(ticket));
         leafletMarkersRef.current.push(marker);
       }
@@ -447,13 +456,13 @@ export function TicketListMap() {
         positions.forEach((p) => bounds.extend(p));
         activeMap.fitBounds(bounds, 48);
       } else {
-        const bounds = L.latLngBounds(positions.map((p) => [p.lat, p.lng] as [number, number]));
-        (activeMap as L.Map).fitBounds(bounds, { padding: [48, 48] });
+        const bounds = L!.latLngBounds(positions.map((p) => [p.lat, p.lng] as [number, number]));
+        (activeMap as Leaflet.Map).fitBounds(bounds, { padding: [48, 48] });
       }
     })();
 
     return () => { cancelled = true; };
-  }, [filtered, mapProvider, googleScriptReady]);
+  }, [filtered, mapProvider, googleScriptReady, L]);
 
   // Pull distinct values from the loaded ticket set for the dropdowns.
   const distinct = (key: string) => {

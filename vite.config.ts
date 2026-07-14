@@ -291,6 +291,17 @@ export default defineConfig({
             const normalized = id.replace(/\\/g, "/");
 
             if (normalized.includes("/node_modules/")) {
+              // Leaflet is browser-only (touches `window` at module load, not
+              // just when called) and is only ever reached via a dynamic
+              // import() (see getLeaflet() in mapEngine.ts), never a static
+              // import — so it must land in its OWN chunk, separate from the
+              // catch-all "vendor" bucket below. That bucket also holds
+              // genuinely SSR-eager deps (Supabase, Firebase, ...), so if
+              // Leaflet shared it, the whole chunk — Leaflet included — would
+              // still be eagerly evaluated by the server entry, crashing
+              // Cloudflare Workers (no `window`) before any request is even
+              // handled, regardless of the dynamic import() at the call site.
+              if (normalized.includes("/node_modules/leaflet/")) return "leaflet";
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
               if (normalized.includes("/node_modules/@radix-ui/")) return "radix-ui";
               if (
@@ -325,7 +336,19 @@ export default defineConfig({
             }
 
             if (normalized.includes("/src/lib/modules.ts")) return "module-registry";
-            if (normalized.includes("/src/lib/")) return "app-lib";
+            // Was its own "app-lib" chunk; merged into "vendor" because the
+            // two had grown into a genuine circular chunk dependency
+            // ("Circular chunk: vendor -> app-lib -> vendor" in the build
+            // log) — several src/lib files are reachable both by static
+            // import (e.g. from ReportHRDaily.tsx) and by dynamic import
+            // (e.g. from auth.tsx) at once, and Rollup has to split the
+            // physical files across the two chunks either way. At runtime
+            // this surfaced as `Uncaught ReferenceError: Cannot access 'X'
+            // before initialization` — a module in one chunk trying to read
+            // an export from the other chunk before its own top-level code
+            // had finished running. Putting them in the same chunk removes
+            // the boundary (and the ordering hazard) entirely.
+            if (normalized.includes("/src/lib/")) return "vendor";
             if (normalized.includes("/src/components/ui/")) return "ui-kit";
             if (normalized.includes("/src/components/")) return "app-components";
             if (normalized.includes("/src/hooks/")) return "app-hooks";

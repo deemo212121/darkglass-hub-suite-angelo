@@ -1,0 +1,24 @@
+-- =====================================================================
+-- 0054 — Fix geocode_cache writes (never worked from the live app)
+--
+-- storeGeocode() (src/lib/supabase/geocodeCache.ts) has never successfully
+-- written a cache row: it upserts without a company_id (the column is
+-- NOT NULL, no default), and its onConflict target is "address_hash"
+-- alone, but the only unique constraint is the composite
+-- (company_id, address_hash) from 0026 — PostgREST rejects an onConflict
+-- that doesn't match a real constraint, which is the 400 Bad Request seen
+-- in the browser console. Every cache row that exists today came from the
+-- offline backfill script (which uses the service-role key and sets
+-- company_id itself), not from normal app usage — every fresh address
+-- has been silently re-geocoded (and re-billed) on every single lookup.
+--
+-- This defaults company_id to the caller's own company via the existing
+-- auth_company_id() RLS helper, so the insert succeeds even though the
+-- client-side payload still omits it. The onConflict target itself is
+-- fixed in the same commit as this migration (geocodeCache.ts, changed to
+-- "company_id,address_hash").
+--
+-- Run once in the Supabase SQL Editor, after 0053.
+-- =====================================================================
+
+alter table geocode_cache alter column company_id set default auth_company_id();

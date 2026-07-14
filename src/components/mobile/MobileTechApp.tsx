@@ -26,9 +26,8 @@ import {
 } from "@/lib/supabase/tickets";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import type * as Leaflet from "leaflet";
 import {
   getDmMessages,
   getOrCreateDmThread,
@@ -791,9 +790,10 @@ function RouteMapView({
     getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
     return () => { cancelled = true; };
   }, []);
-  const leafletMapRef = useRef<L.Map | null>(null);
-  const leafletMarkersRef = useRef<L.Marker[]>([]);
-  const leafletRouteLineRef = useRef<L.Layer | null>(null);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const leafletRouteLineRef = useRef<Leaflet.Layer | null>(null);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -829,7 +829,7 @@ function RouteMapView({
           }
         } else {
           const map = leafletMapRef.current;
-          if (!map) return;
+          if (!map || !L) return;
           map.invalidateSize();
           if (stops.length > 0) {
             const points = stops.map((s) => [s.pos.lat, s.pos.lng] as [number, number]);
@@ -842,7 +842,7 @@ function RouteMapView({
       }
     }, 120);
     return () => window.clearTimeout(t);
-  }, [expanded, stops, origin, mapProvider]);
+  }, [expanded, stops, origin, mapProvider, L]);
 
   // Try to get the technician's current location for the route origin.
   useEffect(() => {
@@ -890,9 +890,17 @@ function RouteMapView({
     };
   }, [mapProvider]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Instantiate the Leaflet map once Leaflet is the active provider.
   useEffect(() => {
-    if (mapProvider !== "leaflet" || !mapEl.current) return;
+    if (mapProvider !== "leaflet" || !L || !mapEl.current) return;
     const container = mapEl.current;
     const map = L.map(container, { zoom: 9, center: [39.5, -98.35], zoomControl: true });
     L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
@@ -906,7 +914,7 @@ function RouteMapView({
       leafletRouteLineRef.current = null;
       setMapReady(false);
     };
-  }, [mapProvider]);
+  }, [mapProvider, L]);
 
   // Geocode stops + build the route once the map is ready. Google mode uses
   // real turn-by-turn driving directions (DirectionsService); Leaflet mode
@@ -917,6 +925,7 @@ function RouteMapView({
     if (!mapProvider) return;
     const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
     if (!activeMap) return;
+    if (mapProvider === "leaflet" && !L) return;
     let cancelled = false;
 
     const buildRoute = async () => {
@@ -968,13 +977,14 @@ function RouteMapView({
           });
           markersRef.current.push(marker);
         } else {
-          const marker = L.marker([s.pos.lat, s.pos.lng], {
+          const marker = L!.marker([s.pos.lat, s.pos.lng], {
             icon: createBadgeDivIcon(
+              L!,
               `<div style="background:${color};color:#fff;font-size:13px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${label}</div>`,
               { className: "mtech-stop-marker", anchor: "bottom" },
             ),
             title,
-          }).addTo(activeMap as L.Map);
+          }).addTo(activeMap as Leaflet.Map);
           leafletMarkersRef.current.push(marker);
         }
       });
@@ -994,7 +1004,7 @@ function RouteMapView({
           mapRef.current.setCenter(resolved[0].pos);
           mapRef.current.setZoom(13);
         } else {
-          (activeMap as L.Map).setView([resolved[0].pos.lat, resolved[0].pos.lng], 13);
+          (activeMap as Leaflet.Map).setView([resolved[0].pos.lat, resolved[0].pos.lng], 13);
         }
         setLegs([
           {
@@ -1060,8 +1070,8 @@ function RouteMapView({
 
         leafletRouteLineRef.current?.remove();
         leafletRouteLineRef.current = route
-          ? L.geoJSON(route.geometry, { style: { color: "#5b7eff", weight: 5 } }).addTo(activeMap as L.Map)
-          : L.polyline(routePoints.map((p) => [p.lat, p.lng] as [number, number]), { color: "#5b7eff", weight: 5 }).addTo(activeMap as L.Map);
+          ? L!.geoJSON(route.geometry, { style: { color: "#5b7eff", weight: 5 } }).addTo(activeMap as Leaflet.Map)
+          : L!.polyline(routePoints.map((p) => [p.lat, p.lng] as [number, number]), { color: "#5b7eff", weight: 5 }).addTo(activeMap as Leaflet.Map);
 
         const legInfo = points.map((p, i) => {
           const leg = route?.legs[i];
@@ -1088,7 +1098,7 @@ function RouteMapView({
         });
         setLegs(legInfo);
         if (!route) setError("Could not build a driving route. Showing straight-line stops only.");
-        (activeMap as L.Map).fitBounds(L.latLngBounds(routePoints.map((p) => [p.lat, p.lng] as [number, number])), { padding: [40, 40] });
+        (activeMap as Leaflet.Map).fitBounds(L!.latLngBounds(routePoints.map((p) => [p.lat, p.lng] as [number, number])), { padding: [40, 40] });
         setRouting(false);
       }
     };
@@ -1103,7 +1113,7 @@ function RouteMapView({
       leafletMarkersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, origin, mapProvider, mapReady]);
+  }, [tickets, origin, mapProvider, mapReady, L]);
 
   // Format a stop's destination string for the Google Maps deep link.
   // Passing the real street address makes Google Maps drop a properly

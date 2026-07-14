@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import {
   getLocations as sbGetLocations,
   upsertLocation as sbUpsertLocation,
@@ -978,9 +977,10 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     return () => { cancelled = true; };
   }, []);
   const leafletCoverageContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletCoverageMapRef = useRef<L.Map | null>(null);
-  const leafletCoverageLayerRef = useRef<L.LayerGroup | null>(null);
-  const leafletZipLabelMarkersRef = useRef<L.Marker[]>([]);
+  const leafletCoverageMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletCoverageLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const leafletZipLabelMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
 
   const filteredLocations = useMemo(() => {
     const query = locationSearch.trim().toLowerCase();
@@ -1170,9 +1170,17 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     };
   }, [activeTab, mapProvider]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Leaflet counterpart of the effect above.
   useEffect(() => {
-    if (activeTab !== "coverage" || mapProvider !== "leaflet" || !leafletCoverageContainerRef.current) return;
+    if (activeTab !== "coverage" || mapProvider !== "leaflet" || !L || !leafletCoverageContainerRef.current) return;
     const container = leafletCoverageContainerRef.current;
     const map = L.map(container, {
       center: [37.0902, -95.7129],
@@ -1191,10 +1199,11 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       leafletCoverageLayerRef.current = null;
       setCoverageMapReady(false);
     };
-  }, [activeTab, mapProvider]);
+  }, [activeTab, mapProvider, L]);
 
   useEffect(() => {
     if (activeTab !== "coverage" || !coverageMapReady || !mapProvider) return;
+    if (mapProvider === "leaflet" && !L) return;
     const activeMap = mapProvider === "google" ? coverageMapRef.current : leafletCoverageMapRef.current;
     if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
@@ -1208,7 +1217,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
     mapData?.forEach((feature: any) => mapData.remove(feature));
 
     let cancelled = false;
-    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+    const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L!.latLngBounds([]);
     const geocode = makeGeocoder(mapProvider);
 
     // fetchZipPoint keeps the existing coverageGeocodeCacheRef as a fast
@@ -1348,8 +1357,9 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
               console.warn(`coverage zip label failed for ${zipCode}:`, err);
             }
           } else if (leafletCoverageLayerRef.current) {
-            const marker = L.marker([point.center.lat, point.center.lng], {
+            const marker = L!.marker([point.center.lat, point.center.lng], {
               icon: createBadgeDivIcon(
+                L!,
                 `<span style="font-size:11px;font-weight:700;color:#0f172a;white-space:nowrap;">${zipCode}</span>`,
                 { className: "coverage-zip-label" },
               ),
@@ -1364,7 +1374,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
           if (mapProvider === "google") {
             mapData.addGeoJson(geojson);
           } else if (leafletCoverageLayerRef.current) {
-            L.geoJSON(geojson, {
+            L!.geoJSON(geojson, {
               style: { fillColor: fillColorFor(zipCode), fillOpacity: 0.35, color: "#0f172a", opacity: 0.6, weight: 1 },
             }).addTo(leafletCoverageLayerRef.current);
           }
@@ -1412,7 +1422,7 @@ export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModule
       coverageOverlayRefs.current = [];
       mapData?.forEach((feature: any) => mapData.remove(feature));
     };
-  }, [activeTab, coverageMapReady, mapProvider, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation]);
+  }, [activeTab, coverageMapReady, mapProvider, minimumReadableZoom, selectedLocationCoverage, coverageGeocodeCacheRef, coverageMapRef, coverageOverlayRefs, coverageZipGeoJsonCacheRef, selectedCoverageLocation, L]);
 
   // Toggle the zip-code labels on/off without rebuilding the map. The map
   // effect above tracks every label marker in coverageOverlayRefs; we just

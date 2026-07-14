@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
 import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
@@ -12,7 +11,7 @@ import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagemen
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -146,12 +145,13 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     return () => { cancelled = true; };
   }, []);
   const leafletContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletMapRef = useRef<L.Map | null>(null);
-  const leafletMarkersRef = useRef<L.Marker[]>([]);
-  const leafletPolylinesRef = useRef<L.Polyline[]>([]);
-  const leafletArrowsRef = useRef<L.Marker[]>([]);
-  const leafletMarkerByTicketRef = useRef<Map<string, L.Marker>>(new Map());
-  const leafletPopupRef = useRef<L.Popup | null>(null);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const leafletPolylinesRef = useRef<Leaflet.Polyline[]>([]);
+  const leafletArrowsRef = useRef<Leaflet.Marker[]>([]);
+  const leafletMarkerByTicketRef = useRef<Map<string, Leaflet.Marker>>(new Map());
+  const leafletPopupRef = useRef<Leaflet.Popup | null>(null);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
   const leafletSwitchingPopupRef = useRef(false);
   // Re-render trigger so the portal mounts on the first selection (when
   // infoContentRef has just been created).
@@ -281,9 +281,17 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     };
   }, [ready, mapProvider]);
 
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
   // Instantiate the Leaflet map once Leaflet is the active provider.
   useEffect(() => {
-    if (!ready || mapProvider !== "leaflet" || !leafletContainerRef.current) return;
+    if (!ready || mapProvider !== "leaflet" || !L || !leafletContainerRef.current) return;
     const container = leafletContainerRef.current;
     const map = L.map(container, {
       center: [37.0902, -95.7129],
@@ -300,7 +308,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       leafletMapRef.current = null;
       setMapReady(false);
     };
-  }, [ready, mapProvider]);
+  }, [ready, mapProvider, L]);
 
   const locationData = useMemo<LocationTickets[]>(() => {
     const locationMap = new Map<string, TicketRecord[]>();
@@ -323,12 +331,6 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
     return mergeLocationOptions(WORK_MAP_LOCATIONS, liveLocations.map((entry) => entry.location)).map((location) => merged.get(location) ?? { location, count: 0, records: [], priority: "low" });
   }, [tickets]);
-
-  useEffect(() => {
-    if (!selectedLocation && locationData.length > 0) {
-      setSelectedLocation(locationData.find((location) => location.count > 0)?.location ?? locationData[0].location);
-    }
-  }, [locationData, selectedLocation]);
 
   // Satellite view is Google-only (plain OSM tiles have no free satellite
   // layer) — this effect is a no-op in Leaflet mode.
@@ -489,6 +491,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     if (!activeMap) return;
     const maps = (window as Window & { google?: any }).google?.maps;
     if (mapProvider === "google" && !maps) return;
+    if (mapProvider === "leaflet" && !L) return;
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
@@ -545,7 +548,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     Promise.all(ticketPositions).then((results) => {
       if (cancelled || !activeMap) return;
 
-      const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L.latLngBounds([]);
+      const bounds = mapProvider === "google" ? new maps.LatLngBounds() : L!.latLngBounds([]);
       const extendBounds = (pos: { lat: number; lng: number }) =>
         mapProvider === "google" ? bounds.extend(pos) : bounds.extend([pos.lat, pos.lng]);
 
@@ -639,14 +642,15 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           marker.addListener("click", () => setSelectedTicket(ticket));
           markersRef.current.push(marker);
         } else {
-          const marker = L.marker([position.lat, position.lng], {
+          const marker = L!.marker([position.lat, position.lng], {
             icon: createBadgeDivIcon(
+              L!,
               `<div style="background:${markerColor};opacity:${onDay ? 1 : 0.75};color:#fff;font-size:${onDay ? "13px" : "12px"};font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${labelText}</div>`,
               { className: "wm-ticket-marker", anchor: "bottom" },
             ),
             zIndexOffset: onDay ? 500 : 100,
             title,
-          }).addTo(activeMap as L.Map);
+          }).addTo(activeMap as Leaflet.Map);
           marker.on("click", () => setSelectedTicket(ticket));
           leafletMarkersRef.current.push(marker);
           if (ticketNoStr) leafletMarkerByTicketRef.current.set(ticketNoStr, marker);
@@ -677,13 +681,13 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
           polylinesRef.current.push(line);
         } else {
           const positions = ordered.map((p) => p.position);
-          const line = L.polyline(positions.map((p) => [p.lat, p.lng] as [number, number]), {
+          const line = L!.polyline(positions.map((p) => [p.lat, p.lng] as [number, number]), {
             color,
             opacity: 0.9,
             weight: 3,
-          }).addTo(activeMap as L.Map);
+          }).addTo(activeMap as Leaflet.Map);
           leafletPolylinesRef.current.push(line);
-          const arrow = addRouteDirectionArrow(activeMap as L.Map, positions, color);
+          const arrow = addRouteDirectionArrow(L!, activeMap as Leaflet.Map, positions, color);
           if (arrow) leafletArrowsRef.current.push(arrow);
         }
       });
@@ -712,27 +716,45 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
             });
             markersRef.current.push(officeMarker);
           } else {
-            const officeMarker = L.marker([officePos.lat, officePos.lng], {
-              icon: createBadgeDivIcon(`<span style="font-size:20px;">🏢</span>`, { className: "wm-office-marker", anchor: "bottom" }),
+            const officeMarker = L!.marker([officePos.lat, officePos.lng], {
+              icon: createBadgeDivIcon(L!, `<span style="font-size:20px;">🏢</span>`, { className: "wm-office-marker", anchor: "bottom" }),
               zIndexOffset: 1000,
-            }).bindTooltip(`${selectedLocation} Office`).addTo(activeMap as L.Map);
+            }).bindTooltip(`${selectedLocation} Office`).addTo(activeMap as Leaflet.Map);
             leafletMarkersRef.current.push(officeMarker);
           }
         });
       }
 
+      // Same floor as the "no tickets" office-zoom fallback below — without
+      // this, a location with tickets spread across a wide area (or just one
+      // mis-geocoded far outside it) can leave fitBounds zoomed WAY out, so
+      // picking that location looks like it "doesn't zoom in" at all (e.g.
+      // Asheville, whose only visible tickets happened to span a wide area,
+      // vs. Atlanta's tighter cluster that fit closely on its own).
+      const MIN_LOCATION_ZOOM = 10;
       const boundsEmpty = mapProvider === "google" ? bounds.isEmpty() : !bounds.isValid();
       if (!boundsEmpty) {
-        if (mapProvider === "google") activeMap.fitBounds(bounds);
-        else (activeMap as L.Map).fitBounds(bounds, { padding: [40, 40] });
+        if (mapProvider === "google") {
+          activeMap.fitBounds(bounds);
+          // fitBounds' zoom change is async (applied once the map goes
+          // idle) — reading getZoom() right after would still see the
+          // pre-fitBounds value, so the floor has to be enforced there too.
+          maps.event.addListenerOnce(activeMap, "idle", () => {
+            if (activeMap.getZoom() < MIN_LOCATION_ZOOM) activeMap.setZoom(MIN_LOCATION_ZOOM);
+          });
+        } else {
+          const leafletMap = activeMap as Leaflet.Map;
+          leafletMap.fitBounds(bounds, { padding: [40, 40] });
+          if (leafletMap.getZoom() < MIN_LOCATION_ZOOM) leafletMap.setZoom(MIN_LOCATION_ZOOM);
+        }
       } else if (selectedLocation) {
         geocodeOfficeLocation(selectedLocation).then((position) => {
           if (!position || !activeMap) return;
           if (mapProvider === "google") {
             activeMap.setCenter(position);
-            activeMap.setZoom(10);
+            activeMap.setZoom(MIN_LOCATION_ZOOM);
           } else {
-            (activeMap as L.Map).setView([position.lat, position.lng], 10);
+            (activeMap as Leaflet.Map).setView([position.lat, position.lng], MIN_LOCATION_ZOOM);
           }
         });
       }
@@ -741,7 +763,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     return () => {
       cancelled = true;
     };
-  }, [mapReady, mapProvider, selectedLocation, visibleTickets]);
+  }, [mapReady, mapProvider, selectedLocation, visibleTickets, L]);
 
   // When the user selects a ticket (marker OR sidebar card), open an
   // anchored InfoWindow at that ticket's pin. The InfoWindow is created
@@ -797,7 +819,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
         infoContentRef.current.className = "ahs-ticket-iw-host";
       }
       if (!leafletPopupRef.current) {
-        leafletPopupRef.current = L.popup({ maxWidth: 480, offset: [0, -8] }).setContent(infoContentRef.current);
+        leafletPopupRef.current = L!.popup({ maxWidth: 480, offset: [0, -8] }).setContent(infoContentRef.current);
         // Re-binding the popup to a different marker closes the previous
         // one first, which also fires "popupclose" — the guard flag below
         // (set around openPopup) tells us to ignore that internal close
@@ -817,7 +839,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
       map.panTo(pos);
       if (map.getZoom() < 12) map.setZoom(12);
     }
-  }, [selectedTicket, mapProvider]);
+  }, [selectedTicket, mapProvider, L]);
 
   // Close + tear down the InfoWindow/Popup when the user dismisses or
   // navigates away.
