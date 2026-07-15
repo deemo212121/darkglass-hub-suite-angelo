@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
@@ -46,6 +46,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getAppUrl } from "@/lib/appUrl";
+import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
 
 const ALL_US_BRANCHES = LOCATIONS_DATA.filter(l => !l.isPhilippines).map(l => l.location).sort();
 const ALL_PH_BRANCHES = LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location).sort();
@@ -188,9 +189,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ── Persist the current tab (and, for Onboarding Documents, which
+  // applicant is open) in the URL, so a plain page refresh comes back to
+  // wherever the user actually was instead of resetting to the Hiring tab
+  // every time. Restoring reads only the FIRST render's search params
+  // (initialHrSearchRef) — after that, this component's own state is the
+  // source of truth and pushes into the URL, not the other way around. ──
+  const navigate = useNavigate();
+  const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
+  const initialHrSearchRef = useRef(hrSearchParams);
+  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "onboarding", "hiringReports", "report", "coe", "warningForm"] as const;
+  useEffect(() => {
+    const tab = initialHrSearchRef.current.tab;
+    if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Jotform Submissions (live) — same Firestore notifications/{uid}/items
   // the bell icon reads (kind: "jotform_submission"), just filtered into its
@@ -208,6 +225,155 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return unsubscribe;
   }, [uid, canViewJotformTab]);
   const unreadJotformCount = jotformNotifs.filter((n) => !n.isRead).length;
+
+  // ── Applicant Documents — the real Jotform-generated PDF per submission
+  // (see hr_jotform_submissions / jotformBridge.ts), filterable/sortable
+  // unlike the plain notification list above. Replaces the old Jotform
+  // Submissions tab; that tab's code/data is left in place, just hidden
+  // from the nav (see tabGroups below). ──
+  const [jotformSubmissions, setJotformSubmissions] = useState<JotformSubmission[]>([]);
+  const [jotformSubmissionsLoading, setJotformSubmissionsLoading] = useState(true);
+  const [jotformFormFilter, setJotformFormFilter] = useState("");
+  const [jotformStatusFilter, setJotformStatusFilter] = useState<"" | JotformSubmissionStatus>("");
+  const [jotformSearch, setJotformSearch] = useState("");
+  const [jotformPreview, setJotformPreview] = useState<JotformSubmission | null>(null);
+  const [jotformPage, setJotformPage] = useState(1);
+  const JOTFORM_PAGE_SIZE = 25;
+
+  const loadJotformSubmissions = async () => {
+    if (!canViewJotformTab) return;
+    setJotformSubmissionsLoading(true);
+    try {
+      setJotformSubmissions(await getJotformSubmissions());
+    } catch (err) {
+      console.error("Failed to load Jotform submissions:", err);
+    } finally {
+      setJotformSubmissionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!ready || !canViewJotformTab) return;
+    void loadJotformSubmissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, canViewJotformTab]);
+
+  useEffect(() => {
+    if (!ready || !companyId || !canViewJotformTab) return;
+    return subscribeTableChanges(
+      "hr_jotform_submissions",
+      () => {
+        void loadJotformSubmissions();
+        void loadDeletedJotformSubmissions();
+      },
+      `company_id=eq.${companyId}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, companyId, canViewJotformTab]);
+
+  // A notification's link ("?tab=jotformDocuments&submissionId=...") lands
+  // here — jump to the tab and open that exact submission once it's loaded,
+  // instead of leaving the user to find it themselves in the list.
+  const jotformSearchParams = hrSearchParams;
+  useEffect(() => {
+    if (!jotformSearchParams.submissionId || jotformSubmissions.length === 0) return;
+    const match = jotformSubmissions.find((s) => s.submissionId === jotformSearchParams.submissionId);
+    if (match) setJotformPreview(match);
+  }, [jotformSearchParams.submissionId, jotformSubmissions]);
+
+  const jotformFormOptions = useMemo(
+    () => Array.from(new Set(jotformSubmissions.map((s) => s.formTitle || s.formId))).sort(),
+    [jotformSubmissions]
+  );
+  const filteredJotformSubmissions = useMemo(() => {
+    const q = jotformSearch.trim().toLowerCase();
+    return jotformSubmissions.filter((s) => {
+      if (jotformFormFilter && (s.formTitle || s.formId) !== jotformFormFilter) return false;
+      if (jotformStatusFilter && s.status !== jotformStatusFilter) return false;
+      if (q && !(s.applicantName ?? "").toLowerCase().includes(q) && !(s.formTitle ?? "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [jotformSubmissions, jotformFormFilter, jotformStatusFilter, jotformSearch]);
+  const newJotformSubmissionsCount = jotformSubmissions.filter((s) => s.status === "new").length;
+
+  // Reset to page 1 whenever the filters actually narrow the list — otherwise
+  // changing a filter while on page 5 could land on an empty page.
+  useEffect(() => { setJotformPage(1); }, [jotformFormFilter, jotformStatusFilter, jotformSearch]);
+  const jotformPageCount = Math.max(1, Math.ceil(filteredJotformSubmissions.length / JOTFORM_PAGE_SIZE));
+  const pagedJotformSubmissions = useMemo(
+    () => filteredJotformSubmissions.slice((jotformPage - 1) * JOTFORM_PAGE_SIZE, jotformPage * JOTFORM_PAGE_SIZE),
+    [filteredJotformSubmissions, jotformPage]
+  );
+  // Windowed page numbers (1 … p-1 p p+1 … last) — with thousands of rows
+  // possible after the backfill, rendering every page number would mean 80+
+  // buttons in a row.
+  const jotformPageWindow = useMemo(() => {
+    const pages = new Set([1, jotformPageCount, jotformPage - 1, jotformPage, jotformPage + 1]);
+    return [...pages].filter((p) => p >= 1 && p <= jotformPageCount).sort((a, b) => a - b);
+  }, [jotformPage, jotformPageCount]);
+
+  const handleJotformStatusChange = async (submission: JotformSubmission, status: JotformSubmissionStatus) => {
+    if (!uid) return;
+    const reviewerId = await getMyProfileId(uid);
+    if (!reviewerId) return;
+    setJotformSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, status } : s)));
+    try {
+      await updateJotformSubmissionStatus(submission.id, status, reviewerId);
+    } catch (err) {
+      console.error("Failed to update submission status:", err);
+      void loadJotformSubmissions();
+    }
+  };
+
+  // ── Deleted Jotforms — "Delete" doesn't remove a submission immediately;
+  // it moves to this list (with its document untouched in Storage) for 30
+  // days, restorable at any time in that window. ──
+  const [deletedJotformSubmissions, setDeletedJotformSubmissions] = useState<JotformSubmission[]>([]);
+  const [deletedJotformLoading, setDeletedJotformLoading] = useState(true);
+
+  const loadDeletedJotformSubmissions = async () => {
+    if (!canViewJotformTab) return;
+    setDeletedJotformLoading(true);
+    try {
+      setDeletedJotformSubmissions(await getDeletedJotformSubmissions());
+    } catch (err) {
+      console.error("Failed to load deleted Jotform submissions:", err);
+    } finally {
+      setDeletedJotformLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!ready || !canViewJotformTab) return;
+    void loadDeletedJotformSubmissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, canViewJotformTab]);
+
+  const handleDeleteJotformSubmission = async (submission: JotformSubmission) => {
+    if (!window.confirm(`Delete "${submission.applicantName || "this"}" submission (${submission.formTitle || submission.formId})? It'll move to Deleted Jotforms, restorable for 30 days.`)) return;
+    setJotformSubmissions((prev) => prev.filter((s) => s.id !== submission.id));
+    if (jotformPreview?.id === submission.id) setJotformPreview(null);
+    try {
+      await softDeleteJotformSubmission(submission.id);
+      void logActivity({ action: "jotform_submission_deleted", targetType: "employee", targetLabel: submission.applicantName || "Unknown", details: { form: submission.formTitle || submission.formId } });
+      void loadDeletedJotformSubmissions();
+    } catch (err) {
+      console.error("Failed to delete submission:", err);
+      void loadJotformSubmissions();
+    }
+  };
+
+  const handleRestoreJotformSubmission = async (submission: JotformSubmission) => {
+    setDeletedJotformSubmissions((prev) => prev.filter((s) => s.id !== submission.id));
+    try {
+      await restoreJotformSubmission(submission.id);
+      void logActivity({ action: "jotform_submission_restored", targetType: "employee", targetLabel: submission.applicantName || "Unknown", details: { form: submission.formTitle || submission.formId } });
+      void loadJotformSubmissions();
+    } catch (err) {
+      console.error("Failed to restore submission:", err);
+      void loadDeletedJotformSubmissions();
+    }
+  };
 
   const markJotformRead = async (n: AppNotification) => {
     if (n.isRead || !uid) return;
@@ -1971,6 +2137,32 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const q = onboardingSearch.trim().toLowerCase();
     return q ? byGroup.filter((e) => e.name.toLowerCase().includes(q)) : byGroup;
   }, [employees, onboardingGroup, onboardingSearch]);
+
+  // Restores which applicant's Onboarding Documents page was open (if any)
+  // from the URL's ?profileId= — only once, as soon as employees has
+  // loaded, using the same frozen initial search params as the tab restore
+  // above. Runs once regardless of tab, since employees loads independently.
+  const restoredOnboardingProfileRef = useRef(false);
+  useEffect(() => {
+    if (restoredOnboardingProfileRef.current || employees.length === 0) return;
+    restoredOnboardingProfileRef.current = true;
+    const profileId = initialHrSearchRef.current.profileId;
+    if (!profileId) return;
+    const employee = employees.find((e) => e.id === profileId);
+    if (employee) setOnboardingSelectedEmployee({ id: employee.id, name: employee.name, docList: getOnboardingDocListForEmployee(employee) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees]);
+
+  // Keeps the URL in sync with the current tab/applicant going forward, so
+  // a refresh (or a bookmarked/shared link) lands back here — replace, not
+  // push, so switching tabs doesn't spam the browser's back-button history.
+  useEffect(() => {
+    void navigate({
+      search: ((prev: any) => ({ ...prev, tab: activeTab, profileId: onboardingSelectedEmployee?.id })) as any,
+      replace: true,
+    } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, onboardingSelectedEmployee?.id]);
   const onboardingDocColumns =
     onboardingGroup === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
     : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
@@ -2099,9 +2291,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       group: "Automated Forms",
       icon: Paperclip,
       tabs: [
+        ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
         { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
-        ...(canViewJotformTab ? [{ key: "jotform", label: "Jotform Submissions", count: unreadJotformCount, icon: Forward }] as const : []),
       ] as const,
     },
     {
@@ -2226,6 +2418,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           {tabGroups.map((section) => {
             const activeInGroup = section.tabs.some((t) => t.key === activeTab);
             const isOpen = openCategory === section.group;
+            // A single-tab category (e.g. Generate Reports) has nothing to
+            // expand into — it IS the tab, so clicking it navigates directly
+            // instead of opening a one-item dropdown.
+            if (section.tabs.length === 1) {
+              const onlyTab = section.tabs[0];
+              return (
+                <button
+                  key={section.group}
+                  type="button"
+                  onClick={() => setActiveTab(onlyTab.key)}
+                  className={`px-3.5 py-2 text-sm font-medium rounded-md border flex items-center gap-2 transition-colors ${activeInGroup ? "border-primary/40 bg-primary/10 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+                >
+                  <section.icon className="h-3.5 w-3.5" />
+                  {section.group}
+                  {onlyTab.count > 0 && (
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeInGroup ? "bg-primary/20 text-primary" : "bg-white/10 text-muted-foreground"}`}>{onlyTab.count}</span>
+                  )}
+                </button>
+              );
+            }
             return (
               <div key={section.group} className="relative">
                 <button
@@ -2770,7 +2982,240 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       )}
 
-      {/* ── Jotform Submissions ── */}
+      {/* ── Applicant Documents — the real Jotform-generated PDF per submission ── */}
+      {activeTab === "jotformDocuments" && canViewJotformTab && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm flex items-center gap-1.5">
+              <Forward className="h-4 w-4 text-blue-300" /> Applicant Documents
+              {newJotformSubmissionsCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/25">{newJotformSubmissionsCount} new</span>
+              )}
+            </h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">The exact PDF Jotform generated for each submission — not a re-creation.</p>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={jotformSearch}
+              onChange={(e) => setJotformSearch(e.target.value)}
+              placeholder="Applicant or form…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Form</label>
+            <select value={jotformFormFilter} onChange={(e) => setJotformFormFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">All</option>
+              {jotformFormOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Status</label>
+            <select value={jotformStatusFilter} onChange={(e) => setJotformStatusFilter(e.target.value as any)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+              <option value="">All</option>
+              <option value="new">New</option>
+              <option value="reviewed">Reviewed</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+          {(jotformSearch || jotformFormFilter || jotformStatusFilter) && (
+            <button onClick={() => { setJotformSearch(""); setJotformFormFilter(""); setJotformStatusFilter(""); }} className="btn text-sm px-3 py-1.5">Clear Filters</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {filteredJotformSubmissions.length}{(jotformSearch || jotformFormFilter || jotformStatusFilter) ? ` of ${jotformSubmissions.length}` : ""} submissions
+          </span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Applicant</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Form</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Submitted</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {jotformSubmissionsLoading ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : filteredJotformSubmissions.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{jotformSubmissions.length === 0 ? "No submissions yet." : "No submissions match these filters."}</td></tr>
+              ) : (
+                pagedJotformSubmissions.map((s) => (
+                  <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-4 py-3 font-medium">
+                      <button type="button" onClick={() => setJotformPreview(s)} className="hover:text-blue-300 hover:underline transition cursor-pointer text-left">
+                        {s.applicantName || "Someone"}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{s.formTitle || s.formId}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(s.submittedAt).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={s.status}
+                        onChange={(e) => handleJotformStatusChange(s, e.target.value as JotformSubmissionStatus)}
+                        className={`text-xs font-semibold px-2 py-1 rounded border-0 ${s.status === "new" ? "bg-blue-500/20 text-blue-300" : s.status === "reviewed" ? "bg-green-500/20 text-green-300" : "bg-slate-700 text-slate-300"}`}
+                      >
+                        <option value="new">New</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="archived">Archived</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      {s.documentUrl ? (
+                        <button type="button" onClick={() => setJotformPreview(s)} className="btn text-xs px-2.5 py-1.5">View PDF</button>
+                      ) : (
+                        <span className="text-muted-foreground text-xs" title="Jotform's generated document couldn't be fetched for this submission.">Unavailable</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button type="button" onClick={() => handleDeleteJotformSubmission(s)} title="Delete this submission" className="text-muted-foreground hover:text-red-400 transition-colors">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── Page numbers ── */}
+        {!jotformSubmissionsLoading && filteredJotformSubmissions.length > JOTFORM_PAGE_SIZE && (
+          <div className="px-4 py-3 border-t border-white/10 flex items-center justify-center gap-1 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setJotformPage((p) => Math.max(1, p - 1))}
+              disabled={jotformPage === 1}
+              className="btn text-xs px-2.5 py-1.5 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            {jotformPageWindow.map((p, i) => (
+              <span key={p} className="flex items-center gap-1">
+                {i > 0 && p - jotformPageWindow[i - 1] > 1 && <span className="text-muted-foreground text-xs px-1">…</span>}
+                <button
+                  type="button"
+                  onClick={() => setJotformPage(p)}
+                  className={`text-xs px-2.5 py-1.5 rounded-md ${p === jotformPage ? "bg-primary/20 text-primary font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+                >
+                  {p}
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => setJotformPage((p) => Math.min(jotformPageCount, p + 1))}
+              disabled={jotformPage === jotformPageCount}
+              className="btn text-xs px-2.5 py-1.5 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Deleted Jotforms — soft-deleted submissions, restorable for 30 days ── */}
+      {activeTab === "jotformDocuments" && canViewJotformTab && (
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm flex items-center gap-1.5">
+            <Trash2 className="h-4 w-4 text-red-300" /> Deleted Jotforms
+          </h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Deleted submissions stay here for 30 days and can be restored — after that they drop off this list.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Applicant</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Form</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Deleted</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Expires</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {deletedJotformLoading ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : deletedJotformSubmissions.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Nothing deleted.</td></tr>
+              ) : (
+                deletedJotformSubmissions.map((s) => {
+                  const deletedAt = new Date(s.deletedAt!);
+                  const expiresAt = new Date(deletedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+                  const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+                  return (
+                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">{s.applicantName || "Someone"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{s.formTitle || s.formId}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{deletedAt.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{daysLeft} day{daysLeft === 1 ? "" : "s"} left</td>
+                      <td className="px-4 py-3">
+                        <button type="button" onClick={() => handleRestoreJotformSubmission(s)} className="btn text-xs px-2.5 py-1.5">Restore</button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* ── Applicant Documents preview modal ── */}
+      {jotformPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setJotformPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{jotformPreview.applicantName || "Someone"}</p>
+                <p className="text-[10px] text-muted-foreground">{jotformPreview.formTitle || jotformPreview.formId} — submitted {new Date(jotformPreview.submittedAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={jotformPreview.status}
+                  onChange={(e) => {
+                    const status = e.target.value as JotformSubmissionStatus;
+                    setJotformPreview({ ...jotformPreview, status });
+                    void handleJotformStatusChange(jotformPreview, status);
+                  }}
+                  className="text-xs font-semibold px-2 py-1 rounded border-0 bg-slate-700 text-slate-100"
+                >
+                  <option value="new">New</option>
+                  <option value="reviewed">Reviewed</option>
+                  <option value="archived">Archived</option>
+                </select>
+                {jotformPreview.documentUrl && (
+                  <a href={jotformPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => handleDeleteJotformSubmission(jotformPreview)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 text-red-300 hover:text-red-200"><Trash2 className="h-3 w-3" /> Delete</button>
+                <button type="button" onClick={() => setJotformPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {jotformPreview.documentUrl ? (
+                <iframe src={jotformPreview.documentUrl} title="Applicant document" className="w-full h-full min-h-[70vh] border-0" />
+              ) : (
+                <p className="p-8 text-center text-sm text-muted-foreground">Jotform's generated document couldn't be fetched for this submission.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Jotform Submissions (hidden from nav — kept for reference/fallback) ── */}
       {activeTab === "jotform" && canViewJotformTab && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">

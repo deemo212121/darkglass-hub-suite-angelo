@@ -14,7 +14,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
-import { ChevronLeft, Upload, Trash2, FileText, Loader2, Link as LinkIcon, X, Eye } from "lucide-react";
+import { ChevronLeft, Upload, Trash2, FileText, Loader2, Link as LinkIcon, X, Eye, Forward } from "lucide-react";
 import {
   getOnboardingDocuments,
   addOnboardingDocument,
@@ -24,6 +24,7 @@ import {
 } from "@/lib/supabase/onboardingDocuments";
 import { uploadOnboardingDocument, deleteOnboardingDocumentFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { getJotformSubmissions, type JotformSubmission } from "@/lib/supabase/jotformSubmissions";
 
 interface Props {
   companyId: string;
@@ -156,12 +157,13 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     setBulkLinksInput("");
   };
 
+  // Drive links use their dedicated /preview embed URL (see getDriveEmbedUrl);
+  // anything else (uploaded files, Jotform-generated PDFs) renders directly
+  // in the iframe as-is — browsers display PDFs inline just fine — with
+  // "Open in new tab" in the modal header as a fallback if a given file
+  // ever doesn't render well embedded.
   const handleOpenDocument = (doc: OnboardingDocument) => {
-    if (getDriveEmbedUrl(doc.fileUrl)) {
-      setPreviewDoc(doc);
-    } else {
-      window.open(doc.fileUrl, "_blank", "noopener,noreferrer");
-    }
+    setPreviewDoc(doc);
   };
 
   const handleDeleteDocument = async (doc: OnboardingDocument) => {
@@ -177,10 +179,114 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     }
   };
 
+  // ── Jotform Submissions — every applicant's real Jotform-generated PDF
+  // (see hr_jotform_submissions / jotformBridge.ts), filterable by name/form
+  // and draggable straight into a category — unlike a Bulk Import Link, we
+  // already know the applicant's name and the form title, so a drop files it
+  // immediately with no "type a label" dialog needed. ──
+  const [jotformSubs, setJotformSubs] = useState<JotformSubmission[]>([]);
+  const [jotformSubsLoading, setJotformSubsLoading] = useState(true);
+  const [jotformNameFilter, setJotformNameFilter] = useState("");
+  const [jotformFormFilter, setJotformFormFilter] = useState("");
+  const [filingSubmissionId, setFilingSubmissionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getJotformSubmissions()
+      .then((subs) => setJotformSubs(subs.filter((s) => s.documentUrl)))
+      .catch((err) => console.error("Failed to load Jotform submissions:", err))
+      .finally(() => setJotformSubsLoading(false));
+  }, []);
+
+  const jotformFormOptions = useMemo(
+    () => Array.from(new Set(jotformSubs.map((s) => s.formTitle || s.formId))).sort(),
+    [jotformSubs]
+  );
+  const filteredJotformSubs = useMemo(() => {
+    const q = jotformNameFilter.trim().toLowerCase();
+    return jotformSubs.filter((s) => {
+      if (jotformFormFilter && (s.formTitle || s.formId) !== jotformFormFilter) return false;
+      if (q && !(s.applicantName ?? "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [jotformSubs, jotformNameFilter, jotformFormFilter]);
+
+  const handleFileJotformSubmission = async (category: OnboardingDocCategory, submission: JotformSubmission) => {
+    if (!submission.documentUrl) return;
+    setFilingSubmissionId(submission.id);
+    try {
+      const fileName = `${submission.applicantName || "Applicant"} — ${submission.formTitle || submission.formId}.pdf`;
+      await addOnboardingDocument({
+        profileId,
+        category,
+        fileName,
+        fileUrl: submission.documentUrl,
+        source: "jotform",
+        jotformNotificationId: submission.submissionId,
+      });
+      await loadDocuments();
+      void logActivity({ action: "onboarding_document_added", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category, fileName } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to file submission.");
+    } finally {
+      setFilingSubmissionId(null);
+    }
+  };
+
+  // ── Bulk Upload Files — for documents that don't come through Jotform at
+  // all (paper forms, emailed copies, etc.). Selecting multiple files makes
+  // each one a draggable card, same as a Jotform submission — a real
+  // filename is already known, so a drop files it immediately with no
+  // "type a label" dialog (unlike a bare Bulk Import Link). ──
+  const [pendingFiles, setPendingFiles] = useState<{ id: string; file: File }[]>([]);
+  const [filingFileId, setFilingFileId] = useState<string | null>(null);
+
+  const handleSelectBulkFiles = (files: FileList) => {
+    const next = Array.from(files).map((file, i) => ({
+      id: `bulkfile:${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+    }));
+    setPendingFiles((prev) => [...prev, ...next]);
+  };
+
+  const handleFileBulkUpload = async (category: OnboardingDocCategory, pending: { id: string; file: File }) => {
+    setFilingFileId(pending.id);
+    try {
+      const { url, fullPath } = await uploadOnboardingDocument(companyId, profileId, category, pending.file);
+      await addOnboardingDocument({
+        profileId,
+        category,
+        fileName: pending.file.name,
+        fileUrl: url,
+        storagePath: fullPath,
+        source: "manual",
+      });
+      await loadDocuments();
+      setPendingFiles((prev) => prev.filter((f) => f.id !== pending.id));
+      void logActivity({ action: "onboarding_document_added", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category, fileName: pending.file.name } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload file.");
+    } finally {
+      setFilingFileId(null);
+    }
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
     const category = over.id as OnboardingDocCategory;
+
+    const activeId = String(active.id);
+    if (activeId.startsWith("jotform:")) {
+      const submission = jotformSubs.find((s) => `jotform:${s.id}` === activeId);
+      if (submission) void handleFileJotformSubmission(category, submission);
+      return;
+    }
+    if (activeId.startsWith("bulkfile:")) {
+      const pending = pendingFiles.find((f) => f.id === activeId);
+      if (pending) void handleFileBulkUpload(category, pending);
+      return;
+    }
+
     const link = pendingLinks.find((l) => l.id === active.id);
     if (!link) return;
     // No filename to go on for a bare link — open Add Link pre-filled with
@@ -229,8 +335,80 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
             ))}
           </div>
 
-          {/* ── Bulk Import Links — paste a batch of Drive links (comma or newline separated), each becomes its own draggable card below. ── */}
-          <div className="panel p-3 lg:sticky lg:top-4 self-start">
+          {/* ── Right column: Jotform Submissions + Bulk Import Links, stacked ── */}
+          <div className="flex flex-col gap-4 lg:sticky lg:top-4 self-start">
+          {/* Every applicant's real Jotform-generated document, filterable by name/form, draggable straight into a category. */}
+          <div className="panel p-3">
+            <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Forward className="h-3.5 w-3.5 text-blue-300" /> Jotform Submissions</h3>
+            <div className="flex flex-col gap-1.5 mb-2">
+              <input
+                type="text"
+                value={jotformNameFilter}
+                onChange={(e) => setJotformNameFilter(e.target.value)}
+                placeholder="Filter by name…"
+                className="glass-input text-xs py-1.5 px-2 rounded-md w-full"
+              />
+              <select
+                value={jotformFormFilter}
+                onChange={(e) => setJotformFormFilter(e.target.value)}
+                className="glass-input text-xs py-1.5 px-2 rounded-md w-full"
+              >
+                <option value="">All forms</option>
+                {jotformFormOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            {jotformSubsLoading ? (
+              <p className="text-xs text-muted-foreground text-center py-6 flex items-center justify-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p>
+            ) : filteredJotformSubs.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">{jotformSubs.length === 0 ? "No submissions yet." : "No submissions match these filters."}</p>
+            ) : (
+              <div className="flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto mb-3">
+                {filteredJotformSubs.map((s) => (
+                  <DraggableJotformSubmission
+                    key={s.id}
+                    submission={s}
+                    filing={filingSubmissionId === s.id}
+                    onPreview={() => setPreviewDoc({ fileName: `${s.applicantName || "Applicant"} — ${s.formTitle || s.formId}`, fileUrl: s.documentUrl! })}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Bulk Upload Files — for documents that don't come through Jotform at all (paper forms, emailed copies, etc.). Select several at once, each becomes its own draggable card below. */}
+          <div className="panel p-3">
+            <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Upload className="h-3.5 w-3.5 text-cyan-300" /> Bulk Upload Files</h3>
+            <label className="btn text-xs px-3 py-1.5 w-full mb-2 flex items-center justify-center gap-1.5 cursor-pointer">
+              <Upload className="h-3.5 w-3.5" /> Select Files
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) handleSelectBulkFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {pendingFiles.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">No pending files yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto mb-3">
+                {pendingFiles.map((f) => (
+                  <DraggablePendingFile
+                    key={f.id}
+                    pending={f}
+                    filing={filingFileId === f.id}
+                    onDiscard={() => setPendingFiles((prev) => prev.filter((x) => x.id !== f.id))}
+                    onPreview={() => setPreviewDoc({ fileName: f.file.name, fileUrl: URL.createObjectURL(f.file) })}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Bulk Import Links — paste a batch of Drive links (comma or newline separated), each becomes its own draggable card below. */}
+          <div className="panel p-3">
             <h3 className="text-sm font-semibold mb-2">Bulk Import Links</h3>
             <textarea
               value={bulkLinksInput}
@@ -261,6 +439,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
                 ))}
               </div>
             )}
+          </div>
           </div>
         </div>
       </DndContext>
@@ -305,10 +484,10 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
         </div>
       )}
 
-      {/* Inline preview for Google Drive-linked documents — full document in an iframe instead of a new tab */}
+      {/* Inline preview — full document in an iframe instead of a new tab. Click the backdrop or the X to close. */}
       {previewDoc && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[85vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setPreviewDoc(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
               <p className="text-sm font-semibold truncate">{previewDoc.fileName}</p>
               <div className="flex items-center gap-2">
@@ -427,6 +606,85 @@ function DraggablePendingLink({ link, onDiscard, onPreview }: { link: { id: stri
           <Eye className="h-3.5 w-3.5" />
         </button>
         <button type="button" onClick={onDiscard} title="Discard this link" className="text-muted-foreground hover:text-red-300">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A real Jotform submission with its generated document already known —
+ * unlike DraggablePendingLink, a drop files it immediately (applicant name
+ * + form title are already real data, no label to type).
+ */
+function DraggableJotformSubmission({
+  submission,
+  filing,
+  onPreview,
+}: {
+  submission: JotformSubmission;
+  filing: boolean;
+  onPreview: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `jotform:${submission.id}`, disabled: filing });
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 } : undefined;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-md border border-white/10 bg-white/5 px-2.5 py-2 flex items-center justify-between gap-2 ${isDragging ? "opacity-50" : ""} ${filing ? "opacity-60" : ""}`}
+    >
+      <div {...listeners} {...attributes} className={`flex items-center gap-1.5 min-w-0 flex-1 ${filing ? "cursor-wait" : "cursor-grab active:cursor-grabbing"}`}>
+        {filing ? <Loader2 className="h-3.5 w-3.5 shrink-0 text-blue-300 animate-spin" /> : <Forward className="h-3.5 w-3.5 shrink-0 text-blue-300" />}
+        <div className="min-w-0">
+          <p className="text-xs truncate">{submission.applicantName || "Applicant"}</p>
+          <p className="text-[10px] text-muted-foreground truncate">{submission.formTitle || submission.formId}</p>
+        </div>
+      </div>
+      <button type="button" onClick={onPreview} title="Preview this document" className="text-muted-foreground hover:text-blue-300 shrink-0">
+        <Eye className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A locally-selected file not yet filed into any category — for documents
+ * that don't come through Jotform at all. Its real filename is already
+ * known, so like a Jotform submission (and unlike a bare Bulk Import Link)
+ * a drop files it immediately, no label to type.
+ */
+function DraggablePendingFile({
+  pending,
+  filing,
+  onDiscard,
+  onPreview,
+}: {
+  pending: { id: string; file: File };
+  filing: boolean;
+  onDiscard: () => void;
+  onPreview: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: pending.id, disabled: filing });
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 } : undefined;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-md border border-white/10 bg-white/5 px-2.5 py-2 flex items-center justify-between gap-2 ${isDragging ? "opacity-50" : ""} ${filing ? "opacity-60" : ""}`}
+    >
+      <div {...listeners} {...attributes} className={`flex items-center gap-1.5 min-w-0 flex-1 ${filing ? "cursor-wait" : "cursor-grab active:cursor-grabbing"}`}>
+        {filing ? <Loader2 className="h-3.5 w-3.5 shrink-0 text-cyan-300 animate-spin" /> : <FileText className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
+        <span className="text-xs truncate">{pending.file.name}</span>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <button type="button" onClick={onPreview} title="Preview this file" className="text-muted-foreground hover:text-blue-300">
+          <Eye className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" onClick={onDiscard} title="Discard this file" className="text-muted-foreground hover:text-red-300">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>

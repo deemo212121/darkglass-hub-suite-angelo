@@ -157,6 +157,18 @@ export async function deleteOnboardingDocumentFile(fullPath: string): Promise<vo
 }
 
 /**
+ * Delete a Jotform-generated document (companies/{companyId}/jotform-documents/…)
+ * by its full storage path — used when HR deletes a submission row (e.g. a
+ * test/junk one) so the file doesn't linger orphaned in Storage.
+ */
+export async function deleteJotformDocumentFile(fullPath: string): Promise<void> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  await deleteObject(ref(storage, fullPath));
+}
+
+/**
  * Upload a generated Certificate of Employment PDF so it can be linked in a
  * Team Messenger message — same "generate client-side, upload, share a
  * link" pattern as the CV-forwarding feature on the Hiring tab.
