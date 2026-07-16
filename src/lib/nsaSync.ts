@@ -18,7 +18,24 @@
  *   NSA timeSlot (A/P/D/E)    → tickets.time_slot
  *   NSA firstName/lastName    → customers.first_name/last_name
  *   NSA address1/city/etc     → customers.address/city/etc
+ *   NSA email                 → customers.email (0057 — was hardcoded to
+ *                                "", silently dropping a real value on
+ *                                every sync)
+ *   NSA countryCode           → customers.country (0057)
  *   NSA status                → mapped AHS repair status
+ *   NSA latitude/longitude    → tickets.nsa_latitude/nsa_longitude (0057;
+ *                                sent as strings by NSA, parsed to numeric)
+ *   NSA statusCode/program/   → tickets.nsa_status_code/nsa_program/
+ *     apiClose/hash/            nsa_api_close/nsa_hash/
+ *     legacyFileName/           nsa_legacy_file_name/
+ *     datetimeDepotReceived/    nsa_datetime_depot_received/
+ *     dispatchCodes/            nsa_dispatch_codes/
+ *     hasPartBOM/partBOMRequired/ nsa_has_part_bom/nsa_part_bom_required/
+ *     sfCanAddPartOrderedBySF/  nsa_sf_can_add_part/
+ *     sfCanOrderPartsThroughNSA nsa_sf_can_order_parts (all 0057 — had no
+ *                                column before, silently dropped)
+ *   NSA customerScheduleAcknowledgedByUserID/ByUserName →
+ *     tickets.nsa_schedule_ack_by_user_id/nsa_schedule_ack_by_user_name (0057)
  *   ticket_source             → "NSA"
  */
 
@@ -84,6 +101,14 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
   const requiredCoverage = d.estimateRules?.requiredCoverageTypeCodes?.join(", ") ?? "";
   const requiredPart = d.estimateRules?.requirePartsDetails ? "Y" : "N";
 
+  // NSA sends these as strings, but the DB column (and Ticket.nsaLatitude/
+  // nsaLongitude) are numeric — parse, dropping anything non-numeric rather
+  // than storing "NaN".
+  const parseCoord = (v: string | undefined) => {
+    const n = parseFloat(String(v ?? ""));
+    return Number.isFinite(n) ? n : undefined;
+  };
+
   return {
     ticketNo: d.dispatchNumber,
     ticketSource: "NSA",
@@ -110,12 +135,13 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
     lastName,
     phone: d.homePhone ?? "",
     secondPhone: d.cellPhone ?? "",
-    email: "",
+    email: d.email ?? "",
     address: d.address1 ?? "",
     address2: d.address2 ?? "",
     city: d.city ?? "",
     state: d.stateProvince ?? "",
     zip: d.postalCode ?? "",
+    country: d.countryCode ?? "",
     // Notes
     internalNote: d.complaint ?? d.notes ?? "",
     problemDescription: d.complaint ?? "",
@@ -133,6 +159,21 @@ function convertDispatchToTicket(d: NsaDispatch): Record<string, any> {
     nsaPreAuth: preAuth,
     nsaMasterCode: d.masterCode ?? "",
     nsaCoverageExclusions: d.coverageExclusions ?? "",
+    nsaLatitude: parseCoord(d.latitude),
+    nsaLongitude: parseCoord(d.longitude),
+    nsaStatusCode: d.statusCode ?? "",
+    nsaDispatchCodes: d.dispatchCodes ?? undefined,
+    nsaHasPartBOM: d.hasPartBOM ?? undefined,
+    nsaPartBOMRequired: d.partBOMRequired ?? undefined,
+    nsaSfCanAddPart: d.sfCanAddPartOrderedBySF ?? undefined,
+    nsaSfCanOrderParts: d.sfCanOrderPartsThroughNSA ?? undefined,
+    nsaProgram: d.program ?? "",
+    nsaApiClose: d.apiClose ?? undefined,
+    nsaHash: d.hash ?? "",
+    nsaLegacyFileName: d.legacyFileName ?? "",
+    nsaDatetimeDepotReceived: d.datetimeDepotReceived ?? "",
+    nsaScheduleAckByUserId: d.customerScheduleAcknowledgedByUserID ?? "",
+    nsaScheduleAckByUserName: d.customerScheduleAcknowledgedByUserName ?? "",
   };
 }
 

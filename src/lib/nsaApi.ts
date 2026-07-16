@@ -72,6 +72,7 @@ export interface NsaDispatch {
   cellPhone?: string;
   workPhone?: string;
   workExtension?: string;
+  email?: string;
   address1?: string;
   address2?: string;
   city?: string;
@@ -87,8 +88,11 @@ export interface NsaDispatch {
   specialInstructions?: string;
   notes?: string;
   status?: string;
+  statusCode?: string;
   routeName?: string;
   groupName?: string;
+  program?: string;
+  apiClose?: boolean;
   ruleSet?: number;
   ruleSetID?: number;
   attachments?: NsaAttachment[];
@@ -99,14 +103,15 @@ export interface NsaDispatch {
   deductible?: string;
   coverageExclusions?: string;
   customerScheduleAcknowledgedDate?: string;
-  customerScheduleAcknowledgedUserName?: string;
+  customerScheduleAcknowledgedByUserID?: string;
+  customerScheduleAcknowledgedByUserName?: string;
   serviceOrderCommunicationLogs?: number[];
   serviceOrderNotes?: number[];
   partIDs?: number[];
   hasPartBOM?: boolean;
-  sfCanAddPartOrderBySF?: boolean;
+  sfCanAddPartOrderedBySF?: boolean;
   sfCanOrderPartsThroughNSA?: boolean;
-  PartBOMRequired?: boolean;
+  partBOMRequired?: boolean;
   estimateRules?: NsaEstimateRules;
   estimates?: NsaEstimateSummary[];
   dispatchCodes?: NsaDispatchCodes;

@@ -300,16 +300,33 @@ function covToDb(row: CoverageRow): Record<string, unknown> {
   };
 }
 
+/**
+ * Supabase/PostgREST silently caps a plain `.select()` at 1000 rows
+ * (db-max-rows), regardless of how many rows actually match. A prior bug
+ * elsewhere relied on an unpaginated fetch here to decide which branches
+ * had "no coverage yet" and re-seeded them — since real coverage across all
+ * branches is now several thousand rows, that always saw a truncated
+ * subset and mass-duplicated data on nearly every page load. Paginating
+ * here ensures every caller actually gets the full table, not an arbitrary
+ * slice ordered by zip code.
+ */
 export async function getCoverage(): Promise<CoverageRow[]> {
-  const { data, error } = await supabase
-    .from("location_mgmt_coverage")
-    .select("*")
-    .order("zip_code", { ascending: true });
-  if (error) {
-    console.error("getCoverage error:", error.message);
-    throw new Error(error.message);
+  const pageSize = 1000;
+  const all: any[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("location_mgmt_coverage")
+      .select("*")
+      .order("zip_code", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) {
+      console.error("getCoverage error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
   }
-  return (data ?? []).map(covFromDb);
+  return all.map(covFromDb);
 }
 
 export async function upsertCoverage(row: CoverageRow): Promise<CoverageRow> {
