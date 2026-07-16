@@ -1,164 +1,236 @@
-import { useState, useMemo } from "react";
+/**
+ * Triage Daily Report — rebuilt on live data. "Triage" is the TR- prefixed
+ * status family a ticket passes through (TR-Need Triage, TR-Need PO).
+ * Remaining is a live snapshot of tickets currently in a TR- status.
+ * Completed and Avg Triage Time are computed from ticket_audit_log (the
+ * real trigger-written status-change trail): for each ticket, find the
+ * timestamp it entered a TR- status and the timestamp it left one — the
+ * delta is real triage duration, attributed to whoever moved it out.
+ *
+ * The old mock's HR/Work Hours/Rate/Covered Locations/Sick Day/Vacation Day
+ * columns have no backing anywhere in this app (no shift/time-off system) —
+ * dropped, matching the same precedent as Operations Daily Report's
+ * "Training" column.
+ */
+
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis } from "recharts";
-import { triageReportData } from "@/lib/reportData";
+import { ChevronLeft, Loader2, Users, CheckCircle2, Clock, Timer } from "lucide-react";
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyTickets, getTicketAuditLog } from "@/lib/supabase/tickets";
+import type { Ticket } from "@/lib/ticketData";
+import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { normalizeRole } from "@/lib/roleLabels";
 
-const KNOWN_AGENTS=["Kemuel Tamayo","Rocky Deles","Mark Marquez","Job Alberto","Angelo Husain","Jeselton Chu"];
-const ALL_DATES=Object.keys(triageReportData).sort();
-const ALL_AGENTS=[...new Set(Object.values(triageReportData).flatMap((d:any)=>d.agents?.map((a:any)=>a.name)||[]))].filter(n=>n&&n.length>3).sort();
-const ALL_BRANDS=["GE","SQT","ASSURANT","ELECTROLUX","HISENSE","AIG","ASURION","MIELE","CENTRICITY","SPQ","MIDEA","NSA","FIDELITY","OOW","BUILDER","SS","LG","SERVICE BENCH","SPPN","INTERNAL"];
-const COLORS=["#3b82f6","#22d3ee","#a78bfa","#34d399","#fb923c","#f472b6","#facc15","#60a5fa","#4ade80","#c084fc"];
-const AG_COLORS:Record<string,string>={"Kemuel Tamayo":"#3b82f6","Rocky Deles":"#22d3ee","Mark Marquez":"#a78bfa","Job Alberto":"#34d399","Angelo Husain":"#fb923c","Jeselton Chu":"#f472b6"};
-const fmtDate=(s:string)=>{const c=s.trim();return c.length===3?`${c[0]}/${c.slice(1)}/26`:`${c.slice(0,-2)}/${c.slice(-2)}/26`;};
+const TRIAGE_ROLES = new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]);
+const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 
-export function ReportTriageDaily({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
-  const [date,setDate]=useState(ALL_DATES[ALL_DATES.length-1]);
-  const [agentFilter,setAgentFilter]=useState("");
-  const [brandFilter,setBrandFilter]=useState("");
-  const [warningFilter,setWarningFilter]=useState("");
+function isTriageProfile(p: ProfileRow): boolean {
+  if (TRIAGE_ROLES.has(normalizeRole(p.role))) return true;
+  return (p.extra_roles || []).some((r) => TRIAGE_ROLES.has(normalizeRole(r)));
+}
+function isTriageStatus(status: string | undefined | null): boolean {
+  return String(status || "").trim().toLowerCase().startsWith("tr-");
+}
+function dateOnly(v: string | undefined | null): string {
+  return (v || "").slice(0, 10);
+}
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+/** Add (or subtract, with a negative n) n days to an ISO date string. */
+const addDaysToIso = (iso: string, n: number) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const fmtShort = (iso: string) => { const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };
+function fmtDuration(ms: number): string {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (hrs < 24) return `${hrs}h ${rem}m`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ${hrs % 24}h`;
+}
 
-  const d=useMemo(()=>(triageReportData as any)[date]||{},[date]);
-  const brands:Record<string,number>=d.brands||{};
-  const brandsRem:Record<string,number>=d.brands_remaining||{};
-  const allAgents:any[]=d.agents||[];
-  const mistakeRemarks:any[]=d.mistake_remarks||[];
+interface ExitEvent { ticketId: string; agentId: string | null; exitAt: string; durationMs: number | null }
 
-  const filteredAgents=useMemo(()=>{
-    let a=allAgents;
-    if(agentFilter) a=a.filter((x:any)=>x.name===agentFilter);
-    if(warningFilter==="has") a=a.filter((x:any)=>x.warning&&x.warning>0);
-    return a;
-  },[allAgents,agentFilter,warningFilter]);
+// Walk each ticket's status-change history (sorted chronologically) and
+// find every "left a TR- status" event, pairing it with the most recent
+// "entered a TR- status" event for that same ticket to get a real duration.
+function computeTriageExits(auditRows: { ticketId: string; field: string; beforeValue: string | null; afterValue: string | null; changedBy: string | null; createdAt: string }[]): ExitEvent[] {
+  const byTicket = new Map<string, typeof auditRows>();
+  for (const r of auditRows) {
+    if (r.field !== "status") continue;
+    if (!byTicket.has(r.ticketId)) byTicket.set(r.ticketId, []);
+    byTicket.get(r.ticketId)!.push(r);
+  }
 
-  const filteredBrands=useMemo(()=>brandFilter?{[brandFilter]:brands[brandFilter]??0}:brands,[brands,brandFilter]);
-  const filteredBrandsRem=useMemo(()=>brandFilter?{[brandFilter]:brandsRem[brandFilter]??0}:brandsRem,[brandsRem,brandFilter]);
+  const exits: ExitEvent[] = [];
+  for (const [ticketId, rows] of byTicket) {
+    rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let enteredAt: string | null = null;
+    for (const r of rows) {
+      const wasTriage = isTriageStatus(r.beforeValue);
+      const isTriage = isTriageStatus(r.afterValue);
+      if (!wasTriage && isTriage) {
+        enteredAt = r.createdAt;
+      } else if (wasTriage && !isTriage) {
+        exits.push({
+          ticketId,
+          agentId: r.changedBy,
+          exitAt: r.createdAt,
+          durationMs: enteredAt ? new Date(r.createdAt).getTime() - new Date(enteredAt).getTime() : null,
+        });
+        enteredAt = null;
+      }
+    }
+  }
+  return exits;
+}
 
-  // Chart data
-  const agentBarData=filteredAgents.map((a:any)=>({name:a.name.split(' ')[0],complete:a.complete||0,remaining:a.remaining||0,pending:a.pending||0,monthly:a.monthlyComplete||0}));
-  const brandBarData=Object.entries(filteredBrands).map(([name,val])=>({name,completed:Number(val),remaining:Number(filteredBrandsRem[name]||0)})).sort((a,b)=>b.completed-a.completed);
-  const trendData=ALL_DATES.slice(-10).map(dt=>{const x=(triageReportData as any)[dt]||{};return{date:fmtDate(dt),completed:x.completed||0,remaining:x.remaining||0};});
-  const radarData=filteredAgents.map((a:any)=>({name:a.name.split(' ')[0],complete:a.complete||0,remaining:a.remaining||0,pending:a.pending||0}));
+export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [staff, setStaff] = useState<ProfileRow[]>([]);
+  const [notes, setNotes] = useState<CsrAgentNote[]>([]);
+  const [exits, setExits] = useState<ExitEvent[]>([]);
 
-  return(
-    <div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
-      <div className="flex items-center gap-3 mb-6"><Link to="/m/$module" params={{module:mod.slug}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
-      <div className="panel mb-6"><div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
-          <select value={date} onChange={e=>setDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">{ALL_DATES.map(d=><option key={d} value={d}>{fmtDate(d)}</option>)}</select></div>
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</label>
-          <select value={agentFilter} onChange={e=>setAgentFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">All Agents</option>{ALL_AGENTS.map(n=><option key={n} value={n}>{n}</option>)}</select></div>
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Brand</label>
-          <select value={brandFilter} onChange={e=>setBrandFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">All Brands</option>{ALL_BRANDS.filter(b=>b in brands).map(b=><option key={b} value={b}>{b}</option>)}</select></div>
-        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Warnings</label>
-          <select value={warningFilter} onChange={e=>setWarningFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"><option value="">All</option><option value="has">Has Warning</option></select></div>
-        {(agentFilter||brandFilter||warningFilter)&&<button onClick={()=>{setAgentFilter("");setBrandFilter("");setWarningFilter("");}} className="btn text-sm px-3 mb-0.5">Clear</button>}
-      </div></div>
+  const [dateFrom, setDateFrom] = useState(daysAgoIso(29));
+  const [dateTo, setDateTo] = useState(todayIso());
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {[["Completed",d.completed,"text-green-300"],["Remaining",d.remaining,"text-yellow-300"],["Staff",d.staff,"text-blue-300"],["Training",d.training,"text-purple-300"]].map(([l,v,c])=>(
-          <div key={l as string} className="panel p-4 text-center"><p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{l}</p><p className={`text-3xl font-bold ${c}`}>{v??'—'}</p></div>
-        ))}
-      </div>
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        // Widen the audit-log lookback so a ticket that entered triage before
+        // dateFrom but exited inside the range still gets a real duration —
+        // only exits inside [dateFrom, dateTo] are actually counted below.
+        const lookbackStart = addDaysToIso(dateFrom, -60);
+        const [allTickets, profiles, allNotes, auditLog] = await Promise.all([
+          getCompanyTickets(),
+          getCompanyUsers(),
+          getAllAgentNotes().catch((err) => { console.error("Failed to load agent notes:", err); return []; }),
+          getTicketAuditLog({ startDate: lookbackStart, endDate: dateTo }).catch((err) => { console.error("Failed to load audit log:", err); return []; }),
+        ]);
+        if (cancelled) return;
+        setTickets(allTickets);
+        setStaff(profiles.filter(isTriageProfile));
+        setNotes(allNotes);
+        setExits(computeTriageExits(auditLog));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Triage Daily Report.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
 
-      {/* Row 1: Agent bar chart + Trend */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <div className="panel p-4">
-          <p className="text-sm font-semibold mb-4">Agent — Complete vs Remaining</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={agentBarData} margin={{left:-10}}>
-              <XAxis dataKey="name" tick={{fill:"#94a3b8",fontSize:11}}/>
-              <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-              <Legend wrapperStyle={{fontSize:11,color:"#94a3b8"}}/>
-              <Bar dataKey="complete" fill="#34d399" radius={[4,4,0,0]} name="Complete"/>
-              <Bar dataKey="remaining" fill="#fb923c" radius={[4,4,0,0]} name="Remaining"/>
-              <Bar dataKey="pending" fill="#a78bfa" radius={[4,4,0,0]} name="Pending"/>
-            </BarChart>
-          </ResponsiveContainer>
+  const remainingTickets = useMemo(() => tickets.filter((t) => isTriageStatus(t.status)), [tickets]);
+  const exitsInRange = useMemo(() => exits.filter((e) => dateOnly(e.exitAt) >= dateFrom && dateOnly(e.exitAt) <= dateTo), [exits, dateFrom, dateTo]);
+
+  const withDuration = exitsInRange.filter((e) => e.durationMs !== null);
+  const avgDurationMs = withDuration.length > 0 ? withDuration.reduce((s, e) => s + (e.durationMs ?? 0), 0) / withDuration.length : null;
+
+  const kpi = {
+    completed: exitsInRange.length,
+    remaining: remainingTickets.length,
+    staff: staff.length,
+    avgTime: avgDurationMs !== null ? fmtDuration(avgDurationMs) : "—",
+  };
+
+  // Real day-by-day Completed count for the 10 days ending at Date To — not
+  // the real "today", so this stays consistent with the KPI tiles when the
+  // user looks at a past date range instead of the current one.
+  const trendData = useMemo(() => {
+    const dates = Array.from({ length: 10 }, (_, i) => addDaysToIso(dateTo, i - 9));
+    const counts = new Map(dates.map((d) => [d, 0]));
+    for (const e of exits) {
+      const d = dateOnly(e.exitAt);
+      if (counts.has(d)) counts.set(d, (counts.get(d) ?? 0) + 1);
+    }
+    return dates.map((d) => ({ date: fmtShort(d), completed: counts.get(d) ?? 0 }));
+  }, [exits, dateTo]);
+
+  const warningCountByProfile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of notes) { if (n.status !== "approved" || n.type !== "warning") continue; map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1); }
+    return map;
+  }, [notes]);
+  const mistakeCountByProfile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of notes) { if (n.status !== "approved" || n.type !== "mistake") continue; map.set(n.agentProfileId, (map.get(n.agentProfileId) ?? 0) + 1); }
+    return map;
+  }, [notes]);
+
+  const totalWarnings = staff.reduce((s, p) => s + (warningCountByProfile.get(p.id) ?? 0), 0);
+  const totalMistakes = staff.reduce((s, p) => s + (mistakeCountByProfile.get(p.id) ?? 0), 0);
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
+          <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
-        <div className="panel p-4">
-          <p className="text-sm font-semibold mb-4">Daily Trend — Last 10 Days</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={trendData} margin={{left:-10}}>
-              <XAxis dataKey="date" tick={{fill:"#94a3b8",fontSize:10}}/>
-              <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-              <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-              <Legend wrapperStyle={{fontSize:11,color:"#94a3b8"}}/>
-              <Bar dataKey="completed" fill="#34d399" radius={[4,4,0,0]} name="Completed"/>
-              <Bar dataKey="remaining" fill="#fb923c" radius={[4,4,0,0]} name="Remaining"/>
-            </BarChart>
-          </ResponsiveContainer>
+
+        <div className="panel mb-6"><div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
+          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
         </div>
-      </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">Remaining reflects tickets currently in a TR- status (a live snapshot); Completed/Avg Triage Time are scoped to Date From–To.</p>
+        </div>
 
-      {/* Row 2: Brand chart */}
-      <div className="panel p-4 mb-4">
-        <p className="text-sm font-semibold mb-4">Brand — Completed vs Remaining</p>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={brandBarData} margin={{left:-10}}>
-            <XAxis dataKey="name" tick={{fill:"#94a3b8",fontSize:10}}/>
-            <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-            <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-            <Legend wrapperStyle={{fontSize:11,color:"#94a3b8"}}/>
-            <Bar dataKey="completed" fill="#3b82f6" radius={[4,4,0,0]} name="Completed"/>
-            <Bar dataKey="remaining" fill="#f472b6" radius={[4,4,0,0]} name="Remaining"/>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+        {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
-      {/* Agent monthly bar */}
-      <div className="panel p-4 mb-4">
-        <p className="text-sm font-semibold mb-4">Agent Monthly Total</p>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={agentBarData} margin={{left:-10}}>
-            <XAxis dataKey="name" tick={{fill:"#94a3b8",fontSize:11}}/>
-            <YAxis tick={{fill:"#94a3b8",fontSize:11}}/>
-            <Tooltip contentStyle={{background:"#1e293b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6}}/>
-            <Bar dataKey="monthly" radius={[4,4,0,0]} name="Monthly Total">
-              {agentBarData.map((entry,i)=><Cell key={i} fill={AG_COLORS[filteredAgents[i]?.name]||COLORS[i%COLORS.length]}/>)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Agent table */}
-      <div className="panel overflow-x-auto p-0 mb-4">
-        <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between"><span>Agent Performance</span><span className="text-xs text-muted-foreground">{filteredAgents.length} of {allAgents.length}</span></div>
-        <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5">
-          {["Name","HR","Work Hours","Rate","Covered Locations","Pending","Warning","Sick","Vacation","Complete","Remaining","Mistakes","Monthly Total"].map(h=>(
-            <th key={h} className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>
+        {loading ? (
+          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Triage Daily Report…</div>
+        ) : (
+        <>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {[
+            { label: "Completed", value: kpi.completed, color: "text-green-300", icon: <CheckCircle2 className="h-4 w-4" /> },
+            { label: "Remaining", value: kpi.remaining, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
+            { label: "Triage Staff", value: kpi.staff, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
+            { label: "Avg Triage Time", value: kpi.avgTime, color: "text-purple-300", icon: <Timer className="h-4 w-4" /> },
+          ].map((k) => (
+            <div key={k.label} className="panel p-4 text-center">
+              <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+              <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+            </div>
           ))}
-        </tr></thead>
-        <tbody>{filteredAgents.length===0?<tr><td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">No agents match filter.</td></tr>:filteredAgents.map((a:any,i:number)=>(
-          <tr key={i} className={`border-b border-white/5 hover:bg-white/5 ${i%2!==0?"bg-white/[0.02]":""}`}>
-            <td className="px-3 py-2.5 font-medium whitespace-nowrap">{a.name}</td>
-            <td className="px-3 py-2.5 text-center text-muted-foreground">{a.hr??'—'}</td>
-            <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{a.workHours??'—'}</td>
-            <td className="px-3 py-2.5 text-center">{a.rate??'—'}</td>
-            <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[160px] truncate" title={a.covered||''}>{a.covered||'—'}</td>
-            <td className="px-3 py-2.5 text-center text-yellow-400 font-medium">{a.pending??'—'}</td>
-            <td className="px-3 py-2.5 text-center">{a.warning!=null&&a.warning>0?<span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-300 border border-red-500/30">{a.warning}</span>:'—'}</td>
-            <td className="px-3 py-2.5 text-center text-muted-foreground">{a.sickDay??'—'}</td>
-            <td className="px-3 py-2.5 text-center text-muted-foreground">{a.vacationDay??'—'}</td>
-            <td className="px-3 py-2.5 text-center text-green-400 font-semibold">{a.complete??'—'}</td>
-            <td className="px-3 py-2.5 text-center text-orange-400">{a.remaining??'—'}</td>
-            <td className="px-3 py-2.5 text-center">{a.mistakes!=null&&a.mistakes>0?<span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-300 border border-red-500/30">{a.mistakes}</span>:'—'}</td>
-            <td className="px-3 py-2.5 text-center text-blue-400">{a.monthlyComplete??'—'}</td>
-          </tr>
-        ))}</tbody></table>
-      </div>
+        </div>
 
-      {/* Mistake Remarks */}
-      {mistakeRemarks.length>0&&<div className="panel p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm">Mistake Remarks</div>
-        <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5"><th className="px-4 py-2 text-left text-xs text-muted-foreground uppercase w-40">Agent</th><th className="px-4 py-2 text-left text-xs text-muted-foreground uppercase">Remarks</th></tr></thead>
-        <tbody>{KNOWN_AGENTS.filter(name=>!agentFilter||agentFilter===name).map(name=>{
-          const remark=mistakeRemarks.find((r:any)=>r.agent===name);
-          return(<tr key={name} className="border-b border-white/5 hover:bg-white/5"><td className="px-4 py-3 font-medium whitespace-nowrap text-blue-400">{name}</td><td className="px-4 py-3 text-sm text-muted-foreground">{remark?.remark||<span className="italic text-white/20">—</span>}</td></tr>);
-        })}</tbody></table>
-      </div>}
-    </main></div>
+        <div className="panel p-4 mb-4">
+          <p className="text-sm font-semibold mb-4">Completed — Last 10 Days</p>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={trendData} margin={{ left: -10 }}>
+              <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="completed" fill="#34d399" radius={[4, 4, 0, 0]} name="Completed" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {[
+            ["Triage Staff", kpi.staff, "text-blue-300"],
+            ["Warnings (Company-wide)", totalWarnings, "text-yellow-300"],
+            ["Mistakes (Company-wide)", totalMistakes, "text-red-300"],
+          ].map(([l, v, c]) => (
+            <div key={l as string} className="panel p-3 text-center"><p className={`text-lg font-bold ${c}`}>{v}</p><p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{l}</p></div>
+          ))}
+        </div>
+        </>
+        )}
+      </main>
+    </div>
   );
 }

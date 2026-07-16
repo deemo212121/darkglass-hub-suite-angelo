@@ -168,6 +168,7 @@ function rowToTicket(row: any): Ticket {
     address2: c.address2 ?? "",
     zip: c.zip ?? "",
     state: c.state ?? "",
+    country: c.country ?? "",
     email: c.email ?? "",
     secondPhone: c.second_phone ?? "",
     altPhone: c.alt_phone ?? "",
@@ -195,6 +196,22 @@ function rowToTicket(row: any): Ticket {
     nsaPreAuth: row.nsa_pre_auth ?? "",
     nsaMasterCode: row.nsa_master_code ?? "",
     nsaCoverageExclusions: row.nsa_coverage_exclusions ?? "",
+    nsaLatitude: row.nsa_latitude ?? undefined,
+    nsaLongitude: row.nsa_longitude ?? undefined,
+    nsaStatusCode: row.nsa_status_code ?? "",
+    nsaDispatchCodes: row.nsa_dispatch_codes ?? undefined,
+    nsaHasPartBOM: row.nsa_has_part_bom ?? undefined,
+    nsaPartBOMRequired: row.nsa_part_bom_required ?? undefined,
+    nsaSfCanAddPart: row.nsa_sf_can_add_part ?? undefined,
+    nsaSfCanOrderParts: row.nsa_sf_can_order_parts ?? undefined,
+    nsaProgram: row.nsa_program ?? "",
+    nsaApiClose: row.nsa_api_close ?? undefined,
+    nsaHash: row.nsa_hash ?? "",
+    nsaLegacyFileName: row.nsa_legacy_file_name ?? "",
+    nsaDatetimeDepotReceived: row.nsa_datetime_depot_received ?? "",
+    nsaScheduleAckByUserId: row.nsa_schedule_ack_by_user_id ?? "",
+    nsaScheduleAckByUserName: row.nsa_schedule_ack_by_user_name ?? "",
+    cancellationReason: row.cancellation_reason ?? "",
     // planner slot (persisted)
     // @ts-expect-error extra field consumed by the Work Planner
     slot: row.time_slot ?? undefined,
@@ -208,7 +225,7 @@ function rowToTicket(row: any): Ticket {
 
 const SELECT = `
   *,
-  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, alt_phone, email, address, address2, city, state, zip, address_note )
+  customer:customers ( id, first_name, last_name, full_name, phone, second_phone, alt_phone, email, address, address2, city, state, zip, country, address_note )
 `;
 
 // ---- reads -----------------------------------------------------------------
@@ -578,11 +595,13 @@ export async function updateTicketFields(
     claimCompany?: string;
     originalTicketNo?: string;
     caseNumber?: string;
+    cancellationReason?: string;
   }
 ): Promise<void> {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (fields.problemDescription !== undefined) payload.problem_description = fields.problemDescription;
   if (fields.internalNote !== undefined) payload.internal_note = fields.internalNote;
+  if (fields.cancellationReason !== undefined) payload.cancellation_reason = fields.cancellationReason;
 
   // Product-info fields. Any update to any of these flips the lock flag.
   const productKeys: Array<keyof typeof fields> = [
@@ -1277,6 +1296,7 @@ async function upsertTicketFromServicePowerImpl(
     city: input.city ?? "",
     state: input.state ?? "",
     zip: input.zip ?? "",
+    country: input.country ?? "",
   };
 
   // Ticket payload (source, product, work order details).
@@ -1345,6 +1365,22 @@ async function upsertTicketFromServicePowerImpl(
     nsa_pre_auth: input.nsaPreAuth || null,
     nsa_master_code: input.nsaMasterCode || null,
     nsa_coverage_exclusions: input.nsaCoverageExclusions || null,
+    // NSA extended fields (see migration 0057) — previously had no column.
+    nsa_latitude: input.nsaLatitude ?? null,
+    nsa_longitude: input.nsaLongitude ?? null,
+    nsa_status_code: input.nsaStatusCode || null,
+    nsa_dispatch_codes: input.nsaDispatchCodes ?? null,
+    nsa_has_part_bom: input.nsaHasPartBOM ?? null,
+    nsa_part_bom_required: input.nsaPartBOMRequired ?? null,
+    nsa_sf_can_add_part: input.nsaSfCanAddPart ?? null,
+    nsa_sf_can_order_parts: input.nsaSfCanOrderParts ?? null,
+    nsa_program: input.nsaProgram || null,
+    nsa_api_close: input.nsaApiClose ?? null,
+    nsa_hash: input.nsaHash || null,
+    nsa_legacy_file_name: input.nsaLegacyFileName || null,
+    nsa_datetime_depot_received: input.nsaDatetimeDepotReceived || null,
+    nsa_schedule_ack_by_user_id: input.nsaScheduleAckByUserId || null,
+    nsa_schedule_ack_by_user_name: input.nsaScheduleAckByUserName || null,
     updated_at: new Date().toISOString(),
   };
 

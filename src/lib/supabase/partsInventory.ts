@@ -47,6 +47,12 @@ export interface PartInventoryRow {
   invoiceNo: string;
   orderNo: string;
   eta: string;
+  /** Return-authorization number — non-empty once an RA has been created for this part. */
+  raNo: string;
+  /** Date the RA was created; falls back to createdAt when unset. */
+  raDate: string;
+  /** Inbound tracking number — non-empty once the part has been received/tracked in. */
+  inTracking: string;
   createdAt: string;
   agingDays: number;
 }
@@ -63,7 +69,7 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
   const [partsRes, ticketsRes] = await Promise.all([
     supabase
       .from("parts")
-      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, created_at")
+      .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, created_at")
       .order("created_at", { ascending: false }),
     supabase.from("tickets").select("id, ticket_no, location, technician, warranty, aging"),
   ]);
@@ -106,6 +112,9 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
       invoiceNo: row.invoice_no ?? "",
       orderNo: row.order_no ?? "",
       eta: row.eta ?? "",
+      raNo: row.ra_no ?? "",
+      raDate: row.ra_date ?? "",
+      inTracking: row.in_tracking ?? "",
       createdAt: row.created_at ?? "",
       agingDays: agingFrom(row.po_date || row.created_at),
     };

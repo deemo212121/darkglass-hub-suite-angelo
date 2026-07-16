@@ -141,6 +141,23 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
     });
   }, [multiRegion, regionGroups, filtered]);
 
+  // Company/region-wide cancellation-reason breakdown — aggregated across
+  // every filtered location's reasonCounts (raw per-branch tallies), not a
+  // re-parse of the formatted `reasons` string. Only CL-Cancelled tickets
+  // carry a structured reason (see operationsBranchMetrics.ts); CL-Need
+  // Cancel tickets are still awaiting BizOps review and have none yet.
+  const reasonBreakdown = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const b of filtered) {
+      for (const [reason, count] of Object.entries(b.reasonCounts)) {
+        totals.set(reason, (totals.get(reason) ?? 0) + count);
+      }
+    }
+    return Array.from(totals.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [filtered]);
+
   const ltpChartData = filtered
     .filter((b) => b.dailyLTP !== null)
     .map((b) => ({ name: multiRegion ? `${b.branch} (${b.region})` : b.branch, dailyLTP: b.dailyLTP as number }))
@@ -307,6 +324,21 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
           )}
         </div>
       </div>
+
+      {reasonBreakdown.length > 0 && (
+        <div className="panel p-4 mb-4">
+          <p className="text-sm font-semibold mb-1">Cancellation Reasons {multiRegion ? "— All Regions" : ""}</p>
+          <p className="text-[10px] text-muted-foreground mb-4">Structured reasons recorded when BizOps confirmed a CL-Cancelled ticket, tallied across {filtered.length} location{filtered.length === 1 ? "" : "s"}.</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={reasonBreakdown} margin={{ left: -10 }}>
+              <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={70} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="value" fill="#f87171" radius={[4, 4, 0, 0]} name="Cancelled" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <div className="panel overflow-x-auto p-0">
         <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between">

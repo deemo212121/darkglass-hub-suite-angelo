@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Eye, Loader2, Search, X } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Search } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { exportToCSV } from "@/lib/csvExport";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getTicketAuditLog } from "@/lib/supabase/tickets";
@@ -47,7 +47,7 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
   return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
 };
 
-export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -58,14 +58,6 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateTo, setDateTo] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
-
-  // Agent table filters
-  const [tblNameSearch, setTblNameSearch] = useState("");
-  const [tblTeam, setTblTeam] = useState("");
-  // Agents can cover 20-30+ locations, which flooded the table when shown
-  // inline — the Locations column was replaced with a Details button that
-  // opens this agent in a modal instead.
-  const [detailsAgent, setDetailsAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,9 +157,6 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
 
   const [trend, setTrend] = useState<{ date: string; schedule: number }[]>([]);
 
-  const teamName = (key: string) => (key === UNASSIGNED ? "Unassigned" : teams.find((t) => t.key === key)?.name || "—");
-  const teamColor = (key: string) => (key === UNASSIGNED ? "#64748b" : teams.find((t) => t.key === key)?.color || "#94a3b8");
-
   // Primary filtered list (top-bar filters)
   const primaryFiltered = useMemo<Agent[]>(() => {
     let a = agents;
@@ -176,21 +165,6 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       a = a.filter((x) => x.locations.some((l) => l.toLowerCase().includes(locationFilter.toLowerCase())));
     return a;
   }, [agents, teamFilter, locationFilter]);
-
-  // Table-level filters applied on top of primary
-  const filtered = useMemo<Agent[]>(() => {
-    return primaryFiltered.filter((a) => {
-      if (tblNameSearch && !a.name.toLowerCase().includes(tblNameSearch.toLowerCase())) return false;
-      if (tblTeam && a.teamKey !== tblTeam) return false;
-      return true;
-    });
-  }, [primaryFiltered, tblNameSearch, tblTeam]);
-
-  const tblHasFilters = !!(tblNameSearch || tblTeam);
-  const clearTblFilters = () => {
-    setTblNameSearch("");
-    setTblTeam("");
-  };
 
   const teamSummaries = useMemo(
     () =>
@@ -218,26 +192,40 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
     Warnings: s.totalWarnings,
     Mistakes: s.totalMistakes,
   }));
-  const agentBarData = [...primaryFiltered]
-    .sort((a, b) => b.schedule - a.schedule)
-    .slice(0, 12)
-    .map((a) => ({ name: a.name.split(" ")[0], schedule: a.schedule, update: a.update }));
+  const companyTotals = useMemo(() => ({
+    agents: primaryFiltered.length,
+    schedule: primaryFiltered.reduce((s, a) => s + a.schedule, 0),
+    update: primaryFiltered.reduce((s, a) => s + a.update, 0),
+    warnings: primaryFiltered.reduce((s, a) => s + a.warnings, 0),
+    mistakes: primaryFiltered.reduce((s, a) => s + a.mistakes, 0),
+  }), [primaryFiltered]);
 
-  const handleExportCSV = () => {
-    exportToCSV(
-      "csr_daily_report",
-      ["Team", "Position", "Name", "Locations", "Schedule", "Update", "Warnings", "Mistakes"],
-      filtered.map((a) => [
-        teamName(a.teamKey),
-        a.role === "Team Leader" ? "Team Leader" : "CSR Agent",
-        a.name,
-        a.locations.join("; "),
-        a.schedule,
-        a.update,
-        a.warnings,
-        a.mistakes,
-      ]),
-    );
+  const exportToXlsx = () => {
+    const sheet: (string | number)[][] = [
+      ["CSR Daily Report"],
+      [`Period: ${dateFrom || "All time"} to ${dateTo || "All time"}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      ["Summary"],
+      ["Metric", "Value"],
+      ["Total Agents", companyTotals.agents],
+      ["Schedule", companyTotals.schedule],
+      ["Update", companyTotals.update],
+      ["Warnings", companyTotals.warnings],
+      ["Mistakes", companyTotals.mistakes],
+      [],
+      ["By Team"],
+      ["Team", "Agents", "Schedule", "Update", "Warnings", "Mistakes"],
+      ...teamSummaries.map((s) => [s.team.name, s.count, s.totalSchedule, s.totalUpdate, s.totalWarnings, s.totalMistakes]),
+      [],
+      ["Schedule Trend — Last 10 Days"],
+      ["Date", "Schedule"],
+      ...trend.map((t) => [t.date, t.schedule]),
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(sheet);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "CSR Report");
+    XLSX.writeFile(workbook, `csr-daily-report_${dateFrom || "all"}_to_${dateTo || "all"}.xlsx`);
   };
 
   return (
@@ -245,8 +233,8 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
           <Link
-            to="/m/$module/$submodule"
-            params={{ module: "dashboard", submodule: "csr-dashboard" }}
+            to="/m/$module"
+            params={{ module: mod.slug }}
             className="btn hover:bg-white/15"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -321,6 +309,9 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             <span className="text-sm text-muted-foreground mb-0.5">
               {primaryFiltered.length} of {agents.length} agents
             </span>
+            <button onClick={exportToXlsx} className="btn text-sm px-3 mb-0.5 flex items-center gap-1.5 ml-auto">
+              <Download className="h-3.5 w-3.5" /> Download XLSX
+            </button>
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground">
             Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail); Warnings/Mistakes reflect approved notes only. Leave Date From/To blank for all-time totals, or narrow either.
@@ -393,209 +384,21 @@ export function ReportCSRDaily({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
         </div>
 
-        {agentBarData.length > 0 && (
-          <div className="panel p-4 mb-4">
-            <p className="text-sm font-semibold mb-4">Agent — Schedule &amp; Update (top 12)</p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={agentBarData} margin={{ left: -10 }}>
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--foreground)", fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
-                <Bar dataKey="schedule" fill="#34d399" radius={[4, 4, 0, 0]} name="Schedule" />
-                <Bar dataKey="update" fill="#fb923c" radius={[4, 4, 0, 0]} name="Update" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* ── Agent Details Table ── */}
-        <div className="panel overflow-x-auto p-0">
-          {/* Table header with inline filters */}
-          <div className="px-4 py-3 border-b border-white/10">
-            <div className="flex flex-wrap items-end gap-3">
-              <span className="font-semibold text-sm mr-1">Agent Details</span>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee Name</label>
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                  <input
-                    value={tblNameSearch}
-                    onChange={(e) => setTblNameSearch(e.target.value)}
-                    placeholder="Search name…"
-                    className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-40"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Team</label>
-                <select
-                  value={tblTeam}
-                  onChange={(e) => setTblTeam(e.target.value)}
-                  className="glass-input text-sm py-1.5 px-3 rounded-md"
-                >
-                  <option value="">All Teams</option>
-                  {teams.map((t) => (
-                    <option key={t.key} value={t.key}>{t.name}</option>
-                  ))}
-                  <option value={UNASSIGNED}>Unassigned</option>
-                </select>
-              </div>
-              {tblHasFilters && (
-                <button
-                  onClick={clearTblFilters}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-white/10 border border-white/10 transition-colors self-end mb-0.5"
-                >
-                  <X className="h-3.5 w-3.5" />Clear
-                </button>
-              )}
-              <div className="ml-auto flex items-center gap-2 self-end mb-0.5">
-                <span className="text-xs text-muted-foreground">
-                  {filtered.length}
-                  {tblHasFilters && filtered.length !== primaryFiltered.length ? ` of ${primaryFiltered.length}` : ""} agents
-                </span>
-                <button
-                  onClick={handleExportCSV}
-                  title="Download CSV"
-                  className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </button>
-              </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {[
+            ["Total Agents", companyTotals.agents, "text-white"],
+            ["Schedule", companyTotals.schedule, "text-green-300"],
+            ["Update", companyTotals.update, "text-orange-300"],
+            ["Warnings", companyTotals.warnings, "text-yellow-300"],
+            ["Mistakes", companyTotals.mistakes, "text-red-300"],
+          ].map(([label, value, color]) => (
+            <div key={label as string} className="panel p-3 text-center">
+              <p className={`text-lg font-bold ${color}`}>{value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{label}</p>
             </div>
-          </div>
-
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Team</th>
-                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Position</th>
-                <th className="px-3 py-2.5 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">Name</th>
-                <th className="px-3 py-2.5 text-right text-xs text-muted-foreground uppercase whitespace-nowrap w-24">Schedule</th>
-                <th className="px-3 py-2.5 text-right text-xs text-muted-foreground uppercase whitespace-nowrap w-24">Update</th>
-                <th className="px-3 py-2.5 text-center text-xs text-muted-foreground uppercase whitespace-nowrap w-20">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
-                    No records match filters.
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((a, i) => (
-                  <tr
-                    key={a.id + i}
-                    className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}
-                  >
-                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: teamColor(a.teamKey) }}>
-                      {teamName(a.teamKey)}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs whitespace-nowrap text-muted-foreground">
-                      {a.role === "Team Leader" ? "Team Leader" : "CSR Agent"}
-                    </td>
-                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">
-                      <a
-                        href={`/csr-agent/${a.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:text-blue-300 hover:underline transition"
-                        title={`View ${a.name}'s statistics — issue a Warning or Mistake here`}
-                      >
-                        {a.name}
-                      </a>
-                    </td>
-                    <td className="px-3 py-2.5 text-right text-green-400 w-24">{a.schedule}</td>
-                    <td className="px-3 py-2.5 text-right w-24">{a.update}</td>
-                    <td className="px-3 py-2.5 text-center w-20">
-                      <button
-                        type="button"
-                        onClick={() => setDetailsAgent(a)}
-                        title={`View details for ${a.name}`}
-                        className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          ))}
         </div>
         </>
-        )}
-
-        {/* ── Agent Details Modal ── */}
-        {detailsAgent && (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setDetailsAgent(null)}>
-            <div className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
-                <div className="flex items-center gap-2">
-                  <Eye className="h-4 w-4 text-blue-400" />
-                  <span className="font-semibold">{detailsAgent.name}</span>
-                  <span className="text-xs font-semibold" style={{ color: teamColor(detailsAgent.teamKey) }}>{teamName(detailsAgent.teamKey)}</span>
-                </div>
-                <button onClick={() => setDetailsAgent(null)} className="text-white/30 hover:text-white/70 transition-colors"><X className="h-5 w-5" /></button>
-              </div>
-
-              <div className="px-5 py-4 overflow-y-auto space-y-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Role</p>
-                    <p className="font-medium">{detailsAgent.role === "Team Leader" ? "Team Leader" : "CSR Agent"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Username</p>
-                    <p className="font-medium">{detailsAgent.username || "—"}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Email</p>
-                    <p className="font-medium truncate">{detailsAgent.email || "—"}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="panel p-3 text-center">
-                    <p className="text-2xl font-bold text-green-300">{detailsAgent.schedule}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Schedule</p>
-                  </div>
-                  <div className="panel p-3 text-center">
-                    <p className="text-2xl font-bold text-purple-300">{detailsAgent.update}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Update</p>
-                  </div>
-                  <div className="panel p-3 text-center">
-                    <p className="text-2xl font-bold text-yellow-300">{detailsAgent.warnings}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Warnings</p>
-                  </div>
-                  <div className="panel p-3 text-center">
-                    <p className="text-2xl font-bold text-red-300">{detailsAgent.mistakes}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Mistakes</p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                    Locations <span className="text-muted-foreground/70">({detailsAgent.locations.length})</span>
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {detailsAgent.locations.length === 0 ? (
-                      <span className="text-sm text-muted-foreground">—</span>
-                    ) : detailsAgent.locations.map((loc) => (
-                      <span key={loc} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/20">
-                        {loc}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         )}
       </main>
     </div>

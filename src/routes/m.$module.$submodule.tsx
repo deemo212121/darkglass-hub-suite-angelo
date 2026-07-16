@@ -70,15 +70,25 @@ import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { isSubmoduleAllowed } from "@/lib/roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+
+// Roles allowed into the admin module overall, and into User Management
+// specifically. Checked via hasDashboardAccess so a secondary role
+// (profiles.extra_roles) grants access too, not just the primary role —
+// e.g. a Parts Manager who's also been given Admin as a secondary role.
+const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
+const USER_MANAGEMENT_ROLES = ["HR", "MANAGER", "ADMIN", "SUPERADMIN"];
 import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
+import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
 import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
 import { ReportTriageDaily } from "@/components/ReportTriageDaily";
 import { ReportPartsDaily } from "@/components/ReportPartsDaily";
 import { ReportOperationsDaily } from "@/components/ReportOperationsDaily";
+import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
+import { ReportAccounting } from "@/components/ReportAccounting";
 import { EncompassClaimAuditReport } from "@/components/EncompassClaimAuditReport";
 import { MonthlyPartReport } from "@/components/MonthlyPartReport";
 import { PayrollReport } from "@/components/PayrollReport";
@@ -137,18 +147,24 @@ function SubModule() {
   const { mod, sub } = Route.useLoaderData();
   const location = useLocation();
 
-  // Dashboard-page role gates (e.g. Attendance Monitoring, Payroll). Only
-  // fetch extra_roles when the primary role alone doesn't already pass —
+  // Role gates that also need to honor a secondary role (profiles.
+  // extra_roles) — a Parts Manager who's ALSO been given Admin as a
+  // secondary role should still get into the admin module, not just users
+  // whose PRIMARY role is Admin/SuperAdmin. Only fetch extra_roles when the
+  // primary role alone doesn't already pass any of these three gates —
   // avoids an extra query on every ungated page load.
   const dashboardAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : null;
   const roleGrantsQuick = !dashboardAllowedRoles || hasDashboardAccess(dashboardAllowedRoles, role, []);
+  const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
+  const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
+  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick;
   const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
   useEffect(() => {
-    if (!dashboardAllowedRoles || roleGrantsQuick || !ready || !uid) return;
+    if (!needsExtraRoles || !ready || !uid) return;
     let cancelled = false;
     getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
     return () => { cancelled = true; };
-  }, [dashboardAllowedRoles, roleGrantsQuick, ready, uid]);
+  }, [needsExtraRoles, ready, uid]);
 
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
@@ -181,8 +197,15 @@ function SubModule() {
     );
   }
 
-  // Check admin access using Firebase role
-  const hasAdminAccess = role && (role.toUpperCase() === "ADMIN" || role.toUpperCase() === "SUPERADMIN");
+  // Wait for the extra_roles fetch before deciding any of the three gates
+  // (dashboard/admin/user-management) when the primary role alone doesn't
+  // already pass — avoids a flash of the denied panel for someone who only
+  // qualifies via a secondary role.
+  if (needsExtraRoles && extraRoles === null) return null;
+
+  // Check admin access using Firebase role — primary role OR a secondary
+  // role (extra_roles) of Admin/SuperAdmin both grant access.
+  const hasAdminAccess = hasDashboardAccess(ADMIN_MODULE_ROLES, role, extraRoles);
 
   // Carve-outs: a few admin-module pages are open to everyone since they're
   // company-wide utilities (e.g. the internal team messenger).
@@ -213,8 +236,9 @@ function SubModule() {
     );
   }
   
-  // Check user management access using Firebase role
-  const hasUserManagementAccess = role && ["HR", "MANAGER", "ADMIN", "SUPERADMIN"].includes(role.toUpperCase());
+  // Check user management access using Firebase role — same primary-or-
+  // secondary-role logic as the admin gate above.
+  const hasUserManagementAccess = hasDashboardAccess(USER_MANAGEMENT_ROLES, role, extraRoles);
   
   if (sub.custom === "user-management" && !hasUserManagementAccess) {
     return (
@@ -247,10 +271,8 @@ function SubModule() {
     return <Outlet />;
   }
 
-  // Dashboard-page role gate resolution (see hook above). Wait for the
-  // extra_roles fetch before deciding when the primary role alone doesn't
-  // already pass — avoids a flash of either the denied panel or the page.
-  if (dashboardAllowedRoles && !roleGrantsQuick && extraRoles === null) return null;
+  // Dashboard-page role gate resolution (extra_roles fetch already awaited
+  // above, alongside the admin/user-management gates).
   const dashboardAccessOk = !dashboardAllowedRoles || roleGrantsQuick || hasDashboardAccess(dashboardAllowedRoles, role, extraRoles);
 
   if (dashboardAllowedRoles && !dashboardAccessOk) {
@@ -359,7 +381,7 @@ function SubModule() {
         : (sub as any).custom === "triage-performance-report"
         ? <TriagePerformanceReport mod={mod} sub={sub} />
         : (sub as any).custom === "report-hr-daily"
-        ? <ReportHRDaily mod={mod} sub={sub} />
+        ? <ReportHR mod={mod} sub={sub} />
         : (sub as any).custom === "report-claims-daily"
         ? <ReportClaimsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-triage-daily"
@@ -368,6 +390,10 @@ function SubModule() {
         ? <ReportPartsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-operations-daily"
         ? <ReportOperationsDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "report-attendance-monitoring"
+        ? <ReportAttendanceMonitoring mod={mod} sub={sub} />
+        : (sub as any).custom === "report-accounting"
+        ? <ReportAccounting mod={mod} sub={sub} />
         : (sub as any).custom === "encompass-claim-audit-report"
         ? <EncompassClaimAuditReport mod={mod} sub={sub} />
         : (sub as any).custom === "monthly-part-report"

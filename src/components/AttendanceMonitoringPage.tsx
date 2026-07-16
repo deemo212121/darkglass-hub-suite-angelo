@@ -510,7 +510,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     try {
-      await reviewPtoStage(request, stage, decision, myProfileId || "");
+      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Admin");
       setPtoRequests(await getCompanyPtoRequests());
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);

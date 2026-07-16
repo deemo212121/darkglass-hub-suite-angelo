@@ -17,8 +17,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, FileText, Clock, CheckCircle2, AlertTriangle, Users, Loader2 } from "lucide-react";
+import { ChevronLeft, FileText, Clock, CheckCircle2, AlertTriangle, Users, Loader2, Download } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
@@ -208,6 +209,49 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
       .sort((a, b) => b.claimsTouched - a.claimsTouched);
   }, [staff, filteredTickets, warningCountByProfile, mistakeCountByProfile]);
 
+  // Exports exactly what's on screen — respects the same date/company/status
+  // filters as the dashboard itself, so there's no separate "report period"
+  // to keep in sync.
+  const exportToXlsx = () => {
+    const sheet: (string | number)[][] = [
+      ["Claims Dashboard Report"],
+      [`Period: ${dateFrom || "All time"} to ${dateTo || "All time"}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      ["Summary"],
+      ["Metric", "Value"],
+      ["Total Claims", kpi.totalClaims],
+      ["Need Pre-Auth", kpi.pendingPreAuth],
+      ["Awaiting Claim Action", kpi.awaitingAction],
+      ["Claimed / Closed", kpi.closed],
+      ["Claims Staff", kpi.staffCount],
+      [],
+      ["By Company"],
+      ["Company", "Claims"],
+      ...companyBreakdown.map((c) => [c.name, c.value]),
+      [],
+      ["By Status"],
+      ["Status", "Claims"],
+      ...statusBreakdown.map((s) => [s.name, s.value]),
+      [],
+      ["Claim Stage"],
+      ["Stage", "Count"],
+      ...stageBreakdown.map((s) => [s.label, s.count]),
+      [],
+      ["Aging — Still Awaiting Pre-Auth / Claim Action"],
+      ["Bucket", "Count"],
+      ...agingBuckets.map((b) => [b.label, b.count]),
+      [],
+      ["Claims Staff"],
+      ["Name", "Role", "Branch", "Claims Touched", "Warnings", "Mistakes"],
+      ...staffRows.map((s) => [s.name, s.role, s.branch, s.claimsTouched, s.warnings, s.mistakes]),
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(sheet);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Claims Report");
+    XLSX.writeFile(workbook, `claims-dashboard-report_${dateFrom || "all"}_to_${dateTo || "all"}.xlsx`);
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
@@ -247,9 +291,14 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
               </select>
             </div>
           </div>
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            A ticket counts as a claim when it's in-warranty (IW) or has a claim company set. Leave Date From/To blank for all-time.
-          </p>
+          <div className="mt-3 flex items-center justify-between gap-4">
+            <p className="text-[10px] text-muted-foreground">
+              A ticket counts as a claim when it's in-warranty (IW) or has a claim company set. Leave Date From/To blank for all-time.
+            </p>
+            <button onClick={exportToXlsx} disabled={loading} className="btn text-sm px-3 shrink-0 flex items-center gap-1.5 disabled:opacity-50">
+              <Download className="h-3.5 w-3.5" /> Download XLSX
+            </button>
+          </div>
         </div>
 
         {error && (

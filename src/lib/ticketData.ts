@@ -75,6 +75,7 @@ export interface Ticket {
   address2?: string;
   zip?: string;
   state?: string;
+  country?: string;
   email?: string;
   secondPhone?: string;
   /** Alternate contact number (in addition to home + cell). Persisted on
@@ -111,6 +112,28 @@ export interface Ticket {
   nsaPreAuth?: string;
   nsaMasterCode?: string;
   nsaCoverageExclusions?: string;
+  // NSA extended dispatch fields (see migration 0057) — previously
+  // silently dropped on every NSA sync since they had no column.
+  nsaLatitude?: number;
+  nsaLongitude?: number;
+  nsaStatusCode?: string;
+  nsaDispatchCodes?: Record<string, any>;
+  nsaHasPartBOM?: boolean;
+  nsaPartBOMRequired?: boolean;
+  nsaSfCanAddPart?: boolean;
+  nsaSfCanOrderParts?: boolean;
+  nsaProgram?: string;
+  nsaApiClose?: boolean;
+  nsaHash?: string;
+  nsaLegacyFileName?: string;
+  nsaDatetimeDepotReceived?: string;
+  nsaScheduleAckByUserId?: string;
+  nsaScheduleAckByUserName?: string;
+  // Structured cancellation reason (migration 0058) — captured when a
+  // BizOps Manager+ sets Repair Status to CL-Cancelled. Replaces the old
+  // approach of embedding "Cancellation Reason: X" as a line inside
+  // internalNote.
+  cancellationReason?: string;
   // Service tracking data - visits and parts integrated into ticket
   visits?: Array<{
     id: string;

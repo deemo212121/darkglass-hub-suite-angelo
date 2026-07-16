@@ -8,8 +8,10 @@
 import { statusGroupOf, type Ticket } from "./ticketData";
 
 // The fixed set of reasons offered when a ticket's status is set to
-// "CL-Need Cancel" (src/routes/ticket.$ticketNo.tsx). Order matches the
-// dropdown.
+// "CL-Cancelled" (src/routes/ticket.$ticketNo.tsx) — only a BizOps Manager
+// can make that transition; a CSR flagging "CL-Need Cancel" just explains
+// why in the free-text Internal Note, no structured reason yet. Order
+// matches the dropdown.
 export const CANCEL_REASONS = [
   "CANCELLED BY WARRANTY",
   "CUSTOMER UNREACHABLE",
@@ -21,23 +23,6 @@ export const CANCEL_REASONS = [
   "NEED FUTURE SCHEDULE",
   "NOT COVERED",
 ] as const;
-
-const CANCEL_REASON_LINE_RE = /Cancellation Reason:\s*([^\n]+)/gi;
-
-/** Appends the chosen cancellation reason onto a ticket's Internal Note as a new line. */
-export function buildCancelReasonNote(reason: string, existingNote?: string | null): string {
-  const line = `Cancellation Reason: ${reason}`;
-  const existing = (existingNote || "").trim();
-  return existing ? `${existing}\n${line}` : line;
-}
-
-/** Extracts the most recently recorded cancellation reason from an Internal Note, if any. */
-export function parseCancelReason(note?: string | null): string | null {
-  if (!note) return null;
-  const matches = [...note.matchAll(CANCEL_REASON_LINE_RE)];
-  if (matches.length === 0) return null;
-  return matches[matches.length - 1][1].trim();
-}
 
 function isMorningSlot(t: Ticket): boolean {
   const period = (t.schedulePeriod || "").toUpperCase();
@@ -62,11 +47,11 @@ function normalizeLocation(v: string | undefined | null): string {
   return (v || "").trim().replace(/,\s+/g, ",");
 }
 
-function isNeedCancel(t: Ticket): boolean {
+export function isNeedCancel(t: Ticket): boolean {
   return t.status.trim().toLowerCase() === "cl-need cancel";
 }
 
-function isCancelled(t: Ticket): boolean {
+export function isCancelled(t: Ticket): boolean {
   const v = t.status.trim().toLowerCase();
   return v === "cl-cancelled" || v === "cancelled";
 }
@@ -87,8 +72,10 @@ export interface BranchRow {
   needCancel: number;
   /** Currently CL-Cancelled/Cancelled tickets at this branch created within [dateFrom, dateTo]. */
   cancelled: number;
-  /** Comma-joined tally of parsed cancellation reasons for this branch's CL-Need Cancel tickets, e.g. "Cancelled By Warranty (4), Duplicate (1)". Empty string when none have a recorded reason yet. */
+  /** Comma-joined tally of parsed cancellation reasons for this branch's CL-Cancelled tickets, e.g. "Cancelled By Warranty (4), Duplicate (1)". Empty string when none have a recorded reason yet. */
   reasons: string;
+  /** Same tally as `reasons`, but as a raw map so callers can aggregate across branches/regions without re-parsing the formatted string. */
+  reasonCounts: Record<string, number>;
 }
 
 /**
@@ -139,11 +126,15 @@ export function computeBranchRows(
     ).length;
 
     const needCancelTickets = branchTickets.filter(isNeedCancel);
-    const cancelled = branchTickets.filter((t) => isCancelled(t) && inRange(t.created, dateFrom, dateTo)).length;
+    const cancelledTickets = branchTickets.filter((t) => isCancelled(t) && inRange(t.created, dateFrom, dateTo));
 
+    // Reasons are only recorded once BizOps actually cancels a ticket (see
+    // ticket.$ticketNo.tsx's canSetCancelled) — a CL-Need Cancel ticket has
+    // whatever free-text a CSR wrote in Internal Note, but no structured
+    // reason to tally yet.
     const reasonTally = new Map<string, number>();
-    for (const t of needCancelTickets) {
-      const reason = parseCancelReason(t.internalNote);
+    for (const t of cancelledTickets) {
+      const reason = (t.cancellationReason || "").trim();
       if (!reason) continue;
       reasonTally.set(reason, (reasonTally.get(reason) ?? 0) + 1);
     }
@@ -162,8 +153,9 @@ export function computeBranchRows(
       staff,
       amReschedule,
       needCancel: needCancelTickets.length,
-      cancelled,
+      cancelled: cancelledTickets.length,
       reasons,
+      reasonCounts: Object.fromEntries(reasonTally),
     };
   });
 }

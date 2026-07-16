@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "attendance-monitoring" | "claims-dashboard"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard"; // hook for special pages
 }
 export interface ModuleDef {
   slug: string;
@@ -120,7 +120,7 @@ const dashboardMod: ModuleDef = {
       slug: "attendance-monitoring",
       title: "Attendance Monitoring Dashboard",
       description: "Track daily attendance, late arrivals, and absences.",
-      custom: "attendance-monitoring",
+      custom: "attendance-monitoring" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -345,7 +345,7 @@ const partsMod: ModuleDef = {
     {
       slug: "part-inventory",
       title: "Part Inventory",
-      description: "Stock counts and reorder points, plus per-branch truck stock.",
+      description: "Stock counts and reorder points.",
       fields: partsCommonFields([
         { key: "onHand", label: "On Hand", type: "number", editable: true },
         { key: "reorder", label: "Reorder", type: "number", editable: true },
@@ -1208,6 +1208,15 @@ const reportMod: ModuleDef = {
   accent: "#34d399",
   submodules: [
     {
+      slug: "report-csr-daily",
+      title: "CSR Daily Report",
+      description: "CSR agent performance — tasks, schedule, attempts, mistakes.",
+      custom: "csr-daily-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "report-claims-daily",
       title: "Claims Daily Report",
       description: "Claims completed vs remaining, brand breakdown and pending types.",
@@ -1239,6 +1248,33 @@ const reportMod: ModuleDef = {
       title: "Operations Daily Report",
       description: "Operations staff tasks, mishandled tickets, and Eastern/Western/Central TX branch metrics.",
       custom: "report-operations-daily" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-hr-daily",
+      title: "HR & Recruitment Report",
+      description: "Hiring pipeline by status, headcount by role, and warnings & mistakes.",
+      custom: "report-hr-daily" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-attendance-monitoring",
+      title: "Attendance Monitoring Report",
+      description: "Daily attendance, late arrivals, absences, and PTO/timecard correction requests.",
+      custom: "report-attendance-monitoring" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "report-accounting",
+      title: "Accounting Report",
+      description: "Payroll runs, US/PH split, and employee time tracking.",
+      custom: "report-accounting" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

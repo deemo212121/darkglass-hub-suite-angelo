@@ -699,7 +699,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     try {
-      await reviewPtoStage(request, stage, decision, myProfileId || "");
+      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Employee");
       await refreshRequests();
     } catch (err) {
       alert(`Failed to update PTO request: ${err instanceof Error ? err.message : "Unknown error"}`);

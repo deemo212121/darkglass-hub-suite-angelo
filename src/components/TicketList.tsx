@@ -36,6 +36,7 @@ const TICKET_COLUMNS = [
   { key: "product", label: "Product" },
   { key: "model", label: "Model" },
   { key: "internalNote", label: "Internal Note" },
+  { key: "cancellationReason", label: "Cancellation Reason" },
   { key: "repair", label: "Repair" },
   { key: "technician", label: "Technician" },
   { key: "customerPref", label: "Cx Prefer" },
@@ -514,10 +515,10 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
-  const [misdiagnosedOnlyFilter, setMisdiagnosedOnlyFilter] = useState(false);
   const [locationFilter, setLocationFilter] = useState("");
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
+  const [misdiagnosedOnlyFilter, setMisdiagnosedOnlyFilter] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   // Page size: a real number of rows per page, or "all" to show every
   // filtered row at once (the old, unpaginated behavior).
@@ -618,7 +619,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // columnValueGetters below.
   const COLUMN_FILTER_KEYS = [
     "ticketNo","warranty","ticketSource","customer","city","location",
-    "product","model","internalNote","repair","technician","customerPref",
+    "product","model","internalNote","cancellationReason","repair","technician","customerPref",
     "schedule","status","phone","redo","partOrder","posting",
   ] as const;
   type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
@@ -651,6 +652,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     product: (t) => productLabel(t) || "",
     model: (t) => t.model || "",
     internalNote: (t) => t.internalNote || "",
+    cancellationReason: (t) => t.cancellationReason || "",
     repair: (t) => t.diagnosed || "",
     technician: (t) => t.technician || "",
     customerPref: (t) => t.customerPref || "",
@@ -748,7 +750,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const NUMERIC_SORT_KEYS = new Set<string>(["aging", "statusSpend", "calls"]);
   const SORTABLE_KEYS = new Set<string>([
     "ticketNo","warranty","ticketSource","customer","city","location",
-    "product","model","internalNote","repair","technician","customerPref",
+    "product","model","internalNote","cancellationReason","repair","technician","customerPref",
     "schedule","status","phone","redo","aging","statusSpend","calls",
     "partOrder","posting",
   ]);
@@ -1052,6 +1054,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   {isColVisible("product") && renderHeader("product", "Product", { filterKey: "product" })}
                   {isColVisible("model") && renderHeader("model", "Model", { filterKey: "model" })}
                   {isColVisible("internalNote") && renderHeader("internalNote", "Internal Note", { filterKey: "internalNote" })}
+                  {isColVisible("cancellationReason") && renderHeader("cancellationReason", "Cancellation Reason", { filterKey: "cancellationReason" })}
                   {isColVisible("repair") && renderHeader("repair", "Repair", { filterKey: "repair" })}
                   {isColVisible("technician") && renderHeader("technician", "Technician", { filterKey: "technician" })}
                   {isColVisible("customerPref") && renderHeader("customerPref", "Cx Prefer", { filterKey: "customerPref" })}
@@ -1108,6 +1111,11 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     {isColVisible("internalNote") && (
                     <td className="px-2 py-1.5 text-slate-400 text-xs max-w-xs truncate" title={ticket.internalNote}>
                       {ticket.internalNote || "—"}
+                    </td>
+                    )}
+                    {isColVisible("cancellationReason") && (
+                    <td className="px-2 py-1.5 text-slate-300 text-xs whitespace-nowrap">
+                      {ticket.cancellationReason || "—"}
                     </td>
                     )}
                     {isColVisible("repair") && <td className="px-2 py-1.5 text-slate-300">{ticket.diagnosed}</td>}

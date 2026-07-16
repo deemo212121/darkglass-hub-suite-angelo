@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Menu, Package, AlertTriangle, CheckCircle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, RotateCcw, TrendingUp, BarChart2 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getTruckStock, type TruckStockRow } from "@/lib/supabase/truckStock";
@@ -384,11 +385,6 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     [filteredRows, partLinesPageSafe],
   );
 
-  const csvEscape = (v: string | number) => {
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-
   const generateReport = () => {
     try {
       setGeneratingReport(true);
@@ -474,16 +470,10 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         ...staffRows.map((s) => [s.name, s.role, s.branch, s.warnings, s.mistakes]),
       ];
 
-      const csv = rows_.map((row) => row.map(csvEscape).join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `parts-dashboard-report_${reportFrom || "all"}_to_${reportTo || "all"}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      const worksheet = XLSX.utils.aoa_to_sheet(rows_);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Parts Report");
+      XLSX.writeFile(workbook, `parts-dashboard-report_${reportFrom || "all"}_to_${reportTo || "all"}.xlsx`);
     } catch (err) {
       setReportError(err instanceof Error ? err.message : "Failed to generate report.");
     } finally {
@@ -529,7 +519,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <Download className="h-4 w-4" /> Generate Report
             </p>
             <p className="text-xs text-muted-foreground mb-4">
-              Pick a period and download a CSV of Part Lines for that window — Summary, By Distributor, By Status, By Location, and Most Ordered Parts. Truck Stock and Parts Staff are always the current snapshot, since those aren't period-based data.
+              Pick a period and download an XLSX of Part Lines for that window — Summary, By Distributor, By Status, By Location, and Most Ordered Parts. Truck Stock and Parts Staff are always the current snapshot, since those aren't period-based data.
             </p>
             <div className="flex flex-wrap items-end gap-4">
               <div>
@@ -547,7 +537,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 className="btn bg-primary/15 border-primary/40 text-primary hover:bg-primary/25 disabled:opacity-50 inline-flex items-center gap-2"
               >
                 {generatingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                {generatingReport ? "Generating…" : "Download CSV"}
+                {generatingReport ? "Generating…" : "Download XLSX"}
               </button>
             </div>
             {reportError && <p className="mt-3 text-xs text-red-300">{reportError}</p>}

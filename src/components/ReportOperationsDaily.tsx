@@ -10,6 +10,7 @@ import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNote
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 import { ReportBranchBase } from "./ReportBranchBase";
+import { ReportCancellations } from "./ReportCancellations";
 
 // Operations staff — BizOps Manager / Senior Manager roles, same live-staff
 // pattern used on Claims/Parts Dashboards (real profiles + real
@@ -27,7 +28,7 @@ function isBizOpsProfile(p: ProfileRow): boolean {
 
 const ALL_REGION_GROUPS = REGIONS.map((region) => ({ region, locations: REGION_LOCATIONS[region] }));
 
-type TabKey = "overview" | "east" | "west" | "central";
+type TabKey = "overview" | "east" | "west" | "central" | "cancellations";
 
 function exportStaffToXlsx(rows: { name: string; role: string; branch: string; warnings: number; mistakes: number }[]) {
   const data = rows.map((r) => ({
@@ -119,6 +120,7 @@ export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubMo
     { key: "east", label: "Eastern TX Daily Report" },
     { key: "west", label: "Western TX Daily Report" },
     { key: "central", label: "Central TX Daily Report" },
+    { key: "cancellations", label: "Need Cancel / Cancelled" },
   ];
 
   return (
@@ -224,6 +226,7 @@ export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubMo
             {activeTab === "east" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "EAST", locations: REGION_LOCATIONS.EAST }]} exportFilePrefix="operations-eastern-tx" />}
             {activeTab === "west" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "WEST", locations: REGION_LOCATIONS.WEST }]} exportFilePrefix="operations-western-tx" />}
             {activeTab === "central" && <ReportBranchBase tickets={tickets} regionGroups={[{ region: "CENTRAL", locations: REGION_LOCATIONS.CENTRAL }]} exportFilePrefix="operations-central-tx" />}
+            {activeTab === "cancellations" && <ReportCancellations tickets={tickets} />}
           </>
         )}
       </main>
