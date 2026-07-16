@@ -4,7 +4,8 @@
  * clears the filter (shows everything). The funnel turns blue when a filter
  * is active. Designed to live inline next to a `<th>` label.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Filter } from "lucide-react";
 
 interface Props {
@@ -26,24 +27,49 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapperRef = useRef<HTMLSpanElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  // The table wrapper needs horizontal scroll (overflow-x-auto), which per the
+  // CSS spec forces overflow-y to "auto" too — so an absolutely-positioned
+  // dropdown nested inside it gets clipped whenever the table is short (e.g.
+  // only 1-2 tickets match the filters). Portal the dropdown to <body> and
+  // position it with fixed coords from the button's rect so it always has
+  // room to render regardless of how few rows the table currently has.
+  const updatePos = useCallback(() => {
+    if (!buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 4, left: rect.left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) updatePos();
+  }, [open, updatePos]);
 
   // Close on outside click / escape.
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", updatePos, true);
+    window.addEventListener("resize", updatePos);
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", updatePos, true);
+      window.removeEventListener("resize", updatePos);
     };
-  }, [open]);
+  }, [open, updatePos]);
 
   const sortedOptions = useMemo(() => {
     const all = Array.from(new Set(options));
@@ -76,6 +102,7 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
   return (
     <span ref={wrapperRef} className={`relative inline-flex items-center ${className ?? ""}`}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -92,9 +119,11 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
       >
         <Filter className="h-3 w-3" fill={hasFilter ? "currentColor" : "none"} strokeWidth={2} />
       </button>
-      {open ? (
+      {open && pos ? createPortal(
         <div
-          className="absolute left-0 top-full z-50 mt-1 w-60 rounded-md border border-[var(--color-panel-border)] bg-[var(--color-card)] p-2 text-xs text-foreground shadow-2xl"
+          ref={dropdownRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
+          className="w-60 rounded-md border border-[var(--color-panel-border)] bg-[var(--color-card)] p-2 text-xs text-foreground shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {label ? (
@@ -154,7 +183,8 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
               Clear filter
             </button>
           ) : null}
-        </div>
+        </div>,
+        document.body
       ) : null}
     </span>
   );

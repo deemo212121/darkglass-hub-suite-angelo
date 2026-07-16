@@ -194,6 +194,33 @@ async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
 }
 
 /**
+ * Resolve a bare US ZIP code straight from the USPS-sourced zippopotam.us
+ * database (free, keyless) instead of a general-purpose address geocoder.
+ * Both Google's and Geoapify's geocoders resolve postcodes through general
+ * address-search indexes (OSM-derived for Geoapify) that can carry stale or
+ * wrong postcode-boundary data — e.g. Geoapify placed ZIP 28750 (Lynn, NC,
+ * near Asheville) in Halifax County, NC, ~200mi away near the VA border,
+ * for both a free-text and a structured postcode query. zippopotam.us is a
+ * dedicated ZIP lookup, so coverage-map zip plotting no longer depends on
+ * a general geocoder's postcode data being right.
+ */
+async function geocodeZipCode(zip: string): Promise<LatLng | null> {
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const place = data?.places?.[0];
+    const lat = parseFloat(place?.latitude);
+    const lng = parseFloat(place?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch (err) {
+    console.warn("geocodeZipCode (zippopotam) failed:", err);
+    return null;
+  }
+}
+
+/**
  * Resolve an address string to coordinates. Checks the in-memory `cache`
  * (module-level by default, so it survives across re-renders and page
  * navigations within the same tab — every call site used to pass its own
@@ -203,6 +230,7 @@ async function geocodeWithGeoapify(query: string): Promise<LatLng | null> {
  * once, ever, regardless of which provider does it.
  */
 const sessionGeocodeCache = new Map<string, LatLng | null>();
+const BARE_ZIP_QUERY = /^(\d{5})(?:-\d{4})?,\s*USA$/i;
 export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, LatLng | null> = sessionGeocodeCache) {
   return async function geocode(query: string): Promise<LatLng | null> {
     if (!query) return null;
@@ -212,7 +240,18 @@ export function makeGeocoder(provider: "google" | "leaflet", cache: Map<string, 
       cache.set(query, dbHit);
       return dbHit;
     }
-    const result = provider === "google" ? await geocodeWithGoogle(query) : await geocodeWithGeoapify(query);
+    // No fallback to the general geocoder for a bare ZIP: an audit of the
+    // existing cache turned up 68 US ZIP codes (not just 28750) that
+    // Geoapify's postcode index had placed hundreds to 2000+ miles from
+    // their real location (e.g. Atlanta-area ZIPs resolved to Washington
+    // state, Oregon, Puerto Rico). Falling back to it here would just
+    // silently reintroduce that same class of wrong-but-confident result
+    // whenever zippopotam.us has a hiccup. zippopotam covers effectively
+    // every real US ZIP, so a genuine miss just leaves that pin unplotted.
+    const zipMatch = query.match(BARE_ZIP_QUERY);
+    const result = zipMatch
+      ? await geocodeZipCode(zipMatch[1])
+      : provider === "google" ? await geocodeWithGoogle(query) : await geocodeWithGeoapify(query);
     cache.set(query, result);
     if (result) void storeGeocode(query, result); // fire-and-forget
     return result;
