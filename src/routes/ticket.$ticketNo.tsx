@@ -1245,6 +1245,17 @@ function TicketDetailsPage() {
   const [newRunningNoteVisibility, setNewRunningNoteVisibility] = useState<"internal" | "external">("internal");
   const [postingRunningNote, setPostingRunningNote] = useState(false);
   const [runningNotePostError, setRunningNotePostError] = useState<string | null>(null);
+  // NSA Estimates panel — NSA has no equivalent AHS UI to extend (unlike
+  // Running Notes/SP), so this is a standalone panel just for NSA tickets.
+  const [nsaEstimates, setNsaEstimates] = useState<Array<{
+    estimateID: number;
+    submissionStatusCode: string;
+    processedStatusCode: string;
+    totalAmount: number;
+    lines: Array<{ coverageTypeCode: string; amount: number }>;
+  }>>([]);
+  const [nsaEstimatesLoading, setNsaEstimatesLoading] = useState(false);
+  const [nsaEstimatesError, setNsaEstimatesError] = useState<string | null>(null);
   const [viewingVisitEntry, setViewingVisitEntry] = useState<VisitLogEntry | null>(null);
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
@@ -3140,6 +3151,34 @@ function TicketDetailsPage() {
     if (!ticketNo) return;
     void loadRunningNotes();
   }, [ticketNo, loadRunningNotes]);
+
+  const loadNsaEstimates = useCallback(async () => {
+    if (!ticketNo || !isNsaTicket) return;
+    setNsaEstimatesLoading(true);
+    setNsaEstimatesError(null);
+    try {
+      const { getNsaEstimates } = await import("@/lib/nsaApi");
+      const estimates = await getNsaEstimates(ticketNo);
+      setNsaEstimates(estimates.map((e) => ({
+        estimateID: e.estimateID,
+        submissionStatusCode: e.submissionStatusCode ?? "",
+        processedStatusCode: e.processedStatusCode ?? "",
+        totalAmount: e.totalAmount ?? 0,
+        lines: (e.lines ?? []).map((l) => ({ coverageTypeCode: l.coverageTypeCode, amount: l.amount })),
+      })));
+    } catch (err) {
+      setNsaEstimatesError(err instanceof Error ? err.message : String(err));
+      setNsaEstimates([]);
+    } finally {
+      setNsaEstimatesLoading(false);
+    }
+  }, [ticketNo, isNsaTicket]);
+
+  // Auto-fetch NSA Estimates the same way Customer Notes auto-fetches above.
+  useEffect(() => {
+    if (!ticketNo || !isNsaTicket) return;
+    void loadNsaEstimates();
+  }, [ticketNo, isNsaTicket, loadNsaEstimates]);
 
   // Auto-sync the per-ticket Squaretrade Appointment Completion URL from
   // ServicePower whenever notes refresh. Squaretrade typically embeds
@@ -6433,6 +6472,82 @@ function TicketDetailsPage() {
                   ))}
                 </div>
               </div>
+
+              {/* NSA Estimates — no existing AHS UI to extend (unlike Customer
+                  Notes/SP Running Notes above), so this is a standalone panel
+                  for NSA tickets only. */}
+              {isNsaTicket && (
+                <div className="space-y-4 mb-8">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="font-semibold text-slate-300">Estimates</h4>
+                    <div className="flex items-center gap-2">
+                      {nsaEstimatesLoading && (
+                        <span className="text-xs text-slate-400">Syncing from NSA…</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void loadNsaEstimates()}
+                        disabled={nsaEstimatesLoading}
+                        className="rounded border border-white/15 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-white/30 hover:bg-white/5 disabled:opacity-60"
+                        title="Re-fetch estimates from NSA"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+                  {nsaEstimatesError && (
+                    <div className="rounded border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      Couldn't sync from NSA: {nsaEstimatesError}
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {nsaEstimates.length === 0 && !nsaEstimatesLoading && (
+                      <p className="text-slate-500 text-sm">No estimates on file for this dispatch.</p>
+                    )}
+                    {nsaEstimates.map((est) => {
+                      const status = est.processedStatusCode || est.submissionStatusCode || "Unknown";
+                      const statusLine =
+                        status.toLowerCase() === "approved"
+                          ? "Current Estimate Approved: See Approval Email for Details."
+                          : status.toLowerCase() === "rejected" || status.toLowerCase() === "denied"
+                          ? "Current Estimate Rejected: See Rejection Email for Details."
+                          : `Current Estimate ${status}.`;
+                      return (
+                        <div key={est.estimateID} className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
+                          <div className="flex justify-between items-start mb-2">
+                            <div
+                              className={
+                                status.toLowerCase() === "approved"
+                                  ? "text-emerald-400 font-semibold"
+                                  : status.toLowerCase() === "rejected" || status.toLowerCase() === "denied"
+                                  ? "text-red-400 font-semibold"
+                                  : "text-slate-300 font-semibold"
+                              }
+                            >
+                              {statusLine}
+                            </div>
+                            <div className="text-blue-400 font-semibold">
+                              Total: ${est.totalAmount.toFixed(2)}
+                            </div>
+                          </div>
+                          {est.lines.length > 0 && (
+                            <table className="w-full mt-2 text-xs">
+                              <tbody>
+                                {est.lines.map((line, idx) => (
+                                  <tr key={idx} className="border-t border-white/5">
+                                    <td className="py-1 text-slate-400">{line.coverageTypeCode}</td>
+                                    <td className="py-1 text-right text-slate-300">${line.amount.toFixed(2)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Claims Readiness Checklist — visible to Admin, BizOps, Claims roles only */}
               {(() => {
