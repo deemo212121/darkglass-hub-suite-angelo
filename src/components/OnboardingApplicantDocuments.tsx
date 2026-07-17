@@ -25,6 +25,17 @@ import {
 import { uploadOnboardingDocument, deleteOnboardingDocumentFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getJotformSubmissions, type JotformSubmission } from "@/lib/supabase/jotformSubmissions";
+import { getSignableDocuments, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+
+/** A file submission normalized from either a Jotform submission or a signed W-4/W-8BEN/W-9 (hr_signable_documents), so both render/drag/file the same way in the Files Submissions panel. */
+interface FileSubmissionCandidate {
+  dragId: string;
+  applicantName: string;
+  formTitle: string;
+  documentUrl: string;
+  /** Only set for a Jotform-sourced candidate — carried through to addOnboardingDocument's jotformNotificationId. */
+  jotformSubmissionId?: string;
+}
 
 interface Props {
   companyId: string;
@@ -179,49 +190,85 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     }
   };
 
-  // ── Jotform Submissions — every applicant's real Jotform-generated PDF
-  // (see hr_jotform_submissions / jotformBridge.ts), filterable by name/form
-  // and draggable straight into a category — unlike a Bulk Import Link, we
-  // already know the applicant's name and the form title, so a drop files it
-  // immediately with no "type a label" dialog needed. ──
+  // ── Files Submissions — every applicant's real generated document,
+  // whether it came from Jotform (see hr_jotform_submissions /
+  // jotformBridge.ts) or from an in-app signed W-4/W-8BEN/W-9
+  // (hr_signable_documents — the same table the "Sent Warning Forms"
+  // tracker reads, filtered to the tax-form document types here). Both are
+  // normalized into one filterable/draggable list — unlike a Bulk Import
+  // Link, we already know the applicant's name and the form title, so a
+  // drop files it immediately with no "type a label" dialog needed. ──
+  const SIGNABLE_TAX_FORM_TYPES: SignableDocumentType[] = ["w4", "w8ben", "w9"];
+  const SIGNABLE_FORM_LABEL: Partial<Record<SignableDocumentType, string>> = {
+    w4: "Form W-4",
+    w8ben: "Form W-8BEN",
+    w9: "Form W-9",
+  };
+  const signableDocApplicantName = (doc: SignableDocument): string => {
+    const fd = doc.formData ?? {};
+    if (doc.documentType === "w4") return [fd.firstNameMiddleInitial, fd.lastName].filter(Boolean).join(" ").trim() || "Applicant";
+    if (doc.documentType === "w9") return fd.name || "Applicant";
+    if (doc.documentType === "w8ben") return fd.employeeName || "Applicant";
+    return "Applicant";
+  };
+
   const [jotformSubs, setJotformSubs] = useState<JotformSubmission[]>([]);
+  const [signableDocs, setSignableDocs] = useState<SignableDocument[]>([]);
   const [jotformSubsLoading, setJotformSubsLoading] = useState(true);
   const [jotformNameFilter, setJotformNameFilter] = useState("");
   const [jotformFormFilter, setJotformFormFilter] = useState("");
   const [filingSubmissionId, setFilingSubmissionId] = useState<string | null>(null);
 
   useEffect(() => {
-    getJotformSubmissions()
-      .then((subs) => setJotformSubs(subs.filter((s) => s.documentUrl)))
-      .catch((err) => console.error("Failed to load Jotform submissions:", err))
+    Promise.all([getJotformSubmissions(), ...SIGNABLE_TAX_FORM_TYPES.map((t) => getSignableDocuments(t))])
+      .then(([subs, ...docsByType]) => {
+        setJotformSubs(subs.filter((s) => s.documentUrl));
+        setSignableDocs(docsByType.flat().filter((d) => d.pdfUrl));
+      })
+      .catch((err) => console.error("Failed to load file submissions:", err))
       .finally(() => setJotformSubsLoading(false));
   }, []);
 
+  const fileSubmissionCandidates = useMemo<FileSubmissionCandidate[]>(() => [
+    ...jotformSubs.map((s) => ({
+      dragId: `jotform:${s.id}`,
+      applicantName: s.applicantName || "Applicant",
+      formTitle: s.formTitle || s.formId,
+      documentUrl: s.documentUrl!,
+      jotformSubmissionId: s.submissionId,
+    })),
+    ...signableDocs.map((d) => ({
+      dragId: `signable:${d.id}`,
+      applicantName: signableDocApplicantName(d),
+      formTitle: SIGNABLE_FORM_LABEL[d.documentType] ?? d.documentType,
+      documentUrl: d.pdfUrl!,
+    })),
+  ], [jotformSubs, signableDocs]);
+
   const jotformFormOptions = useMemo(
-    () => Array.from(new Set(jotformSubs.map((s) => s.formTitle || s.formId))).sort(),
-    [jotformSubs]
+    () => Array.from(new Set(fileSubmissionCandidates.map((s) => s.formTitle))).sort(),
+    [fileSubmissionCandidates]
   );
   const filteredJotformSubs = useMemo(() => {
     const q = jotformNameFilter.trim().toLowerCase();
-    return jotformSubs.filter((s) => {
-      if (jotformFormFilter && (s.formTitle || s.formId) !== jotformFormFilter) return false;
-      if (q && !(s.applicantName ?? "").toLowerCase().includes(q)) return false;
+    return fileSubmissionCandidates.filter((s) => {
+      if (jotformFormFilter && s.formTitle !== jotformFormFilter) return false;
+      if (q && !s.applicantName.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [jotformSubs, jotformNameFilter, jotformFormFilter]);
+  }, [fileSubmissionCandidates, jotformNameFilter, jotformFormFilter]);
 
-  const handleFileJotformSubmission = async (category: OnboardingDocCategory, submission: JotformSubmission) => {
-    if (!submission.documentUrl) return;
-    setFilingSubmissionId(submission.id);
+  const handleFileJotformSubmission = async (category: OnboardingDocCategory, submission: FileSubmissionCandidate) => {
+    setFilingSubmissionId(submission.dragId);
     try {
-      const fileName = `${submission.applicantName || "Applicant"} — ${submission.formTitle || submission.formId}.pdf`;
+      const fileName = `${submission.applicantName} — ${submission.formTitle}.pdf`;
       await addOnboardingDocument({
         profileId,
         category,
         fileName,
         fileUrl: submission.documentUrl,
-        source: "jotform",
-        jotformNotificationId: submission.submissionId,
+        source: submission.jotformSubmissionId ? "jotform" : "manual",
+        jotformNotificationId: submission.jotformSubmissionId ?? null,
       });
       await loadDocuments();
       void logActivity({ action: "onboarding_document_added", targetType: "employee", targetId: profileId, targetLabel: profileName, details: { category, fileName } });
@@ -276,8 +323,8 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
     const category = over.id as OnboardingDocCategory;
 
     const activeId = String(active.id);
-    if (activeId.startsWith("jotform:")) {
-      const submission = jotformSubs.find((s) => `jotform:${s.id}` === activeId);
+    if (activeId.startsWith("jotform:") || activeId.startsWith("signable:")) {
+      const submission = fileSubmissionCandidates.find((s) => s.dragId === activeId);
       if (submission) void handleFileJotformSubmission(category, submission);
       return;
     }
@@ -335,11 +382,11 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
             ))}
           </div>
 
-          {/* ── Right column: Jotform Submissions + Bulk Import Links, stacked ── */}
+          {/* ── Right column: Files Submissions + Bulk Import Links, stacked ── */}
           <div className="flex flex-col gap-4 lg:sticky lg:top-4 self-start">
-          {/* Every applicant's real Jotform-generated document, filterable by name/form, draggable straight into a category. */}
+          {/* Every applicant's real generated document — Jotform submissions and signed W-4/W-8BEN/W-9 alike — filterable by name/form, draggable straight into a category. */}
           <div className="panel p-3">
-            <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Forward className="h-3.5 w-3.5 text-blue-300" /> Jotform Submissions</h3>
+            <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Forward className="h-3.5 w-3.5 text-blue-300" /> Files Submissions</h3>
             <div className="flex flex-col gap-1.5 mb-2">
               <input
                 type="text"
@@ -360,15 +407,15 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
             {jotformSubsLoading ? (
               <p className="text-xs text-muted-foreground text-center py-6 flex items-center justify-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p>
             ) : filteredJotformSubs.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-6">{jotformSubs.length === 0 ? "No submissions yet." : "No submissions match these filters."}</p>
+              <p className="text-xs text-muted-foreground text-center py-6">{fileSubmissionCandidates.length === 0 ? "No submissions yet." : "No submissions match these filters."}</p>
             ) : (
               <div className="flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto mb-3">
                 {filteredJotformSubs.map((s) => (
                   <DraggableJotformSubmission
-                    key={s.id}
+                    key={s.dragId}
                     submission={s}
-                    filing={filingSubmissionId === s.id}
-                    onPreview={() => setPreviewDoc({ fileName: `${s.applicantName || "Applicant"} — ${s.formTitle || s.formId}`, fileUrl: s.documentUrl! })}
+                    filing={filingSubmissionId === s.dragId}
+                    onPreview={() => setPreviewDoc({ fileName: `${s.applicantName} — ${s.formTitle}`, fileUrl: s.documentUrl })}
                   />
                 ))}
               </div>
@@ -614,20 +661,21 @@ function DraggablePendingLink({ link, onDiscard, onPreview }: { link: { id: stri
 }
 
 /**
- * A real Jotform submission with its generated document already known —
- * unlike DraggablePendingLink, a drop files it immediately (applicant name
- * + form title are already real data, no label to type).
+ * A real file submission (Jotform or a signed W-4/W-8BEN/W-9 alike) with its
+ * generated document already known — unlike DraggablePendingLink, a drop
+ * files it immediately (applicant name + form title are already real data,
+ * no label to type).
  */
 function DraggableJotformSubmission({
   submission,
   filing,
   onPreview,
 }: {
-  submission: JotformSubmission;
+  submission: FileSubmissionCandidate;
   filing: boolean;
   onPreview: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `jotform:${submission.id}`, disabled: filing });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: submission.dragId, disabled: filing });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 } : undefined;
 
   return (
@@ -639,8 +687,8 @@ function DraggableJotformSubmission({
       <div {...listeners} {...attributes} className={`flex items-center gap-1.5 min-w-0 flex-1 ${filing ? "cursor-wait" : "cursor-grab active:cursor-grabbing"}`}>
         {filing ? <Loader2 className="h-3.5 w-3.5 shrink-0 text-blue-300 animate-spin" /> : <Forward className="h-3.5 w-3.5 shrink-0 text-blue-300" />}
         <div className="min-w-0">
-          <p className="text-xs truncate">{submission.applicantName || "Applicant"}</p>
-          <p className="text-[10px] text-muted-foreground truncate">{submission.formTitle || submission.formId}</p>
+          <p className="text-xs truncate">{submission.applicantName}</p>
+          <p className="text-[10px] text-muted-foreground truncate">{submission.formTitle}</p>
         </div>
       </div>
       <button type="button" onClick={onPreview} title="Preview this document" className="text-muted-foreground hover:text-blue-300 shrink-0">

@@ -66,37 +66,23 @@ import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmi
 // Placeholders are substituted in at generation time; this default matches
 // the original hardcoded text exactly, so nothing changes until an Admin
 // edits it. Paragraphs are separated by a blank line.
-const COE_BODY_PLACEHOLDERS = ["date", "employeeName", "startDate", "jobTitle", "amount", "month", "authorizedRep", "email", "phone"] as const;
-// The "===OFFICE USE===" marker splits the letter body (above it) from the
-// boxed "For Office Use Only" stamp (below it) — both are rendered through
-// the same paragraph-splitting logic, just into two different containers so
-// the stamp keeps its own visual box. Everything here is plain text/
-// placeholders — no HTML — so an Admin editing this never has to touch markup.
-const DEFAULT_COE_BODY_TEMPLATE = `Date: {{date}}
+const COE_BODY_PLACEHOLDERS = ["honorific", "employeeName", "startDate", "jobTitle", "reason", "he", "his"] as const;
+// This is the free-flowing letter prose only — Admin-editable via "Edit
+// Template" — everything here is plain text/placeholders, no HTML, so
+// editing it never means touching markup. The "For Office Use Only" stamp
+// that follows it on the actual certificate is NOT part of this template —
+// it's a fixed-layout box built directly in buildCoeBodyMarkup from the
+// Generate COE form's own office-use fields (Name/Title/Signature/Number),
+// matching the reference certificate's 2-column layout exactly; letting an
+// Admin freely rearrange that structured stamp via free text isn't
+// meaningful the way editing prose paragraphs is.
+const DEFAULT_COE_BODY_TEMPLATE = `This is to certify that {{employeeName}} has been employed with US IN HOME SERVICES since {{startDate}}.
 
-To Whom It May Concern,
+{{honorific}} {{employeeName}} is currently employed as a {{jobTitle}}. Throughout {{his}} employment, {{he}} has demonstrated professionalism and has remained a valued employee in good standing with our organization.
 
-This is to certify that {{employeeName}} has been employed with US IN HOME SERVICES since {{startDate}}.
+This certification is issued upon {{his}} request for {{reason}}.
 
-During their employment, {{employeeName}} has been serving as {{jobTitle}} and has been a member of our organization in good standing. The employee receives a gross compensation of \${{amount}} per {{month}}, subject to applicable deductions and company policies.
-
-This certificate is issued upon the employee's request for whatever lawful purpose it may serve.
-
-Should you require any additional information, please feel free to contact us.
-
-Sincerely,
-
-{{authorizedRep}}
-Authorized Representative
-US IN HOME SERVICES
-Email: {{email}}
-Phone: {{phone}}
-
-===OFFICE USE===
-For Office Use Only:
-Name: Naveen Lakhani
-Title: BizOps Senior Manager
-Signature: Naveen Lakhani`;
+Should you require any additional information or verification regarding {{his}} employment, please do not hesitate to contact us.`;
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -1198,15 +1184,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const [coeForm, setCoeForm] = useState({
-    date: todayStr,
+    honorific: "Mr.",
     employeeName: "",
     employeeStartDate: "",
     jobTitle: "",
-    amount: "",
-    month: "",
+    reason: "",
     authorizedRep: "",
-    email: "",
-    phone: "",
+    authorizedRepEmail: "",
+    authorizedRepPhone: "800-779-3579",
+    officeUseName: "",
+    officeUseTitle: "",
+    officeUseSignature: "",
+    officeUseNumber: "800-779-3579",
   });
   const [coeGenerating, setCoeGenerating] = useState(false);
   const updateCoeField = (field: keyof typeof coeForm, value: string) =>
@@ -1246,14 +1235,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .map((para) => `<p>${para.replace(/\n/g, "<br/>")}</p>`)
       .join("\n");
   };
-  /** Splits the raw template on the "===OFFICE USE===" marker into the main letter and the boxed stamp — done before escaping/substitution so the marker itself never needs escaping. */
-  const splitCoeTemplate = (template: string): { letter: string; officeUse: string } => {
-    const marker = /\n?[=]{3}\s*OFFICE USE\s*[=]{3}\n?/i;
-    const match = template.match(marker);
-    if (!match || match.index === undefined) return { letter: template, officeUse: "" };
-    return { letter: template.slice(0, match.index), officeUse: template.slice(match.index + match[0].length) };
-  };
-
   // Employee Name, Job Title, and Authorized Representative are all
   // typeable filters — the input's value doubles as both the filter query
   // and the field's final text (so a name/title not in either suggestion
@@ -1272,13 +1253,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return q ? COE_JOB_TITLE_OPTIONS.filter((t) => t.toLowerCase().includes(q)) : COE_JOB_TITLE_OPTIONS;
   };
 
-  // Authorized Representative suggestions — Admin/HR/BizOps roles are the
-  // people who'd realistically sign a certificate like this.
-  const COE_AUTHORIZED_REP_ROLES = new Set(["ADMIN", "HR", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+  // "For Office Use Only — Name" and "Authorized Representative" suggestions
+  // — Admin/HR/BizOps roles are the people who'd realistically sign off on
+  // a certificate like this. These are two independent signers (e.g. the
+  // reference certificate has "Frederick Ian Cabilao" as the letter's
+  // Authorized Representative and a different person, "Raul Bayuyos", in
+  // the Office Use box), so each gets its own dropdown/state.
+  const COE_OFFICE_USE_ROLES = new Set(["ADMIN", "HR", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+  // Office Use box signer is any manager (Branch, CSR, Parts, BizOps, etc.
+  // — anything with "MANAGER" in the role code) as well as Admin/HR/BizOps,
+  // since a branch-level manager like the reference's "CSR Manager" isn't
+  // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
+  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "HR" || role.includes("BIZOPS");
+  const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
+  const filteredCoeOfficeUseNameOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const candidates = employees.filter((e) => isCoeOfficeUseEligible(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
+  };
+
   const [coeAuthorizedRepDropdownOpen, setCoeAuthorizedRepDropdownOpen] = useState(false);
   const filteredCoeAuthorizedRepOptions = (query: string) => {
     const q = query.trim().toLowerCase();
-    const candidates = employees.filter((e) => COE_AUTHORIZED_REP_ROLES.has(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
+    const candidates = employees.filter((e) => COE_OFFICE_USE_ROLES.has(normalizeRole(e.position))).sort((a, b) => a.name.localeCompare(b.name));
     return q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   };
 
@@ -1292,12 +1289,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     .coe-container .header img.logo { width: 115px; height: 115px; object-fit: contain; }
     .coe-container .header img.ribbon { width: 260px; height: auto; }
     .coe-container h1 { text-align: center; font-size: 20px; letter-spacing: 0.3px; margin-bottom: 22px; }
-    .coe-container p { font-size: 13.5px; line-height: 1.7; margin-bottom: 14px; text-align: justify; }
-    .coe-container .sign-block { margin-top: 36px; }
-    .coe-container .sign-line { width: 260px; margin-bottom: 6px; font-weight: 600; }
-    .coe-container .office-use { margin-top: 44px; border-top: 1px solid #9ca3af; padding: 14px 8px 0; }
-    .coe-container .office-use .row { display: flex; gap: 90px; align-items: flex-end; margin-top: 8px; }
-    .coe-container .office-use u { text-decoration: underline; }
+    .coe-container p { font-size: 13.5px; line-height: 1.3; margin-bottom: 17px; text-align: justify; }
+    .coe-container .date-line { margin-bottom: 17px; }
+    .coe-container .sign-block { margin-top: 4px; }
+    .coe-container .sign-block p { text-align: left; margin-bottom: 2px; }
+    .coe-container .sign-line { margin-bottom: 6px; font-weight: 600; }
+    .coe-container .office-use { margin-top: 58px; }
+    .coe-container .office-use-rule { border: none; border-top: 1.5px solid #9ca3af; margin: 0 0 14px; }
+    .coe-container .office-use-rule.bottom { margin: 14px 0 0; }
+    .coe-container .office-use p { font-size: 13.5px; line-height: 1.3; margin-bottom: 8px; text-align: left; }
+    .coe-container .office-use-heading { font-weight: 700; margin-bottom: 10px; }
+    .coe-container .office-use .row { display: flex; gap: 90px; align-items: flex-start; margin-bottom: 8px; }
+    .coe-container .office-use .row p { margin-bottom: 8px; }
+    .coe-container .office-use-col:last-child p { margin-bottom: 0; }
+    .coe-container .office-use u { text-decoration: underline; font-style: italic; }
     .coe-container .footer-wrap { margin-top: 70px; }
     .coe-container .footer-graphic img { display: block; width: 100%; height: auto; }
   `;
@@ -1305,18 +1310,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const buildCoeBodyMarkup = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => {
     const f = coeForm;
     const blank = (v: string) => (v.trim() ? escapeHtml(v) : "&nbsp;");
+    // "Ms."/"Mrs." both read as female for pronoun purposes; anything else
+    // (including "Mr.") defaults to male since it's the only other option
+    // in the Honorific dropdown.
+    const isFemale = f.honorific === "Ms." || f.honorific === "Mrs.";
     const values = {
-      date: blank(f.date ? new Date(f.date).toLocaleDateString() : ""),
+      honorific: blank(f.honorific),
       employeeName: blank(f.employeeName),
-      startDate: blank(f.employeeStartDate ? new Date(f.employeeStartDate).toLocaleDateString() : ""),
+      startDate: blank(f.employeeStartDate ? new Date(f.employeeStartDate).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : ""),
       jobTitle: blank(f.jobTitle),
-      amount: blank(f.amount),
-      month: blank(f.month),
-      authorizedRep: blank(f.authorizedRep),
-      email: blank(f.email),
-      phone: blank(f.phone),
+      reason: blank(f.reason),
+      he: isFemale ? "she" : "he",
+      his: isFemale ? "her" : "his",
     };
-    const { letter, officeUse } = splitCoeTemplate(coeBodyTemplate);
     return `
       <div class="coe-container">
         <div class="header">
@@ -1326,10 +1332,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
         <h1>CERTIFICATE OF EMPLOYMENT<br/>US IN HOME SERVICES</h1>
 
-        ${renderCoeBodyHtml(letter, values)}
+        <p class="date-line">Date: ${escapeHtml(new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }))}</p>
+
+        <p>To Whom It May Concern,</p>
+
+        ${renderCoeBodyHtml(coeBodyTemplate, values)}
+
+        <div class="sign-block">
+          <p>Sincerely,</p>
+          <p class="sign-line">${blank(f.authorizedRep)}</p>
+          <p>Authorized Representative</p>
+          <p>US IN HOME SERVICES</p>
+          <p>Email: ${blank(f.authorizedRepEmail)}</p>
+          <p>Phone: ${blank(f.authorizedRepPhone)}</p>
+        </div>
 
         <div class="office-use">
-          ${renderCoeBodyHtml(officeUse, values)}
+          <hr class="office-use-rule" />
+          <p class="office-use-heading">For Office Use Only:</p>
+          <div class="row">
+            <div class="office-use-col">
+              <p>Name: ${blank(f.officeUseName)}</p>
+              <p>Title: ${blank(f.officeUseTitle)}</p>
+            </div>
+            <div class="office-use-col">
+              <p>Signature: <u>${blank(f.officeUseSignature)}</u></p>
+            </div>
+          </div>
+          <p>Contact Number: ${blank(f.officeUseNumber)}</p>
+          <hr class="office-use-rule bottom" />
         </div>
 
         <div class="footer-wrap">
@@ -3298,21 +3329,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </Link>
       </div>
 
-      {/* ── KPI overview ── */}
+      {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it. ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
         {[
-          { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
-          { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
-          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
-          { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
-          { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
-          { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" /> },
+          { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter(""); } },
+          { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("interviewing"); } },
+          { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("rejected"); } },
+          { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("hired"); } },
+          { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => { setActiveTab("directory"); setEmployeeFilters((prev) => ({ ...prev, status: "terminated" })); } },
+          { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => { setActiveTab("directory"); setEmployeeFilters((prev) => ({ ...prev, status: "resigned" })); } },
         ].map((k) => (
-          <div key={k.label} className="panel p-3 text-center">
+          <button
+            key={k.label}
+            type="button"
+            onClick={k.onClick}
+            className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
+          >
             <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
             <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
-          </div>
+          </button>
         ))}
         <button
           type="button"
@@ -4875,8 +4911,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
-            <input type="date" value={coeForm.date} onChange={(e) => updateCoeField("date", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Honorific</label>
+            <select
+              value={coeForm.honorific}
+              onChange={(e) => updateCoeField("honorific", e.target.value)}
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            >
+              <option value="Mr.">Mr.</option>
+              <option value="Ms.">Ms.</option>
+              <option value="Mrs.">Mrs.</option>
+            </select>
           </div>
           <div className="flex flex-col gap-1 relative">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee Name</label>
@@ -4944,19 +4988,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Amount</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">$</span>
-              <input type="text" value={coeForm.amount} onChange={(e) => updateCoeField("amount", e.target.value)} placeholder="2,500.00" className="glass-input text-sm py-1.5 pl-6 pr-3 rounded-md w-full" />
-            </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
+            <input type="text" value={coeForm.reason} onChange={(e) => updateCoeField("reason", e.target.value)} placeholder="e.g. visa application, loan application" className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Month</label>
-            <input type="text" value={coeForm.month} onChange={(e) => updateCoeField("month", e.target.value)} placeholder="e.g. month" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+
+          <div className="md:col-span-2 pt-2 mt-1 border-t border-white/10">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Authorized Representative (Sincerely — Sign-off)</p>
           </div>
           <div className="flex flex-col gap-1 relative">
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Authorized Representative</label>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Name</label>
             <input
               type="text"
               value={coeForm.authorizedRep}
@@ -4976,7 +5017,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       key={e.id}
                       type="button"
                       onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => { updateCoeField("authorizedRep", e.name); setCoeAuthorizedRepDropdownOpen(false); }}
+                      onClick={() => {
+                        setCoeForm((prev) => ({ ...prev, authorizedRep: e.name, authorizedRepEmail: e.email }));
+                        setCoeAuthorizedRepDropdownOpen(false);
+                      }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-white/10"
                     >
                       {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
@@ -4988,11 +5032,61 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Email</label>
-            <input type="email" value={coeForm.email} onChange={(e) => updateCoeField("email", e.target.value)} placeholder="e.g. admin@usinhomeservices.com" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            <input type="text" value={coeForm.authorizedRepEmail} onChange={(e) => updateCoeField("authorizedRepEmail", e.target.value)} placeholder="e.g. name@usinhomeservices.com" className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Phone</label>
-            <input type="text" value={coeForm.phone} onChange={(e) => updateCoeField("phone", e.target.value)} placeholder="e.g. (555) 123-4567" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            <input type="text" value={coeForm.authorizedRepPhone} onChange={(e) => updateCoeField("authorizedRepPhone", e.target.value)} placeholder="e.g. 800-779-3579" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+
+          <div className="md:col-span-2 pt-2 mt-1 border-t border-white/10">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">For Office Use Only</p>
+          </div>
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Name</label>
+            <input
+              type="text"
+              value={coeForm.officeUseName}
+              onChange={(e) => { updateCoeField("officeUseName", e.target.value); setCoeOfficeUseNameDropdownOpen(true); }}
+              onFocus={() => setCoeOfficeUseNameDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setCoeOfficeUseNameDropdownOpen(false), 150)}
+              placeholder="Signer's name"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {coeOfficeUseNameDropdownOpen && (
+              <div className="absolute z-10 top-full mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                {filteredCoeOfficeUseNameOptions(coeForm.officeUseName).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching Admin/HR/BizOps accounts — your typed text will be used as-is.</p>
+                ) : (
+                  filteredCoeOfficeUseNameOptions(coeForm.officeUseName).map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setCoeForm((prev) => ({ ...prev, officeUseName: e.name, officeUseTitle: ROLE_LABELS[normalizeRole(e.position)] ?? e.position }));
+                        setCoeOfficeUseNameDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-white/10"
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Title</label>
+            <input type="text" value={coeForm.officeUseTitle} onChange={(e) => updateCoeField("officeUseTitle", e.target.value)} placeholder="e.g. CSR Manager" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signature</label>
+            <input type="text" value={coeForm.officeUseSignature} onChange={(e) => updateCoeField("officeUseSignature", e.target.value)} placeholder="Typed name as signature" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Contact Number</label>
+            <input type="text" value={coeForm.officeUseNumber} onChange={(e) => updateCoeField("officeUseNumber", e.target.value)} placeholder="e.g. 800-779-3579" className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
         </div>
 
