@@ -21,7 +21,19 @@ import { resolve } from "node:path";
 // started), then tell both environments not to try emptying it again
 // (see emptyOutDir: false below) so nothing ever attempts to touch a path
 // workerd might still be holding open partway through the build.
-rmSync(resolve(process.cwd(), "dist"), { recursive: true, force: true });
+//
+// This alone isn't quite enough, though: a PRIOR build/test run's workerd
+// process can still be alive and holding the same lock at the moment THIS
+// rmSync call itself runs (observed in practice — a leftover workerd from
+// an earlier session). maxRetries/retryDelay is Node's own built-in
+// mechanism for exactly this class of transient Windows EBUSY/EPERM lock —
+// retry a few times with a short pause instead of failing on the first hit.
+rmSync(resolve(process.cwd(), "dist"), {
+  recursive: true,
+  force: true,
+  maxRetries: 10,
+  retryDelay: 300,
+});
 
 // Read .env directly (avoid importing from "vite" here — it creates a module
 // require-cycle with the lovable config wrapper). We inject SERVER-ONLY secrets
