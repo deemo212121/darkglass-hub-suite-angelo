@@ -325,12 +325,15 @@ export interface NsaRunningNote {
 }
 
 /**
- * NSA's Communications log, normalized into the same shape ServicePower's
- * Running Notes use (see fetchServicePowerNotes in servicePowerNotes.ts), so
- * the ticket detail page's Customer Notes / Running Notes section can
- * display either source interchangeably. Every entry is a logged contact
- * with the customer (call/text), so isInternal is always false — there's no
- * internal/external distinction on NSA's side the way there is on SP's.
+ * NSA's "Communication" tab (on their own website) merges two separate API
+ * endpoints — confirmed by comparing a real dispatch's tab against both raw
+ * responses: getCommunications (calls/texts, direction + type tagged) and
+ * getNotes (free-text service-order notes, no direction/type). Mirroring
+ * both here, normalized into the same shape ServicePower's Running Notes
+ * use (see fetchServicePowerNotes in servicePowerNotes.ts), so the ticket
+ * detail page's Customer Notes / Running Notes section can display either
+ * source interchangeably. isInternal is always false — NSA has no
+ * internal/external distinction the way SP does.
  */
 export async function fetchNsaRunningNotes(dispatchNumber: string): Promise<{
   success: boolean;
@@ -339,19 +342,27 @@ export async function fetchNsaRunningNotes(dispatchNumber: string): Promise<{
 }> {
   const { reportApiHealth } = await import("./apiHealth");
   try {
-    const comms = await getNsaCommunications(dispatchNumber);
-    const notes: NsaRunningNote[] = comms
-      .map((c) => {
-        const label = [c.directionDesc, c.typeDesc].filter(Boolean).join(" ");
-        const body = label ? `[${label}] ${c.notes ?? ""}`.trim() : (c.notes ?? "").trim();
-        return {
-          date: c.timeStamp ?? "",
-          body,
-          addedBy: c.createUserName || c.contactee || "NSA",
-          isInternal: false,
-        };
-      })
-      .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const [comms, serviceNotes] = await Promise.all([
+      getNsaCommunications(dispatchNumber),
+      getNsaNotes(dispatchNumber),
+    ]);
+    const fromComms: NsaRunningNote[] = comms.map((c) => {
+      const label = [c.directionDesc, c.typeDesc].filter(Boolean).join(" ");
+      const body = label ? `[${label}] ${c.notes ?? ""}`.trim() : (c.notes ?? "").trim();
+      return {
+        date: c.timeStamp ?? "",
+        body,
+        addedBy: c.createUserName || c.contactee || "NSA",
+        isInternal: false,
+      };
+    });
+    const fromNotes: NsaRunningNote[] = serviceNotes.map((n) => ({
+      date: n.timeStamp ?? "",
+      body: (n.notes ?? "").trim(),
+      addedBy: n.createUserName || "NSA",
+      isInternal: false,
+    }));
+    const notes = [...fromComms, ...fromNotes].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
     reportApiHealth("nsa.fetchCommunications", "ok");
     return { success: true, notes };
   } catch (e) {

@@ -6760,9 +6760,9 @@ function TicketDetailsPage() {
                   type="button"
                   onClick={openRunningNotesModal}
                   className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
-                  title={isNsaTicket ? "View NSA's Communications log for this dispatch" : "View / post ServicePower Running Notes for this work order"}
+                  title={isNsaTicket ? "View NSA's Communication log for this dispatch" : "View / post ServicePower Running Notes for this work order"}
                 >
-                  {isNsaTicket ? "NSA Communications" : "Running Notes"}
+                  {isNsaTicket ? "NSA Communication" : "Running Notes"}
                 </button>
               </div>
               <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4">
@@ -7135,7 +7135,7 @@ function TicketDetailsPage() {
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">
                           {isNsaTicket ? "NSA" : "ServicePower"}
                         </p>
-                        <h3 className="text-xl font-bold text-white">{isNsaTicket ? "Communications" : "Running Notes"}</h3>
+                        <h3 className="text-xl font-bold text-white">{isNsaTicket ? "Communication" : "Running Notes"}</h3>
                         <p className="mt-1 text-sm text-slate-400">
                           {isNsaTicket ? "Dispatch" : "Work Order"} #{ticketNo}
                         </p>
@@ -7151,7 +7151,7 @@ function TicketDetailsPage() {
 
                     <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200/90">
                       {isNsaTicket
-                        ? "This is NSA's Communications log — the call/text contact history with the customer. It's read-only here; posting new notes back to NSA isn't supported yet."
+                        ? "Mirrors NSA's own Communication tab — call/text contact log plus service-order notes. It's read-only here; posting new entries back to NSA isn't supported yet."
                         : "ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration."}
                     </div>
 
