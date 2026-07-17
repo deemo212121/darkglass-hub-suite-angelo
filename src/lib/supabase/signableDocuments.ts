@@ -1,7 +1,7 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9";
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
 
@@ -97,15 +97,37 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
   return (data ?? []).map(mapRow);
 }
 
-/** Records the recipient's signature and marks the document signed — awaiting HR's review/confirm, not yet an official warning. */
-export async function signDocument(id: string, slot: SignatureSlot, entry: SignatureEntry, pdfUrl: string): Promise<void> {
+/**
+ * Records the recipient's signature and marks the document signed — awaiting
+ * HR's review/confirm, not yet an official warning. `formData`, if given,
+ * overwrites the stored form_data too — needed for documents like W-8BEN
+ * where the recipient fills in the actual fields themselves (HR only sends
+ * a near-empty shell), unlike the Warning Form where HR pre-fills everything
+ * and the recipient only signs.
+ */
+export async function signDocument(id: string, slot: SignatureSlot, entry: SignatureEntry, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
   const doc = await getSignableDocument(id);
   if (!doc) throw new Error("Document not found.");
   const signatures = { ...doc.signatures, [slot]: entry };
-  const { error } = await supabase
-    .from("hr_signable_documents")
-    .update({ signatures, status: "signed", pdf_url: pdfUrl, signed_at: new Date().toISOString() })
-    .eq("id", id);
+  const update: Record<string, any> = { signatures, status: "signed", pdf_url: pdfUrl, signed_at: new Date().toISOString() };
+  if (formData) update.form_data = formData;
+  const { error } = await supabase.from("hr_signable_documents").update(update).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Swaps in a re-generated PDF for an already-signed document — used when HR
+ * completes a section the recipient couldn't (e.g. the W-4's "Employers
+ * Only" box) after the fact by regenerating the whole PDF fresh from the
+ * stored form_data plus the newly-added fields, rather than patching the
+ * previously-generated file. `formData`, if given, overwrites the stored
+ * form_data too, so the added fields (and future regenerations) build on
+ * the complete picture.
+ */
+export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
+  const update: Record<string, any> = { pdf_url: pdfUrl };
+  if (formData) update.form_data = formData;
+  const { error } = await supabase.from("hr_signable_documents").update(update).eq("id", id);
   if (error) throw new Error(error.message);
 }
 

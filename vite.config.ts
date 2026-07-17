@@ -278,6 +278,10 @@ export default defineConfig({
   },
   vite: {
     define: SERVER_DEFINE,
+    // Vite's default asset list doesn't include .pdf — needed so the blank
+    // W-8BEN template (src/assets/w8ben-blank.pdf) resolves to a URL via a
+    // plain `import` the same way the logo/ribbon/footer PNGs already do.
+    assetsInclude: ["**/*.pdf"],
     // Dev-server only (never shipped in the Cloudflare production build):
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.

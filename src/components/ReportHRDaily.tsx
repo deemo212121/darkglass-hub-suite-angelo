@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -30,7 +30,7 @@ import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, addAgentNote, 
 import { parseBranchAccess } from "@/lib/locations";
 import { OnboardingApplicantDocuments } from "./OnboardingApplicantDocuments";
 import { getOnboardingDocumentCategoriesByProfileIds } from "@/lib/supabase/onboardingDocuments";
-import { uploadCoeCertificate, uploadWarningForm } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadW8benForm, uploadW4Form } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -39,14 +39,73 @@ import {
   cancelSignableDocument,
   deleteSignableDocument,
   reassignSignableDocument,
+  updateSignableDocumentPdfUrl,
   type SignableDocument,
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
+import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
+import { fillW8benPdf } from "@/lib/w8benPdfFill";
+import type { W4FormData } from "@/lib/w4FormTemplate";
+import { fillW4Pdf } from "@/lib/w4PdfFill";
+import type { W9FormData } from "@/lib/w9FormTemplate";
+import { fillW9Pdf } from "@/lib/w9PdfFill";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
-import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardCorrections, approveTimecardCorrection, rejectTimecardCorrection, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
 import { getAppUrl } from "@/lib/appUrl";
+import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate } from "@/lib/supabase/companySettings";
+import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
+
+// Certificate of Employment's editable body — the prose paragraphs between
+// the greeting and the signature block (see companySettings.ts's
+// getCompanyCoeBodyTemplate/setCompanyCoeBodyTemplate, migration 0058).
+// Placeholders are substituted in at generation time; this default matches
+// the original hardcoded text exactly, so nothing changes until an Admin
+// edits it. Paragraphs are separated by a blank line.
+const COE_BODY_PLACEHOLDERS = ["date", "employeeName", "startDate", "jobTitle", "amount", "month", "authorizedRep", "email", "phone"] as const;
+// The "===OFFICE USE===" marker splits the letter body (above it) from the
+// boxed "For Office Use Only" stamp (below it) — both are rendered through
+// the same paragraph-splitting logic, just into two different containers so
+// the stamp keeps its own visual box. Everything here is plain text/
+// placeholders — no HTML — so an Admin editing this never has to touch markup.
+const DEFAULT_COE_BODY_TEMPLATE = `Date: {{date}}
+
+To Whom It May Concern,
+
+This is to certify that {{employeeName}} has been employed with US IN HOME SERVICES since {{startDate}}.
+
+During their employment, {{employeeName}} has been serving as {{jobTitle}} and has been a member of our organization in good standing. The employee receives a gross compensation of \${{amount}} per {{month}}, subject to applicable deductions and company policies.
+
+This certificate is issued upon the employee's request for whatever lawful purpose it may serve.
+
+Should you require any additional information, please feel free to contact us.
+
+Sincerely,
+
+{{authorizedRep}}
+Authorized Representative
+US IN HOME SERVICES
+Email: {{email}}
+Phone: {{phone}}
+
+===OFFICE USE===
+For Office Use Only:
+Name: Naveen Lakhani
+Title: BizOps Senior Manager
+Signature: Naveen Lakhani`;
+
+const PTO_TYPE_LABEL: Record<PtoType, string> = {
+  vacation: "Vacation",
+  sick: "Sick",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid",
+  bereavement: "Bereavement",
+};
 
 const ALL_US_BRANCHES = LOCATIONS_DATA.filter(l => !l.isPhilippines).map(l => l.location).sort();
 const ALL_PH_BRANCHES = LOCATIONS_DATA.filter(l => l.isPhilippines).map(l => l.location).sort();
@@ -103,6 +162,13 @@ interface Employee {
   terminationReason?: string;
   status: EmploymentStatus;
   onboardingDocs: Record<string, boolean>;
+  // Same off-day/required-shift fields Attendance Monitoring already uses
+  // (profiles.off_days/required_check_in/required_check_out) — carried
+  // through here so the Attendance KPI tile can derive present/absent/short
+  // duty without a second profiles query.
+  offDays: number[];
+  requiredCheckIn: string;
+  requiredCheckOut: string;
 }
 
 // Onboarding Documents — per-role/country checklist columns (see the
@@ -163,6 +229,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const normalizedMyRole = normalizeRole(myRole);
   const isHrOrAdmin = ready && HR_ADMIN_ROLES.has(normalizedMyRole);
   const isBranchManager = ready && BRANCH_MANAGER_ROLES.has(normalizedMyRole);
+  const isAdmin = ["ADMIN", "SUPERADMIN"].includes(normalizedMyRole);
 
   // HR can also be held as a sub-role (extra_roles) rather than the primary
   // role — useAuth().role only carries the primary, so resolve extra_roles
@@ -189,7 +256,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -202,7 +269,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "onboarding", "hiringReports", "report", "coe", "warningForm"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -624,6 +691,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
           onboardingDocs: info.onboardingDocs || {},
+          offDays: p.off_days ?? [],
+          requiredCheckIn: p.required_check_in || "",
+          requiredCheckOut: p.required_check_out || "",
         };
       });
       setEmployees(mapped);
@@ -641,6 +711,138 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setPtoRequests(await getCompanyPtoRequests());
     } catch (err) {
       console.error("Failed to load PTO requests:", err);
+    }
+  };
+
+  // ── Employee Request Manager — all-in-one company-wide view of PTO
+  // requests, Time Correction requests, Attendance Disputes, and Payroll
+  // Inquiries, mirroring Employee Self-Service's "Manage Requests" tab (same
+  // underlying lib functions, its own fetch/state here) so HR/managers don't
+  // need to leave the HR dashboard to review and act on these. ──
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
+  const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
+  const [requestManagerLoading, setRequestManagerLoading] = useState(true);
+  const [requestResponseNote, setRequestResponseNote] = useState<Record<string, string>>({});
+  const loadRequestManagerData = async () => {
+    setRequestManagerLoading(true);
+    try {
+      const [correctionsData, employeeRequestsData] = await Promise.all([
+        getCompanyTimecardCorrections(),
+        getCompanyEmployeeRequests(),
+      ]);
+      setCorrections(correctionsData);
+      setEmployeeRequests(employeeRequestsData);
+    } catch (err) {
+      console.error("Failed to load employee requests:", err);
+    } finally {
+      setRequestManagerLoading(false);
+    }
+  };
+  const pendingPtoRequests = useMemo(() => ptoRequests.filter((r) => r.status === "pending"), [ptoRequests]);
+  const pendingCorrections = useMemo(() => corrections.filter((r) => r.status === "pending"), [corrections]);
+  const pendingEmployeeRequests = useMemo(() => employeeRequests.filter((r) => r.status === "pending"), [employeeRequests]);
+  const requestManagerPendingCount = pendingPtoRequests.length + pendingCorrections.length + pendingEmployeeRequests.length;
+
+  // ── Which category's table is showing (one at a time, not all three
+  // stacked) + a "new since last viewed" badge per category, tracked in
+  // localStorage (per browser) since there's no existing per-user "seen"
+  // flag on these request tables to read instead. ──
+  const REQUEST_MANAGER_CATEGORIES = ["pto", "corrections", "disputes"] as const;
+  type RequestManagerCategory = (typeof REQUEST_MANAGER_CATEGORIES)[number];
+  const [requestManagerCategory, setRequestManagerCategory] = useState<RequestManagerCategory>("pto");
+  const [requestManagerLastSeen, setRequestManagerLastSeen] = useState<Record<RequestManagerCategory, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("hrRequestManagerLastSeen") || "{}");
+    } catch {
+      return {} as Record<RequestManagerCategory, string>;
+    }
+  });
+  const latestCreatedAt = (rows: { createdAt: string }[]): string | null =>
+    rows.reduce<string | null>((max, r) => (!max || r.createdAt > max ? r.createdAt : max), null);
+  const requestManagerLatest: Record<RequestManagerCategory, string | null> = {
+    pto: latestCreatedAt(pendingPtoRequests),
+    corrections: latestCreatedAt(pendingCorrections),
+    disputes: latestCreatedAt(pendingEmployeeRequests),
+  };
+  const requestManagerHasNew = (category: RequestManagerCategory): boolean => {
+    const latest = requestManagerLatest[category];
+    if (!latest) return false;
+    const lastSeen = requestManagerLastSeen[category];
+    return !lastSeen || latest > lastSeen;
+  };
+  const handleSelectRequestManagerCategory = (category: RequestManagerCategory) => {
+    setRequestManagerCategory(category);
+    const latest = requestManagerLatest[category];
+    if (latest) {
+      const next = { ...requestManagerLastSeen, [category]: latest };
+      setRequestManagerLastSeen(next);
+      localStorage.setItem("hrRequestManagerLastSeen", JSON.stringify(next));
+    }
+  };
+  const profileName = (id: string) => employees.find((e) => e.id === id)?.name || "Unknown";
+  /** Native <input type="time"> flips AM/PM when a user mistypes — flags the classic case without needing Date parsing. */
+  const isCheckOutBeforeCheckIn = (checkIn: string, checkOut: string): boolean => !!checkIn && !!checkOut && checkOut <= checkIn;
+
+  const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
+    try {
+      await reviewPtoStage(request, stage, decision, myProfileId || "");
+      await loadPtoRequests();
+    } catch (err) {
+      alert(`Failed to update PTO request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const handleCorrectionAction = async (correction: TimecardCorrectionRow, approve: boolean) => {
+    try {
+      if (approve) {
+        const effectiveCheckIn = correction.correctedCheckIn || correction.originalCheckIn || "";
+        const effectiveCheckOut = correction.correctedCheckOut || correction.originalCheckOut || "";
+        const effectiveMealStart = correction.correctedMealStart || correction.originalMealStart || "";
+        const effectiveMealEnd = correction.correctedMealEnd || correction.originalMealEnd || "";
+        if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
+          alert(`Can't approve: check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
+          return;
+        }
+        if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
+          alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
+          return;
+        }
+        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, correction.correctedMealStart, correction.correctedMealEnd);
+      } else {
+        await rejectTimecardCorrection(correction, myProfileId);
+      }
+      await loadRequestManagerData();
+    } catch (err) {
+      alert(`Failed to update correction: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
+    try {
+      await updateEmployeeRequestStatus(id, status, myProfileId, requestResponseNote[id]);
+      await loadRequestManagerData();
+      setRequestResponseNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (err) {
+      alert(`Failed to update request: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  // ── Attendance KPI tile — today's present/absent breakdown. Reuses the
+  // exact same off_days/required_check_in/required_check_out + timecard
+  // comparison Attendance Monitoring already does, just for today only. ──
+  const [todayTimecardEntries, setTodayTimecardEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
+  const [attendanceCountryTab, setAttendanceCountryTab] = useState<"US" | "PH">("US");
+  const loadTodayTimecardEntries = async () => {
+    try {
+      setTodayTimecardEntries(await getCompanyTimecardEntries(today, today));
+    } catch (err) {
+      console.error("Failed to load today's timecard entries:", err);
     }
   };
 
@@ -711,6 +913,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     loadCandidates();
     loadNotes();
     loadPtoRequests();
+    loadTodayTimecardEntries();
+    loadRequestManagerData();
+    if (uid) void getMyProfileId(uid).then(setMyProfileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, isHrOrAdmin]);
 
@@ -723,8 +928,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const unsubs = [
       subscribeTableChanges("hr_candidates", () => void loadCandidates(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => void loadSentWarningForms(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
+      subscribeTableChanges("employee_requests", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
     ];
     return () => unsubs.forEach((unsub) => unsub());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -824,6 +1032,90 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     resigned: employees.filter((e) => e.status === "resigned").length,
   }), [visibleCandidates, employees]);
 
+  // ── Attendance KPI tile — today's present/absent breakdown, built the same
+  // way Attendance Monitoring's dailyRecords does (off_days -> isOffDay,
+  // required_check_in/out vs actual check-in/out -> short-duty alerts).
+  // Absent employees are further split using today's approved PTO requests,
+  // mapped per the confirmed convention: sick->Sick Leave, personal->
+  // Personal Leave, unpaid->Time Off, vacation/holiday/bereavement->Paid
+  // Time Off. Anyone absent with no matching approved PTO is "no notice". ──
+  function fmtShortMinutes(hours: number): string {
+    const totalMinutes = Math.max(0, Math.round(hours * 60));
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+  const PTO_BUCKET: Record<PtoType, "Sick Leave" | "Personal Leave" | "Time Off" | "Paid Time Off"> = {
+    sick: "Sick Leave",
+    personal: "Personal Leave",
+    unpaid: "Time Off",
+    vacation: "Paid Time Off",
+    holiday: "Paid Time Off",
+    bereavement: "Paid Time Off",
+  };
+  function buildAttendanceSummary(pool: Employee[], entryByProfile: Map<string, CompanyTimecardEntry>, ptoByProfile: Map<string, PtoType>, dow: number) {
+    const present: { employee: Employee; lateBy: string | null; shortBy: string | null }[] = [];
+    const buckets: Record<"Absent without notice" | "Sick Leave" | "Personal Leave" | "Time Off" | "Paid Time Off", Employee[]> = {
+      "Absent without notice": [],
+      "Sick Leave": [],
+      "Personal Leave": [],
+      "Time Off": [],
+      "Paid Time Off": [],
+    };
+    for (const emp of pool) {
+      if (emp.status !== "active") continue;
+      const isOffDay = new Set(emp.offDays).has(dow);
+      if (isOffDay) continue;
+      const entry = entryByProfile.get(emp.id);
+      const checkIn = entry?.checkIn || "";
+      const checkOut = entry?.checkOut || "";
+      if (checkIn) {
+        let lateBy: string | null = null;
+        let shortBy: string | null = null;
+        if (emp.requiredCheckIn && checkIn > emp.requiredCheckIn) {
+          lateBy = fmtShortMinutes(hoursDiff(emp.requiredCheckIn, checkIn));
+        }
+        if (checkOut && emp.requiredCheckIn && emp.requiredCheckOut) {
+          const worked = calcWorkedHours({ checkIn, checkOut, mealStart: entry?.mealStart || "", mealEnd: entry?.mealEnd || "", notes: "" });
+          const requiredHours = hoursDiff(emp.requiredCheckIn, emp.requiredCheckOut);
+          if (requiredHours - worked > 0.25) shortBy = fmtShortMinutes(requiredHours - worked);
+        }
+        present.push({ employee: emp, lateBy, shortBy });
+      } else {
+        const ptoType = ptoByProfile.get(emp.id);
+        const bucket = ptoType ? PTO_BUCKET[ptoType] : "Absent without notice";
+        buckets[bucket].push(emp);
+      }
+    }
+    const totalAbsent = Object.values(buckets).reduce((sum, arr) => sum + arr.length, 0);
+    return { present, buckets, totalAbsent };
+  }
+
+  // Split US/PH so HR can review each region's attendance separately
+  // (different shift norms, holidays, etc.) instead of one blended list.
+  const { attendanceSummaryUS, attendanceSummaryPH, attendanceSummary } = useMemo(() => {
+    const dow = new Date(today + "T00:00:00").getDay();
+    const entryByProfile = new Map<string, CompanyTimecardEntry>();
+    for (const e of todayTimecardEntries) entryByProfile.set(e.profileId, e);
+    const approvedPtoToday = ptoRequests.filter(
+      (r) => r.status === "approved" && r.startDate <= today && today <= r.endDate
+    );
+    const ptoByProfile = new Map<string, PtoType>();
+    for (const r of approvedPtoToday) if (!ptoByProfile.has(r.profileId)) ptoByProfile.set(r.profileId, r.ptoType);
+
+    const us = buildAttendanceSummary(employees.filter((e) => e.country === "US"), entryByProfile, ptoByProfile, dow);
+    const ph = buildAttendanceSummary(employees.filter((e) => e.country === "PH"), entryByProfile, ptoByProfile, dow);
+    const combined = {
+      present: [...us.present, ...ph.present],
+      buckets: (["Absent without notice", "Sick Leave", "Personal Leave", "Time Off", "Paid Time Off"] as const).reduce((acc, k) => {
+        acc[k] = [...us.buckets[k], ...ph.buckets[k]];
+        return acc;
+      }, {} as typeof us.buckets),
+      totalAbsent: us.totalAbsent + ph.totalAbsent,
+    };
+    return { attendanceSummaryUS: us, attendanceSummaryPH: ph, attendanceSummary: combined };
+  }, [employees, todayTimecardEntries, ptoRequests, today]);
+
   // ── Generate Report: same KPI breakdown as the top of the page, scoped to
   // a date range instead of all-time. Candidates are windowed by when they
   // applied (createdAt); terminated/resigned are windowed by terminationDate
@@ -920,6 +1212,48 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const updateCoeField = (field: keyof typeof coeForm, value: string) =>
     setCoeForm((prev) => ({ ...prev, [field]: value }));
 
+  // ── Editable COE body template (Admin-only) — doesn't touch the form
+  // fields above; just the prose paragraphs rendered into the certificate. ──
+  const [coeBodyTemplate, setCoeBodyTemplate] = useState(DEFAULT_COE_BODY_TEMPLATE);
+  const [coeTemplateModalOpen, setCoeTemplateModalOpen] = useState(false);
+  const [coeTemplateDraft, setCoeTemplateDraft] = useState("");
+  const [coeTemplateSaving, setCoeTemplateSaving] = useState(false);
+  useEffect(() => {
+    getCompanyCoeBodyTemplate()
+      .then((stored) => setCoeBodyTemplate(stored ?? DEFAULT_COE_BODY_TEMPLATE))
+      .catch((err) => console.error("Failed to load COE body template:", err));
+  }, []);
+  const handleSaveCoeBodyTemplate = async () => {
+    setCoeTemplateSaving(true);
+    try {
+      await setCompanyCoeBodyTemplate(coeTemplateDraft);
+      setCoeBodyTemplate(coeTemplateDraft);
+      setCoeTemplateModalOpen(false);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save template.");
+    } finally {
+      setCoeTemplateSaving(false);
+    }
+  };
+  /** Substitutes {{placeholders}} into the (already-escaped) template text and wraps blank-line-separated paragraphs in <p> tags. */
+  const renderCoeBodyHtml = (template: string, values: Record<string, string>): string => {
+    const escaped = escapeHtml(template);
+    const substituted = escaped.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? "");
+    return substituted
+      .split(/\n\s*\n/)
+      .map((para) => para.trim())
+      .filter(Boolean)
+      .map((para) => `<p>${para.replace(/\n/g, "<br/>")}</p>`)
+      .join("\n");
+  };
+  /** Splits the raw template on the "===OFFICE USE===" marker into the main letter and the boxed stamp — done before escaping/substitution so the marker itself never needs escaping. */
+  const splitCoeTemplate = (template: string): { letter: string; officeUse: string } => {
+    const marker = /\n?[=]{3}\s*OFFICE USE\s*[=]{3}\n?/i;
+    const match = template.match(marker);
+    if (!match || match.index === undefined) return { letter: template, officeUse: "" };
+    return { letter: template.slice(0, match.index), officeUse: template.slice(match.index + match[0].length) };
+  };
+
   // Employee Name, Job Title, and Authorized Representative are all
   // typeable filters — the input's value doubles as both the filter query
   // and the field's final text (so a name/title not in either suggestion
@@ -971,6 +1305,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const buildCoeBodyMarkup = (logoDataUrl: string, ribbonDataUrl: string, footerDataUrl: string) => {
     const f = coeForm;
     const blank = (v: string) => (v.trim() ? escapeHtml(v) : "&nbsp;");
+    const values = {
+      date: blank(f.date ? new Date(f.date).toLocaleDateString() : ""),
+      employeeName: blank(f.employeeName),
+      startDate: blank(f.employeeStartDate ? new Date(f.employeeStartDate).toLocaleDateString() : ""),
+      jobTitle: blank(f.jobTitle),
+      amount: blank(f.amount),
+      month: blank(f.month),
+      authorizedRep: blank(f.authorizedRep),
+      email: blank(f.email),
+      phone: blank(f.phone),
+    };
+    const { letter, officeUse } = splitCoeTemplate(coeBodyTemplate);
     return `
       <div class="coe-container">
         <div class="header">
@@ -980,37 +1326,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
         <h1>CERTIFICATE OF EMPLOYMENT<br/>US IN HOME SERVICES</h1>
 
-        <p>Date: <strong>${blank(f.date ? new Date(f.date).toLocaleDateString() : "")}</strong></p>
-
-        <p>To Whom It May Concern,</p>
-
-        <p>This is to certify that <strong>${blank(f.employeeName)}</strong> has been employed with US IN HOME SERVICES since ${blank(f.employeeStartDate ? new Date(f.employeeStartDate).toLocaleDateString() : "")}.</p>
-
-        <p>During their employment, ${blank(f.employeeName)} has been serving as <strong>${blank(f.jobTitle)}</strong> and has been a member of our organization in good standing. The employee receives a gross compensation of $${blank(f.amount)} per <strong>${blank(f.month)}</strong>, subject to applicable deductions and company policies.</p>
-
-        <p>This certificate is issued upon the employee's request for whatever lawful purpose it may serve.</p>
-
-        <p>Should you require any additional information, please feel free to contact us.</p>
-
-        <p>Sincerely,</p>
-
-        <div class="sign-block">
-          <div class="sign-line">${blank(f.authorizedRep)}</div>
-          <p style="margin-bottom:2px;">Authorized Representative</p>
-          <p style="margin-bottom:2px;">US IN HOME SERVICES</p>
-          <p style="margin-bottom:2px;">Email: ${blank(f.email)}</p>
-          <p>Phone: ${blank(f.phone)}</p>
-        </div>
+        ${renderCoeBodyHtml(letter, values)}
 
         <div class="office-use">
-          <p style="font-weight:700;">For Office Use Only:</p>
-          <div class="row">
-            <div>
-              <p style="margin-bottom:2px;">Name: <u>Naveen Lakhani</u></p>
-              <p>Title: <u>BizOps Senior Manager</u></p>
-            </div>
-            <p>Signature: <u>Naveen Lakhani</u></p>
-          </div>
+          ${renderCoeBodyHtml(officeUse, values)}
         </div>
 
         <div class="footer-wrap">
@@ -1056,6 +1375,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // sits behind this full-screen overlay, so a failure here would otherwise
   // happen silently as far as the user watching this modal can tell.
   const [coeSendError, setCoeSendError] = useState<string | null>(null);
+
+  // ── COE Sent History ──
+  const [coeDocuments, setCoeDocuments] = useState<CoeDocument[]>([]);
+  const [coeDocumentsLoading, setCoeDocumentsLoading] = useState(true);
+  const [coeDocumentPreview, setCoeDocumentPreview] = useState<CoeDocument | null>(null);
+  const loadCoeDocuments = async () => {
+    setCoeDocumentsLoading(true);
+    try {
+      setCoeDocuments(await getCompanyCoeDocuments());
+    } catch (err) {
+      console.error("Failed to load COE sent history:", err);
+    } finally {
+      setCoeDocumentsLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (!ready) return;
+    void loadCoeDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+  useEffect(() => {
+    if (!ready || !companyId) return;
+    return subscribeTableChanges("hr_coe_documents", () => void loadCoeDocuments(), `company_id=eq.${companyId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, companyId]);
   const filteredCoeRecipients = useMemo(() => {
     const q = coeRecipientSearch.trim().toLowerCase();
     const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
@@ -1110,6 +1454,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const recipientName = employees.find((e) => e.id === coeRecipientId)?.name;
       void logActivity({ action: "coe_sent", targetType: "employee", targetLabel: employeeLabel, details: { to: recipientName ?? "" } });
+      // Best-effort — the certificate has already been sent above by this
+      // point, so a failure here (e.g. migration 0059 not run yet) must
+      // never surface as "failed to send" or block closing the dialog.
+      addCoeDocument({ employeeName: employeeLabel, documentUrl: url, recipientId: coeRecipientId })
+        .then(() => void loadCoeDocuments())
+        .catch((err) => console.error("Failed to record COE sent-history row:", err));
 
       setCoePreviewOpen(false);
       setCoeRecipientId("");
@@ -1301,6 +1651,558 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       URL.revokeObjectURL(blobUrl);
     } catch {
       window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  // ── W-8BEN — HR just picks a recipient; the recipient fills in their own
+  // Part I fields on FillW8benPage.tsx and sends the completed PDF back. ──
+  const [sentW8benForms, setSentW8benForms] = useState<SignableDocument[]>([]);
+  const loadSentW8benForms = async () => {
+    try {
+      setSentW8benForms(await getSignableDocuments("w8ben"));
+    } catch (err) {
+      console.error("Failed to load sent W-8BEN forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "w8ben") void loadSentW8benForms();
+  }, [activeTab]);
+
+  const [w8RecipientId, setW8RecipientId] = useState("");
+  const [w8RecipientSearch, setW8RecipientSearch] = useState("");
+  const [w8RecipientDropdownOpen, setW8RecipientDropdownOpen] = useState(false);
+  const [w8Sending, setW8Sending] = useState(false);
+  const [w8SendError, setW8SendError] = useState<string | null>(null);
+  const [w8ActionBusyId, setW8ActionBusyId] = useState<string | null>(null);
+  const [w8ActionError, setW8ActionError] = useState<string | null>(null);
+  const [w8PreviewOpen, setW8PreviewOpen] = useState(false);
+  const [w8PreviewPdfUrl, setW8PreviewPdfUrl] = useState<string | null>(null);
+  const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
+  const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
+  const filteredW8Recipients = useMemo(
+    () => employees.filter((e) => e.name.toLowerCase().includes(w8RecipientSearch.toLowerCase())),
+    [employees, w8RecipientSearch]
+  );
+
+  const W8_BLANK_ADDRESS: W8benAddress = { street: "", cityStateZip: "", country: "" };
+  /** What the recipient sees before they've filled anything in — just their name pre-filled, everything else blank (including Part II, which they fill in themselves like the rest of the form). */
+  const buildW8benPreviewData = (employeeName: string): W8benFormData => ({
+    employeeId: "",
+    employeeName,
+    countryOfCitizenship: "",
+    permanentAddress: { ...W8_BLANK_ADDRESS },
+    mailingAddress: { ...W8_BLANK_ADDRESS },
+    usTin: "",
+    ftin: "",
+    ftinNotRequired: false,
+    referenceNumbers: "",
+    dateOfBirth: "",
+    treatyResidentCountry: "",
+    treatyArticleParagraph: "",
+    treatyRate: "",
+    treatyIncomeType: "",
+    treatyAdditionalConditions: "",
+    certifiedTrue: false,
+    dateSigned: "",
+  });
+
+  const closeW8benPreview = () => {
+    setW8PreviewOpen(false);
+    if (w8PreviewPdfUrl) URL.revokeObjectURL(w8PreviewPdfUrl);
+    setW8PreviewPdfUrl(null);
+  };
+
+  /** Renders the SAME real official PDF (fillW8benPdf, no HTML redraw) with a blank preview fill, so what HR previews is exactly what gets generated when the recipient actually submits. */
+  const handleOpenW8benPreview = async () => {
+    setW8SendError(null);
+    setW8PreviewOpen(true);
+    setW8PreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === w8RecipientId)?.name || "";
+      const pdfBytes = await fillW8benPdf(buildW8benPreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setW8PreviewPdfUrl(url);
+    } catch (err) {
+      setW8SendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setW8PreviewLoading(false);
+    }
+  };
+
+  const handleSendW8ben = async () => {
+    if (!w8RecipientId || !uid) return;
+    setW8Sending(true);
+    setW8SendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === w8RecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "w8ben",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: w8RecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, w8RecipientId);
+      const fillLink = `${getAppUrl()}/fill-w8ben/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete your Form W-8BEN (Certificate of Foreign Status): ${fillLink}`,
+      });
+
+      void logActivity({ action: "w8ben_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeW8benPreview();
+      setW8RecipientId("");
+      setW8RecipientSearch("");
+      await loadSentW8benForms();
+    } catch (err) {
+      setW8SendError(err instanceof Error ? err.message : "Failed to send W-8BEN request.");
+    } finally {
+      setW8Sending(false);
+    }
+  };
+
+  const handleCopyW8benLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w8ben/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  /** Forces a real download instead of just opening the PDF in a new tab — same fallback as the Warning Form's download action. */
+  const handleDownloadW8benPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const employeeName = (doc.formData as Partial<W8benFormData>).employeeName || "w8ben-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `W-8BEN - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteW8ben = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this W-8BEN request?")) return;
+    setW8ActionBusyId(doc.id);
+    setW8ActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentW8benForms();
+    } catch (err) {
+      setW8ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setW8ActionBusyId(null);
+    }
+  };
+
+  // ── W-4 — same pattern as W-8BEN above: HR just picks a recipient, the
+  // recipient fills in everything themselves on FillW4Page.tsx. ──
+  const [w8FormType, setW8FormType] = useState<"w8ben" | "w4" | "w9">("w8ben");
+  const [sentW4Forms, setSentW4Forms] = useState<SignableDocument[]>([]);
+  const loadSentW4Forms = async () => {
+    try {
+      setSentW4Forms(await getSignableDocuments("w4"));
+    } catch (err) {
+      console.error("Failed to load sent W-4 forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "w8ben") void loadSentW4Forms();
+  }, [activeTab]);
+
+  const [w4RecipientId, setW4RecipientId] = useState("");
+  const [w4RecipientSearch, setW4RecipientSearch] = useState("");
+  const [w4RecipientDropdownOpen, setW4RecipientDropdownOpen] = useState(false);
+  const [w4Sending, setW4Sending] = useState(false);
+  const [w4SendError, setW4SendError] = useState<string | null>(null);
+  const [w4ActionBusyId, setW4ActionBusyId] = useState<string | null>(null);
+  const [w4ActionError, setW4ActionError] = useState<string | null>(null);
+  const [w4PreviewOpen, setW4PreviewOpen] = useState(false);
+  const [w4PreviewPdfUrl, setW4PreviewPdfUrl] = useState<string | null>(null);
+  const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
+  const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
+  const filteredW4Recipients = useMemo(
+    () => employees.filter((e) => e.name.toLowerCase().includes(w4RecipientSearch.toLowerCase())),
+    [employees, w4RecipientSearch]
+  );
+
+  const buildW4PreviewData = (employeeName: string): W4FormData => {
+    const [first, ...rest] = employeeName.split(" ");
+    return {
+      employeeId: "",
+      firstNameMiddleInitial: first ?? "",
+      lastName: rest.join(" "),
+      ssn: "",
+      address: "",
+      cityStateZip: "",
+      filingStatus: "",
+      multipleJobsCheckbox: false,
+      step3ChildrenAmount: "",
+      step3OtherDependentsAmount: "",
+      step3TotalAmount: "",
+      step4aOtherIncome: "",
+      step4bDeductions: "",
+      step4cExtraWithholding: "",
+      exemptCheckbox: false,
+      dateSigned: "",
+      signatureDataUrl: "",
+      employerNameAndAddress: "",
+      employerFirstDateOfEmployment: "",
+      employerEin: "",
+      mjwLine1: "",
+      mjwLine2a: "",
+      mjwLine2b: "",
+      mjwLine2c: "",
+      mjwLine3: "",
+      mjwLine4: "",
+      dwLine1a: "",
+      dwLine1b: "",
+      dwLine1c: "",
+      dwLine2: "",
+      dwLine3a: "",
+      dwLine3b: "",
+      dwLine4: "",
+      dwLine5: "",
+      dwLine6a: "",
+      dwLine6b: "",
+      dwLine6c: "",
+      dwLine6d: "",
+      dwLine6e: "",
+      dwLine7: "",
+      dwLine8a: "",
+      dwLine8b: "",
+      dwLine9: "",
+      dwLine10: "",
+      dwLine11: "",
+      dwLine12: "",
+      dwLine13: "",
+      dwLine14: "",
+      dwLine15: "",
+    };
+  };
+
+  const closeW4Preview = () => {
+    setW4PreviewOpen(false);
+    if (w4PreviewPdfUrl) URL.revokeObjectURL(w4PreviewPdfUrl);
+    setW4PreviewPdfUrl(null);
+  };
+
+  const handleOpenW4Preview = async () => {
+    setW4SendError(null);
+    setW4PreviewOpen(true);
+    setW4PreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === w4RecipientId)?.name || "";
+      const pdfBytes = await fillW4Pdf(buildW4PreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setW4PreviewPdfUrl(url);
+    } catch (err) {
+      setW4SendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setW4PreviewLoading(false);
+    }
+  };
+
+  const handleSendW4 = async () => {
+    if (!w4RecipientId || !uid) return;
+    setW4Sending(true);
+    setW4SendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === w4RecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "w4",
+        formData: { employeeId: recipient.id } as unknown as Record<string, any>,
+        recipientId: w4RecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, w4RecipientId);
+      const fillLink = `${getAppUrl()}/fill-w4/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete your Form W-4 (Employee's Withholding Certificate): ${fillLink}`,
+      });
+
+      void logActivity({ action: "w4_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeW4Preview();
+      setW4RecipientId("");
+      setW4RecipientSearch("");
+      await loadSentW4Forms();
+    } catch (err) {
+      setW4SendError(err instanceof Error ? err.message : "Failed to send W-4 request.");
+    } finally {
+      setW4Sending(false);
+    }
+  };
+
+  const handleCopyW4Link = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w4/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadW4Pdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const data = doc.formData as Partial<W4FormData>;
+    const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "w4-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `W-4 - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteW4 = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this W-4 request?")) return;
+    setW4ActionBusyId(doc.id);
+    setW4ActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentW4Forms();
+    } catch (err) {
+      setW4ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setW4ActionBusyId(null);
+    }
+  };
+
+  // ── W-9 — same pattern as W-8BEN/W-4 above: HR just picks a recipient,
+  // the recipient fills in everything themselves on FillW9Page.tsx. No
+  // later "HR completes a section" step, unlike the W-4's Employers Only
+  // box. ──
+  const [sentW9Forms, setSentW9Forms] = useState<SignableDocument[]>([]);
+  const loadSentW9Forms = async () => {
+    try {
+      setSentW9Forms(await getSignableDocuments("w9"));
+    } catch (err) {
+      console.error("Failed to load sent W-9 forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "w8ben") void loadSentW9Forms();
+  }, [activeTab]);
+
+  const [w9RecipientId, setW9RecipientId] = useState("");
+  const [w9RecipientSearch, setW9RecipientSearch] = useState("");
+  const [w9RecipientDropdownOpen, setW9RecipientDropdownOpen] = useState(false);
+  const [w9Sending, setW9Sending] = useState(false);
+  const [w9SendError, setW9SendError] = useState<string | null>(null);
+  const [w9ActionBusyId, setW9ActionBusyId] = useState<string | null>(null);
+  const [w9ActionError, setW9ActionError] = useState<string | null>(null);
+  const [w9PreviewOpen, setW9PreviewOpen] = useState(false);
+  const [w9PreviewPdfUrl, setW9PreviewPdfUrl] = useState<string | null>(null);
+  const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
+  const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
+  const filteredW9Recipients = useMemo(
+    () => employees.filter((e) => e.name.toLowerCase().includes(w9RecipientSearch.toLowerCase())),
+    [employees, w9RecipientSearch]
+  );
+
+  const buildW9PreviewData = (name: string): W9FormData => ({
+    employeeId: "",
+    name,
+    businessName: "",
+    taxClassification: "",
+    llcTaxClassificationCode: "",
+    otherClassificationText: "",
+    foreignPartnersCheckbox: false,
+    exemptPayeeCode: "",
+    fatcaExemptionCode: "",
+    address: "",
+    cityStateZip: "",
+    accountNumbers: "",
+    requesterNameAddress: "",
+    ssnPart1: "",
+    ssnPart2: "",
+    ssnPart3: "",
+    einPart1: "",
+    einPart2: "",
+    dateSigned: "",
+    signatureDataUrl: "",
+  });
+
+  const closeW9Preview = () => {
+    setW9PreviewOpen(false);
+    if (w9PreviewPdfUrl) URL.revokeObjectURL(w9PreviewPdfUrl);
+    setW9PreviewPdfUrl(null);
+  };
+
+  const handleOpenW9Preview = async () => {
+    setW9SendError(null);
+    setW9PreviewOpen(true);
+    setW9PreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === w9RecipientId)?.name || "";
+      const pdfBytes = await fillW9Pdf(buildW9PreviewData(recipientName));
+      const url = URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      setW9PreviewPdfUrl(url);
+    } catch (err) {
+      setW9SendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setW9PreviewLoading(false);
+    }
+  };
+
+  const handleSendW9 = async () => {
+    if (!w9RecipientId || !uid) return;
+    setW9Sending(true);
+    setW9SendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === w9RecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const doc = await createSignableDocument({
+        documentType: "w9",
+        formData: { employeeId: recipient.id } as unknown as Record<string, any>,
+        recipientId: w9RecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, w9RecipientId);
+      const fillLink = `${getAppUrl()}/fill-w9/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete your Form W-9 (Request for Taxpayer Identification Number and Certification): ${fillLink}`,
+      });
+
+      void logActivity({ action: "w9_form_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      closeW9Preview();
+      setW9RecipientId("");
+      setW9RecipientSearch("");
+      await loadSentW9Forms();
+    } catch (err) {
+      setW9SendError(err instanceof Error ? err.message : "Failed to send W-9 request.");
+    } finally {
+      setW9Sending(false);
+    }
+  };
+
+  const handleCopyW9Link = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-w9/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadW9Pdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const data = doc.formData as Partial<W9FormData>;
+    const name = data.name || "w9-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `W-9 - ${name}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleDeleteW9 = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this W-9 request?")) return;
+    setW9ActionBusyId(doc.id);
+    setW9ActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentW9Forms();
+    } catch (err) {
+      setW9ActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setW9ActionBusyId(null);
+    }
+  };
+
+  // ── HR completing the W-4's "Employers Only" box after the employee has
+  // already submitted. Regenerates the whole PDF fresh from the
+  // ALREADY-STORED formData (a plain same-origin Supabase read) plus the
+  // newly-typed employer fields, via the same fillW4Pdf the employee's own
+  // submission used — never fetches the previously-generated PDF back from
+  // Firebase Storage, so there's no CORS setup needed for this feature at
+  // all. The employee's signature is redrawn from formData.signatureDataUrl
+  // (a data: URL, always same-origin-safe to fetch — see
+  // w4FormTemplate.ts's header comment). ──
+  const [w4EmployerDialog, setW4EmployerDialog] = useState<SignableDocument | null>(null);
+  const [w4EmployerNameAddress, setW4EmployerNameAddress] = useState("");
+  const [w4EmployerFirstDate, setW4EmployerFirstDate] = useState("");
+  const [w4EmployerEin, setW4EmployerEin] = useState("");
+  const [w4EmployerSaving, setW4EmployerSaving] = useState(false);
+  const [w4EmployerError, setW4EmployerError] = useState<string | null>(null);
+
+  const handleOpenW4EmployerDialog = (doc: SignableDocument) => {
+    setW4EmployerDialog(doc);
+    setW4EmployerNameAddress("");
+    setW4EmployerFirstDate("");
+    setW4EmployerEin("");
+    setW4EmployerError(null);
+  };
+
+  const handleSaveW4EmployerInfo = async () => {
+    if (!w4EmployerDialog) return;
+    setW4EmployerSaving(true);
+    setW4EmployerError(null);
+    try {
+      const data = w4EmployerDialog.formData as W4FormData;
+      const merged: W4FormData = {
+        ...data,
+        employerNameAndAddress: w4EmployerNameAddress,
+        employerFirstDateOfEmployment: w4EmployerFirstDate,
+        employerEin: w4EmployerEin,
+      };
+      const sigBytes = data.signatureDataUrl
+        ? new Uint8Array(await (await fetch(data.signatureDataUrl)).arrayBuffer())
+        : undefined;
+      const pdfBytes = await fillW4Pdf(merged, sigBytes);
+      const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+      const pdfUrl = await uploadW4Form(w4EmployerDialog.companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      await updateSignableDocumentPdfUrl(w4EmployerDialog.id, pdfUrl, merged as unknown as Record<string, any>);
+      setW4EmployerDialog(null);
+      await loadSentW4Forms();
+    } catch (err) {
+      setW4EmployerError(err instanceof Error ? err.message : "Failed to save employer info.");
+    } finally {
+      setW4EmployerSaving(false);
     }
   };
 
@@ -2294,6 +3196,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
         { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
+        { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
       ] as const,
     },
     {
@@ -2308,6 +3211,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Users,
       tabs: [
         { key: "directory", label: "Employee Directory", count: employees.length, icon: UserCheck },
+        { key: "employeeRequestManager", label: "Employee Request Manager", count: requestManagerPendingCount, icon: ClipboardList },
         { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
         { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
         { key: "warnings", label: "Warnings & Mistakes", count: isHrOrAdmin ? pendingNotes.length : 0, icon: AlertTriangle },
@@ -2395,7 +3299,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
 
       {/* ── KPI overview ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
         {[
           { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
           { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
@@ -2410,7 +3314,113 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
           </div>
         ))}
+        <button
+          type="button"
+          onClick={() => setAttendanceModalOpen(true)}
+          className="panel p-3 text-center hover:bg-white/5 transition-colors cursor-pointer"
+        >
+          <div className="flex justify-center mb-1 text-muted-foreground"><UserCheck className="h-4 w-4" /></div>
+          <p className="text-xl font-bold text-cyan-300">{attendanceSummary.present.length}</p>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Attendance</p>
+        </button>
       </div>
+
+      {/* ── Attendance summary modal — today's present/absent breakdown ── */}
+      {attendanceModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setAttendanceModalOpen(false)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold">Today's Attendance</p>
+                <p className="text-[10px] text-muted-foreground">{new Date(today + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+              </div>
+              <button type="button" onClick={() => setAttendanceModalOpen(false)} className="btn text-xs px-2.5 py-1.5">Close</button>
+            </div>
+            <div className="px-4 pt-3 flex gap-2">
+              {(["US", "PH"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setAttendanceCountryTab(c)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${attendanceCountryTab === c ? "border-primary/40 bg-primary/10 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+                >
+                  {c === "US" ? "US Employees" : "PH Employees"}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {(() => {
+                const summary = attendanceCountryTab === "US" ? attendanceSummaryUS : attendanceSummaryPH;
+                return (
+                  <>
+                    {/* Present */}
+                    <div>
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <UserCheck className="h-3.5 w-3.5 text-cyan-300" /> Total Present ({summary.present.length})
+                      </h3>
+                      {summary.present.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">No one clocked in yet today.</p>
+                      ) : (
+                        <div className="flex flex-col gap-1.5 max-h-[28rem] overflow-y-auto">
+                          {summary.present.map(({ employee, lateBy, shortBy }) => (
+                            <div key={employee.id} className="flex items-center justify-between gap-2 bg-white/5 rounded px-2.5 py-1.5">
+                              <span className="text-xs truncate">{employee.name}</span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {lateBy && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-500/20 text-orange-300" title="Clocked in late">
+                                    Late in {lateBy}
+                                  </span>
+                                )}
+                                {shortBy && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-500/20 text-red-300" title="Didn't complete full duty hours">
+                                    Short {shortBy}
+                                  </span>
+                                )}
+                                {!lateBy && !shortBy && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-500/20 text-green-300">On time</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Absent */}
+                    <div>
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <UserX className="h-3.5 w-3.5 text-red-300" /> Total Absent ({summary.totalAbsent})
+                      </h3>
+                      <div className="flex flex-col gap-3">
+                        {(["Absent without notice", "Sick Leave", "Personal Leave", "Time Off", "Paid Time Off"] as const).map((bucket) => {
+                          const list = summary.buckets[bucket];
+                          if (list.length === 0) return null;
+                          const isNoNotice = bucket === "Absent without notice";
+                          return (
+                            <details key={bucket} className="rounded-md border border-white/10 overflow-hidden" open={isNoNotice}>
+                              <summary className={`px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide cursor-pointer select-none ${isNoNotice ? "bg-red-500/15 text-red-300" : "bg-white/5 text-muted-foreground"}`}>
+                                {bucket} ({list.length})
+                              </summary>
+                              <div className="max-h-64 overflow-y-auto grid grid-cols-2 sm:grid-cols-4">
+                                {list.map((employee) => (
+                                  <div key={employee.id} className={`px-2.5 py-1.5 text-xs truncate border-t border-white/5 ${isNoNotice ? "text-red-200" : "text-muted-foreground"}`}>
+                                    {employee.name}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          );
+                        })}
+                        {summary.totalAbsent === 0 && <p className="text-xs text-muted-foreground italic">No one absent today.</p>}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Tab navigation — collapsed into 3 category dropdowns to save space ── */}
       <div className="mb-4 border-b border-white/10 pb-3 relative">
@@ -3177,7 +4187,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* ── Applicant Documents preview modal ── */}
       {jotformPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setJotformPreview(null)}>
-          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{jotformPreview.applicantName || "Someone"}</p>
@@ -3299,6 +4309,173 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             ))}
           </div>
+        )}
+      </div>
+      )}
+
+      {/* ── Employee Request Manager — company-wide PTO / Time Correction / Attendance Dispute / Payroll Inquiry review, mirroring Employee Self-Service's "Manage Requests" tab ── */}
+      {activeTab === "employeeRequestManager" && (
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {([
+            { key: "pto", label: "Pending PTO", count: pendingPtoRequests.length },
+            { key: "corrections", label: "Pending Corrections", count: pendingCorrections.length },
+            { key: "disputes", label: "Pending Disputes / Inquiries", count: pendingEmployeeRequests.length },
+          ] as const).map((t) => {
+            const active = requestManagerCategory === t.key;
+            const isNew = requestManagerHasNew(t.key);
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => handleSelectRequestManagerCategory(t.key)}
+                className={`relative panel p-3 text-center transition-colors ${active ? "border-primary/50 bg-primary/10" : "hover:bg-white/5"}`}
+              >
+                {isNew && (
+                  <span className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-red-500 text-white">NEW</span>
+                )}
+                <p className={`text-xl font-bold ${active ? "text-primary" : "text-yellow-300"}`}>{t.count}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{t.label}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Pending PTO */}
+        {requestManagerCategory === "pto" && (
+        <div className="panel p-4">
+          <h3 className="text-sm font-semibold mb-3">PTO Requests — Pending</h3>
+          {requestManagerLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : pendingPtoRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No pending PTO requests.</p>
+          ) : (
+            <div className="space-y-3">
+              {pendingPtoRequests.map((r) => {
+                const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole);
+                const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole);
+                return (
+                  <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">{profileName(r.profileId)} — {PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{r.startDate} to {r.endDate} ({r.hoursRequested}h)</p>
+                        {r.reason && <p className="text-sm text-muted-foreground mt-2">{r.reason}</p>}
+                        <div className="flex gap-2 mt-2">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                            r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                            : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                            : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                          }`}>
+                            Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
+                            {r.managerReviewedBy ? ` — ${profileName(r.managerReviewedBy)}` : ""}
+                          </span>
+                          <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                            r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                            : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                            : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                          }`}>
+                            HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
+                            {r.hrReviewedBy ? ` — ${profileName(r.hrReviewedBy)}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        {canManagerAct && (
+                          <div className="flex gap-1">
+                            <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                            <button type="button" onClick={() => handlePtoStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                          </div>
+                        )}
+                        {canHrAct && (
+                          <div className="flex gap-1">
+                            <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                            <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                          </div>
+                        )}
+                        {!canManagerAct && !canHrAct && <span className="text-xs text-muted-foreground">Awaiting other approver</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* Pending Time Corrections */}
+        {requestManagerCategory === "corrections" && (
+        <div className="panel p-4">
+          <h3 className="text-sm font-semibold mb-3">Time Corrections — Pending</h3>
+          {requestManagerLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : pendingCorrections.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No pending time correction requests.</p>
+          ) : (
+            <div className="space-y-3">
+              {pendingCorrections.map((r) => (
+                <div key={r.id} className="border border-white/10 rounded-lg p-3 flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold">{profileName(r.profileId)} — {r.workDate}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {r.originalCheckIn || "—"} → {r.originalCheckOut || "—"} &nbsp;⟶&nbsp; requested {r.correctedCheckIn || "—"} → {r.correctedCheckOut || "—"}
+                    </p>
+                    {(r.correctedMealStart || r.correctedMealEnd) && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Meal: {r.originalMealStart || "—"} → {r.originalMealEnd || "—"} &nbsp;⟶&nbsp; requested {r.correctedMealStart || "—"} → {r.correctedMealEnd || "—"}
+                      </p>
+                    )}
+                    {r.reason && <p className="text-sm text-muted-foreground mt-2">{r.reason}</p>}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button type="button" onClick={() => handleCorrectionAction(r, true)} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve</button>
+                    <button type="button" onClick={() => handleCorrectionAction(r, false)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* Pending Attendance Disputes & Payroll Inquiries */}
+        {requestManagerCategory === "disputes" && (
+        <div className="panel p-4">
+          <h3 className="text-sm font-semibold mb-3">Attendance Disputes &amp; Payroll Inquiries — Pending</h3>
+          {requestManagerLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : pendingEmployeeRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No pending disputes or inquiries.</p>
+          ) : (
+            <div className="space-y-3">
+              {pendingEmployeeRequests.map((r) => (
+                <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                  <p className="text-sm font-semibold">{profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                  <p className="text-sm text-muted-foreground mt-2">{r.details}</p>
+                  <textarea
+                    placeholder="Optional response note (visible to the employee)…"
+                    value={requestResponseNote[r.id] || ""}
+                    onChange={(e) => setRequestResponseNote({ ...requestResponseNote, [r.id]: e.target.value })}
+                    rows={2}
+                    className="glass-input text-sm w-full mt-2 px-3 py-2 rounded-md"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    {r.requestType === "attendance_dispute" ? (
+                      <>
+                        <button type="button" onClick={() => handleEmployeeRequestAction(r.id, "approved")} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve</button>
+                        <button type="button" onClick={() => handleEmployeeRequestAction(r.id, "rejected")} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => handleEmployeeRequestAction(r.id, "closed")} className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition">Respond &amp; Close</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         )}
       </div>
       )}
@@ -3678,10 +4855,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       {/* ── Generate Certificate of Employment ── */}
       {activeTab === "coe" && (
+      <>
       <div className="panel p-0 overflow-hidden mt-4">
-        <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Generate Certificate of Employment</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Fill in the fields below, then generate a printable/PDF certificate on the US In Home Services letterhead.</p>
+        <div className="px-4 py-4 border-b border-white/10 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Generate Certificate of Employment</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Fill in the fields below, then generate a printable/PDF certificate on the US In Home Services letterhead.</p>
+          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { setCoeTemplateDraft(coeBodyTemplate); setCoeTemplateModalOpen(true); }}
+              className="btn text-xs px-2.5 py-1.5 shrink-0"
+            >
+              Edit Template
+            </button>
+          )}
         </div>
 
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3817,6 +5006,120 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </button>
         </div>
       </div>
+
+      {/* ── COE Sent History ── */}
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">COE Sent History</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Every Certificate of Employment sent from this tab, with a link back to the exact PDF that went out.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent To</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Date</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Document</th>
+              </tr>
+            </thead>
+            <tbody>
+              {coeDocumentsLoading ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+              ) : coeDocuments.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No COEs sent yet.</td></tr>
+              ) : (
+                coeDocuments.map((doc) => (
+                  <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-4 py-3 font-medium">
+                      <button type="button" onClick={() => setCoeDocumentPreview(doc)} className="hover:text-blue-300 hover:underline text-left">
+                        {doc.employeeName}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{doc.recipientName ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{doc.sentByName ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit"><Download className="h-3 w-3" /> View PDF</a>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {/* COE Sent History — PDF preview, same inline-frame pattern used elsewhere in this dashboard */}
+      {coeDocumentPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCoeDocumentPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{coeDocumentPreview.employeeName}</p>
+                <p className="text-[10px] text-muted-foreground">Sent to {coeDocumentPreview.recipientName ?? "—"} — {new Date(coeDocumentPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a href={coeDocumentPreview.documentUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                <button type="button" onClick={() => setCoeDocumentPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              <iframe src={coeDocumentPreview.documentUrl} title="Certificate of Employment" className="w-full h-full min-h-[70vh] border-0" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Certificate of Employment — Edit Template (Admin-only, doesn't touch the form fields above, just the certificate's prose paragraphs) */}
+      {coeTemplateModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setCoeTemplateModalOpen(false)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-white/10">
+              <h3 className="text-sm font-semibold">Edit Certificate Body Template</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Only the paragraph text below is editable — the form fields, header, and signature block stay as they are.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              <textarea
+                value={coeTemplateDraft}
+                onChange={(e) => setCoeTemplateDraft(e.target.value)}
+                rows={12}
+                className="glass-input text-sm w-full p-3 rounded-md font-mono"
+              />
+              <div className="text-xs text-muted-foreground">
+                <p className="font-semibold mb-1">Available placeholders:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {COE_BODY_PLACEHOLDERS.map((p) => (
+                    <code key={p} className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10">{`{{${p}}}`}</code>
+                  ))}
+                </div>
+                <p className="mt-2">Separate paragraphs with a blank line.</p>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
+              <button type="button" onClick={() => setCoeTemplateModalOpen(false)} className="btn text-sm px-3 py-1.5">Cancel</button>
+              <button
+                type="button"
+                onClick={() => { setCoeTemplateDraft(DEFAULT_COE_BODY_TEMPLATE); }}
+                className="btn text-sm px-3 py-1.5"
+                title="Reset to the original default text"
+              >
+                Reset to Default
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCoeBodyTemplate}
+                disabled={coeTemplateSaving}
+                className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {coeTemplateSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Certificate of Employment — preview, then pick a recipient and send via Team Messenger */}
@@ -4168,6 +5471,664 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "w8ben" && (
+      <>
+      <div className="flex gap-2 mt-4">
+        {(["w8ben", "w4", "w9"] as const).map((ft) => (
+          <button
+            key={ft}
+            type="button"
+            onClick={() => setW8FormType(ft)}
+            className={`px-3 py-1.5 rounded-md text-sm font-semibold border transition-colors ${
+              w8FormType === ft ? "border-primary/50 bg-primary/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {ft === "w8ben" ? "W-8BEN" : ft === "w4" ? "W-4" : "W-9"}
+          </button>
+        ))}
+      </div>
+
+      {w8FormType === "w8ben" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send W-8BEN Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-8BEN. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={w8RecipientSearch}
+              onChange={(e) => { setW8RecipientSearch(e.target.value); setW8RecipientId(""); setW8RecipientDropdownOpen(true); }}
+              onFocus={() => setW8RecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setW8RecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {w8RecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredW8Recipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredW8Recipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setW8RecipientId(e.id);
+                        setW8RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setW8RecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w8RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          {w8SendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8SendError}</p>
+          )}
+          <button
+            onClick={handleOpenW8benPreview}
+            disabled={!w8RecipientId || w8Sending}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+          >
+            Preview & Send
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">W-8BEN Sent History</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {w8ActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w8ActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentW8benForms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-8BEN requests sent yet.</td></tr>
+              ) : (
+                sentW8benForms.map((doc) => {
+                  const data = doc.formData as Partial<W8benFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = w8ActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setW8DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyW8benLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadW8benPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteW8ben(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {w8FormType === "w4" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send W-4 Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-4. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={w4RecipientSearch}
+              onChange={(e) => { setW4RecipientSearch(e.target.value); setW4RecipientId(""); setW4RecipientDropdownOpen(true); }}
+              onFocus={() => setW4RecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setW4RecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {w4RecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredW4Recipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredW4Recipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setW4RecipientId(e.id);
+                        setW4RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setW4RecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w4RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          {w4SendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4SendError}</p>
+          )}
+          <button
+            onClick={handleOpenW4Preview}
+            disabled={!w4RecipientId || w4Sending}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+          >
+            Preview & Send
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">W-4 Sent History</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {w4ActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w4ActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentW4Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-4 requests sent yet.</td></tr>
+              ) : (
+                sentW4Forms.map((doc) => {
+                  const data = doc.formData as Partial<W4FormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const employeeName = `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+                  const busy = w4ActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setW4DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {employeeName || recipient?.name || "—"}
+                          </button>
+                        ) : (
+                          employeeName || recipient?.name || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyW4Link(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadW4Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.status === "signed" && (
+                            <button type="button" onClick={() => handleOpenW4EmployerDialog(doc)} className="btn text-[10px] px-2 py-1">
+                              Fill Employer Info
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteW4(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {w8FormType === "w9" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send W-9 Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in and sign their own Form W-9. It comes back to you here automatically once submitted.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-md">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+            <input
+              type="text"
+              value={w9RecipientSearch}
+              onChange={(e) => { setW9RecipientSearch(e.target.value); setW9RecipientId(""); setW9RecipientDropdownOpen(true); }}
+              onFocus={() => setW9RecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setW9RecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {w9RecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredW9Recipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredW9Recipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => {
+                        setW9RecipientId(e.id);
+                        setW9RecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                        setW9RecipientDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${w9RecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          {w9SendError && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9SendError}</p>
+          )}
+          <button
+            onClick={handleOpenW9Preview}
+            disabled={!w9RecipientId || w9Sending}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit"
+          >
+            Preview & Send
+          </button>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">W-9 Sent History</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        {w9ActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{w9ActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentW9Forms.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No W-9 requests sent yet.</td></tr>
+              ) : (
+                sentW9Forms.map((doc) => {
+                  const data = doc.formData as Partial<W9FormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = w9ActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setW9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.name || recipient?.name || "—"}
+                          </button>
+                        ) : (
+                          data.name || recipient?.name || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyW9Link(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadW9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteW9(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+      </>
+      )}
+
+      {/* Form W-8BEN — preview the REAL official PDF (fillW8benPdf, same function used at submission time) with a blank fill, not a redrawn approximation, before sending the fill-in link */}
+      {w8PreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Form W-8BEN — Preview</h3>
+              <button onClick={closeW8benPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {w8PreviewLoading || !w8PreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={w8PreviewPdfUrl} title="W-8BEN Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {w8SendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w8SendError}</p>
+              )}
+              <button onClick={closeW8benPreview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendW8ben}
+                disabled={w8Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w8Sending ? "Sending…" : "Send W-8BEN Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* W-8BEN Sent History — PDF preview, same inline-frame pattern used for COE Sent History */}
+      {w8DocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW8DocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(w8DocPreview.formData as Partial<W8benFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(w8DocPreview.signedAt ?? w8DocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {w8DocPreview.pdfUrl && (
+                  <a href={w8DocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setW8DocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {w8DocPreview.pdfUrl && <iframe src={w8DocPreview.pdfUrl} title="Form W-8BEN" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form W-4 — preview the REAL official PDF (fillW4Pdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {w4PreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Form W-4 — Preview</h3>
+              <button onClick={closeW4Preview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {w4PreviewLoading || !w4PreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={w4PreviewPdfUrl} title="W-4 Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {w4SendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w4SendError}</p>
+              )}
+              <button onClick={closeW4Preview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendW4}
+                disabled={w4Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w4Sending ? "Sending…" : "Send W-4 Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* W-4 Sent History — PDF preview, same inline-frame pattern used for W-8BEN/COE Sent History */}
+      {w4DocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW4DocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">
+                  {(() => {
+                    const data = w4DocPreview.formData as Partial<W4FormData>;
+                    return `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim() || "—";
+                  })()}
+                </p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(w4DocPreview.signedAt ?? w4DocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {w4DocPreview.pdfUrl && (
+                  <a href={w4DocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setW4DocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {w4DocPreview.pdfUrl && <iframe src={w4DocPreview.pdfUrl} title="Form W-4" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form W-9 — preview the REAL official PDF (fillW9Pdf, same function used at submission time) with a blank fill, before sending the fill-in link */}
+      {w9PreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Form W-9 — Preview</h3>
+              <button onClick={closeW9Preview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 bg-white/5">
+              {w9PreviewLoading || !w9PreviewPdfUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading preview…</div>
+              ) : (
+                <iframe src={w9PreviewPdfUrl} title="W-9 Preview" className="w-full h-full border-0" />
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              {w9SendError && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mr-auto">{w9SendError}</p>
+              )}
+              <button onClick={closeW9Preview} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSendW9}
+                disabled={w9Sending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w9Sending ? "Sending…" : "Send W-9 Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* W-9 Sent History — PDF preview, same inline-frame pattern used for W-8BEN/W-4/COE Sent History */}
+      {w9DocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setW9DocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(w9DocPreview.formData as Partial<W9FormData>).name || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(w9DocPreview.signedAt ?? w9DocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {w9DocPreview.pdfUrl && (
+                  <a href={w9DocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setW9DocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {w9DocPreview.pdfUrl && <iframe src={w9DocPreview.pdfUrl} title="Form W-9" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HR completing the W-4's "Employers Only" box after the employee has already submitted */}
+      {w4EmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Fill Employer Info</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Completes the "Employers Only" box on{" "}
+              <span className="font-semibold text-white">
+                {(() => {
+                  const data = w4EmployerDialog.formData as Partial<W4FormData>;
+                  return `${data.firstNameMiddleInitial ?? ""} ${data.lastName ?? ""}`.trim();
+                })()}
+              </span>
+              's submitted W-4.
+            </p>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer's name and address</label>
+                <textarea value={w4EmployerNameAddress} onChange={(e) => setW4EmployerNameAddress(e.target.value)} rows={2} className="glass-input text-sm py-1.5 px-3 rounded-md resize-y" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First date of employment</label>
+                <input type="date" value={w4EmployerFirstDate} onChange={(e) => setW4EmployerFirstDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employer identification number (EIN)</label>
+                <input type="text" placeholder="XX-XXXXXXX" value={w4EmployerEin} onChange={(e) => setW4EmployerEin(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+            </div>
+            {w4EmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{w4EmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setW4EmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSaveW4EmployerInfo}
+                disabled={w4EmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {w4EmployerSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Send to Next Recipient — reassign a signed-back document to another signer */}
       {reassignDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -4238,7 +6199,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* Sent Warning Forms — view-only preview of the form as it stands right now (whatever signatures exist so far) */}
       {warnViewDoc && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-6xl h-[92vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
               <div>
                 <h3 className="text-base font-bold">{(warnViewDoc.formData as unknown as WarningFormData).employeeName} — Warning Form</h3>
