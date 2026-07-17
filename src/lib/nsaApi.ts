@@ -317,6 +317,50 @@ export async function getNsaCommunications(dispatchNumber: string): Promise<NsaC
   return Array.isArray(data) ? data : [];
 }
 
+export interface NsaRunningNote {
+  date: string;
+  body: string;
+  addedBy: string;
+  isInternal: boolean;
+}
+
+/**
+ * NSA's Communications log, normalized into the same shape ServicePower's
+ * Running Notes use (see fetchServicePowerNotes in servicePowerNotes.ts), so
+ * the ticket detail page's Customer Notes / Running Notes section can
+ * display either source interchangeably. Every entry is a logged contact
+ * with the customer (call/text), so isInternal is always false — there's no
+ * internal/external distinction on NSA's side the way there is on SP's.
+ */
+export async function fetchNsaRunningNotes(dispatchNumber: string): Promise<{
+  success: boolean;
+  notes: NsaRunningNote[];
+  error?: string;
+}> {
+  const { reportApiHealth } = await import("./apiHealth");
+  try {
+    const comms = await getNsaCommunications(dispatchNumber);
+    const notes: NsaRunningNote[] = comms
+      .map((c) => {
+        const label = [c.directionDesc, c.typeDesc].filter(Boolean).join(" ");
+        const body = label ? `[${label}] ${c.notes ?? ""}`.trim() : (c.notes ?? "").trim();
+        return {
+          date: c.timeStamp ?? "",
+          body,
+          addedBy: c.createUserName || c.contactee || "NSA",
+          isInternal: false,
+        };
+      })
+      .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    reportApiHealth("nsa.fetchCommunications", "ok");
+    return { success: true, notes };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    reportApiHealth("nsa.fetchCommunications", { error });
+    return { success: false, notes: [], error };
+  }
+}
+
 /** Returns array of new communication log IDs. */
 export async function addNsaCommunications(
   dispatchNumber: string,

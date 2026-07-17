@@ -3077,11 +3077,29 @@ function TicketDetailsPage() {
   const [runningNotesRawXml, setRunningNotesRawXml] = useState<string>("");
 
   // ---- ServicePower Running Notes ----------------------------------------
+  const isNsaTicket = String(ticket?.ticketSource || "").toUpperCase().includes("NSA");
+
   const loadRunningNotes = useCallback(async () => {
     if (!ticketNo) return;
     setRunningNotesLoading(true);
     setRunningNotesError(null);
     try {
+      if (isNsaTicket) {
+        // NSA has no equivalent of SP's getCallInfo raw-XML fallback, and
+        // nothing here scans for a Squaretrade-style URL on NSA tickets —
+        // clear it so a stale SP payload from a prior ticket view can't
+        // linger in the extractor's input.
+        setRunningNotesRawXml("");
+        const { fetchNsaRunningNotes } = await import("@/lib/nsaApi");
+        const result = await fetchNsaRunningNotes(ticketNo);
+        if (!result.success) {
+          setRunningNotesError(result.error || "Failed to load NSA communications.");
+          setRunningNotes([]);
+        } else {
+          setRunningNotes(result.notes);
+        }
+        return;
+      }
       const { fetchServicePowerNotes } = await import("@/lib/servicePowerNotes");
       const result = await fetchServicePowerNotes(ticketNo);
       // Stash both XML payloads concatenated so the URL extractor can
@@ -3105,7 +3123,7 @@ function TicketDetailsPage() {
     } finally {
       setRunningNotesLoading(false);
     }
-  }, [ticketNo]);
+  }, [ticketNo, isNsaTicket]);
 
   const openRunningNotesModal = () => {
     setIsRunningNotesOpen(true);
@@ -3186,6 +3204,9 @@ function TicketDetailsPage() {
   };
 
   const submitRunningNote = async () => {
+    // No addNsaCommunications wiring here — the UI hides this form for NSA
+    // tickets, but guard the handler too in case that ever changes.
+    if (isNsaTicket) return;
     const noteBody = newRunningNote.trim();
     if (!noteBody) return;
     setPostingRunningNote(true);
@@ -6379,14 +6400,14 @@ function TicketDetailsPage() {
                   <h4 className="font-semibold text-slate-300">Customer Notes</h4>
                   <div className="flex items-center gap-2">
                     {runningNotesLoading && (
-                      <span className="text-xs text-slate-400">Syncing from ServicePower…</span>
+                      <span className="text-xs text-slate-400">Syncing from {isNsaTicket ? "NSA" : "ServicePower"}…</span>
                     )}
                     <button
                       type="button"
                       onClick={() => void loadRunningNotes()}
                       disabled={runningNotesLoading}
                       className="rounded border border-white/15 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-white/30 hover:bg-white/5 disabled:opacity-60"
-                      title="Re-fetch the Running Notes thread from ServicePower"
+                      title={isNsaTicket ? "Re-fetch the Communications log from NSA" : "Re-fetch the Running Notes thread from ServicePower"}
                     >
                       Refresh
                     </button>
@@ -6394,7 +6415,7 @@ function TicketDetailsPage() {
                 </div>
                 {runningNotesError && (
                   <div className="rounded border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                    Couldn't sync from ServicePower: {runningNotesError}
+                    Couldn't sync from {isNsaTicket ? "NSA" : "ServicePower"}: {runningNotesError}
                   </div>
                 )}
                 <div className="space-y-3">
@@ -6739,9 +6760,9 @@ function TicketDetailsPage() {
                   type="button"
                   onClick={openRunningNotesModal}
                   className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
-                  title="View / post ServicePower Running Notes for this work order"
+                  title={isNsaTicket ? "View NSA's Communications log for this dispatch" : "View / post ServicePower Running Notes for this work order"}
                 >
-                  Running Notes
+                  {isNsaTicket ? "NSA Communications" : "Running Notes"}
                 </button>
               </div>
               <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4">
@@ -7112,11 +7133,11 @@ function TicketDetailsPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">
-                          ServicePower
+                          {isNsaTicket ? "NSA" : "ServicePower"}
                         </p>
-                        <h3 className="text-xl font-bold text-white">Running Notes</h3>
+                        <h3 className="text-xl font-bold text-white">{isNsaTicket ? "Communications" : "Running Notes"}</h3>
                         <p className="mt-1 text-sm text-slate-400">
-                          Work Order #{ticketNo}
+                          {isNsaTicket ? "Dispatch" : "Work Order"} #{ticketNo}
                         </p>
                       </div>
                       <button
@@ -7129,19 +7150,20 @@ function TicketDetailsPage() {
                     </div>
 
                     <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200/90">
-                      ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events
-                      and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration.
+                      {isNsaTicket
+                        ? "This is NSA's Communications log — the call/text contact history with the customer. It's read-only here; posting new notes back to NSA isn't supported yet."
+                        : "ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration."}
                     </div>
 
                     <div className="mt-4 space-y-3 max-h-[40vh] overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 p-3">
                       {runningNotesLoading ? (
-                        <div className="text-sm text-slate-400">Loading notes from ServicePower…</div>
+                        <div className="text-sm text-slate-400">Loading {isNsaTicket ? "communications from NSA" : "notes from ServicePower"}…</div>
                       ) : runningNotesError ? (
                         <div className="rounded-md border border-red-500/30 bg-red-900/20 px-3 py-2 text-sm text-red-200">
                           {runningNotesError}
                         </div>
                       ) : runningNotes.length === 0 ? (
-                        <div className="text-sm text-slate-400">No running notes recorded yet for this work order.</div>
+                        <div className="text-sm text-slate-400">{isNsaTicket ? "No communications logged yet for this dispatch." : "No running notes recorded yet for this work order."}</div>
                       ) : (
                         runningNotes.map((n, idx) => (
                           <div
@@ -7183,65 +7205,78 @@ function TicketDetailsPage() {
                       )}
                     </div>
 
-                    <div className="mt-4 border-t border-white/10 pt-4">
-                      <div className="flex items-center justify-between gap-3 mb-2">
-                        <p className="text-sm font-semibold text-slate-200">Add a note</p>
-                        <div className="inline-flex rounded-md border border-white/15 bg-slate-950/80 p-0.5 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => setNewRunningNoteVisibility("internal")}
-                            className={`rounded px-2 py-1 font-semibold ${
-                              newRunningNoteVisibility === "internal"
-                                ? "bg-amber-500/30 text-amber-200"
-                                : "text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            Internal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setNewRunningNoteVisibility("external")}
-                            className={`rounded px-2 py-1 font-semibold ${
-                              newRunningNoteVisibility === "external"
-                                ? "bg-emerald-500/30 text-emerald-200"
-                                : "text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            External
-                          </button>
-                        </div>
-                      </div>
-                      <textarea
-                        value={newRunningNote}
-                        onChange={(e) => setNewRunningNote(e.target.value)}
-                        placeholder="Type your running note. Internal notes are only visible to AHS staff; external notes are sent to the warranty company."
-                        className="w-full min-h-[100px] rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-400/50 focus:outline-none"
-                        disabled={postingRunningNote}
-                      />
-                      {runningNotePostError ? (
-                        <div className="mt-2 rounded-md border border-red-500/30 bg-red-900/20 px-3 py-2 text-xs text-red-200">
-                          {runningNotePostError}
-                        </div>
-                      ) : null}
-                      <div className="mt-3 flex justify-end gap-2">
+                    {isNsaTicket ? (
+                      <div className="mt-4 border-t border-white/10 pt-4 flex justify-end">
                         <button
                           type="button"
                           onClick={() => void loadRunningNotes()}
-                          disabled={runningNotesLoading || postingRunningNote}
+                          disabled={runningNotesLoading}
                           className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40 disabled:opacity-60"
                         >
                           Refresh
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => void submitRunningNote()}
-                          disabled={postingRunningNote || !newRunningNote.trim()}
-                          className="rounded-md border border-emerald-400/40 bg-emerald-500/30 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500/40 disabled:opacity-60"
-                        >
-                          {postingRunningNote ? "Sending…" : "Send to ServicePower"}
-                        </button>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="mt-4 border-t border-white/10 pt-4">
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <p className="text-sm font-semibold text-slate-200">Add a note</p>
+                          <div className="inline-flex rounded-md border border-white/15 bg-slate-950/80 p-0.5 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setNewRunningNoteVisibility("internal")}
+                              className={`rounded px-2 py-1 font-semibold ${
+                                newRunningNoteVisibility === "internal"
+                                  ? "bg-amber-500/30 text-amber-200"
+                                  : "text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              Internal
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNewRunningNoteVisibility("external")}
+                              className={`rounded px-2 py-1 font-semibold ${
+                                newRunningNoteVisibility === "external"
+                                  ? "bg-emerald-500/30 text-emerald-200"
+                                  : "text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              External
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={newRunningNote}
+                          onChange={(e) => setNewRunningNote(e.target.value)}
+                          placeholder="Type your running note. Internal notes are only visible to AHS staff; external notes are sent to the warranty company."
+                          className="w-full min-h-[100px] rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-400/50 focus:outline-none"
+                          disabled={postingRunningNote}
+                        />
+                        {runningNotePostError ? (
+                          <div className="mt-2 rounded-md border border-red-500/30 bg-red-900/20 px-3 py-2 text-xs text-red-200">
+                            {runningNotePostError}
+                          </div>
+                        ) : null}
+                        <div className="mt-3 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadRunningNotes()}
+                            disabled={runningNotesLoading || postingRunningNote}
+                            className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40 disabled:opacity-60"
+                          >
+                            Refresh
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void submitRunningNote()}
+                            disabled={postingRunningNote || !newRunningNote.trim()}
+                            className="rounded-md border border-emerald-400/40 bg-emerald-500/30 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500/40 disabled:opacity-60"
+                          >
+                            {postingRunningNote ? "Sending…" : "Send to ServicePower"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}
