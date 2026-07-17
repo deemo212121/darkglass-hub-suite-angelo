@@ -131,4 +131,18 @@ export default {
       return brandedErrorResponse();
     }
   },
+
+  // Cron Trigger (see wrangler.jsonc "triggers.crons") — hourly pull of any
+  // new parts NSA has added to open NSA tickets since the last run.
+  async scheduled(_event: unknown, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
+    const merged = await resolveServerEnv(env);
+    ctx.waitUntil(
+      import("./lib/server/nsaPartsSync").then(
+        ({ runNsaPartsSync }) => runNsaPartsSync(merged),
+      ).then(
+        (result) => console.log("nsaPartsSync:", JSON.stringify(result)),
+        (error) => console.error("nsaPartsSync failed:", error),
+      ),
+    );
+  },
 };

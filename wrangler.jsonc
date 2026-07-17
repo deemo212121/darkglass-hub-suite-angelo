@@ -4,4 +4,10 @@
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
+  // Hourly (top of every hour, UTC) — see the scheduled() handler in
+  // src/server.ts, which runs runNsaPartsSync() from
+  // src/lib/server/nsaPartsSync.ts.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
 }
