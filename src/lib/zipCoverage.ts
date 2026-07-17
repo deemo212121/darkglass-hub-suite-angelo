@@ -31587,6 +31587,12 @@ export const ZIP_COVERAGE: Record<string, ZipCoverageEntry> = {
     "selfSchedule": "3",
     "tierCode": ""
   },
+  "63089": {
+    "location": "St. Louis",
+    "city": "Villa Ridge",
+    "selfSchedule": "3",
+    "tierCode": ""
+  },
   "63099": {
     "location": "St. Louis",
     "city": "Fenton",
