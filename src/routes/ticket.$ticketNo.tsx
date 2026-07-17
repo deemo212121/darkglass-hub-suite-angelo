@@ -3216,14 +3216,15 @@ function TicketDetailsPage() {
       date: formatSpNoteDate(n.date),
       notes: n.body,
       by: n.addedBy || "ServicePower",
+      isInternal: n.isInternal,
     }));
     const fromTicket = (ticket?.customerNotes ?? []) as Array<{ date: string; notes: string; by: string }>;
     // SP is the source of truth. If it returned at least one note, show
     // only those (de-duped by date+body). Only fall back to the
     // ticket-stored notes when SP came back empty.
-    const source = fromSp.length > 0 ? fromSp : fromTicket;
+    const source = fromSp.length > 0 ? fromSp : fromTicket.map((n) => ({ ...n, isInternal: false }));
     const seen = new Set<string>();
-    const merged: Array<{ date: string; notes: string; by: string }> = [];
+    const merged: Array<{ date: string; notes: string; by: string; isInternal: boolean }> = [];
     for (const note of source) {
       const key = `${(note.date || "").trim()}::${(note.notes || "").trim()}`;
       if (seen.has(key)) continue;
@@ -6457,15 +6458,33 @@ function TicketDetailsPage() {
                     Couldn't sync from {isNsaTicket ? "NSA" : "ServicePower"}: {runningNotesError}
                   </div>
                 )}
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
                   {displayedCustomerNotes.length === 0 && !runningNotesLoading && (
                     <p className="text-slate-500 text-sm">No customer notes yet for this work order.</p>
                   )}
                   {displayedCustomerNotes.map((note, idx) => (
-                    <div key={idx} className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="text-slate-400">{note.date}</div>
-                        <div className="text-blue-400">By: {note.by}</div>
+                    <div
+                      key={idx}
+                      className={`rounded-md border p-3 text-sm ${
+                        note.isInternal
+                          ? "border-amber-400/30 bg-amber-900/10"
+                          : "border-emerald-400/30 bg-emerald-900/10"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-400 mb-2">
+                        <div className="font-semibold text-slate-300">
+                          {note.by}
+                          <span className="ml-2 text-slate-500">{note.date}</span>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                            note.isInternal
+                              ? "bg-amber-400/20 text-amber-200"
+                              : "bg-emerald-400/20 text-emerald-200"
+                          }`}
+                        >
+                          {note.isInternal ? "Internal" : "External"}
+                        </span>
                       </div>
                       <p className="text-slate-300 whitespace-pre-wrap">{note.notes}</p>
                     </div>
