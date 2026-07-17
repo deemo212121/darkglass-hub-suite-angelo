@@ -276,6 +276,13 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  // Production builds are one-shot — there's nothing to persist state across
+  // runs for. Disabling this stops the plugin from writing
+  // dist/server/.wrangler/state/v3/cache during the build at all, which
+  // sidesteps a Windows-only race: the client-build phase's local workerd
+  // instance doesn't release its lock on that directory before the very next
+  // ssr-build phase tries to rmdir it (EBUSY: resource busy or locked).
+  cloudflare: { viteEnvironment: { name: "ssr" }, persistState: false },
   vite: {
     define: SERVER_DEFINE,
     // Dev-server only (never shipped in the Cloudflare production build):
@@ -302,6 +309,24 @@ export default defineConfig({
               // Cloudflare Workers (no `window`) before any request is even
               // handled, regardless of the dynamic import() at the call site.
               if (normalized.includes("/node_modules/leaflet/")) return "leaflet";
+              // Same reasoning as Leaflet above: heic2any's own module does
+              // `import "./libheif"` / `import "./gifshot"` at its top level,
+              // both of which touch `window` at load time, not just when
+              // called. It's only ever reached via a dynamic import() inside
+              // compressImage() (src/lib/imageCompression.ts), itself only
+              // called from a browser file-input handler — but sharing the
+              // "vendor" bucket with SSR-eager deps meant the Cloudflare
+              // Worker crashed on `window is not defined` at startup, before
+              // handling any request, regardless of that dynamic import().
+              // browser-image-compression is bundled alongside it since it's
+              // only ever imported from the same call site, for the same
+              // reason.
+              if (
+                normalized.includes("/node_modules/heic2any/") ||
+                normalized.includes("/node_modules/browser-image-compression/")
+              ) {
+                return "image-compression";
+              }
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
               if (normalized.includes("/node_modules/@radix-ui/")) return "radix-ui";
               if (

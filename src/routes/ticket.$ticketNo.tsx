@@ -5575,7 +5575,7 @@ function TicketDetailsPage() {
                       <CalendarDays className="h-4 w-4" />
                     </a>
                     <span
-                      className="text-xs font-semibold text-slate-300"
+                      className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2.5 py-1 text-sm font-bold text-emerald-200"
                       title="Driving distance from office to customer"
                     >
                       {officeDistanceMiles != null ? `${officeDistanceMiles.toFixed(1)} mi` : "— mi"}
@@ -6240,15 +6240,10 @@ function TicketDetailsPage() {
                     </div>
                   )}
 
-                  {/* Notes / Message / Problem Description */}
-                  <div className="grid grid-cols-1 gap-3 text-sm">
-                    {ticket.problemDescription && (
-                      <div>
-                        <label className="text-slate-500 font-semibold">Problem Description</label>
-                        <div className="text-white mt-1">{ticket.problemDescription}</div>
-                      </div>
-                    )}
-                  </div>
+                  {/* Problem Description isn't repeated here — the
+                      unconditional "Problem Description" section below
+                      (synced from ServicePower) already shows it for every
+                      ticket, NSA-sourced or not. */}
 
                   {/* Coverage + Pre-Auth */}
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -6428,8 +6423,11 @@ function TicketDetailsPage() {
                 if (!canSeeChecklist || !ticket) return null;
 
                 // Evaluate each of the 5 requirements
+                // NOTE: ticket.problemDescription is the customer's original
+                // complaint, auto-populated from NSA/ServicePower at sync
+                // time — it exists before any service happens, so it can't
+                // be used as evidence a technician documented their work.
                 const hasServiceNotes = Boolean(
-                  ticket.problemDescription?.trim() ||
                   visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
                 );
                 const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
@@ -6500,11 +6498,18 @@ function TicketDetailsPage() {
                     label: "Part Status Correct",
                     done: hasCorrectPartStatus,
                     detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
+                    // No parts ordered yet is a genuine "nothing to check"
+                    // state, same as Warranty Call's skip — not evidence
+                    // anything was actually verified correct.
+                    skip: partRows.length === 0,
                   },
                   {
                     label: "Same-Day Updates",
                     done: hasSameDayUpdate,
-                    detail: "Notes, photos, part status, warranty info updated same day as visit",
+                    detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
+                    // No visit yet means there's nothing to have been
+                    // "same-day" about — not evidence anything was verified.
+                    skip: visitLogEntries.length === 0,
                   },
                 ];
 
@@ -7760,7 +7765,7 @@ function TicketDetailsPage() {
                     </span>
                   ) : null}
                   {officeDistanceMiles != null ? (
-                    <span className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                    <span className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2.5 py-1 text-sm font-bold text-emerald-200">
                       {officeDistanceMiles.toFixed(1)} mi
                     </span>
                   ) : null}

@@ -6,6 +6,21 @@ import {
   deleteTicketPhoto,
   type TicketPhoto,
 } from "@/lib/firebase/storage";
+import { compressImage, validateImageFile, formatBytes } from "@/lib/imageCompression";
+
+const MAX_PHOTOS = 10;
+
+interface UploadQueueItem {
+  id: string;
+  fileName: string;
+  status: "compressing" | "uploading" | "done" | "error";
+  progress: number;
+  originalSize: number;
+  originalDims?: { width: number; height: number };
+  compressedSize?: number;
+  compressedDims?: { width: number; height: number };
+  error?: string;
+}
 
 /**
  * Ticket photo gallery + uploader. Photos live in Firebase Storage under
@@ -34,7 +49,8 @@ export function TicketPhotos({
   const { companyId, ready } = useAuth();
   const [photos, setPhotos] = useState<TicketPhoto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const uploading = uploadQueue.some((q) => q.status === "compressing" || q.status === "uploading");
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<TicketPhoto | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
@@ -80,31 +96,92 @@ export function TicketPhotos({
     });
   };
 
+  const updateQueueItem = (id: string, patch: Partial<UploadQueueItem>) => {
+    setUploadQueue((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  };
+
+  // Compresses (in parallel across files, via a Web Worker per
+  // browser-image-compression) then uploads each selected photo. Each
+  // file's pipeline is wrapped in its own try/catch so one failure never
+  // stops the rest of the batch — the previous version awaited each file
+  // sequentially inside a single try/catch, which silently abandoned the
+  // remaining files the moment any one of them threw.
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    setUploading(true);
     setError(null);
-    try {
-      const uploaded: TicketPhoto[] = [];
-      for (const file of Array.from(files)) {
-        if (file.size > 25 * 1024 * 1024) {
-          setError(`"${file.name}" is larger than 25MB and was skipped.`);
-          continue;
-        }
-        const photo = await uploadTicketPhoto(cid, ticketPath, file, {
-          uploadedBy,
-          visitNo: selectedVisitNo || undefined,
-        });
-        uploaded.push(photo);
+
+    const candidates = Array.from(files);
+    const valid: File[] = [];
+    const rejections: string[] = [];
+
+    const roomLeft = MAX_PHOTOS - photos.length - uploadQueue.length;
+    for (const file of candidates) {
+      const formatError = validateImageFile(file);
+      if (formatError) {
+        rejections.push(formatError);
+        continue;
       }
-      if (uploaded.length) setPhotos((prev) => [...uploaded, ...prev]);
-    } catch (err) {
-      console.error("Photo upload failed:", err);
-      setError(`Upload failed: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (valid.length >= Math.max(0, roomLeft)) {
+        rejections.push(`"${file.name}" was skipped — a ticket can have at most ${MAX_PHOTOS} photos.`);
+        continue;
+      }
+      valid.push(file);
     }
+    if (rejections.length) setError(rejections.join(" "));
+    if (valid.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    const items: UploadQueueItem[] = valid.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      fileName: file.name,
+      status: "compressing",
+      progress: 0,
+      originalSize: file.size,
+    }));
+    setUploadQueue((prev) => [...items, ...prev]);
+
+    await Promise.allSettled(
+      valid.map(async (file, i) => {
+        const id = items[i].id;
+        try {
+          const compressed = await compressImage(file);
+          updateQueueItem(id, {
+            status: "uploading",
+            originalDims: { width: compressed.originalWidth, height: compressed.originalHeight },
+            compressedSize: compressed.compressedSize,
+            compressedDims: { width: compressed.width, height: compressed.height },
+          });
+
+          const photo = await uploadTicketPhoto(
+            cid,
+            ticketPath,
+            compressed.blob,
+            file.name,
+            {
+              uploadedBy,
+              visitNo: selectedVisitNo || undefined,
+              width: compressed.width,
+              height: compressed.height,
+              originalSize: compressed.originalSize,
+            },
+            (percent) => updateQueueItem(id, { progress: percent }),
+          );
+
+          setPhotos((prev) => [photo, ...prev]);
+          setUploadQueue((prev) => prev.filter((q) => q.id !== id));
+        } catch (err) {
+          console.error(`Photo upload failed for "${file.name}":`, err);
+          updateQueueItem(id, {
+            status: "error",
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      }),
+    );
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleDelete = async (photo: TicketPhoto) => {
@@ -166,6 +243,43 @@ export function TicketPhotos({
         </div>
       )}
 
+      {uploadQueue.length > 0 && (
+        <div className="space-y-2">
+          {uploadQueue.map((item) => {
+            const savedPct = item.compressedSize
+              ? Math.round((1 - item.compressedSize / item.originalSize) * 100)
+              : null;
+            return (
+              <div key={item.id} className="rounded-lg border border-white/10 bg-slate-900/50 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-slate-300">{item.fileName}</span>
+                  <span className={item.status === "error" ? "text-red-400" : "text-slate-400"}>
+                    {item.status === "compressing" && "Compressing…"}
+                    {item.status === "uploading" && `Uploading ${item.progress}%`}
+                    {item.status === "error" && "Failed"}
+                  </span>
+                </div>
+                {item.status === "uploading" && (
+                  <div className="mt-1.5 h-1 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-blue-500 transition-all" style={{ width: `${item.progress}%` }} />
+                  </div>
+                )}
+                {item.compressedSize != null && item.compressedDims && item.originalDims ? (
+                  <div className="mt-1 text-slate-500">
+                    {formatBytes(item.originalSize)} ({item.originalDims.width}×{item.originalDims.height}) →{" "}
+                    {formatBytes(item.compressedSize)} ({item.compressedDims.width}×{item.compressedDims.height})
+                    {savedPct != null && savedPct > 0 && <span className="text-emerald-400 ml-1">· {savedPct}% saved</span>}
+                  </div>
+                ) : null}
+                {item.status === "error" && item.error && (
+                  <div className="mt-1 text-red-400">{item.error}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-slate-400">Loading photos…</p>
       ) : photos.length === 0 ? (
@@ -175,7 +289,12 @@ export function TicketPhotos({
           {photos.map((photo) => (
             <div key={photo.fullPath} className="group relative rounded-lg overflow-hidden border border-white/10 bg-slate-900/50">
               {isImage(photo.name) ? (
-                <button type="button" onClick={() => openPreview(photo)} className="block w-full">
+                <button
+                  type="button"
+                  onClick={() => openPreview(photo)}
+                  className="block w-full"
+                  title={photo.width && photo.height ? `${formatBytes(photo.size)} · ${photo.width}×${photo.height}` : undefined}
+                >
                   <img src={photo.url} alt={photo.name} className="h-28 w-full object-cover" loading="lazy" />
                 </button>
               ) : (
