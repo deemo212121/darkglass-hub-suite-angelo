@@ -14,7 +14,11 @@ export async function captureHtmlToPdfBlob(
   opts?: { width?: number; height?: number }
 ): Promise<Blob> {
   const width = opts?.width ?? 816;
-  const height = opts?.height ?? 1400;
+  // Matches the US Letter 8.5x11in @ 96dpi target every template (COE,
+  // Warning Form) is actually built for (both containers declare
+  // min-height: 1056px) — capturing at a taller default like 1400 just adds
+  // that much dead white space below the real content on every export.
+  const height = opts?.height ?? 1056;
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.left = "-99999px";
@@ -35,10 +39,31 @@ export async function captureHtmlToPdfBlob(
     // local data: URL) is otherwise silently skipped by html2canvas
     // instead of erroring, leaving a blank gap with no visible sign of
     // what went wrong.
+    // scale: 2 renders the canvas at double pixel density for crisper text —
+    // but the PDF *page* must stay sized to the intended width/height (not
+    // canvas.width/canvas.height, which are 2x that). Using the raw canvas
+    // pixel size as the page format was making every exported PDF a
+    // physically oversized page (double width AND height = ~4x the area),
+    // which is why it opened looking huge until zoomed way out. The
+    // high-resolution image still gets placed at full page size below —
+    // it's just scaled down to fit instead of inflating the page around it.
     const canvas = await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
     const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ unit: "px", format: [canvas.width, canvas.height] });
-    pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+    // jsPDF's "px" unit does NOT mean CSS px @ 96dpi — it takes the format
+    // numbers as raw PDF points (1/72in) verbatim. So a [816, 1056] "px" page
+    // actually became an 816x1056-POINT page (11.3 x 14.7in), ~1.33x oversized
+    // in each direction versus a real, Google/Word-style US Letter page
+    // (612x792pt = 8.5x11in). Converting our CSS-px template dimensions to
+    // points (1px @ 96dpi = 0.75pt) and building the PDF in "pt" units gives
+    // an actual standard Letter page for the common case. Height is still
+    // derived from the canvas's own aspect ratio (not hardcoded) so content
+    // that overflows the 1056px design height gets a taller page instead of
+    // being squished to fit.
+    const PX_TO_PT = 0.75;
+    const pageWidth = width * PX_TO_PT;
+    const pageHeight = (canvas.height / canvas.width) * pageWidth;
+    const pdf = new jsPDF({ unit: "pt", format: [pageWidth, pageHeight] });
+    pdf.addImage(imgData, "PNG", 0, 0, pageWidth, pageHeight);
     return pdf.output("blob");
   } finally {
     document.body.removeChild(iframe);

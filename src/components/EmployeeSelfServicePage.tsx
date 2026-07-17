@@ -477,6 +477,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     correctedMealEnd: "",
     details: "",
     branch: (LOCATIONS[0] as string) || "",
+    position: "",
   });
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -815,7 +816,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             ptoType: ptoTypeMap[formData.leaveType] || "vacation",
             startDate: formData.startDate,
             endDate: formData.endDate,
-            reason: `Branch: ${formData.branch} | Position: ${employee?.role || "N/A"} - ${formData.details}`,
+            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || employee?.role || "N/A"} - ${formData.details}`,
             requestedBy: myProfileId,
             managerId: managerProfile?.id ?? null,
           });
@@ -943,6 +944,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           correctedMealEnd: "",
           details: "",
           branch: LOCATIONS[0] || "",
+          position: "",
         });
       }, 1500);
     } catch (err) {
@@ -1492,6 +1494,46 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </button>
             </div>
 
+            {/* Submit Request Buttons */}
+            {!ptoEligible && (
+              <div className="bg-amber-500/10 border border-amber-400/40 rounded-lg p-3 text-xs text-amber-100">
+                You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting {ptoEligibleOn}.
+              </div>
+            )}
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => { setModalType("pto"); setShowModal(true); }}
+                disabled={!ptoEligible}
+                title={!ptoEligible ? `Not eligible until ${ptoEligibleOn}` : undefined}
+                className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                PTO Request
+              </button>
+              <button
+                onClick={() => { setModalType("dispute"); setShowModal(true); }}
+                className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Attendance Dispute
+              </button>
+              <button
+                onClick={() => { setModalType("correction"); setShowModal(true); }}
+                className="px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Time Correction Request
+              </button>
+              <button
+                onClick={() => { setModalType("inquiry"); setShowModal(true); }}
+                className="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Payroll Inquiry
+              </button>
+            </div>
+
             {/* Requests List */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between mb-4">
@@ -1531,46 +1573,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   ))}
                 </div>
               )}
-            </div>
-
-            {/* Submit Request Buttons */}
-            {!ptoEligible && (
-              <div className="bg-amber-500/10 border border-amber-400/40 rounded-lg p-3 text-xs text-amber-100">
-                You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting {ptoEligibleOn}.
-              </div>
-            )}
-            <div className="grid gap-3 md:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => { setModalType("pto"); setShowModal(true); }}
-                disabled={!ptoEligible}
-                title={!ptoEligible ? `Not eligible until ${ptoEligibleOn}` : undefined}
-                className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                PTO Request
-              </button>
-              <button
-                onClick={() => { setModalType("dispute"); setShowModal(true); }}
-                className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Attendance Dispute
-              </button>
-              <button
-                onClick={() => { setModalType("correction"); setShowModal(true); }}
-                className="px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Time Correction Request
-              </button>
-              <button
-                onClick={() => { setModalType("inquiry"); setShowModal(true); }}
-                className="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Payroll Inquiry
-              </button>
             </div>
           </div>
         )}
@@ -1808,9 +1810,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
-                          <div className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm">
-                            {employee?.role || "N/A"}
-                          </div>
+                          <select
+                            value={formData.position || employee?.role || ""}
+                            onChange={(e) => setFormData({ ...formData, position: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          >
+                            {Object.entries(ROLE_LABELS).map(([code, label]) => (
+                              <option key={code} value={code}>{label}</option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Branch</label>

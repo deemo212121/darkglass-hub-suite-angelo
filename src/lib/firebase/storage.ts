@@ -197,6 +197,18 @@ export async function deleteOnboardingDocumentFile(fullPath: string): Promise<vo
 }
 
 /**
+ * Delete a Jotform-generated document (companies/{companyId}/jotform-documents/…)
+ * by its full storage path — used when HR deletes a submission row (e.g. a
+ * test/junk one) so the file doesn't linger orphaned in Storage.
+ */
+export async function deleteJotformDocumentFile(fullPath: string): Promise<void> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  await deleteObject(ref(storage, fullPath));
+}
+
+/**
  * Upload a generated Certificate of Employment PDF so it can be linked in a
  * Team Messenger message — same "generate client-side, upload, share a
  * link" pattern as the CV-forwarding feature on the Hiring tab.
@@ -222,6 +234,39 @@ export async function uploadWarningForm(companyId: string, employeeName: string,
   }
   const folder = `companies/${companyId}/warning-forms`;
   const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "warning-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadW8benForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/w8ben-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "w8ben-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadW4Form(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/w4-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "w4-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+export async function uploadW9Form(companyId: string, name: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/w9-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(name || "w9-form")}.pdf`;
   const objectRef = ref(storage, `${folder}/${objectName}`);
   const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
   return getDownloadURL(snapshot.ref);

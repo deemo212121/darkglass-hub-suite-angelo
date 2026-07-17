@@ -5,8 +5,23 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+
+// Windows-only build race: @cloudflare/vite-plugin's client-build phase
+// spawns a local workerd instance that doesn't reliably exit before the
+// very next ssr-build phase starts — and Vite's own out-dir-emptying step
+// (build.emptyOutDir, on by default) then fails with EBUSY trying to rmdir
+// dist/server/.wrangler/state/v3/cache while that process still holds a
+// lock on it. Neither disabling wrangler's state persistence nor
+// relocating it actually stops the directory from being created and raced
+// over — the fix instead sidesteps Vite's crash-prone cleanup entirely:
+// clean dist/ ourselves, once, synchronously, here at config-load time
+// (before any environment's build — and therefore before workerd — has
+// started), then tell both environments not to try emptying it again
+// (see emptyOutDir: false below) so nothing ever attempts to touch a path
+// workerd might still be holding open partway through the build.
+rmSync(resolve(process.cwd(), "dist"), { recursive: true, force: true });
 
 // Read .env directly (avoid importing from "vite" here — it creates a module
 // require-cycle with the lovable config wrapper). We inject SERVER-ONLY secrets
@@ -276,15 +291,17 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
-  // Production builds are one-shot — there's nothing to persist state across
-  // runs for. Disabling this stops the plugin from writing
-  // dist/server/.wrangler/state/v3/cache during the build at all, which
-  // sidesteps a Windows-only race: the client-build phase's local workerd
-  // instance doesn't release its lock on that directory before the very next
-  // ssr-build phase tries to rmdir it (EBUSY: resource busy or locked).
+  // Production builds are one-shot — nothing needs local Wrangler state
+  // persisted across runs. See the rmSync/emptyOutDir notes above for the
+  // actual EBUSY fix; this just avoids writing the sqlite cache files into
+  // the build output in the first place.
   cloudflare: { viteEnvironment: { name: "ssr" }, persistState: false },
   vite: {
     define: SERVER_DEFINE,
+    // Vite's default asset list doesn't include .pdf — needed so the blank
+    // W-8BEN template (src/assets/w8ben-blank.pdf) resolves to a URL via a
+    // plain `import` the same way the logo/ribbon/footer PNGs already do.
+    assetsInclude: ["**/*.pdf"],
     // Dev-server only (never shipped in the Cloudflare production build):
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
@@ -292,6 +309,10 @@ export default defineConfig({
     plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
+      // See the rmSync call above — we clean dist/ ourselves once, up
+      // front, so Vite's own crash-prone out-dir-emptying step (which
+      // races against a lingering workerd process on Windows) never runs.
+      emptyOutDir: false,
       rollupOptions: {
         output: {
           manualChunks(id) {
@@ -327,6 +348,29 @@ export default defineConfig({
               ) {
                 return "image-compression";
               }
+              // Same reasoning again: pdfjs-dist touches browser globals
+              // (DOMMatrix, document, Worker, canvas) at module load, and is
+              // only ever reached via a dynamic import() inside the
+              // Fill*Page components (FillW4Page.tsx etc.) — but the
+              // "vendor" bucket is eagerly evaluated by the Cloudflare
+              // Worker regardless of that dynamic import(), so it needs its
+              // own chunk too. Exclude the `?url` worker-asset import
+              // (pdfjs-dist/build/pdf.worker.min.mjs?url) — that one IS
+              // statically imported by the Fill*Page components, and
+              // grouping it into the same chunk as the real dynamically-
+              // imported library code would merge them into one physical
+              // chunk, making the whole thing a static (eager) dependency
+              // again — exactly the bug this isolation exists to prevent.
+              // Left to fall through, it resolves as a plain build-time URL
+              // constant, same as the PNG asset imports elsewhere.
+              if (
+                normalized.includes("/node_modules/pdfjs-dist/") &&
+                !normalized.endsWith("?url")
+              ) {
+                return "pdfjs-dist";
+              }
+              // pdf-lib is left in "vendor": it's pure JS PDF manipulation
+              // with no DOM dependency, so it's SSR-safe.
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";
               if (normalized.includes("/node_modules/@radix-ui/")) return "radix-ui";
               if (

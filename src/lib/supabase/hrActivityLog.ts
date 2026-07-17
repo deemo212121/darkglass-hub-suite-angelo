@@ -20,6 +20,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   warning_form_cancelled: "Cancelled Employee Warning Form",
   warning_form_deleted: "Deleted Employee Warning Form",
   warning_form_reassigned: "Sent Warning Form to next recipient",
+  jotform_submission_deleted: "Deleted Jotform submission",
+  jotform_submission_restored: "Restored Jotform submission",
 };
 
 export function activityActionLabel(action: string): string {
