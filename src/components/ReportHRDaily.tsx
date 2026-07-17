@@ -3434,7 +3434,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* ── Tab navigation — collapsed into 3 category dropdowns to save space ── */}
-      <div className="mb-4 border-b border-white/10 pb-3 relative">
+      {/* z-30 on the wrapper itself (not just the z-20 dropdown inside it) —
+          the tab content below (e.g. the W-8BEN panel) uses backdrop-filter,
+          which creates its own stacking context and, without this, paints
+          over the open dropdown regardless of the dropdown's own z-index. */}
+      <div className="mb-4 border-b border-white/10 pb-3 relative z-30">
         <div className="flex flex-wrap gap-2">
           {tabGroups.map((section) => {
             const activeInGroup = section.tabs.some((t) => t.key === activeTab);
