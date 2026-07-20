@@ -119,10 +119,16 @@ export interface Company {
 }
 
 /**
- * Create a new company
+ * Create a new company. Pass `companyId` to request a specific ID (e.g. the
+ * SuperAdmin "Add Company" form); omit it to get an auto-generated
+ * `COMP<timestamp>` ID (existing callers that never specified one keep
+ * working exactly as before). A requested ID is checked against Firestore
+ * directly — not just a caller's possibly-stale in-memory company list —
+ * since setDoc() would otherwise silently overwrite an existing company
+ * sharing that ID instead of erroring.
  */
 export async function createCompany(
-  companyData: Omit<Company, "companyId" | "createdAt" | "createdBy">,
+  companyData: Omit<Company, "companyId" | "createdAt" | "createdBy"> & { companyId?: string },
   creatorUid: string
 ): Promise<string> {
   if (!isFirebaseReady() || !db) {
@@ -130,12 +136,19 @@ export async function createCompany(
   }
 
   try {
-    // Generate company ID
-    const companyId = `COMP${Date.now()}`;
+    const { companyId: requestedId, ...rest } = companyData;
+    const companyId = requestedId || `COMP${Date.now()}`;
     const companyRef = doc(db, "companies", companyId);
 
+    if (requestedId) {
+      const existing = await getDoc(companyRef);
+      if (existing.exists()) {
+        throw new Error(`Company ID '${companyId}' already exists.`);
+      }
+    }
+
     await setDoc(companyRef, {
-      ...companyData,
+      ...rest,
       companyId,
       createdAt: serverTimestamp(),
       createdBy: creatorUid,
