@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { ALL_TECHNICIANS } from "@/lib/locations";
+import { ALL_TECHNICIANS, normalizeLocationForRegionMatch } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock } from "lucide-react";
@@ -841,8 +841,12 @@ function milesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: nu
 function getOfficeCoordinates(location: string): { lat: number; lng: number } | null {
   const fromMgmt = getLocationManagementCoordinates(location);
   if (fromMgmt) return fromMgmt;
-  const normalized = String(location || "").trim().toLowerCase();
-  const match = LOCATIONS_DATA.find((l) => l.location.trim().toLowerCase() === normalized);
+  // LOCATIONS_DATA stores a few branches (Jackson,MS / Jackson,TN) without
+  // the space canonicalBranchLabel() puts in real ticket.location values —
+  // normalize both sides the same way locationRegion() already does, or
+  // those branches silently never resolve an office and mileage shows "—".
+  const normalized = normalizeLocationForRegionMatch(location).toLowerCase();
+  const match = LOCATIONS_DATA.find((l) => normalizeLocationForRegionMatch(l.location).toLowerCase() === normalized);
   if (match && match.lat && match.lng) {
     const lat = parseFloat(match.lat);
     const lng = parseFloat(match.lng);

@@ -113,7 +113,13 @@ export const REGION_LOCATIONS: Record<Region, string[]> = {
 
 // Real synced ticket.location values sometimes drop the space after a
 // comma (e.g. "Jackson,MS" instead of "Jackson, MS") — match loosely.
-function normalizeLocationForRegionMatch(v: string): string {
+// Exported since other location lookups (e.g. getOfficeCoordinates in
+// ticket.$ticketNo.tsx) need the exact same normalization for the same
+// reason — LOCATIONS_DATA stores "Jackson,MS" without the space, but
+// canonicalBranchLabel() normalizes real ticket.location values to the
+// spaced "Jackson, MS" form, so a strict string match between the two
+// never succeeds.
+export function normalizeLocationForRegionMatch(v: string): string {
   return (v || "").trim().replace(/,\s+/g, ",");
 }
 
