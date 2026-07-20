@@ -67,11 +67,21 @@ export async function updateSupabaseCompanyLoginAlias(
   legacyCode: string,
   loginAlias: string | null
 ): Promise<void> {
-  const { error } = await supabase
+  // RLS silently drops updates to rows the caller isn't allowed to touch —
+  // PostgREST returns 200 with an empty array, NOT an error, so `.select()`
+  // + an explicit empty-result check is required to catch it. Without this,
+  // a stale/expired Supabase session reports "success" while writing nothing.
+  const { data, error } = await supabase
     .from("companies")
     .update({ login_alias: loginAlias })
-    .eq("legacy_code", legacyCode);
+    .eq("legacy_code", legacyCode)
+    .select("id");
   if (error) {
     throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error(
+      "Update was rejected (no matching company, or your session isn't recognized as SuperAdmin — try refreshing the page and signing in again)."
+    );
   }
 }
