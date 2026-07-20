@@ -832,15 +832,22 @@ export async function handleJotformRequest(
     const companyId = getEnv("JOTFORM_TARGET_COMPANY_ID");
     if (!companyId) return json({ error: "Server missing JOTFORM_TARGET_COMPANY_ID" }, 500);
 
-    const g = globalThis as any;
+    // Read `(globalThis as any).__X__` directly at each call site, NOT via a
+    // local `const g = globalThis as any` alias — vite's define only does an
+    // exact textual match on the literal `globalThis.__X__` expression;
+    // through an aliased `g.__X__` it never matches, so the substitution
+    // silently never happens. This was masked here because these specific
+    // secrets also have real Cloudflare secrets configured as a working
+    // fallback (unlike NSA's, where the same aliased pattern caused a real
+    // production failure — see nsaBridge.ts's fix).
     const projectId: string | undefined =
-      (g.__FIREBASE_PROJECT_ID__ && g.__FIREBASE_PROJECT_ID__ !== "" ? g.__FIREBASE_PROJECT_ID__ : undefined) ??
+      ((globalThis as any).__FIREBASE_PROJECT_ID__ && (globalThis as any).__FIREBASE_PROJECT_ID__ !== "" ? (globalThis as any).__FIREBASE_PROJECT_ID__ : undefined) ??
       getEnv("VITE_FIREBASE_PROJECT_ID");
     const serviceAccountEmail: string | undefined =
-      (g.__FIREBASE_SA_EMAIL__ && g.__FIREBASE_SA_EMAIL__ !== "" ? g.__FIREBASE_SA_EMAIL__ : undefined) ??
+      ((globalThis as any).__FIREBASE_SA_EMAIL__ && (globalThis as any).__FIREBASE_SA_EMAIL__ !== "" ? (globalThis as any).__FIREBASE_SA_EMAIL__ : undefined) ??
       getEnv("FIREBASE_SERVICE_ACCOUNT_EMAIL");
     const privateKey: string | undefined =
-      (g.__FIREBASE_SA_PRIVATE_KEY__ && g.__FIREBASE_SA_PRIVATE_KEY__ !== "" ? g.__FIREBASE_SA_PRIVATE_KEY__ : undefined) ??
+      ((globalThis as any).__FIREBASE_SA_PRIVATE_KEY__ && (globalThis as any).__FIREBASE_SA_PRIVATE_KEY__ !== "" ? (globalThis as any).__FIREBASE_SA_PRIVATE_KEY__ : undefined) ??
       getEnv("FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY");
 
     if (!projectId || !serviceAccountEmail || !privateKey) {
@@ -857,10 +864,10 @@ export async function handleJotformRequest(
     }
 
     const supabaseUrl: string | undefined =
-      (g.__SUPABASE_URL__ && g.__SUPABASE_URL__ !== "" ? g.__SUPABASE_URL__ : undefined) ??
+      ((globalThis as any).__SUPABASE_URL__ && (globalThis as any).__SUPABASE_URL__ !== "" ? (globalThis as any).__SUPABASE_URL__ : undefined) ??
       getEnv("VITE_SUPABASE_URL");
     const supabaseServiceKey: string | undefined =
-      (g.__SUPABASE_SERVICE_KEY__ && g.__SUPABASE_SERVICE_KEY__ !== "" ? g.__SUPABASE_SERVICE_KEY__ : undefined) ??
+      ((globalThis as any).__SUPABASE_SERVICE_KEY__ && (globalThis as any).__SUPABASE_SERVICE_KEY__ !== "" ? (globalThis as any).__SUPABASE_SERVICE_KEY__ : undefined) ??
       getEnv("SUPABASE_SERVICE_KEY");
 
     if (!supabaseUrl || !supabaseServiceKey) {
@@ -884,10 +891,10 @@ export async function handleJotformRequest(
     // under companies/{companyId}/jotform-submissions/ instead. Best-effort —
     // a failed mirror never blocks the notification itself.
     const storageBucket: string | undefined =
-      (g.__FIREBASE_STORAGE_BUCKET__ && g.__FIREBASE_STORAGE_BUCKET__ !== "" ? g.__FIREBASE_STORAGE_BUCKET__ : undefined) ??
+      ((globalThis as any).__FIREBASE_STORAGE_BUCKET__ && (globalThis as any).__FIREBASE_STORAGE_BUCKET__ !== "" ? (globalThis as any).__FIREBASE_STORAGE_BUCKET__ : undefined) ??
       getEnv("VITE_FIREBASE_STORAGE_BUCKET");
     const jotformApiKey: string | undefined =
-      (g.__JOTFORM_API_KEY__ && g.__JOTFORM_API_KEY__ !== "" ? g.__JOTFORM_API_KEY__ : undefined) ??
+      ((globalThis as any).__JOTFORM_API_KEY__ && (globalThis as any).__JOTFORM_API_KEY__ !== "" ? (globalThis as any).__JOTFORM_API_KEY__ : undefined) ??
       getEnv("JOTFORM_API_KEY");
     // The Submission API (when an API key is configured) returns each
     // answer's widget type + a clean URL/name, far more reliable than

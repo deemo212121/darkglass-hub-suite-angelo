@@ -79,17 +79,27 @@ export async function handleNsaRequest(
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // Credentials — compile-time globals take priority
-  const g = globalThis as any;
+  // Credentials — compile-time globals take priority. Read
+  // `(globalThis as any).__NSA_X__` directly at each call site, NOT via a
+  // `const g = globalThis as any` local alias — vite's define (esbuild
+  // define under the hood) only does an exact textual match on the literal
+  // `globalThis.__NSA_X__` expression; through an aliased `g.__NSA_X__` it
+  // never matches, so the substitution silently never happens and this
+  // always falls through to the (here, unset) env fallback. Confirmed via
+  // the built output: `g.__NSA_API_KEY__` was still present as literal,
+  // unsubstituted source in the deployed bundle.
   const BASE_URL =
-    (g.__NSA_BASE_URL__ && g.__NSA_BASE_URL__ !== "") ? g.__NSA_BASE_URL__
-    : env?.NSA_BASE_URL ?? "https://dev-api.nationalservicealliance.com";
+    ((globalThis as any).__NSA_BASE_URL__ && (globalThis as any).__NSA_BASE_URL__ !== "")
+      ? (globalThis as any).__NSA_BASE_URL__
+      : env?.NSA_BASE_URL ?? "https://dev-api.nationalservicealliance.com";
   const API_KEY =
-    (g.__NSA_API_KEY__ && g.__NSA_API_KEY__ !== "") ? g.__NSA_API_KEY__
-    : env?.NSA_API_KEY ?? "";
+    ((globalThis as any).__NSA_API_KEY__ && (globalThis as any).__NSA_API_KEY__ !== "")
+      ? (globalThis as any).__NSA_API_KEY__
+      : env?.NSA_API_KEY ?? "";
   const SECRET =
-    (g.__NSA_SECRET__ && g.__NSA_SECRET__ !== "") ? g.__NSA_SECRET__
-    : env?.NSA_SECRET ?? "";
+    ((globalThis as any).__NSA_SECRET__ && (globalThis as any).__NSA_SECRET__ !== "")
+      ? (globalThis as any).__NSA_SECRET__
+      : env?.NSA_SECRET ?? "";
 
   if (!API_KEY || !SECRET) {
     return new Response(
