@@ -12,7 +12,7 @@ export const Route = createFileRoute("/landing")({
 });
 
 function Landing() {
-  const { login, logout, email, role, ready, loading, companyId } = useAuth();
+  const { login, logout, email, role, ready, loading, companyId, companyLoginAlias } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ 
     emailOrUsername: "jdage7@gmail.com", 
@@ -65,8 +65,13 @@ function Landing() {
     // Wait until the auth listener has loaded a profile (email + companyId set).
     if (!ready || !email) return;
     // companyId may be "" if the company join returned nothing — treat empty as
-    // "can't verify" and allow through (don't log a valid user out).
-    if (companyId && companyId.toUpperCase() !== pendingCompany.toUpperCase()) {
+    // "can't verify" and allow through (don't log a valid user out). The typed
+    // value can match either the canonical company ID or its login alias (see
+    // migration 0066) — both are accepted.
+    const typed = pendingCompany.toUpperCase();
+    const matchesCanonical = companyId ? companyId.toUpperCase() === typed : false;
+    const matchesAlias = companyLoginAlias ? companyLoginAlias.toUpperCase() === typed : false;
+    if (companyId && !matchesCanonical && !matchesAlias) {
       setErr("Invalid company ID for this account.");
       setPendingCompany(null);
       setSubmitting(false);
@@ -76,7 +81,7 @@ function Landing() {
     // Validated (or unverifiable) — let the redirect effect proceed.
     setPendingCompany(null);
     setSubmitting(false);
-  }, [pendingCompany, ready, email, companyId, logout]);
+  }, [pendingCompany, ready, email, companyId, companyLoginAlias, logout]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

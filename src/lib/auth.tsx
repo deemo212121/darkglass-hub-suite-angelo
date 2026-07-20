@@ -12,6 +12,7 @@ import { getProfileForLogin, touchLastLogin } from "./supabase/users";
 type AuthState = {
   email: string | null;
   companyId: string | null;
+  companyLoginAlias: string | null;
   role: string | null;
   uid: string | null;
   displayName: string | null;
@@ -92,6 +93,7 @@ function maybeAutoMigrateLegacyUsers(role: string, companyId: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companyLoginAlias, setCompanyLoginAlias] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [uid, setUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setUid(firebaseUser.uid);
                   setEmail(sbProfile.email);
                   setCompanyId(sbProfile.companyId);
+                  setCompanyLoginAlias(sbProfile.companyLoginAlias);
                   setRole(sbProfile.role);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
@@ -222,6 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setUid(firebaseUser.uid);
                   setEmail(userProfile.email);
                   setCompanyId(userProfile.companyId);
+                  setCompanyLoginAlias(null);
                   setRole(userProfile.role);
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
@@ -244,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUid(null);
             setEmail(null);
             setCompanyId(null);
+            setCompanyLoginAlias(null);
             setRole(null);
             setDisplayName(null);
             setIsActive(false);
@@ -329,10 +334,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      email, 
-      companyId, 
-      role, 
+    <AuthContext.Provider value={{
+      email,
+      companyId,
+      companyLoginAlias,
+      role,
       uid,
       displayName,
       isActive,

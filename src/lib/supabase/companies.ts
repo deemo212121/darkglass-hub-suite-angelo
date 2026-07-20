@@ -22,6 +22,7 @@ export async function createSupabaseCompany(input: {
   email?: string;
   isActive?: boolean;
   subscriptionPlan?: "basic" | "professional" | "enterprise";
+  loginAlias?: string;
 }): Promise<string> {
   const { data, error } = await supabase
     .from("companies")
@@ -36,6 +37,7 @@ export async function createSupabaseCompany(input: {
       email: input.email || null,
       is_active: input.isActive ?? true,
       subscription_plan: input.subscriptionPlan || "basic",
+      login_alias: input.loginAlias || null,
     })
     .select("id")
     .single();
@@ -44,4 +46,32 @@ export async function createSupabaseCompany(input: {
     throw new Error(error.message);
   }
   return data.id as string;
+}
+
+/** Read a company's current login alias (or null) by its canonical legacy_code. */
+export async function getSupabaseCompanyLoginAlias(legacyCode: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("companies")
+    .select("login_alias")
+    .eq("legacy_code", legacyCode)
+    .maybeSingle();
+  if (error) {
+    console.error("getSupabaseCompanyLoginAlias error:", error.message);
+    return null;
+  }
+  return (data as any)?.login_alias ?? null;
+}
+
+/** Set (or clear, with null) a company's login alias by its canonical legacy_code. */
+export async function updateSupabaseCompanyLoginAlias(
+  legacyCode: string,
+  loginAlias: string | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("companies")
+    .update({ login_alias: loginAlias })
+    .eq("legacy_code", legacyCode);
+  if (error) {
+    throw new Error(error.message);
+  }
 }

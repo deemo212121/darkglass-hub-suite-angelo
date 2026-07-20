@@ -15,7 +15,11 @@ import {
   type UserRole,
 } from "@/lib/firebase/users";
 import { getCurrentUser } from "@/lib/firebase/auth";
-import { createSupabaseCompany } from "@/lib/supabase/companies";
+import {
+  createSupabaseCompany,
+  getSupabaseCompanyLoginAlias,
+  updateSupabaseCompanyLoginAlias,
+} from "@/lib/supabase/companies";
 
 export const Route = createFileRoute("/superadmin")({
   component: SuperAdminDashboard,
@@ -57,6 +61,7 @@ function SuperAdminDashboard() {
     phoneCountry: "+1", // Default to US
     email: "",
     subscriptionPlan: "professional" as "basic" | "professional" | "enterprise",
+    loginAlias: "",
   });
 
   // Common country codes with flags
@@ -168,6 +173,12 @@ function SuperAdminDashboard() {
         return;
       }
 
+      // Login alias is optional, but if set must follow the same format rule.
+      if (newCompanyForm.loginAlias && !/^[A-Z0-9]+$/.test(newCompanyForm.loginAlias)) {
+        setError("Login Alias must contain only letters and numbers (no spaces or special characters)");
+        return;
+      }
+
       // Check if company ID already exists
       const existingCompany = companies.find(c => c.companyId === newCompanyForm.companyId);
       if (existingCompany) {
@@ -216,6 +227,7 @@ function SuperAdminDashboard() {
           email: newCompanyForm.email,
           subscriptionPlan: newCompanyForm.subscriptionPlan,
           isActive: true,
+          loginAlias: newCompanyForm.loginAlias || undefined,
         });
         setSuccess(`✅ Company '${newCompanyForm.companyName}' created with ID: ${newCompanyForm.companyId}`);
         setTimeout(() => setSuccess(null), 5000);
@@ -303,6 +315,12 @@ function SuperAdminDashboard() {
 
       if (!editingCompany) return;
 
+      // Login alias is optional, but if set must follow the same format rule.
+      if (newCompanyForm.loginAlias && !/^[A-Z0-9]+$/.test(newCompanyForm.loginAlias)) {
+        setError("Login Alias must contain only letters and numbers (no spaces or special characters)");
+        return;
+      }
+
       await updateCompany(editingCompany.companyId, {
         companyName: newCompanyForm.companyName,
         address: newCompanyForm.address,
@@ -314,8 +332,16 @@ function SuperAdminDashboard() {
         subscriptionPlan: newCompanyForm.subscriptionPlan,
       });
 
-      setSuccess(`✅ Company updated successfully`);
-      setTimeout(() => setSuccess(null), 5000);
+      // Login alias lives only in Supabase (see migration 0066) — Firestore
+      // has no equivalent field, so this is a separate write.
+      try {
+        await updateSupabaseCompanyLoginAlias(editingCompany.companyId, newCompanyForm.loginAlias || null);
+        setSuccess(`✅ Company updated successfully`);
+        setTimeout(() => setSuccess(null), 5000);
+      } catch (aliasErr: any) {
+        console.error("Error updating Supabase login alias:", aliasErr);
+        setError(`Company updated, but the login alias failed to save (${aliasErr.message || aliasErr}).`);
+      }
 
       resetCompanyForm();
       loadData();
@@ -396,7 +422,14 @@ function SuperAdminDashboard() {
       phoneCountry: "+1",
       email: company.email || "",
       subscriptionPlan: company.subscriptionPlan || "professional",
+      loginAlias: "",
     });
+    // Login alias lives only in Supabase (see migration 0066), not on the
+    // Firestore company record — fetch it separately so opening the modal
+    // isn't blocked on a round-trip.
+    getSupabaseCompanyLoginAlias(company.companyId)
+      .then((alias) => setNewCompanyForm((f) => ({ ...f, loginAlias: alias || "" })))
+      .catch((err) => console.error("Failed to load login alias:", err));
   };
 
   const syncUsernamesToFirebase = async () => {
@@ -491,6 +524,7 @@ function SuperAdminDashboard() {
       phoneCountry: "+1",
       email: "",
       subscriptionPlan: "professional",
+      loginAlias: "",
     });
     setIsAddingCompany(false);
     setEditingCompany(null);
@@ -723,6 +757,19 @@ function SuperAdminDashboard() {
                   <option value="professional">Professional</option>
                   <option value="enterprise">Enterprise</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-300 mb-2">
+                  Login Alias (optional)
+                </label>
+                <input
+                  type="text"
+                  value={newCompanyForm.loginAlias}
+                  onChange={(e) => setNewCompanyForm({ ...newCompanyForm, loginAlias: e.target.value.toUpperCase() })}
+                  className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500 font-mono"
+                  placeholder="A shorter ID that also works at login"
+                  maxLength={20}
+                />
               </div>
             </div>
             <div className="flex gap-3 mt-6">
@@ -1280,6 +1327,17 @@ function SuperAdminDashboard() {
                     <option value="professional">Professional</option>
                     <option value="enterprise">Enterprise</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Login Alias (optional)</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.loginAlias}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, loginAlias: e.target.value.toUpperCase() })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500 font-mono"
+                    placeholder="A shorter ID that also works at login"
+                    maxLength={20}
+                  />
                 </div>
               </div>
               <div className="flex gap-3 mt-5">

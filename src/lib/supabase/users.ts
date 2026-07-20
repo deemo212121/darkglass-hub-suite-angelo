@@ -74,10 +74,13 @@ export function generateUsername(displayName: string): string {
 /**
  * Get the profile for a Firebase uid (for login). Returns the auth-relevant fields.
  * Uses the company legacy_code as the companyId the rest of the app expects.
+ * companyLoginAlias is a second, optional string that also works as the
+ * "Company ID" typed at login (see migration 0066).
  */
 export async function getProfileForLogin(firebaseUid: string): Promise<{
   email: string;
   companyId: string;
+  companyLoginAlias: string | null;
   role: string;
   displayName: string;
   isActive: boolean;
@@ -86,7 +89,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code)")
+    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code, login_alias)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -97,9 +100,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   if (!data) return null;
 
   const legacyCode = (data as any).companies?.legacy_code ?? "";
+  const loginAlias = (data as any).companies?.login_alias ?? null;
   return {
     email: data.email,
     companyId: legacyCode,
+    companyLoginAlias: loginAlias,
     role: data.role,
     displayName: data.display_name ?? data.email,
     isActive: data.is_active,
