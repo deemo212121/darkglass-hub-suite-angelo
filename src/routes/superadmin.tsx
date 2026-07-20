@@ -9,6 +9,7 @@ import {
   deactivateUserAccount,
   activateUserAccount,
   createCompany,
+  updateCompany,
   type UserAccount,
   type Company,
   type UserRole,
@@ -29,6 +30,7 @@ function SuperAdminDashboard() {
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const [isAddingCompany, setIsAddingCompany] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState<UserAccount | null>(null);
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [syncingUsernames, setSyncingUsernames] = useState(false);
@@ -271,6 +273,34 @@ function SuperAdminDashboard() {
     }
   };
 
+  const handleUpdateCompany = async () => {
+    try {
+      setError(null);
+
+      if (!editingCompany) return;
+
+      await updateCompany(editingCompany.companyId, {
+        companyName: newCompanyForm.companyName,
+        address: newCompanyForm.address,
+        city: newCompanyForm.city,
+        state: newCompanyForm.state,
+        zipCode: newCompanyForm.zipCode,
+        phoneNumber: newCompanyForm.phoneNumber,
+        email: newCompanyForm.email,
+        subscriptionPlan: newCompanyForm.subscriptionPlan,
+      });
+
+      setSuccess(`✅ Company updated successfully`);
+      setTimeout(() => setSuccess(null), 5000);
+
+      resetCompanyForm();
+      loadData();
+    } catch (err: any) {
+      console.error("Error updating company:", err);
+      setError(err.message || "Failed to update company");
+    }
+  };
+
   const handleUpdateAdmin = async () => {
     try {
       setError(null);
@@ -326,6 +356,22 @@ function SuperAdminDashboard() {
       phoneNumber: user.phoneNumber || "",
       userType: user.role,
       companyId: user.companyId,
+    });
+  };
+
+  const startEditCompany = (company: Company) => {
+    setEditingCompany(company);
+    setNewCompanyForm({
+      companyId: company.companyId,
+      companyName: company.companyName,
+      address: company.address || "",
+      city: company.city || "",
+      state: company.state || "",
+      zipCode: company.zipCode || "",
+      phoneNumber: company.phoneNumber || "",
+      phoneCountry: "+1",
+      email: company.email || "",
+      subscriptionPlan: company.subscriptionPlan || "professional",
     });
   };
 
@@ -423,6 +469,7 @@ function SuperAdminDashboard() {
       subscriptionPlan: "professional",
     });
     setIsAddingCompany(false);
+    setEditingCompany(null);
   };
 
   if (loading) {
@@ -1039,7 +1086,8 @@ function SuperAdminDashboard() {
                   </tr>
                 ) : (
                   companies.map((company) => (
-                    <tr key={company.companyId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <Fragment key={company.companyId}>
+                    <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3 text-slate-300 font-mono">{company.companyId}</td>
                       <td className="px-4 py-3 text-white font-semibold">{company.companyName}</td>
                       <td className="px-4 py-3 text-slate-300">{company.email}</td>
@@ -1061,7 +1109,7 @@ function SuperAdminDashboard() {
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
                           <button
-                            onClick={() => alert('Edit company feature coming soon')}
+                            onClick={() => startEditCompany(company)}
                             className="px-3 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 text-xs font-semibold transition-colors"
                           >
                             Edit
@@ -1079,6 +1127,134 @@ function SuperAdminDashboard() {
                         </div>
                       </td>
                     </tr>
+                    {editingCompany?.companyId === company.companyId && (
+                      <tr className="border-b border-white/5 bg-blue-950/20">
+                        <td colSpan={9} className="px-6 py-5">
+                          <h4 className="text-sm font-semibold text-blue-300 uppercase tracking-wide mb-4">
+                            Edit Company
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Company ID (read-only)</label>
+                              <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400 font-mono">
+                                {newCompanyForm.companyId}
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Company Name *</label>
+                              <input
+                                type="text"
+                                value={newCompanyForm.companyName}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, companyName: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Acme Appliance Repair"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
+                              <input
+                                type="email"
+                                value={newCompanyForm.email}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, email: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="contact@company.com"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
+                              <div className="flex gap-2">
+                                <select
+                                  value={newCompanyForm.phoneCountry}
+                                  onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneCountry: e.target.value })}
+                                  className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                  style={{ minWidth: '80px' }}
+                                >
+                                  {countryCodes.map((item, idx) => (
+                                    <option key={`${item.code}-${idx}`} value={item.code}>
+                                      {item.flag} {item.code}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="tel"
+                                  value={newCompanyForm.phoneNumber}
+                                  onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneNumber: e.target.value })}
+                                  className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                  placeholder="123-456-7890"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Address</label>
+                              <input
+                                type="text"
+                                value={newCompanyForm.address}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, address: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="123 Main St"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">City</label>
+                              <input
+                                type="text"
+                                value={newCompanyForm.city}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, city: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Jackson"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">State</label>
+                              <input
+                                type="text"
+                                value={newCompanyForm.state}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, state: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="MS"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">ZIP Code</label>
+                              <input
+                                type="text"
+                                value={newCompanyForm.zipCode}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, zipCode: e.target.value })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                                placeholder="39056"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-300 mb-2">Subscription Plan</label>
+                              <select
+                                value={newCompanyForm.subscriptionPlan}
+                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, subscriptionPlan: e.target.value as "basic" | "professional" | "enterprise" })}
+                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="basic">Basic</option>
+                                <option value="professional">Professional</option>
+                                <option value="enterprise">Enterprise</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex gap-3 mt-5">
+                            <button
+                              onClick={handleUpdateCompany}
+                              className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
+                            >
+                              Update Company
+                            </button>
+                            <button
+                              onClick={resetCompanyForm}
+                              className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))
                 )}
               </tbody>
