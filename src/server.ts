@@ -6,6 +6,7 @@ import { handleSupabaseTokenRequest } from "./lib/server/supabaseTokenBridge";
 import { handleServicePowerRequest } from "./lib/server/servicePowerBridge";
 import { handleMarconeRequest } from "./lib/server/marconeBridge";
 import { handleJotformRequest } from "./lib/server/jotformBridge";
+import { handleNsaRequest } from "./lib/server/nsaBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -120,6 +121,10 @@ export default {
     if (url.pathname === "/api/jotform") {
       const merged = await resolveServerEnv(env);
       return await handleJotformRequest(request, merged);
+    }
+    if (url.pathname === "/api/nsa") {
+      const merged = await resolveServerEnv(env);
+      return await handleNsaRequest(request, merged);
     }
 
     try {
