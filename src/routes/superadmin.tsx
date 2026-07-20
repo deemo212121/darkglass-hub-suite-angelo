@@ -900,8 +900,7 @@ function SuperAdminDashboard() {
                     })();
                     
                     return (
-                    <Fragment key={admin.uid}>
-                    <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <tr key={admin.uid} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3 text-slate-300">{admin.email}</td>
                       <td className="px-4 py-3 text-slate-300 font-mono">{username}</td>
                       <td className="px-4 py-3 text-white font-semibold">{admin.displayName}</td>
@@ -956,97 +955,6 @@ function SuperAdminDashboard() {
                         </div>
                       </td>
                     </tr>
-                    {editingAdmin?.uid === admin.uid && (
-                      <tr className="border-b border-white/5 bg-blue-950/20">
-                        <td colSpan={10} className="px-6 py-5">
-                          <h4 className="text-sm font-semibold text-blue-300 uppercase tracking-wide mb-4">
-                            Edit Admin Account
-                          </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
-                              <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
-                                {newAdminForm.email}
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Full Name *</label>
-                              <input
-                                type="text"
-                                value={newAdminForm.displayName}
-                                onChange={(e) => setNewAdminForm({ ...newAdminForm, displayName: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="John Doe"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
-                              <div className="flex gap-2">
-                                <select
-                                  value={newAdminForm.phoneCountry}
-                                  onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneCountry: e.target.value })}
-                                  className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                  style={{ minWidth: '80px' }}
-                                >
-                                  {countryCodes.map((item, idx) => (
-                                    <option key={`${item.code}-${idx}`} value={item.code}>
-                                      {item.flag} {item.code}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  type="tel"
-                                  value={newAdminForm.phoneNumber}
-                                  onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneNumber: e.target.value })}
-                                  className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                  placeholder="123-456-7890"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">User Type *</label>
-                              <select
-                                value={newAdminForm.userType}
-                                onChange={(e) => setNewAdminForm({ ...newAdminForm, userType: e.target.value as UserRole })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                              >
-                                <option value="SUPERADMIN">SuperAdmin</option>
-                                <option value="ADMIN">Admin</option>
-                                <option value="MANAGER">Manager</option>
-                                <option value="CSR">CSR (Customer Service)</option>
-                                <option value="TECHNICIAN">Technician</option>
-                                <option value="DISPATCHER">Dispatcher</option>
-                                <option value="HR">HR (Human Resources)</option>
-                                <option value="IT">IT Support</option>
-                                <option value="PARTS">Parts Management</option>
-                                <option value="FINANCE">Finance</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Company (read-only)</label>
-                              <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
-                                {getCompanyName(newAdminForm.companyId)} ({newAdminForm.companyId})
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex gap-3 mt-5">
-                            <button
-                              onClick={handleUpdateAdmin}
-                              className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
-                            >
-                              Update Admin
-                            </button>
-                            <button
-                              onClick={resetAdminForm}
-                              className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
                     );
                   })
                 )}
@@ -1054,6 +962,105 @@ function SuperAdminDashboard() {
             </table>
           </div>
         </div>
+
+        {/* Edit Admin Account modal */}
+        {editingAdmin && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 text-white shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                <h4 className="text-xl font-bold text-white">Edit Admin Account</h4>
+                <button
+                  type="button"
+                  onClick={resetAdminForm}
+                  className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
+                  <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
+                    {newAdminForm.email}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Full Name *</label>
+                  <input
+                    type="text"
+                    value={newAdminForm.displayName}
+                    onChange={(e) => setNewAdminForm({ ...newAdminForm, displayName: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="John Doe"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={newAdminForm.phoneCountry}
+                      onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneCountry: e.target.value })}
+                      className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                      style={{ minWidth: '80px' }}
+                    >
+                      {countryCodes.map((item, idx) => (
+                        <option key={`${item.code}-${idx}`} value={item.code}>
+                          {item.flag} {item.code}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="tel"
+                      value={newAdminForm.phoneNumber}
+                      onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneNumber: e.target.value })}
+                      className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                      placeholder="123-456-7890"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">User Type *</label>
+                  <select
+                    value={newAdminForm.userType}
+                    onChange={(e) => setNewAdminForm({ ...newAdminForm, userType: e.target.value as UserRole })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="SUPERADMIN">SuperAdmin</option>
+                    <option value="ADMIN">Admin</option>
+                    <option value="MANAGER">Manager</option>
+                    <option value="CSR">CSR (Customer Service)</option>
+                    <option value="TECHNICIAN">Technician</option>
+                    <option value="DISPATCHER">Dispatcher</option>
+                    <option value="HR">HR (Human Resources)</option>
+                    <option value="IT">IT Support</option>
+                    <option value="PARTS">Parts Management</option>
+                    <option value="FINANCE">Finance</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Company (read-only)</label>
+                  <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
+                    {getCompanyName(newAdminForm.companyId)} ({newAdminForm.companyId})
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-5">
+                <button
+                  onClick={handleUpdateAdmin}
+                  className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
+                >
+                  Update Admin
+                </button>
+                <button
+                  onClick={resetAdminForm}
+                  className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Companies List */}
         <div className="mt-8 rounded-xl border border-white/15 bg-white/8 backdrop-blur-md overflow-hidden">
