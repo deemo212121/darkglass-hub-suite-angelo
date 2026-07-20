@@ -15,6 +15,7 @@ import {
   type UserRole,
 } from "@/lib/firebase/users";
 import { getCurrentUser } from "@/lib/firebase/auth";
+import { createSupabaseCompany } from "@/lib/supabase/companies";
 
 export const Route = createFileRoute("/superadmin")({
   component: SuperAdminDashboard,
@@ -199,9 +200,32 @@ function SuperAdminDashboard() {
         authUser.uid
       );
 
-      setSuccess(`✅ Company '${newCompanyForm.companyName}' created with ID: ${newCompanyForm.companyId}`);
-      setTimeout(() => setSuccess(null), 5000);
-      
+      // Also create the matching Supabase row — every business table
+      // (tickets, parts, profiles, ...) foreign-keys to Supabase's
+      // companies.id, not the Firestore doc, so the company can't
+      // actually be used for anything until this row exists too.
+      try {
+        await createSupabaseCompany({
+          legacyCode: newCompanyForm.companyId,
+          companyName: newCompanyForm.companyName,
+          address: newCompanyForm.address,
+          city: newCompanyForm.city,
+          state: newCompanyForm.state,
+          zipCode: newCompanyForm.zipCode,
+          phoneNumber: fullPhoneNumber,
+          email: newCompanyForm.email,
+          subscriptionPlan: newCompanyForm.subscriptionPlan,
+          isActive: true,
+        });
+        setSuccess(`✅ Company '${newCompanyForm.companyName}' created with ID: ${newCompanyForm.companyId}`);
+        setTimeout(() => setSuccess(null), 5000);
+      } catch (supabaseErr: any) {
+        console.error("Error creating Supabase company row:", supabaseErr);
+        setError(
+          `Company '${newCompanyForm.companyName}' was created, but failed to sync to Supabase (${supabaseErr.message || supabaseErr}). Its tickets/users won't work until this is fixed manually.`
+        );
+      }
+
       resetCompanyForm();
       setIsAddingCompany(false);
       loadData();
