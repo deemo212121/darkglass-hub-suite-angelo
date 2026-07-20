@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import {
   createUserAccount,
@@ -1117,8 +1117,7 @@ function SuperAdminDashboard() {
                   </tr>
                 ) : (
                   companies.map((company) => (
-                    <Fragment key={company.companyId}>
-                    <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <tr key={company.companyId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3 text-slate-300 font-mono">{company.companyId}</td>
                       <td className="px-4 py-3 text-white font-semibold">{company.companyName}</td>
                       <td className="px-4 py-3 text-slate-300">{company.email}</td>
@@ -1158,140 +1157,148 @@ function SuperAdminDashboard() {
                         </div>
                       </td>
                     </tr>
-                    {editingCompany?.companyId === company.companyId && (
-                      <tr className="border-b border-white/5 bg-blue-950/20">
-                        <td colSpan={9} className="px-6 py-5">
-                          <h4 className="text-sm font-semibold text-blue-300 uppercase tracking-wide mb-4">
-                            Edit Company
-                          </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Company ID (read-only)</label>
-                              <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400 font-mono">
-                                {newCompanyForm.companyId}
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Company Name *</label>
-                              <input
-                                type="text"
-                                value={newCompanyForm.companyName}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, companyName: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="Acme Appliance Repair"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
-                              <input
-                                type="email"
-                                value={newCompanyForm.email}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, email: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="contact@company.com"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
-                              <div className="flex gap-2">
-                                <select
-                                  value={newCompanyForm.phoneCountry}
-                                  onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneCountry: e.target.value })}
-                                  className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                  style={{ minWidth: '80px' }}
-                                >
-                                  {countryCodes.map((item, idx) => (
-                                    <option key={`${item.code}-${idx}`} value={item.code}>
-                                      {item.flag} {item.code}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  type="tel"
-                                  value={newCompanyForm.phoneNumber}
-                                  onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneNumber: e.target.value })}
-                                  className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                  placeholder="123-456-7890"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Address</label>
-                              <input
-                                type="text"
-                                value={newCompanyForm.address}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, address: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="123 Main St"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">City</label>
-                              <input
-                                type="text"
-                                value={newCompanyForm.city}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, city: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="Jackson"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">State</label>
-                              <input
-                                type="text"
-                                value={newCompanyForm.state}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, state: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="MS"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">ZIP Code</label>
-                              <input
-                                type="text"
-                                value={newCompanyForm.zipCode}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, zipCode: e.target.value })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                                placeholder="39056"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-semibold text-slate-300 mb-2">Subscription Plan</label>
-                              <select
-                                value={newCompanyForm.subscriptionPlan}
-                                onChange={(e) => setNewCompanyForm({ ...newCompanyForm, subscriptionPlan: e.target.value as "basic" | "professional" | "enterprise" })}
-                                className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                              >
-                                <option value="basic">Basic</option>
-                                <option value="professional">Professional</option>
-                                <option value="enterprise">Enterprise</option>
-                              </select>
-                            </div>
-                          </div>
-                          <div className="flex gap-3 mt-5">
-                            <button
-                              onClick={handleUpdateCompany}
-                              className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
-                            >
-                              Update Company
-                            </button>
-                            <button
-                              onClick={resetCompanyForm}
-                              className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
                   ))
                 )}
               </tbody>
             </table>
           </div>
         </div>
+
+        {/* Edit Company modal */}
+        {editingCompany && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 text-white shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+                <h4 className="text-xl font-bold text-white">Edit Company</h4>
+                <button
+                  type="button"
+                  onClick={resetCompanyForm}
+                  className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Company ID (read-only)</label>
+                  <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400 font-mono">
+                    {newCompanyForm.companyId}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Company Name *</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.companyName}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, companyName: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="Acme Appliance Repair"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={newCompanyForm.email}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, email: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="contact@company.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={newCompanyForm.phoneCountry}
+                      onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneCountry: e.target.value })}
+                      className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                      style={{ minWidth: '80px' }}
+                    >
+                      {countryCodes.map((item, idx) => (
+                        <option key={`${item.code}-${idx}`} value={item.code}>
+                          {item.flag} {item.code}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="tel"
+                      value={newCompanyForm.phoneNumber}
+                      onChange={(e) => setNewCompanyForm({ ...newCompanyForm, phoneNumber: e.target.value })}
+                      className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                      placeholder="123-456-7890"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Address</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.address}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, address: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="123 Main St"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">City</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.city}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, city: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="Jackson"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">State</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.state}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, state: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="MS"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">ZIP Code</label>
+                  <input
+                    type="text"
+                    value={newCompanyForm.zipCode}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, zipCode: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="39056"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Subscription Plan</label>
+                  <select
+                    value={newCompanyForm.subscriptionPlan}
+                    onChange={(e) => setNewCompanyForm({ ...newCompanyForm, subscriptionPlan: e.target.value as "basic" | "professional" | "enterprise" })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="basic">Basic</option>
+                    <option value="professional">Professional</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-5">
+                <button
+                  onClick={handleUpdateCompany}
+                  className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
+                >
+                  Update Company
+                </button>
+                <button
+                  onClick={resetCompanyForm}
+                  className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
