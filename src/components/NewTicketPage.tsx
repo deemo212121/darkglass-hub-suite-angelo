@@ -5,6 +5,8 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type Ticket } from "@/lib/ticketData";
 import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
 import { getCompanyDefaultTechnician } from "@/lib/supabase/companySettings";
+import { getLocations } from "@/lib/supabase/locationManagement";
+import { normalizeLocationForRegionMatch } from "@/lib/locations";
 import { lookupZip } from "@/lib/zipCoverage";
 import {
   cityStateMatchesZip,
@@ -101,6 +103,28 @@ export function NewTicketPage({ mod, sub }: Props) {
   useEffect(() => {
     let cancelled = false;
     getCompanyDefaultTechnician().then((t) => { if (!cancelled) setDefaultTechnician(t); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Per-branch default technician: Location Management's "Rep Tech" field
+  // (already set for every real branch, e.g. Nashville -> Leo Sun) takes
+  // priority over the company-wide default above when the ticket's
+  // resolved branch has one set. Keyed normalized+lowercased the same way
+  // getOfficeCoordinates() matches branch names, since branch names are
+  // inconsistently spaced/cased across the codebase ("Jackson,MS" vs
+  // "Jackson, MS").
+  const [locationRepTechs, setLocationRepTechs] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    getLocations().then((rows) => {
+      if (cancelled) return;
+      const map = new Map<string, string>();
+      for (const row of rows) {
+        if (!row.repTech) continue;
+        map.set(normalizeLocationForRegionMatch(row.location).toLowerCase(), row.repTech);
+      }
+      setLocationRepTechs(map);
+    }).catch((err) => console.error("Failed to load location rep techs:", err));
     return () => { cancelled = true; };
   }, []);
 
@@ -285,7 +309,7 @@ export function NewTicketPage({ mod, sub }: Props) {
             return `${m}/${d}/${y.slice(2)}`;
           })()
         : "",
-      technician: defaultTechnician,
+      technician: locationRepTechs.get(normalizeLocationForRegionMatch(location).toLowerCase()) || defaultTechnician,
       customerPref: form.cxPreferredDate ? "Yes" : "No",
       redo: form.isRedo ? "Yes" : "No",
       aging: 0,
