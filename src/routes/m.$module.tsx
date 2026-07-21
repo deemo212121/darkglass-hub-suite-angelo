@@ -15,6 +15,7 @@ import {
   setCompanyDefaultTechnician,
   type MapProvider,
 } from "@/lib/supabase/companySettings";
+import { getLocations, upsertLocation, type LocationRow } from "@/lib/supabase/locationManagement";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
@@ -113,6 +114,34 @@ function ModuleIndex() {
       alert(`Failed to change default technician: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSavingDefaultTechnician(false);
+    }
+  };
+
+  // Per-branch default technician: same "Rep Tech" field Location
+  // Management already edits (location_mgmt_locations.rep_tech) - editing
+  // it here updates the exact same row, just from the Admin page instead
+  // of digging through the full Location Management table.
+  const [locations, setLocations] = useState<LocationRow[]>([]);
+  const [savingLocationId, setSavingLocationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready || !email || m.slug !== "admin") return;
+    let cancelled = false;
+    getLocations().then((rows) => { if (!cancelled) setLocations(rows); })
+      .catch((err) => console.error("Failed to load locations:", err));
+    return () => { cancelled = true; };
+  }, [ready, email, m.slug]);
+
+  const handleRepTechChange = async (loc: LocationRow, next: string) => {
+    if (next === (loc.repTech || "") || savingLocationId) return;
+    setSavingLocationId(loc.id);
+    try {
+      const saved = await upsertLocation({ ...loc, repTech: next });
+      setLocations((current) => current.map((l) => (l.id === loc.id ? saved : l)));
+    } catch (err) {
+      alert(`Failed to update ${loc.location}'s default technician: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingLocationId(null);
     }
   };
 
@@ -249,6 +278,43 @@ function ModuleIndex() {
                 <option key={tech} value={tech}>{tech}</option>
               ))}
             </select>
+          </div>
+        )}
+        {m.slug === "admin" && isAdmin && locations.length > 0 && (
+          <div className="panel mb-5">
+            <div className="mb-3">
+              <h3 className="text-sm font-semibold">Branch Default Technicians (Rep Tech)</h3>
+              <p className="text-xs text-muted-foreground">
+                Overrides the company-wide Default Technician above for tickets
+                whose branch has one set. This is the same "Rep Tech" field
+                Location Management already edits, so changes here show up
+                there too.
+              </p>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-lg border border-white/10">
+              <table className="w-full text-sm">
+                <tbody>
+                  {locations.map((loc) => (
+                    <tr key={loc.id} className="border-b border-white/5 last:border-0">
+                      <td className="px-3 py-2">{loc.location}</td>
+                      <td className="px-3 py-2 text-right">
+                        <select
+                          className="glass-input"
+                          value={loc.repTech || ""}
+                          disabled={savingLocationId === loc.id}
+                          onChange={(e) => handleRepTechChange(loc, e.target.value)}
+                        >
+                          <option value="">Unassigned</option>
+                          {technicianRoster.map((tech) => (
+                            <option key={tech} value={tech}>{tech}</option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
         {m.slug === "dashboard" ? (
