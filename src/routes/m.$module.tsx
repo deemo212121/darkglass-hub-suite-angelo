@@ -18,6 +18,11 @@ import {
 import { getLocations, upsertLocation, type LocationRow } from "@/lib/supabase/locationManagement";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
+// Sentinel <select> value for "force this branch unassigned regardless of
+// the company-wide default" — distinct from "" (no override, inherit the
+// company default), which no real technician name will ever collide with.
+const FORCE_UNASSIGNED = "__FORCE_UNASSIGNED__";
+
 export const Route = createFileRoute("/m/$module")({
   head: ({ params }) => ({
     meta: [{ title: `${getModule(params.module)?.label ?? "Module"} — Admin Hub Solutions` }],
@@ -133,10 +138,15 @@ function ModuleIndex() {
   }, [ready, email, m.slug]);
 
   const handleRepTechChange = async (loc: LocationRow, next: string) => {
-    if (next === (loc.repTech || "") || savingLocationId) return;
+    const currentValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
+    if (next === currentValue || savingLocationId) return;
     setSavingLocationId(loc.id);
     try {
-      const saved = await upsertLocation({ ...loc, repTech: next });
+      const saved = await upsertLocation({
+        ...loc,
+        repTech: next === FORCE_UNASSIGNED ? "" : next,
+        forceUnassigned: next === FORCE_UNASSIGNED,
+      });
       setLocations((current) => current.map((l) => (l.id === loc.id ? saved : l)));
     } catch (err) {
       alert(`Failed to update ${loc.location}'s default technician: ${err instanceof Error ? err.message : String(err)}`);
@@ -258,53 +268,49 @@ function ModuleIndex() {
           </div>
         )}
         {m.slug === "admin" && isAdmin && (
-          <div className="panel mb-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold">Default Technician</h3>
-              <p className="text-xs text-muted-foreground">
-                Every new ticket is created already assigned to this technician,
-                instead of starting unassigned. Leave as "Unassigned" to keep
-                today's behavior.
-              </p>
-            </div>
-            <select
-              className="glass-input"
-              value={defaultTechnician}
-              disabled={savingDefaultTechnician}
-              onChange={(e) => handleDefaultTechnicianChange(e.target.value)}
-            >
-              <option value="">Unassigned</option>
-              {technicianRoster.map((tech) => (
-                <option key={tech} value={tech}>{tech}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        {m.slug === "admin" && isAdmin && locations.length > 0 && (
           <div className="panel mb-5">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Branch Default Technicians (Rep Tech)</h3>
+              <h3 className="text-sm font-semibold">Default Technician</h3>
               <p className="text-xs text-muted-foreground">
-                Overrides the company-wide Default Technician above for tickets
-                whose branch has one set. This is the same "Rep Tech" field
-                Location Management already edits, so changes here show up
-                there too.
+                New tickets are created already assigned to a technician instead
+                of starting unassigned. Set one company-wide below, then
+                optionally override per branch — each branch can inherit the
+                company default, force unassigned regardless of it, or use its
+                own technician (the same "Rep Tech" field Location Management
+                already edits).
               </p>
             </div>
-            <div className="max-h-64 overflow-y-auto rounded-lg border border-white/10">
+            <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
               <table className="w-full text-sm">
                 <tbody>
+                  <tr className="border-b border-white/10 bg-white/5">
+                    <td className="px-3 py-2 font-semibold">All Branches (Company Default)</td>
+                    <td className="px-3 py-2 text-right">
+                      <select
+                        className="glass-input"
+                        value={defaultTechnician}
+                        disabled={savingDefaultTechnician}
+                        onChange={(e) => handleDefaultTechnicianChange(e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {technicianRoster.map((tech) => (
+                          <option key={tech} value={tech}>{tech}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
                   {locations.map((loc) => (
                     <tr key={loc.id} className="border-b border-white/5 last:border-0">
                       <td className="px-3 py-2">{loc.location}</td>
                       <td className="px-3 py-2 text-right">
                         <select
                           className="glass-input"
-                          value={loc.repTech || ""}
+                          value={loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "")}
                           disabled={savingLocationId === loc.id}
                           onChange={(e) => handleRepTechChange(loc, e.target.value)}
                         >
-                          <option value="">Unassigned</option>
+                          <option value="">Use Company Default</option>
+                          <option value={FORCE_UNASSIGNED}>Force Unassigned</option>
                           {technicianRoster.map((tech) => (
                             <option key={tech} value={tech}>{tech}</option>
                           ))}

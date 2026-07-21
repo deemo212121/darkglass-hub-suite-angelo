@@ -24,6 +24,12 @@ export type LocationRow = {
   email: string;
   defaultPartDist: string;
   repTech: string;
+  // If true, this branch's default technician (for new-ticket assignment)
+  // is forced blank regardless of repTech or the company-wide default
+  // (see migration 0068). Optional/undefined so callers that don't know
+  // about this field (e.g. the Location Management form) don't
+  // accidentally reset it — see locToDb below.
+  forceUnassigned?: boolean;
   officeLocation?: string;
   deliveryRecipientName?: string;
   checkProcessing?: "Y" | "N";
@@ -90,6 +96,7 @@ function locFromDb(r: any): LocationRow {
     email: r.email ?? "",
     defaultPartDist: r.default_part_dist ?? "",
     repTech: r.rep_tech ?? "",
+    forceUnassigned: r.force_unassigned === true,
     officeLocation: r.office_location ?? "",
     deliveryRecipientName: r.delivery_recipient_name ?? "",
     checkProcessing: yn(r.check_processing),
@@ -111,7 +118,7 @@ function locFromDb(r: any): LocationRow {
 }
 
 function locToDb(row: LocationRow): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     legacy_id: row.legacyId || (row.id && !row.id.includes("-") ? row.id : null),
     location: row.location,
     address1: row.address1,
@@ -144,6 +151,14 @@ function locToDb(row: LocationRow): Record<string, unknown> {
     oow_part_actual: row.oowPartActual === true,
     updated_at: new Date().toISOString(),
   };
+  // Only touch this column when the caller actually knows about it — the
+  // Location Management form doesn't set forceUnassigned on its rows, and
+  // sending `false` for every save from there would silently clobber
+  // whatever the Admin page's default-technician panel had set.
+  if (row.forceUnassigned !== undefined) {
+    payload.force_unassigned = row.forceUnassigned;
+  }
+  return payload;
 }
 
 export async function getLocations(): Promise<LocationRow[]> {
