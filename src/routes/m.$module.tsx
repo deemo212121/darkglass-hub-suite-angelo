@@ -295,7 +295,7 @@ function ModuleIndex() {
           </div>
         </div>
         {m.slug === "admin" && isAdmin && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5 items-stretch">
         {mapProvider && (
           <div className="panel flex flex-wrap items-center justify-between gap-3">
             <div>
