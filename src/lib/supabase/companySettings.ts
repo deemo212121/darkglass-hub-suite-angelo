@@ -69,3 +69,27 @@ export async function setCompanyCoeBodyTemplate(template: string): Promise<void>
     throw new Error(error.message);
   }
 }
+
+/**
+ * The one technician every new ticket is created with (see migration
+ * 0067). Empty string means "leave new tickets unassigned", same as
+ * before this setting existed.
+ */
+export async function getCompanyDefaultTechnician(): Promise<string> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error || !data) {
+    if (error) console.error("getCompanyDefaultTechnician error:", error.message);
+    return "";
+  }
+  const value = (data.settings as Record<string, unknown> | null)?.defaultTechnician;
+  return typeof value === "string" ? value : "";
+}
+
+/** Admin/Superadmin only — enforced server-side by the set_company_default_technician RPC. */
+export async function setCompanyDefaultTechnician(technician: string): Promise<void> {
+  const { error } = await supabase.rpc("set_company_default_technician", { p_technician: technician });
+  if (error) {
+    console.error("setCompanyDefaultTechnician error:", error.message);
+    throw new Error(error.message);
+  }
+}

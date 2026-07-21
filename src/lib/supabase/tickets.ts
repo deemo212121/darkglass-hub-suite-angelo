@@ -379,6 +379,7 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
       product_type: input.productType ?? null,
       purchase_date: input.purchaseDate || null,
       status: input.status ?? "CSR-Needs Scheduling",
+      technician: input.technician || null,
       part_order: input.partOrder ?? null,
       diagnosed: bool(input.diagnosed),
       customer_pref: bool(input.customerPref),

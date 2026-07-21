@@ -4,6 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type Ticket } from "@/lib/ticketData";
 import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
+import { getCompanyDefaultTechnician } from "@/lib/supabase/companySettings";
 import { lookupZip } from "@/lib/zipCoverage";
 import {
   cityStateMatchesZip,
@@ -93,7 +94,16 @@ export function NewTicketPage({ mod, sub }: Props) {
   const [zipLookupError, setZipLookupError] = useState<string | null>(null);
   const navigate = useNavigate();
   const createdTicketStatus = "Acknowledged";
-  
+  // Company-wide default technician (see migration 0067) — new tickets are
+  // created with this technician instead of starting unassigned. Empty
+  // string if the company hasn't set one, which keeps today's behavior.
+  const [defaultTechnician, setDefaultTechnician] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyDefaultTechnician().then((t) => { if (!cancelled) setDefaultTechnician(t); });
+    return () => { cancelled = true; };
+  }, []);
+
   // Get query parameters using router's useSearch
   let copyToken: string | null = null;
   try {
@@ -275,7 +285,7 @@ export function NewTicketPage({ mod, sub }: Props) {
             return `${m}/${d}/${y.slice(2)}`;
           })()
         : "",
-      technician: "",
+      technician: defaultTechnician,
       customerPref: form.cxPreferredDate ? "Yes" : "No",
       redo: form.isRedo ? "Yes" : "No",
       aging: 0,

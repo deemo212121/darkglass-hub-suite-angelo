@@ -7,8 +7,14 @@ import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
-import { getMyRoles } from "@/lib/supabase/users";
-import { getCompanyMapProvider, setCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
+import {
+  getCompanyMapProvider,
+  setCompanyMapProvider,
+  getCompanyDefaultTechnician,
+  setCompanyDefaultTechnician,
+  type MapProvider,
+} from "@/lib/supabase/companySettings";
 import { ArrowRight, ChevronLeft } from "lucide-react";
 
 export const Route = createFileRoute("/m/$module")({
@@ -69,6 +75,44 @@ function ModuleIndex() {
       alert(`Failed to change map provider: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSavingMapProvider(false);
+    }
+  };
+
+  // Company-wide default technician (see migration 0067) — every new ticket
+  // is created with this technician instead of starting unassigned.
+  const [defaultTechnician, setDefaultTechnicianState] = useState("");
+  const [technicianRoster, setTechnicianRoster] = useState<string[]>([]);
+  const [savingDefaultTechnician, setSavingDefaultTechnician] = useState(false);
+
+  useEffect(() => {
+    if (!ready || !email || m.slug !== "admin") return;
+    let cancelled = false;
+    getCompanyDefaultTechnician().then((t) => { if (!cancelled) setDefaultTechnicianState(t); });
+    getCompanyUsers().then((users) => {
+      if (cancelled) return;
+      const names = users
+        .filter((u) => {
+          const roles = [u.role, ...(u.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
+          return u.is_active && (roles.includes("TECHNICIAN") || roles.includes("TECHNICIAN_MANAGER"));
+        })
+        .map((u) => u.display_name || u.email)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      setTechnicianRoster(names);
+    }).catch((err) => console.error("Failed to load technician roster:", err));
+    return () => { cancelled = true; };
+  }, [ready, email, m.slug]);
+
+  const handleDefaultTechnicianChange = async (next: string) => {
+    if (next === defaultTechnician || savingDefaultTechnician) return;
+    setSavingDefaultTechnician(true);
+    try {
+      await setCompanyDefaultTechnician(next);
+      setDefaultTechnicianState(next);
+    } catch (err) {
+      alert(`Failed to change default technician: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSavingDefaultTechnician(false);
     }
   };
 
@@ -182,6 +226,29 @@ function ModuleIndex() {
               </p>
             </div>
             <MapProviderToggle value={mapProvider} onChange={handleMapProviderChange} disabled={savingMapProvider} />
+          </div>
+        )}
+        {m.slug === "admin" && isAdmin && (
+          <div className="panel mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">Default Technician</h3>
+              <p className="text-xs text-muted-foreground">
+                Every new ticket is created already assigned to this technician,
+                instead of starting unassigned. Leave as "Unassigned" to keep
+                today's behavior.
+              </p>
+            </div>
+            <select
+              className="glass-input"
+              value={defaultTechnician}
+              disabled={savingDefaultTechnician}
+              onChange={(e) => handleDefaultTechnicianChange(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {technicianRoster.map((tech) => (
+                <option key={tech} value={tech}>{tech}</option>
+              ))}
+            </select>
           </div>
         )}
         {m.slug === "dashboard" ? (
