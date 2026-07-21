@@ -70,6 +70,25 @@ export interface UserAccount {
 }
 
 /**
+ * Normalize a raw Firestore user document into the UserAccount shape.
+ * Two on-disk shapes exist:
+ *  - legacy flat users/{uid}: already uid/displayName.
+ *  - role-grouped users/{role}/{status}/{name} + its users_index/{uid}
+ *    mirror (see createUserAccount below): documentId/name instead.
+ * Casting raw data straight to UserAccount without this leaves uid and
+ * displayName undefined for every user created via the newer path — which
+ * breaks React list keys (`key={admin.uid}` collides as `undefined` across
+ * every such user, so only one survives rendering) and shows a blank name.
+ */
+function normalizeUserAccount(docId: string, data: any): UserAccount {
+  return {
+    ...data,
+    uid: data.uid || data.documentId || docId,
+    displayName: data.displayName || data.name || data.email || "",
+  } as UserAccount;
+}
+
+/**
  * Generate username from display name
  * Format: FirstName.LastName
  * Example: "Jhon Norban Rulona" -> "Jhon.Rulona"
@@ -350,12 +369,12 @@ export async function getUserAccount(uid: string): Promise<UserAccount | null> {
     const indexRef = doc(db, "users_index", uid);
     const indexSnap = await getDoc(indexRef);
     if (indexSnap.exists()) {
-      return indexSnap.data() as UserAccount;
+      return normalizeUserAccount(indexSnap.id, indexSnap.data());
     }
     // Back-compat: fall back to the legacy flat users/{uid} path.
     const legacyRef = doc(db, "users", uid);
     const legacySnap = await getDoc(legacyRef);
-    return legacySnap.exists() ? (legacySnap.data() as UserAccount) : null;
+    return legacySnap.exists() ? normalizeUserAccount(legacySnap.id, legacySnap.data()) : null;
   } catch (error) {
     console.error("Error fetching user:", error);
     return null;
@@ -418,7 +437,7 @@ export async function getUserByUsername(
       return null;
     }
 
-    const user = snapshot.docs[0].data() as UserAccount;
+    const user = normalizeUserAccount(snapshot.docs[0].id, snapshot.docs[0].data());
 
     if (!user.isActive) {
       console.warn(`User ${username} is inactive`);
@@ -457,17 +476,15 @@ export async function getCompanyUsers(companyId: string): Promise<UserAccount[]>
     // index entry when a user exists in both — i.e. already migrated).
     const byId = new Map<string, UserAccount>();
     legacySnap.docs.forEach((d) => {
-      const u = d.data() as UserAccount;
-      byId.set((u as any).documentId || u.uid || d.id, u);
+      const u = normalizeUserAccount(d.id, d.data());
+      byId.set(u.uid, u);
     });
     idxSnap.docs.forEach((d) => {
-      const u = d.data() as UserAccount;
-      byId.set((u as any).documentId || u.uid || d.id, u);
+      const u = normalizeUserAccount(d.id, d.data());
+      byId.set(u.uid, u);
     });
 
-    return Array.from(byId.values()).sort((a, b) =>
-      (a.displayName || (a as any).name || "").localeCompare(b.displayName || (b as any).name || "")
-    );
+    return Array.from(byId.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
   } catch (error) {
     console.error("Error fetching company users:", error);
     return [];
@@ -491,14 +508,15 @@ export async function getAllUsers(): Promise<UserAccount[]> {
 
     const byId = new Map<string, UserAccount>();
     legacySnap.docs.forEach((d) => {
-      const u = d.data() as UserAccount;
+      const raw = d.data();
       // Skip the role-label subcollection parent docs (they have no uid/email).
-      if (!(u as any).email && !u.uid && !(u as any).documentId) return;
-      byId.set((u as any).documentId || u.uid || d.id, u);
+      if (!raw.email && !raw.uid && !raw.documentId) return;
+      const u = normalizeUserAccount(d.id, raw);
+      byId.set(u.uid, u);
     });
     idxSnap.docs.forEach((d) => {
-      const u = d.data() as UserAccount;
-      byId.set((u as any).documentId || u.uid || d.id, u);
+      const u = normalizeUserAccount(d.id, d.data());
+      byId.set(u.uid, u);
     });
 
     return Array.from(byId.values()).sort((a, b) => {
@@ -621,7 +639,7 @@ export async function getUsersByRole(
     );
     const snapshot = await getDocs(q);
 
-    return snapshot.docs.map((doc) => doc.data() as UserAccount);
+    return snapshot.docs.map((doc) => normalizeUserAccount(doc.id, doc.data()));
   } catch (error) {
     console.error("Error fetching users by role:", error);
     return [];
