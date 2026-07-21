@@ -313,13 +313,9 @@ function ModuleIndex() {
               <div>
                 <h3 className="text-sm font-semibold">Default Technician</h3>
                 <p className="text-xs text-muted-foreground">
-                  New tickets are created already assigned to a technician instead
-                  of starting unassigned. Set one company-wide below, then
-                  optionally override per branch — each branch can inherit the
-                  company default, force unassigned regardless of it, or use its
-                  own technician (the same "Rep Tech" field Location Management
-                  already edits). Changes below are staged only — nothing saves
-                  until you click Save Changes.
+                  New tickets start assigned to a technician instead of unassigned.
+                  Set one company-wide, then optionally override per branch.
+                  Nothing saves until you click Save Changes.
                 </p>
               </div>
               {hasPendingChanges && (
