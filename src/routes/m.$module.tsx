@@ -294,8 +294,10 @@ function ModuleIndex() {
             <p className="text-sm text-muted-foreground">{m.tagline}</p>
           </div>
         </div>
-        {m.slug === "admin" && isAdmin && mapProvider && (
-          <div className="panel mb-5 flex flex-wrap items-center justify-between gap-3">
+        {m.slug === "admin" && isAdmin && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5 items-start">
+        {mapProvider && (
+          <div className="panel flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold">Map Provider</h3>
               <p className="text-xs text-muted-foreground">
@@ -306,8 +308,7 @@ function ModuleIndex() {
             <MapProviderToggle value={mapProvider} onChange={handleMapProviderChange} disabled={savingMapProvider} />
           </div>
         )}
-        {m.slug === "admin" && isAdmin && (
-          <div className="panel mb-5">
+          <div className="panel">
             <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold">Default Technician</h3>
@@ -408,6 +409,7 @@ function ModuleIndex() {
               )}
             </div>
           </div>
+        </div>
         )}
         {m.slug === "dashboard" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
