@@ -3232,7 +3232,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // floating sidebar, so the two stay in sync automatically. Categories and
   // the tabs within them are kept in alphabetical order. ──
   const tabGroups = [
-    {
+    // Automated Forms (COE, Warning Form, tax forms, Jotform docs) is
+    // AH Solutions-only for now — other companies don't use these forms.
+    ...(companyId === "COMP001" ? [{
       group: "Automated Forms",
       icon: Paperclip,
       tabs: [
@@ -3241,7 +3243,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
         { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
       ] as const,
-    },
+    }] : []),
     {
       group: "Generate Reports",
       icon: Download,
