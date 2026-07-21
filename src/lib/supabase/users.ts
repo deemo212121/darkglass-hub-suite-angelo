@@ -410,6 +410,50 @@ export async function createCompanyUser(input: {
 }
 
 /**
+ * Create the Supabase profile for an admin created through SuperAdmin's
+ * Firestore-based Add Admin flow (createUserAccount in firebase/users.ts).
+ * Without this, the admin has no Supabase profile at all — every RLS
+ * policy resolves the caller's company through profiles (auth_company_id()),
+ * so they'd log in fine but see no tickets/users/anything Supabase-backed.
+ *
+ * Unlike createCompanyUser() above, this targets an ARBITRARY company (the
+ * one SuperAdmin picked), not the caller's own — only a SuperAdmin session
+ * can do this (profiles_insert's RLS check allows is_superadmin() with any
+ * company_id; a regular admin/manager session would be rejected).
+ */
+export async function createSupabaseAdminProfile(input: {
+  firebaseUid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  companyLegacyCode: string;
+  phoneNumber?: string;
+}): Promise<void> {
+  const { data: company, error: companyErr } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("legacy_code", input.companyLegacyCode)
+    .maybeSingle();
+  if (companyErr) throw new Error(companyErr.message);
+  if (!company) {
+    throw new Error(`No Supabase company found for '${input.companyLegacyCode}'`);
+  }
+
+  const username = generateUsername(input.displayName);
+  const { error } = await supabase.from("profiles").insert({
+    firebase_uid: input.firebaseUid,
+    company_id: company.id,
+    email: input.email,
+    username,
+    display_name: input.displayName,
+    role: input.role,
+    phone_number: input.phoneNumber ?? "",
+    is_active: true,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/**
  * Delete a user's profile from Supabase (company-scoped via RLS).
  * Note: this removes the Supabase profile only. The Firebase Auth credential
  * (if any) should be removed separately in the Firebase console or via admin SDK.

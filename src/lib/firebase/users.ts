@@ -14,8 +14,9 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db, isFirebaseReady } from "./config";
-import { createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
-import { auth } from "./config";
+import { createUserWithEmailAndPassword, getAuth, updatePassword } from "firebase/auth";
+import { initializeApp, getApps, deleteApp } from "firebase/app";
+import { auth, app } from "./config";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 
 /**
@@ -284,13 +285,32 @@ export async function createUserAccount(
     // 1. Generate username from display name
     const username = generateUsername(userData.displayName);
 
-    // 2. Create Firebase Auth user
-    const userCredential = await createUserWithEmailAndPassword(
-      auth,
-      userData.email,
-      userData.password
-    );
-    const uid = userCredential.user.uid;
+    // 2. Create Firebase Auth user on a SECONDARY app, matching the pattern
+    //    already established in supabase/users.ts's createCompanyUser().
+    //    createUserWithEmailAndPassword ALWAYS switches its Auth instance's
+    //    current user to the newly created one — calling it on the primary
+    //    `auth` (as this used to) would sign the calling SuperAdmin out of
+    //    their own session and sign them in as the admin they just created.
+    if (!app) throw new Error("Firebase not initialized");
+    const secondaryName = "user-provisioner";
+    const existingSecondary = getApps().find((a) => a.name === secondaryName);
+    const secondaryApp = existingSecondary ?? initializeApp(app.options, secondaryName);
+    const secondaryAuth = getAuth(secondaryApp);
+
+    let uid: string;
+    try {
+      const userCredential = await createUserWithEmailAndPassword(
+        secondaryAuth,
+        userData.email,
+        userData.password
+      );
+      uid = userCredential.user.uid;
+      await secondaryAuth.signOut();
+    } finally {
+      if (!existingSecondary) {
+        try { await deleteApp(secondaryApp); } catch { /* ignore */ }
+      }
+    }
 
     // 3. Build the full profile record (every form field is persisted here).
     //    Field order matters for the Firestore console: documentId goes LAST.

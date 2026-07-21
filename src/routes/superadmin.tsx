@@ -20,6 +20,7 @@ import {
   getSupabaseCompanyLoginAlias,
   updateSupabaseCompanyLoginAlias,
 } from "@/lib/supabase/companies";
+import { createSupabaseAdminProfile } from "@/lib/supabase/users";
 
 export const Route = createFileRoute("/superadmin")({
   component: SuperAdminDashboard,
@@ -279,7 +280,7 @@ function SuperAdminDashboard() {
         ? `${newAdminForm.phoneCountry} ${newAdminForm.phoneNumber}`
         : "";
 
-      await createUserAccount(
+      const newUid = await createUserAccount(
         {
           email: newAdminForm.email,
           password: newAdminForm.password,
@@ -291,9 +292,28 @@ function SuperAdminDashboard() {
         authUser.uid
       );
 
-      setSuccess(`✅ Admin '${newAdminForm.displayName}' created successfully for ${company.companyName}!`);
-      setTimeout(() => setSuccess(null), 5000);
-      
+      // Also create the matching Supabase profile — every RLS policy
+      // resolves the caller's company through profiles, so without this
+      // the admin can log in but sees no tickets/users/anything
+      // Supabase-backed at all.
+      try {
+        await createSupabaseAdminProfile({
+          firebaseUid: newUid,
+          email: newAdminForm.email,
+          displayName: newAdminForm.displayName,
+          role: newAdminForm.userType,
+          companyLegacyCode: newAdminForm.companyId,
+          phoneNumber: fullPhoneNumber,
+        });
+        setSuccess(`✅ Admin '${newAdminForm.displayName}' created successfully for ${company.companyName}!`);
+        setTimeout(() => setSuccess(null), 5000);
+      } catch (supabaseErr: any) {
+        console.error("Error creating Supabase admin profile:", supabaseErr);
+        setError(
+          `Admin '${newAdminForm.displayName}' was created, but failed to sync to Supabase (${supabaseErr.message || supabaseErr}). They can log in but won't see any tickets/data until this is fixed.`
+        );
+      }
+
       resetAdminForm();
       setIsAddingAdmin(false);
       loadData();
