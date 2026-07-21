@@ -16,7 +16,7 @@ import {
   type MapProvider,
 } from "@/lib/supabase/companySettings";
 import { getLocations, upsertLocation, type LocationRow } from "@/lib/supabase/locationManagement";
-import { ArrowRight, ChevronLeft } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronDown, ChevronUp } from "lucide-react";
 
 // Sentinel <select> value for "force this branch unassigned regardless of
 // the company-wide default" — distinct from "" (no override, inherit the
@@ -130,6 +130,9 @@ function ModuleIndex() {
   const [pendingDefaultTechnician, setPendingDefaultTechnician] = useState<string | null>(null);
   const [pendingLocationChanges, setPendingLocationChanges] = useState<Map<string, string>>(new Map());
   const [savingChanges, setSavingChanges] = useState(false);
+  // Collapsed by default so the per-branch list (30+ rows) doesn't push the
+  // rest of the Admin page's content down out of view.
+  const [branchListExpanded, setBranchListExpanded] = useState(false);
   const hasPendingChanges = pendingDefaultTechnician !== null || pendingLocationChanges.size > 0;
 
   const handleDefaultTechnicianChange = (next: string) => {
@@ -339,7 +342,7 @@ function ModuleIndex() {
                 </div>
               )}
             </div>
-            <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
+            <div className="rounded-lg border border-white/10">
               <table className="w-full text-sm">
                 <tbody>
                   <tr className={`border-b border-white/10 ${pendingDefaultTechnician !== null ? "bg-amber-500/10" : "bg-white/5"}`}>
@@ -358,32 +361,51 @@ function ModuleIndex() {
                       </select>
                     </td>
                   </tr>
-                  {locations.map((loc) => {
-                    const savedValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
-                    const pendingValue = pendingLocationChanges.get(loc.id);
-                    const isPending = pendingValue !== undefined;
-                    return (
-                      <tr key={loc.id} className={`border-b border-white/5 last:border-0 ${isPending ? "bg-amber-500/10" : ""}`}>
-                        <td className="px-3 py-2">{loc.location}</td>
-                        <td className="px-3 py-2 text-right">
-                          <select
-                            className="glass-input"
-                            value={pendingValue ?? savedValue}
-                            disabled={savingChanges}
-                            onChange={(e) => handleRepTechChange(loc, e.target.value)}
-                          >
-                            <option value="">Use Company Default</option>
-                            <option value={FORCE_UNASSIGNED}>Force Unassigned</option>
-                            {technicianRoster.map((tech) => (
-                              <option key={tech} value={tech}>{tech}</option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    );
-                  })}
                 </tbody>
               </table>
+              <button
+                type="button"
+                onClick={() => setBranchListExpanded((v) => !v)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground border-b border-white/10 transition-colors"
+              >
+                {branchListExpanded ? (
+                  <>Hide per-branch overrides <ChevronUp className="h-3.5 w-3.5" /></>
+                ) : (
+                  <>Show all {locations.length} branches <ChevronDown className="h-3.5 w-3.5" /></>
+                )}
+              </button>
+              {branchListExpanded && (
+                <div className="max-h-80 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {locations.map((loc) => {
+                        const savedValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
+                        const pendingValue = pendingLocationChanges.get(loc.id);
+                        const isPending = pendingValue !== undefined;
+                        return (
+                          <tr key={loc.id} className={`border-b border-white/5 last:border-0 ${isPending ? "bg-amber-500/10" : ""}`}>
+                            <td className="px-3 py-2">{loc.location}</td>
+                            <td className="px-3 py-2 text-right">
+                              <select
+                                className="glass-input"
+                                value={pendingValue ?? savedValue}
+                                disabled={savingChanges}
+                                onChange={(e) => handleRepTechChange(loc, e.target.value)}
+                              >
+                                <option value="">Use Company Default</option>
+                                <option value={FORCE_UNASSIGNED}>Force Unassigned</option>
+                                {technicianRoster.map((tech) => (
+                                  <option key={tech} value={tech}>{tech}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
