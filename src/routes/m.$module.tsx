@@ -88,7 +88,6 @@ function ModuleIndex() {
   // is created with this technician instead of starting unassigned.
   const [defaultTechnician, setDefaultTechnicianState] = useState("");
   const [technicianRoster, setTechnicianRoster] = useState<string[]>([]);
-  const [savingDefaultTechnician, setSavingDefaultTechnician] = useState(false);
 
   useEffect(() => {
     if (!ready || !email || m.slug !== "admin") return;
@@ -109,25 +108,11 @@ function ModuleIndex() {
     return () => { cancelled = true; };
   }, [ready, email, m.slug]);
 
-  const handleDefaultTechnicianChange = async (next: string) => {
-    if (next === defaultTechnician || savingDefaultTechnician) return;
-    setSavingDefaultTechnician(true);
-    try {
-      await setCompanyDefaultTechnician(next);
-      setDefaultTechnicianState(next);
-    } catch (err) {
-      alert(`Failed to change default technician: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSavingDefaultTechnician(false);
-    }
-  };
-
   // Per-branch default technician: same "Rep Tech" field Location
   // Management already edits (location_mgmt_locations.rep_tech) - editing
   // it here updates the exact same row, just from the Admin page instead
   // of digging through the full Location Management table.
   const [locations, setLocations] = useState<LocationRow[]>([]);
-  const [savingLocationId, setSavingLocationId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ready || !email || m.slug !== "admin") return;
@@ -137,21 +122,72 @@ function ModuleIndex() {
     return () => { cancelled = true; };
   }, [ready, email, m.slug]);
 
-  const handleRepTechChange = async (loc: LocationRow, next: string) => {
-    const currentValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
-    if (next === currentValue || savingLocationId) return;
-    setSavingLocationId(loc.id);
-    try {
-      const saved = await upsertLocation({
-        ...loc,
-        repTech: next === FORCE_UNASSIGNED ? "" : next,
-        forceUnassigned: next === FORCE_UNASSIGNED,
-      });
-      setLocations((current) => current.map((l) => (l.id === loc.id ? saved : l)));
-    } catch (err) {
-      alert(`Failed to update ${loc.location}'s default technician: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSavingLocationId(null);
+  // Dropdowns in this panel only stage a change locally — nothing is
+  // written until "Save Changes" is clicked, so scrolling/clicking through
+  // ~30 branches can't accidentally commit a change. pendingDefaultTechnician
+  // is null when there's no staged edit; pendingLocationChanges maps
+  // location id -> staged <select> value (specific tech / "" / FORCE_UNASSIGNED).
+  const [pendingDefaultTechnician, setPendingDefaultTechnician] = useState<string | null>(null);
+  const [pendingLocationChanges, setPendingLocationChanges] = useState<Map<string, string>>(new Map());
+  const [savingChanges, setSavingChanges] = useState(false);
+  const hasPendingChanges = pendingDefaultTechnician !== null || pendingLocationChanges.size > 0;
+
+  const handleDefaultTechnicianChange = (next: string) => {
+    setPendingDefaultTechnician(next === defaultTechnician ? null : next);
+  };
+
+  const handleRepTechChange = (loc: LocationRow, next: string) => {
+    const savedValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
+    setPendingLocationChanges((current) => {
+      const updated = new Map(current);
+      if (next === savedValue) updated.delete(loc.id);
+      else updated.set(loc.id, next);
+      return updated;
+    });
+  };
+
+  const handleDiscardChanges = () => {
+    setPendingDefaultTechnician(null);
+    setPendingLocationChanges(new Map());
+  };
+
+  const handleSaveChanges = async () => {
+    setSavingChanges(true);
+    const errors: string[] = [];
+
+    if (pendingDefaultTechnician !== null) {
+      try {
+        await setCompanyDefaultTechnician(pendingDefaultTechnician);
+        setDefaultTechnicianState(pendingDefaultTechnician);
+        setPendingDefaultTechnician(null);
+      } catch (err) {
+        errors.push(`Company default: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    for (const [locId, value] of pendingLocationChanges) {
+      const loc = locations.find((l) => l.id === locId);
+      if (!loc) continue;
+      try {
+        const saved = await upsertLocation({
+          ...loc,
+          repTech: value === FORCE_UNASSIGNED ? "" : value,
+          forceUnassigned: value === FORCE_UNASSIGNED,
+        });
+        setLocations((current) => current.map((l) => (l.id === locId ? saved : l)));
+        setPendingLocationChanges((current) => {
+          const updated = new Map(current);
+          updated.delete(locId);
+          return updated;
+        });
+      } catch (err) {
+        errors.push(`${loc.location}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    setSavingChanges(false);
+    if (errors.length > 0) {
+      alert(`Some changes failed to save:\n\n${errors.join("\n")}`);
     }
   };
 
@@ -269,27 +305,50 @@ function ModuleIndex() {
         )}
         {m.slug === "admin" && isAdmin && (
           <div className="panel mb-5">
-            <div className="mb-3">
-              <h3 className="text-sm font-semibold">Default Technician</h3>
-              <p className="text-xs text-muted-foreground">
-                New tickets are created already assigned to a technician instead
-                of starting unassigned. Set one company-wide below, then
-                optionally override per branch — each branch can inherit the
-                company default, force unassigned regardless of it, or use its
-                own technician (the same "Rep Tech" field Location Management
-                already edits).
-              </p>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">Default Technician</h3>
+                <p className="text-xs text-muted-foreground">
+                  New tickets are created already assigned to a technician instead
+                  of starting unassigned. Set one company-wide below, then
+                  optionally override per branch — each branch can inherit the
+                  company default, force unassigned regardless of it, or use its
+                  own technician (the same "Rep Tech" field Location Management
+                  already edits). Changes below are staged only — nothing saves
+                  until you click Save Changes.
+                </p>
+              </div>
+              {hasPendingChanges && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleDiscardChanges}
+                    disabled={savingChanges}
+                    className="btn"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveChanges}
+                    disabled={savingChanges}
+                    className="btn btn-primary"
+                  >
+                    {savingChanges ? "Saving…" : "Save Changes"}
+                  </button>
+                </div>
+              )}
             </div>
             <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
               <table className="w-full text-sm">
                 <tbody>
-                  <tr className="border-b border-white/10 bg-white/5">
+                  <tr className={`border-b border-white/10 ${pendingDefaultTechnician !== null ? "bg-amber-500/10" : "bg-white/5"}`}>
                     <td className="px-3 py-2 font-semibold">All Branches (Company Default)</td>
                     <td className="px-3 py-2 text-right">
                       <select
                         className="glass-input"
-                        value={defaultTechnician}
-                        disabled={savingDefaultTechnician}
+                        value={pendingDefaultTechnician ?? defaultTechnician}
+                        disabled={savingChanges}
                         onChange={(e) => handleDefaultTechnicianChange(e.target.value)}
                       >
                         <option value="">Unassigned</option>
@@ -299,25 +358,30 @@ function ModuleIndex() {
                       </select>
                     </td>
                   </tr>
-                  {locations.map((loc) => (
-                    <tr key={loc.id} className="border-b border-white/5 last:border-0">
-                      <td className="px-3 py-2">{loc.location}</td>
-                      <td className="px-3 py-2 text-right">
-                        <select
-                          className="glass-input"
-                          value={loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "")}
-                          disabled={savingLocationId === loc.id}
-                          onChange={(e) => handleRepTechChange(loc, e.target.value)}
-                        >
-                          <option value="">Use Company Default</option>
-                          <option value={FORCE_UNASSIGNED}>Force Unassigned</option>
-                          {technicianRoster.map((tech) => (
-                            <option key={tech} value={tech}>{tech}</option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
+                  {locations.map((loc) => {
+                    const savedValue = loc.forceUnassigned ? FORCE_UNASSIGNED : (loc.repTech || "");
+                    const pendingValue = pendingLocationChanges.get(loc.id);
+                    const isPending = pendingValue !== undefined;
+                    return (
+                      <tr key={loc.id} className={`border-b border-white/5 last:border-0 ${isPending ? "bg-amber-500/10" : ""}`}>
+                        <td className="px-3 py-2">{loc.location}</td>
+                        <td className="px-3 py-2 text-right">
+                          <select
+                            className="glass-input"
+                            value={pendingValue ?? savedValue}
+                            disabled={savingChanges}
+                            onChange={(e) => handleRepTechChange(loc, e.target.value)}
+                          >
+                            <option value="">Use Company Default</option>
+                            <option value={FORCE_UNASSIGNED}>Force Unassigned</option>
+                            {technicianRoster.map((tech) => (
+                              <option key={tech} value={tech}>{tech}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
