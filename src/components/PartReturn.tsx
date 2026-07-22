@@ -5,6 +5,7 @@ import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const STATUS_COLOR: Record<string, React.CSSProperties> = {
@@ -44,6 +45,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [location, setLocation] = useState("");
   const [agingMin, setAgingMin] = useState(0);
   const [agingMax, setAgingMax] = useState(90);
+  const [repairStatusFilter, setRepairStatusFilter] = useState<Set<string>>(new Set());
   const [uniqueIdSearch, setUniqueIdSearch] = useState("");
   const [includeReturned, setIncludeReturned] = useState(false);
   const [resultSearch, setResultSearch] = useState("");
@@ -123,19 +125,36 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const byTab = useMemo(() => allRows.filter((r) => (tab === "core" ? r.coreValue > 0 : r.coreValue <= 0)), [allRows, tab]);
 
-  const rows = useMemo(() => byTab.filter((r) => {
+  // Shared predicate so the Repair Status column filter's own option list can
+  // cascade off every OTHER active filter (aging included) while excluding
+  // its own selection - same "Excel autofilter" pattern Ticket List uses.
+  const matchesCommonFilters = (r: PartReturnRow, opts: { skipRepairStatus?: boolean } = {}) => {
     if (provider && r.claimTo !== provider) return false;
     if (partDist && r.partDist !== partDist) return false;
     if (location && r.location !== location) return false;
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
+    if (!opts.skipRepairStatus && repairStatusFilter.size > 0 && !repairStatusFilter.has(r.repairStatus)) return false;
     if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
     if (uniqueIdSearch && !r.id.toLowerCase().includes(uniqueIdSearch.toLowerCase()) && !r.invoiceNo.toLowerCase().includes(uniqueIdSearch.toLowerCase())) return false;
     if (resultSearch) {
-      const blob = [r.ticketNo, r.partNo, r.description, r.status, r.claimTo, r.raNo].join(" ").toLowerCase();
+      const blob = [r.ticketNo, r.partNo, r.description, r.status, r.claimTo, r.raNo, r.repairStatus].join(" ").toLowerCase();
       if (!blob.includes(resultSearch.toLowerCase())) return false;
     }
     return true;
-  }), [byTab, provider, partDist, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
+  };
+
+  const rows = useMemo(
+    () => byTab.filter((r) => matchesCommonFilters(r)),
+    [byTab, provider, partDist, location, agingMin, agingMax, repairStatusFilter, includeReturned, uniqueIdSearch, resultSearch]
+  );
+
+  const repairStatusOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const r of byTab) {
+      if (matchesCommonFilters(r, { skipRepairStatus: true })) values.add(r.repairStatus);
+    }
+    return Array.from(values);
+  }, [byTab, provider, partDist, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -274,6 +293,12 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 <tr>
                   <th>Ticket No.</th>
                   <th>Branch</th>
+                  <th>
+                    <span className="inline-flex items-center">
+                      Repair Status
+                      <TicketColumnFilter options={repairStatusOptions} selected={repairStatusFilter} onChange={setRepairStatusFilter} label="Filter by Repair Status" />
+                    </span>
+                  </th>
                   <th>Unique ID</th>
                   <th>Part #</th>
                   <th>Dist.</th>
@@ -291,7 +316,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={15} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                  <tr><td colSpan={16} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
                 ) : rows.map((r) => (
                   <tr key={r.id}>
                     <td>
@@ -300,6 +325,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       ) : "—"}
                     </td>
                     <td>{r.location || "—"}</td>
+                    <td>{r.repairStatus || "—"}</td>
                     <td title={r.id}>{r.id.slice(0, 8)}</td>
                     <td>
                       <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>

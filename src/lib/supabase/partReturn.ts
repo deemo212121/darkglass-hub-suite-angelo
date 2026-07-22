@@ -35,6 +35,7 @@ export interface PartReturnRow {
   raDate: string;
   claimTo: string;
   returnStatus: string;
+  repairStatus: string;
 }
 
 function daysSince(dateStr: string | null): number | null {
@@ -51,7 +52,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, schedule_date, technician)"
+      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, schedule_date, technician, status)"
     )
     .not("claim_to", "is", null)
     .neq("claim_to", "");
@@ -80,6 +81,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     raDate: row.ra_date || "",
     claimTo: row.claim_to || "",
     returnStatus: row.return_status || "NOT RECEIVED",
+    repairStatus: row.tickets?.status || "",
   }));
 }
 
