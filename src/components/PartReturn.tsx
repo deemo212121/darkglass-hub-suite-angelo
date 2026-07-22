@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
+import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, marconeRequestReturn, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
@@ -28,6 +28,18 @@ const STATUS_COLOR: Record<string, React.CSSProperties> = {
 // fabricated taxonomy, just the real categories this app already uses.
 const RETURN_REASONS = ["Not Needed", "Defect", "DMG", "PNN", "Qty Discrepancy"];
 
+// Part Provider is a fixed, user-specified set of 4 buckets (not a
+// dynamically-fetched list) that every real part_dist value gets grouped
+// into - replaces the earlier separate "Part Dist." filter entirely.
+const PROVIDER_OPTIONS = ["Marcone", "Encompass", "LG", "Other"];
+function providerGroupOf(partDist: string): string {
+  const d = (partDist || "").toLowerCase();
+  if (d.includes("marcone")) return "Marcone";
+  if (d.includes("encompass")) return "Encompass";
+  if (d.includes("lg")) return "LG";
+  return "Other";
+}
+
 function formatMoney(value: number) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
@@ -39,15 +51,12 @@ function formatUsd(value: number | undefined): string {
 export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [tab, setTab] = useState<"return" | "core">("return");
   const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
-  const [providers, setProviders] = useState<string[]>([]);
-  const [partDists, setPartDists] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [provider, setProvider] = useState("");
-  const [partDist, setPartDist] = useState("");
   const [location, setLocation] = useState("");
   const [agingMin, setAgingMin] = useState(0);
   const [agingMax, setAgingMax] = useState(90);
@@ -75,8 +84,6 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       .then(setAllRows)
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-    getDistinctProviders().then(setProviders).catch((err) => console.error("Failed to load providers:", err));
-    getDistinctPartDist().then(setPartDists).catch((err) => console.error("Failed to load part distributors:", err));
   }, []);
 
   useEffect(() => {
@@ -122,14 +129,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     setModalTab("marcone");
   };
 
-  // A return batch can only target one distributor at a time - "Part Dist."
-  // (part_dist, e.g. Marcone/Encompass), not "Part Provider" (claim_to, the
-  // insurance/warranty payer) - since it's the distributor's API/process
-  // that actually processes a return. Drop the selection whenever the Part
-  // Dist. filter changes or is cleared to "All Distributors".
+  // A return batch can only target one provider bucket at a time. Drop the
+  // selection whenever Part Provider changes or is cleared.
   useEffect(() => {
     setSelectedForReturn(new Set());
-  }, [partDist, tab]);
+  }, [provider, tab]);
 
   const setLocalField = (id: string, field: "raNo" | "raDate" | "returnReason", value: string) => {
     setAllRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
@@ -165,7 +169,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   };
 
   const selectedRows = useMemo(() => allRows.filter((r) => selectedForReturn.has(r.id)), [allRows, selectedForReturn]);
-  const isMarconeDist = partDist.toLowerCase().includes("marcone");
+  const isMarconeDist = provider === "Marcone";
 
   const submitReturn = async () => {
     setSubmittingReturn(true);
@@ -220,7 +224,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         setAllRows((current) => current.map((row) =>
           selectedForReturn.has(row.id) && !row.raDate ? { ...row, raDate: today } : row
         ));
-        setReturnSubmitMessage(`Return recorded locally for ${selectedForReturn.size} part${selectedForReturn.size !== 1 ? "s" : ""} — ${partDist} has no live return API wired up, so no real RA # was issued.`);
+        setReturnSubmitMessage(`Return recorded locally for ${selectedForReturn.size} part${selectedForReturn.size !== 1 ? "s" : ""} — ${provider} has no live return API wired up, so no real RA # was issued.`);
         setSelectedForReturn(new Set());
         setShowReturnConfirm(false);
       }
@@ -238,8 +242,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // cascade off every OTHER active filter (aging included) while excluding
   // its own selection - same "Excel autofilter" pattern Ticket List uses.
   const matchesCommonFilters = (r: PartReturnRow, opts: { skipRepairStatus?: boolean } = {}) => {
-    if (provider && r.claimTo !== provider) return false;
-    if (partDist && r.partDist !== partDist) return false;
+    if (provider && providerGroupOf(r.partDist) !== provider) return false;
     if (location && r.location !== location) return false;
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
     if (!opts.skipRepairStatus && repairStatusFilter.size > 0 && !repairStatusFilter.has(r.repairStatus)) return false;
@@ -254,7 +257,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const rows = useMemo(
     () => byTab.filter((r) => matchesCommonFilters(r)),
-    [byTab, provider, partDist, location, agingMin, agingMax, repairStatusFilter, includeReturned, uniqueIdSearch, resultSearch]
+    [byTab, provider, location, agingMin, agingMax, repairStatusFilter, includeReturned, uniqueIdSearch, resultSearch]
   );
 
   const repairStatusOptions = useMemo(() => {
@@ -263,7 +266,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       if (matchesCommonFilters(r, { skipRepairStatus: true })) values.add(r.repairStatus);
     }
     return Array.from(values);
-  }, [byTab, provider, partDist, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
+  }, [byTab, provider, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -338,14 +341,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               <label htmlFor="providerFilter">Part Provider</label>
               <select id="providerFilter" value={provider} onChange={(e) => setProvider(e.target.value)}>
                 <option value="">All Providers</option>
-                {providers.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="partDistFilter">Part Dist.</label>
-              <select id="partDistFilter" value={partDist} onChange={(e) => setPartDist(e.target.value)}>
-                <option value="">All Distributors</option>
-                {partDists.map((d) => <option key={d} value={d}>{d}</option>)}
+                {PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div className="field">
@@ -389,7 +385,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <div className="result-info">{rows.length} record{rows.length !== 1 ? "s" : ""} found</div>
             <div className="flex items-center gap-3">
               {returnSubmitMessage && <span className="text-sm font-semibold text-green-300">{returnSubmitMessage}</span>}
-              {partDist ? (
+              {provider ? (
                 <button
                   type="button"
                   className="btn px-4 bg-blue-600 hover:bg-blue-700 border-blue-600"
@@ -397,10 +393,10 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   style={selectedForReturn.size === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                   onClick={() => setShowReturnConfirm(true)}
                 >
-                  Return {partDist} {selectedForReturn.size > 0 ? `(${selectedForReturn.size})` : ""}
+                  Return {provider} {selectedForReturn.size > 0 ? `(${selectedForReturn.size})` : ""}
                 </button>
               ) : (
-                <span className="text-xs text-muted-foreground">Select a Part Dist. to process returns</span>
+                <span className="text-xs text-muted-foreground">Select a Part Provider to process returns</span>
               )}
               <input className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} />
             </div>
@@ -506,10 +502,10 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       />
                     </td>
                     <td>
-                      {partDist ? (
+                      {provider ? (
                         <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
                           <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
-                          <span className="text-xs">Return {partDist}</span>
+                          <span className="text-xs">Return {provider}</span>
                         </label>
                       ) : "—"}
                     </td>
@@ -529,7 +525,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       }}>
         <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="returnConfirmTitle">
           <div className="part-info-header">
-            <div id="returnConfirmTitle" className="part-info-title">Confirm Return to {partDist}</div>
+            <div id="returnConfirmTitle" className="part-info-title">Confirm Return to {provider}</div>
             <button type="button" className="part-info-close" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Close</button>
           </div>
           <div className="part-info-body">
@@ -537,7 +533,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               {isMarconeDist ? (
                 <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be submitted to <strong>Marcone's real return API</strong> — each will get back a genuine RA # from Marcone, saved into {tab === "core" ? "Core RA #" : "RA #"}.</>
               ) : (
-                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{partDist}</strong> in our own system only — {partDist} has no live return API wired up here, so no real RA # will be issued.</>
+                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{provider}</strong> in our own system only — {provider} has no live return API wired up here, so no real RA # will be issued.</>
               )}
             </p>
             <table className="part-info-matrix">
@@ -558,7 +554,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem", justifyContent: "flex-end" }}>
               <button type="button" className="btn" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Cancel</button>
               <button type="button" className="btn bg-blue-600 hover:bg-blue-700 border-blue-600" onClick={submitReturn} disabled={submittingReturn}>
-                {submittingReturn ? "Submitting…" : `Return ${partDist}`}
+                {submittingReturn ? "Submitting…" : `Return ${provider}`}
               </button>
             </div>
           </div>

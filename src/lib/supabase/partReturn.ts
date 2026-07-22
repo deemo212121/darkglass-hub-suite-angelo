@@ -5,14 +5,13 @@
  * Distinct from Part Return Status, which tracks the RA shipment
  * lifecycle for the 4 real "RA - *" statuses; this page covers a much
  * broader population and is scoped down via its own filters (Part
- * Provider/Part Dist./Location/Aging/Repair Status) instead.
+ * Provider/Location/Aging/Repair Status) instead.
  *
- * claim_to is NOT a required filter, only an optional one (Part
- * Provider) - confirmed against real data that every single Marcone
- * part in production has claim_to blank (Marcone parts generally
- * aren't tied to an insurance claim), so requiring claim_to here would
- * silently exclude 100% of real Marcone returns, which is exactly the
- * bug this fixes: population went from 23 rows (claim_to required) to
+ * claim_to is not filtered on at all here - confirmed against real data
+ * that every single Marcone part in production has claim_to blank
+ * (Marcone parts generally aren't tied to an insurance claim), so an
+ * earlier version requiring claim_to silently excluded 100% of real
+ * Marcone returns: population went from 23 rows (claim_to required) to
  * 141 (not required), and real Marcone rows went from 0 to 14.
  *
  * return_status (migration 0070) is reused here for "Include Returned".
@@ -28,16 +27,17 @@
  * you don't physically have yet. Caught by the user looking at a real
  * "Need PO" row sitting in this list.
  *
- * Return submission is keyed by Part Dist. (part_dist - the actual
- * distributor, e.g. "Marcone-162468"/"Encompass"), NOT Part Provider
- * (claim_to, the insurance/warranty payer) - it's the distributor whose
- * API/process actually handles a return. For Marcone specifically this
- * calls their real POST /returns/requestreturnauthorization (confirmed
- * against Marcone's own Swagger spec) and gets back a real
- * returnAuthorizationNumber, saved into ra_no. Every other distributor
- * has no documented/wired return API, so submitting for them only
- * stamps ra_date locally (see submitPartReturnBatch) rather than
- * pretending to submit anything externally.
+ * Part Provider is a fixed 4-option list (Marcone/Encompass/LG/Other),
+ * grouped from the real part_dist value via providerGroupOf() in
+ * PartReturn.tsx - it's the distributor whose API/process actually
+ * handles a return, not the insurance/warranty payer. For Marcone
+ * specifically this calls their real POST
+ * /returns/requestreturnauthorization (confirmed against Marcone's own
+ * Swagger spec) and gets back a real returnAuthorizationNumber, saved
+ * into ra_no. Every other provider has no documented/wired return API,
+ * so submitting for them only stamps ra_date locally (see
+ * submitPartReturnBatch) rather than pretending to submit anything
+ * externally.
  */
 
 import { supabase } from "./client";
@@ -119,17 +119,6 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   }));
 }
 
-/** Distinct real distributor (part_dist) values currently in use, for the filter dropdown. */
-export async function getDistinctPartDist(): Promise<string[]> {
-  const { data, error } = await supabase.from("parts").select("part_dist").not("part_dist", "is", null);
-  if (error) {
-    console.error("getDistinctPartDist error:", error.message);
-    return [];
-  }
-  const set = new Set((data ?? []).map((r: any) => r.part_dist).filter((v: string) => v && v.trim()));
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
 export async function updatePartReturnEntryRow(
   id: string,
   updates: { raNo?: string; raDate?: string; returnReason?: string; returnQty?: number }
@@ -174,15 +163,4 @@ export async function submitPartReturnBatch(ids: string[]): Promise<void> {
       throw new Error(error.message);
     }
   }
-}
-
-/** Distinct real claim_to (Part Provider) values currently in use, for the filter dropdown. */
-export async function getDistinctProviders(): Promise<string[]> {
-  const { data, error } = await supabase.from("parts").select("claim_to").not("claim_to", "is", null);
-  if (error) {
-    console.error("getDistinctProviders error:", error.message);
-    return [];
-  }
-  const set = new Set((data ?? []).map((r: any) => r.claim_to).filter((v: string) => v && v.trim()));
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
