@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
-import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
+import { marconeLookupPart, marconeRequestReturn, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -122,12 +122,14 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     setModalTab("marcone");
   };
 
-  // A return batch can only target one provider at a time (that's who the
-  // "Return {Provider}" action would be for) - drop the selection whenever
-  // the provider filter changes or is cleared to "All Providers".
+  // A return batch can only target one distributor at a time - "Part Dist."
+  // (part_dist, e.g. Marcone/Encompass), not "Part Provider" (claim_to, the
+  // insurance/warranty payer) - since it's the distributor's API/process
+  // that actually processes a return. Drop the selection whenever the Part
+  // Dist. filter changes or is cleared to "All Distributors".
   useEffect(() => {
     setSelectedForReturn(new Set());
-  }, [provider, tab]);
+  }, [partDist, tab]);
 
   const setLocalField = (id: string, field: "raNo" | "raDate" | "returnReason", value: string) => {
     setAllRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
@@ -163,22 +165,66 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   };
 
   const selectedRows = useMemo(() => allRows.filter((r) => selectedForReturn.has(r.id)), [allRows, selectedForReturn]);
+  const isMarconeDist = partDist.toLowerCase().includes("marcone");
 
   const submitReturn = async () => {
     setSubmittingReturn(true);
     setSaveError(null);
     try {
-      await submitPartReturnBatch(Array.from(selectedForReturn));
-      // Reflect the stamped ra_date locally so the RA Date column updates
-      // without a full refetch.
-      const today = new Date().toISOString().slice(0, 10);
-      setAllRows((current) => current.map((row) =>
-        selectedForReturn.has(row.id) && !row.raDate ? { ...row, raDate: today } : row
-      ));
-      setReturnSubmitMessage(`Return submitted for ${selectedForReturn.size} part${selectedForReturn.size !== 1 ? "s" : ""} to ${provider}.`);
-      setSelectedForReturn(new Set());
-      setShowReturnConfirm(false);
-      window.setTimeout(() => setReturnSubmitMessage(null), 5000);
+      if (isMarconeDist) {
+        // Real Marcone return: one call per part line (the endpoint doesn't
+        // accept a batch), collect per-row success/failure so one bad line
+        // doesn't block the rest.
+        const results = await Promise.allSettled(
+          selectedRows.map(async (r) => {
+            const res = await marconeRequestReturn({
+              partNumber: r.partNo,
+              quantity: r.returnQty || r.quantity,
+              reason: r.returnReason || undefined,
+              poNumber: r.poNo || undefined,
+              invoiceNumber: r.invoiceNo || undefined,
+              reference: r.ticketNo || undefined,
+            });
+            if (!res.success || !res.data?.returnAuthorizationNumber) {
+              throw new Error(res.error || "Marcone returned no RA number");
+            }
+            const raNo = String(res.data.returnAuthorizationNumber);
+            await updatePartReturnEntryRow(r.id, { raNo, raDate: new Date().toISOString().slice(0, 10) });
+            return { id: r.id, raNo };
+          })
+        );
+        const succeeded = results.filter((r): r is PromiseFulfilledResult<{ id: string; raNo: string }> => r.status === "fulfilled");
+        const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (succeeded.length > 0) {
+          const raById = new Map(succeeded.map((r) => [r.value.id, r.value.raNo]));
+          const today = new Date().toISOString().slice(0, 10);
+          setAllRows((current) => current.map((row) =>
+            raById.has(row.id) ? { ...row, raNo: raById.get(row.id)!, raDate: today } : row
+          ));
+        }
+        if (failed.length === 0) {
+          setReturnSubmitMessage(`Marcone issued ${succeeded.length} real RA number${succeeded.length !== 1 ? "s" : ""}.`);
+          setSelectedForReturn(new Set());
+          setShowReturnConfirm(false);
+        } else {
+          setSaveError(`${succeeded.length} succeeded, ${failed.length} failed: ${failed[0].reason instanceof Error ? failed[0].reason.message : String(failed[0].reason)}`);
+          // Keep only the failed rows selected so the user can retry just those.
+          const succeededIds = new Set(succeeded.map((r) => r.value.id));
+          setSelectedForReturn((prev) => new Set(Array.from(prev).filter((id) => !succeededIds.has(id))));
+        }
+      } else {
+        // No documented/wired return API for this distributor - record the
+        // return locally only (stamps ra_date, doesn't fabricate an RA #).
+        await submitPartReturnBatch(Array.from(selectedForReturn));
+        const today = new Date().toISOString().slice(0, 10);
+        setAllRows((current) => current.map((row) =>
+          selectedForReturn.has(row.id) && !row.raDate ? { ...row, raDate: today } : row
+        ));
+        setReturnSubmitMessage(`Return recorded locally for ${selectedForReturn.size} part${selectedForReturn.size !== 1 ? "s" : ""} — ${partDist} has no live return API wired up, so no real RA # was issued.`);
+        setSelectedForReturn(new Set());
+        setShowReturnConfirm(false);
+      }
+      window.setTimeout(() => setReturnSubmitMessage(null), 8000);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to submit return");
     } finally {
@@ -343,7 +389,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <div className="result-info">{rows.length} record{rows.length !== 1 ? "s" : ""} found</div>
             <div className="flex items-center gap-3">
               {returnSubmitMessage && <span className="text-sm font-semibold text-green-300">{returnSubmitMessage}</span>}
-              {provider ? (
+              {partDist ? (
                 <button
                   type="button"
                   className="btn px-4 bg-blue-600 hover:bg-blue-700 border-blue-600"
@@ -351,10 +397,10 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   style={selectedForReturn.size === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                   onClick={() => setShowReturnConfirm(true)}
                 >
-                  Return {provider} {selectedForReturn.size > 0 ? `(${selectedForReturn.size})` : ""}
+                  Return {partDist} {selectedForReturn.size > 0 ? `(${selectedForReturn.size})` : ""}
                 </button>
               ) : (
-                <span className="text-xs text-muted-foreground">Select a Part Provider to process returns</span>
+                <span className="text-xs text-muted-foreground">Select a Part Dist. to process returns</span>
               )}
               <input className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} />
             </div>
@@ -460,10 +506,10 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                       />
                     </td>
                     <td>
-                      {provider ? (
+                      {partDist ? (
                         <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
                           <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
-                          <span className="text-xs">Return {provider}</span>
+                          <span className="text-xs">Return {partDist}</span>
                         </label>
                       ) : "—"}
                     </td>
@@ -483,12 +529,16 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       }}>
         <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="returnConfirmTitle">
           <div className="part-info-header">
-            <div id="returnConfirmTitle" className="part-info-title">Confirm Return to {provider}</div>
+            <div id="returnConfirmTitle" className="part-info-title">Confirm Return to {partDist}</div>
             <button type="button" className="part-info-close" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Close</button>
           </div>
           <div className="part-info-body">
             <p style={{ fontSize: "0.85rem", color: "#374151", marginBottom: "0.75rem" }}>
-              {selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{provider}</strong>. This records the return in our own system — it does not submit anything to {provider}'s own website.
+              {isMarconeDist ? (
+                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be submitted to <strong>Marcone's real return API</strong> — each will get back a genuine RA # from Marcone, saved into Core RA #.</>
+              ) : (
+                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{partDist}</strong> in our own system only — {partDist} has no live return API wired up here, so no real RA # will be issued.</>
+              )}
             </p>
             <table className="part-info-matrix">
               <thead>
@@ -508,7 +558,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem", justifyContent: "flex-end" }}>
               <button type="button" className="btn" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Cancel</button>
               <button type="button" className="btn bg-blue-600 hover:bg-blue-700 border-blue-600" onClick={submitReturn} disabled={submittingReturn}>
-                {submittingReturn ? "Submitting…" : `Return ${provider}`}
+                {submittingReturn ? "Submitting…" : `Return ${partDist}`}
               </button>
             </div>
           </div>

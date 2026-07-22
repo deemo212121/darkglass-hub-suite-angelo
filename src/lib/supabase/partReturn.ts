@@ -1,10 +1,21 @@
 /**
- * Part Return — parts being processed through a warranty/insurance
- * provider claim (claim_to set), joined to their ticket for
- * location/technician. Distinct from Part Return Status, which tracks
- * the RA shipment lifecycle for the 4 real "RA - *" statuses; this page
- * is scoped by *provider*, not by RA status. return_status (migration
- * 0070) is reused here for the "Include Returned" filter.
+ * Part Return — every real part that's actually been received (excludes
+ * Need PO/PO Made, see below) and could plausibly need to go back to
+ * wherever it came from, joined to its ticket for location/technician.
+ * Distinct from Part Return Status, which tracks the RA shipment
+ * lifecycle for the 4 real "RA - *" statuses; this page covers a much
+ * broader population and is scoped down via its own filters (Part
+ * Provider/Part Dist./Location/Aging/Repair Status) instead.
+ *
+ * claim_to is NOT a required filter, only an optional one (Part
+ * Provider) - confirmed against real data that every single Marcone
+ * part in production has claim_to blank (Marcone parts generally
+ * aren't tied to an insurance claim), so requiring claim_to here would
+ * silently exclude 100% of real Marcone returns, which is exactly the
+ * bug this fixes: population went from 23 rows (claim_to required) to
+ * 141 (not required), and real Marcone rows went from 0 to 14.
+ *
+ * return_status (migration 0070) is reused here for "Include Returned".
  *
  * Aging is days-since-invoice_date (a real distributor return window is
  * usually ~90 days from invoice), NOT tickets.aging - that column tracks
@@ -17,12 +28,16 @@
  * you don't physically have yet. Caught by the user looking at a real
  * "Need PO" row sitting in this list.
  *
- * Return submission (Reason/Return Qty/the "Return {Provider}" batch
- * action) writes to real fields (return_reason/return_qty, migration
- * 0073, plus the existing ra_date) - it does NOT call Marcone's or
- * Encompass's actual return/RMA API, since neither is documented or
- * wired into this app. Confirming a batch here records that staff
- * locally initiated the return; it doesn't generate a real RMA #.
+ * Return submission is keyed by Part Dist. (part_dist - the actual
+ * distributor, e.g. "Marcone-162468"/"Encompass"), NOT Part Provider
+ * (claim_to, the insurance/warranty payer) - it's the distributor whose
+ * API/process actually handles a return. For Marcone specifically this
+ * calls their real POST /returns/requestreturnauthorization (confirmed
+ * against Marcone's own Swagger spec) and gets back a real
+ * returnAuthorizationNumber, saved into ra_no. Every other distributor
+ * has no documented/wired return API, so submitting for them only
+ * stamps ra_date locally (see submitPartReturnBatch) rather than
+ * pretending to submit anything externally.
  */
 
 import { supabase } from "./client";
@@ -36,6 +51,7 @@ export interface PartReturnRow {
   partNo: string;
   partDist: string;
   description: string;
+  poNo: string;
   invoiceNo: string;
   invoiceDate: string;
   quantity: number;
@@ -68,10 +84,8 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
+      "id, part_no, part_dist, part_desc, po_no, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
     )
-    .not("claim_to", "is", null)
-    .neq("claim_to", "")
     .not("status", "in", `(${NOT_YET_RECEIVED_STATUSES.join(",")})`);
 
   if (error) {
@@ -86,6 +100,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     partNo: row.part_no || "",
     partDist: row.part_dist || "",
     description: row.part_desc || "",
+    poNo: row.po_no || "",
     invoiceNo: row.invoice_no || "",
     invoiceDate: row.invoice_date || "",
     quantity: Number(row.quantity ?? 0),

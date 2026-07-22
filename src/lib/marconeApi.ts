@@ -514,3 +514,96 @@ export async function marconeOrderStatus(args: {
 
   return { success: true, status: result.status, data: flat };
 }
+
+// ─── Returns ────────────────────────────────────────────────────────────
+
+export interface MarconeReturnAuthorization {
+  transactionId?: string;
+  /** The real RMA number Marcone issues for this return. */
+  returnAuthorizationNumber?: number;
+  status?: string;
+}
+
+interface MarconeRequestReturnAuthorizationRawResponse {
+  transactionId?: string;
+  returnAuthorizationNumber?: number;
+  status?: string;
+  errorMessage?: string;
+}
+
+/**
+ * Request a real Return Merchandise Authorization from Marcone for one part
+ * line. POST /returns/requestreturnauthorization — confirmed directly
+ * against Marcone's own Swagger spec (api.msupply.com/swagger/v1/
+ * swagger.json): request takes custNo/make/partNumber/quantity/reason/
+ * poNumber/invoiceNumber/reference, response returns a real
+ * returnAuthorizationNumber (int32). One call per part line — the
+ * endpoint doesn't accept a batch of parts.
+ */
+export async function marconeRequestReturn(args: {
+  partNumber: string;
+  quantity: number;
+  reason?: string;
+  poNumber?: string;
+  invoiceNumber?: string;
+  reference?: string;
+  make?: string;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReturnAuthorization>> {
+  const partNumber = args.partNumber?.trim();
+  if (!partNumber) {
+    return { success: false, error: "partNumber is required" };
+  }
+
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const body: Record<string, unknown> = {
+    custNo,
+    partNumber,
+    quantity: args.quantity ?? 1,
+  };
+  if (args.make?.trim()) body.make = args.make.trim();
+  if (args.reason?.trim()) body.reason = args.reason.trim();
+  if (args.poNumber?.trim()) body.poNumber = args.poNumber.trim();
+  if (args.invoiceNumber?.trim()) body.invoiceNumber = args.invoiceNumber.trim();
+  if (args.reference?.trim()) body.reference = args.reference.trim();
+
+  const result = await marconeRequest<MarconeRequestReturnAuthorizationRawResponse>(
+    "/returns/requestreturnauthorization",
+    { method: "POST", body },
+  );
+  if (!result.success) {
+    const data = (result.data as MarconeRequestReturnAuthorizationRawResponse) || {};
+    return {
+      success: false,
+      status: result.status,
+      error: data.errorMessage || result.error || `HTTP ${result.status || "?"}`,
+    };
+  }
+  const raw = (result.data as MarconeRequestReturnAuthorizationRawResponse) || {};
+  if (!raw.returnAuthorizationNumber) {
+    return {
+      success: false,
+      status: result.status,
+      error: "Marcone accepted the request but returned no RA number.",
+    };
+  }
+  return {
+    success: true,
+    status: result.status,
+    data: {
+      transactionId: raw.transactionId,
+      returnAuthorizationNumber: raw.returnAuthorizationNumber,
+      status: raw.status,
+    },
+  };
+}
