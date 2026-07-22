@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getReservedPartRows, TERMINAL_TICKET_STATUSES, type ReservedPartRow } from "@/lib/supabase/reservedPartList";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const DS: React.CSSProperties = { background: "var(--color-card)", color: "var(--color-foreground)", border: "1px solid var(--color-panel-border)", borderRadius: 6, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 999999, position: "fixed", maxHeight: 260, overflowY: "auto" };
@@ -36,6 +37,7 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [startDate, setStartDate] = useState(""); const [endDate, setEndDate] = useState("");
   const [resultSearch, setResultSearch] = useState("");
   const locD = useP(locOpen); const techD = useP(techOpen); const locL = useRef<HTMLDivElement>(null); const techL = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadRows = () => {
     setLoading(true);
@@ -161,8 +163,8 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           <span><span className="text-foreground font-medium">{rows.length}</span> records found</span>
           <input type="text" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="search in result" className="glass-input text-sm py-1.5 px-3 rounded-md w-64" />
         </div>
-        <div className="panel overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+          <table className="w-full min-w-max text-sm">
             <thead><tr className="border-b border-white/10 bg-white/5">
               {["#", "Location", "Ticket No", "Repair Status", "Technician", "Schedule Date", "Model Code", "Part No", "Description", "Unique ID", "Qty", "Received", "Part Status"].map((h) => <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>)}
             </tr></thead>
@@ -191,6 +193,7 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             </tbody>
           </table>
         </div>
+        <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
         </>
         )}
       </main>
