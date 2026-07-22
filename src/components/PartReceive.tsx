@@ -241,7 +241,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
           ) : (
           <>
           <div ref={tableScrollRef} className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-max text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">
