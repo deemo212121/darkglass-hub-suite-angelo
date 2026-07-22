@@ -145,7 +145,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 min-w-0 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
             <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
@@ -241,7 +241,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
           ) : (
           <>
           <div ref={tableScrollRef} className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
-            <table className="w-full min-w-max text-sm">
+            <table className="w-full min-w-[2400px] text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">
