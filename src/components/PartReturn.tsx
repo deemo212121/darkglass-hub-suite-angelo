@@ -152,9 +152,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .actions-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.7rem; justify-content: space-between; }
           .result-info { font-size: 0.84rem; font-weight: 600; color: #bfdbfe; }
           .search-input { padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 220px; }
-          .tab-buttons { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
-          .tab-btn { padding: 0.55rem 1.1rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+          .tab-buttons { display: flex; gap: 0.75rem; margin-top: 1.1rem; margin-bottom: 1.1rem; }
+          .tab-btn { padding: 0.75rem 1.75rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: #fff; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: background 0.15s ease, border-color 0.15s ease; }
+          .tab-btn:hover { background: rgba(255, 255, 255, 0.1); }
           .tab-btn.active { background: #1d4ed8; border-color: #1d4ed8; }
+          .tab-btn.active:hover { background: #1e40af; }
           .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
           .pr-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; white-space: nowrap; }
           .pr-table thead tr { background: #1e3a5f; color: #fff; }
