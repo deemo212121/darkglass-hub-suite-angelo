@@ -127,7 +127,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     if (provider && r.claimTo !== provider) return false;
     if (partDist && r.partDist !== partDist) return false;
     if (location && r.location !== location) return false;
-    if (r.aging < agingMin || r.aging > agingMax) return false;
+    if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
     if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
     if (uniqueIdSearch && !r.id.toLowerCase().includes(uniqueIdSearch.toLowerCase()) && !r.invoiceNo.toLowerCase().includes(uniqueIdSearch.toLowerCase())) return false;
     if (resultSearch) {
@@ -310,7 +310,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     <td className="money">{r.quantity}</td>
                     <td className="money">{r.coreValue > 0 ? formatMoney(r.coreValue) : "—"}</td>
                     <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
-                    <td className="money">{r.aging}</td>
+                    <td className="money">{r.aging === null ? "—" : r.aging}</td>
                     <td>{r.scheduleDate || "—"}</td>
                     <td>{r.technician || "—"}</td>
                     <td>
