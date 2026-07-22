@@ -34,15 +34,20 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [partNo, setPartNo] = useState(""); const [invoiceNo, setInvoiceNo] = useState("");
   const [showAllStatus, setShowAllStatus] = useState(false);
   const [startDate, setStartDate] = useState(""); const [endDate, setEndDate] = useState("");
+  const [resultSearch, setResultSearch] = useState("");
   const locD = useP(locOpen); const techD = useP(techOpen); const locL = useRef<HTMLDivElement>(null); const techL = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const loadRows = () => {
     setLoading(true);
     setLoadError(null);
     getReservedPartRows()
       .then(setAllRows)
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadRows();
     // Real technician roster (active TECHNICIAN/TECHNICIAN_MANAGER users),
     // same source used on Part Daily Pickup, instead of the static
     // ALL_TECHNICIANS seed list - so the filter only offers names that can
@@ -88,8 +93,12 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     if (scheduleDate) r = r.filter((x) => x.scheduleDate === scheduleDate);
     if (partNo) r = r.filter((x) => x.partNo.toLowerCase().includes(partNo.toLowerCase()));
     if (invoiceNo) r = r.filter((x) => x.invoiceNo.toLowerCase().includes(invoiceNo.toLowerCase()));
+    if (resultSearch) {
+      const s = resultSearch.toLowerCase();
+      r = r.filter((x) => [x.location, x.ticketNo, x.ticketStatus, x.technician, x.modelCode, x.partNo, x.description, x.id, x.partStatus].join(" ").toLowerCase().includes(s));
+    }
     return r;
-  }, [allRows, endDate, invoiceNo, location, partNo, scheduleDate, showAllStatus, startDate, tech]);
+  }, [allRows, endDate, invoiceNo, location, partNo, resultSearch, scheduleDate, showAllStatus, startDate, tech]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -125,6 +134,7 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Schedule Date</label>
                 <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md" />
               </div>
+              <button type="button" onClick={loadRows} className="btn px-4 py-1.5 h-[34px]">Refresh</button>
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-3 mt-3">
@@ -147,28 +157,35 @@ export function ReservedPartList({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
         ) : (
         <>
-        <div className="mb-2 text-sm text-muted-foreground"><span className="text-foreground font-medium">{rows.length}</span> records found</div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+          <span><span className="text-foreground font-medium">{rows.length}</span> records found</span>
+          <input type="text" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="search in result" className="glass-input text-sm py-1.5 px-3 rounded-md w-64" />
+        </div>
         <div className="panel overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-white/10 bg-white/5">
-              {["#", "Part #", "Description", "Ticket No", "Technician", "Location", "Invoice #", "Schedule Date", "Qty"].map((h) => <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>)}
+              {["#", "Location", "Ticket No", "Repair Status", "Technician", "Schedule Date", "Model Code", "Part No", "Description", "Unique ID", "Qty", "Received", "Part Status"].map((h) => <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>)}
             </tr></thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No records found.</td></tr>
+                <tr><td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">No records found.</td></tr>
               ) : rows.map((r, i) => (
                 <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
                   <td className="px-3 py-2.5 text-muted-foreground">{i + 1}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs">{r.partNo}</td>
-                  <td className="px-3 py-2.5 text-xs">{r.description || "—"}</td>
+                  <td className="px-3 py-2.5 text-xs">{r.location || "—"}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">
                     {r.ticketNo ? <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline">{r.ticketNo}</Link> : "—"}
                   </td>
+                  <td className="px-3 py-2.5 text-xs">{r.ticketStatus || "—"}</td>
                   <td className="px-3 py-2.5 text-xs">{r.technician || "—"}</td>
-                  <td className="px-3 py-2.5 text-xs">{r.location || "—"}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs text-blue-400">{r.invoiceNo || "—"}</td>
                   <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.scheduleDate || "—"}</td>
+                  <td className="px-3 py-2.5 text-xs">{r.modelCode || "—"}</td>
+                  <td className="px-3 py-2.5 font-mono text-xs">{r.partNo}</td>
+                  <td className="px-3 py-2.5 text-xs">{r.description || "—"}</td>
+                  <td className="px-3 py-2.5 font-mono text-[10px]" title={r.id}>{r.id.slice(0, 8)}</td>
                   <td className="px-3 py-2.5 text-right">{r.quantity}</td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.receivedDate || "—"}</td>
+                  <td className="px-3 py-2.5 text-xs">{r.partStatus || "—"}</td>
                 </tr>
               ))}
             </tbody>
