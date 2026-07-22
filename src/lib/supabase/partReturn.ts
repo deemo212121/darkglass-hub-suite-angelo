@@ -14,6 +14,7 @@ export interface PartReturnRow {
   ticketNo: string;
   location: string;
   partNo: string;
+  partDist: string;
   description: string;
   invoiceNo: string;
   invoiceDate: string;
@@ -33,7 +34,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, part_no, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, aging, schedule_date, technician)"
+      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, aging, schedule_date, technician)"
     )
     .not("claim_to", "is", null)
     .neq("claim_to", "");
@@ -48,6 +49,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     ticketNo: row.tickets?.ticket_no || "",
     location: row.tickets?.location || "",
     partNo: row.part_no || "",
+    partDist: row.part_dist || "",
     description: row.part_desc || "",
     invoiceNo: row.invoice_no || "",
     invoiceDate: row.invoice_date || "",
@@ -62,6 +64,17 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     claimTo: row.claim_to || "",
     returnStatus: row.return_status || "NOT RECEIVED",
   }));
+}
+
+/** Distinct real distributor (part_dist) values currently in use, for the filter dropdown. */
+export async function getDistinctPartDist(): Promise<string[]> {
+  const { data, error } = await supabase.from("parts").select("part_dist").not("part_dist", "is", null);
+  if (error) {
+    console.error("getDistinctPartDist error:", error.message);
+    return [];
+  }
+  const set = new Set((data ?? []).map((r: any) => r.part_dist).filter((v: string) => v && v.trim()));
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
 export async function updatePartReturnEntryRow(

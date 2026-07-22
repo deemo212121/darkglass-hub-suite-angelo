@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, type PartReturnRow } from "@/lib/supabase/partReturn";
+import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -32,11 +32,13 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [tab, setTab] = useState<"return" | "core">("return");
   const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
   const [providers, setProviders] = useState<string[]>([]);
+  const [partDists, setPartDists] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [provider, setProvider] = useState("");
+  const [partDist, setPartDist] = useState("");
   const [location, setLocation] = useState("");
   const [agingMin, setAgingMin] = useState(0);
   const [agingMax, setAgingMax] = useState(90);
@@ -59,6 +61,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
     getDistinctProviders().then(setProviders).catch((err) => console.error("Failed to load providers:", err));
+    getDistinctPartDist().then(setPartDists).catch((err) => console.error("Failed to load part distributors:", err));
   }, []);
 
   useEffect(() => {
@@ -120,6 +123,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const rows = useMemo(() => byTab.filter((r) => {
     if (provider && r.claimTo !== provider) return false;
+    if (partDist && r.partDist !== partDist) return false;
     if (location && r.location !== location) return false;
     if (r.aging < agingMin || r.aging > agingMax) return false;
     if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
@@ -129,7 +133,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       if (!blob.includes(resultSearch.toLowerCase())) return false;
     }
     return true;
-  }), [byTab, provider, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
+  }), [byTab, provider, partDist, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -206,6 +210,13 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               </select>
             </div>
             <div className="field">
+              <label htmlFor="partDistFilter">Part Dist.</label>
+              <select id="partDistFilter" value={partDist} onChange={(e) => setPartDist(e.target.value)}>
+                <option value="">All Distributors</option>
+                {partDists.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div className="field">
               <label htmlFor="locationFilter">Location</label>
               <select id="locationFilter" value={location} onChange={(e) => setLocation(e.target.value)}>
                 <option value="">All Locations</option>
@@ -260,6 +271,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   <th>Branch</th>
                   <th>Unique ID</th>
                   <th>Part #</th>
+                  <th>Dist.</th>
                   <th>Description</th>
                   <th>Invoice Date</th>
                   <th>Return Qty</th>
@@ -274,7 +286,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={14} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                  <tr><td colSpan={15} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
                 ) : rows.map((r) => (
                   <tr key={r.id}>
                     <td>
@@ -287,6 +299,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     <td>
                       <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>
                     </td>
+                    <td>{r.partDist || "—"}</td>
                     <td>{r.description || "—"}</td>
                     <td>{r.invoiceDate || "—"}</td>
                     <td className="money">{r.quantity}</td>
