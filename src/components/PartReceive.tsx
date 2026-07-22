@@ -111,39 +111,35 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     }
   };
 
-  const [savingInvoiceIds, setSavingInvoiceIds] = useState<Set<string>>(new Set());
-  const [savedInvoiceIds, setSavedInvoiceIds] = useState<Set<string>>(new Set());
+  const [dirtyInvoiceIds, setDirtyInvoiceIds] = useState<Set<string>>(new Set());
+  const [savingInvoices, setSavingInvoices] = useState(false);
+  const [invoiceSaveMessage, setInvoiceSaveMessage] = useState<string | null>(null);
 
   const setLocalInvoiceNo = (id: string, value: string) => {
     setReceiveItems((current) => current.map((item) => (item.id === id ? { ...item, invoiceNo: value } : item)));
-    setSavedInvoiceIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    setDirtyInvoiceIds((prev) => new Set(prev).add(id));
+    setInvoiceSaveMessage(null);
   };
-  const saveInvoiceNo = async (id: string, value: string) => {
-    setSavingInvoiceIds((prev) => new Set(prev).add(id));
+
+  const saveAllInvoiceChanges = async () => {
+    if (dirtyInvoiceIds.size === 0) return;
+    setSavingInvoices(true);
+    setSaveError(null);
+    const ids = Array.from(dirtyInvoiceIds);
     try {
-      await updatePartReceiveRow(id, { invoiceNo: value });
-      setSaveError(null);
-      setSavedInvoiceIds((prev) => new Set(prev).add(id));
-      window.setTimeout(() => {
-        setSavedInvoiceIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, 2000);
+      await Promise.all(
+        ids.map((id) => {
+          const item = receiveItems.find((r) => r.id === id);
+          return item ? updatePartReceiveRow(id, { invoiceNo: item.invoiceNo }) : Promise.resolve();
+        })
+      );
+      setDirtyInvoiceIds(new Set());
+      setInvoiceSaveMessage(`Saved ${ids.length} invoice ${ids.length === 1 ? "number" : "numbers"}.`);
+      window.setTimeout(() => setInvoiceSaveMessage(null), 3000);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save invoice #");
+      setSaveError(err instanceof Error ? err.message : "Failed to save invoice numbers");
     } finally {
-      setSavingInvoiceIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      setSavingInvoices(false);
     }
   };
 
@@ -265,6 +261,21 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
           <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
         ) : (
         <>
+        <div className="flex items-center justify-end gap-3 mb-3">
+          {invoiceSaveMessage && (
+            <span className="flex items-center gap-1.5 text-sm text-green-400">
+              <Check className="h-4 w-4" /> {invoiceSaveMessage}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={saveAllInvoiceChanges}
+            disabled={dirtyInvoiceIds.size === 0 || savingInvoices}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {savingInvoices ? "Saving…" : `Save Invoice Changes${dirtyInvoiceIds.size > 0 ? ` (${dirtyInvoiceIds.size})` : ""}`}
+          </button>
+        </div>
         <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
             <table className="w-full min-w-[2400px] text-sm">
               <thead>
@@ -336,17 +347,9 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                           value={item.invoiceNo}
                           placeholder="e.g. JS-TS-26000792299DF"
                           onChange={(event) => setLocalInvoiceNo(item.id, event.target.value)}
-                          className="w-36 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400"
+                          className={`w-40 rounded border bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400 ${dirtyInvoiceIds.has(item.id) ? "border-amber-400/60" : "border-white/10"}`}
                         />
-                        <button
-                          type="button"
-                          onClick={() => saveInvoiceNo(item.id, item.invoiceNo)}
-                          disabled={savingInvoiceIds.has(item.id)}
-                          className="shrink-0 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
-                          title="Save invoice #"
-                        >
-                          {savingInvoiceIds.has(item.id) ? "…" : savedInvoiceIds.has(item.id) ? <Check className="h-3.5 w-3.5 text-green-400" /> : "Save"}
-                        </button>
+                        {dirtyInvoiceIds.has(item.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved change" />}
                       </div>
                     </td>
                     <td className="px-4 py-3 font-mono text-slate-300">{item.partNo}</td>
