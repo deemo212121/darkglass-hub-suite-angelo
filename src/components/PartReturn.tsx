@@ -436,7 +436,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   <th>Aging</th>
                   <th>Schedule Date</th>
                   <th>Technician</th>
-                  <th>Core RA #</th>
+                  <th>{tab === "core" ? "Core RA #" : "RA #"}</th>
                   <th>RA Date</th>
                   <th>Return</th>
                 </tr>
@@ -535,7 +535,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           <div className="part-info-body">
             <p style={{ fontSize: "0.85rem", color: "#374151", marginBottom: "0.75rem" }}>
               {isMarconeDist ? (
-                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be submitted to <strong>Marcone's real return API</strong> — each will get back a genuine RA # from Marcone, saved into Core RA #.</>
+                <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be submitted to <strong>Marcone's real return API</strong> — each will get back a genuine RA # from Marcone, saved into {tab === "core" ? "Core RA #" : "RA #"}.</>
               ) : (
                 <>{selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{partDist}</strong> in our own system only — {partDist} has no live return API wired up here, so no real RA # will be issued.</>
               )}
