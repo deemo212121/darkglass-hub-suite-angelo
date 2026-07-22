@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const STATUS_COLOR: Record<string, React.CSSProperties> = {
@@ -36,6 +37,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [provider, setProvider] = useState("");
   const [partDist, setPartDist] = useState("");
@@ -265,8 +267,9 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           ) : loading ? (
             <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
           ) : (
-          <div className="table-wrap">
-            <table className="pr-table">
+          <>
+          <div ref={tableScrollRef} className="table-wrap">
+            <table className="pr-table min-w-max">
               <thead>
                 <tr>
                   <th>Ticket No.</th>
@@ -334,6 +337,8 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               </tbody>
             </table>
           </div>
+          <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+          </>
           )}
         </div>
       </main>
