@@ -72,8 +72,8 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           .field label { font-size: 0.78rem; font-weight: 600; color: #e5e7eb; letter-spacing: 0.02em; }
           .field input { width: 100%; min-width: 280px; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; font-family: inherit; }
           .field input:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.16); }
-          .btn { height: 38px; padding: 0 1rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.25); background: #1d4ed8; color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
-          .btn:hover { background: #1e40af; }
+          .refresh-btn { height: 38px; padding: 0 1rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.25); background: #1d4ed8; color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+          .refresh-btn:hover { background: #1e40af; }
           .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; margin: 0.8rem 0 0.6rem; }
           .record-count { font-size: 0.88rem; font-weight: 700; color: #bfdbfe; }
           .search-inline input { padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 210px; }
@@ -117,7 +117,7 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
                 placeholder="Unique ID, Part #, Invoice #, or PO #"
               />
             </div>
-            <button type="button" className="btn" onClick={() => runSearch()}>Refresh</button>
+            <button type="button" className="refresh-btn" onClick={() => runSearch()}>Refresh</button>
           </div>
 
           {loadError ? (
