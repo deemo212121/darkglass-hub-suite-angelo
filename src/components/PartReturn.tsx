@@ -1,272 +1,391 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Check, Save, Printer, ChevronDown, ArrowUpDown } from "lucide-react";
+import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, type PartReturnRow } from "@/lib/supabase/partReturn";
+import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
-const PROVIDERS = [
-  "AIG","Assurant","Asurion","Bosch","Builder","Centricity","Electrolux",
-  "Encompass","Encompass-Birmingham/Montgomery","Fidelity","Finance","GE",
-  "GE Appliances","Hisense","Internal","LG","Marcone","Maytag","Midea","Miele",
-  "NSA","OOW","Others","Samsung","Speed Queen","SPPN","SquareTrade","Whirlpool",
-];
-const LOT_STATUSES = ["All","In Review","Defective","PNN","Claimed","Used","Pending","Returned"];
-const CORE_PARTS = [
-  {id:393,ticketNo:"4172283796",uniqueId:"7181346012000010",partNo:"BN07-01736A",description:"LCD-CSOT",invoiceDate:"",returnQty:1,coreValue:40,partStatus:"Claimed",scheduleDate:"08/17/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:336,ticketNo:"4171861618",uniqueId:"7175654957000020",partNo:"BN44-01056A",description:"DC VSS-PD BOARD",invoiceDate:"",returnQty:1,coreValue:70,partStatus:"Claimed",scheduleDate:"07/17/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:252,ticketNo:"4171548336",uniqueId:"7171782918000050",partNo:"BN44-01056A",description:"DC VSS-PD BOARD",invoiceDate:"",returnQty:1,coreValue:70,partStatus:"Claimed",scheduleDate:"06/21/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:285,ticketNo:"4171583019",uniqueId:"7170837270000010",partNo:"BN44-01170A",description:"DC VSS-POWER BOARD",invoiceDate:"",returnQty:1,coreValue:110,partStatus:"Claimed",scheduleDate:"06/25/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:400,ticketNo:"4172329575",uniqueId:"7181092191000010",partNo:"BN44-01170A",description:"DC VSS-POWER BOARD",invoiceDate:"",returnQty:1,coreValue:110,partStatus:"Claimed",scheduleDate:"08/17/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:249,ticketNo:"4171524828",uniqueId:"7171384525000010",partNo:"BN94-00054G",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:108,partStatus:"Claimed",scheduleDate:"06/30/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:440,ticketNo:"4172505183",uniqueId:"7183263736000020",partNo:"BN94-14156F",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:80,partStatus:"Claimed",scheduleDate:"08/23/2023",technician:"Sean Smith",coreRA:""},
-  {id:39212,ticketNo:"R-4175935790",uniqueId:"7223871680000010",partNo:"BN94-15731B",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:84,partStatus:"Claimed",scheduleDate:"05/16/2024",technician:"Christian Newson",coreRA:""},
-  {id:386,ticketNo:"4172246461",uniqueId:"7177635275000020",partNo:"BN94-16104Z",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:72,partStatus:"Claimed",scheduleDate:"08/11/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:413,ticketNo:"4172401281",uniqueId:"7180296664000010",partNo:"BN94-16105A",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:49.3,partStatus:"Claimed",scheduleDate:"08/23/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:291,ticketNo:"4171620877",uniqueId:"7173426368000030",partNo:"BN94-16105A",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:49.3,partStatus:"Used",scheduleDate:"06/27/2023",technician:"Nelson Ogutu",coreRA:""},
-  {id:242,ticketNo:"4171419136",uniqueId:"7170251158000010",partNo:"BN94-16107B",description:"ASSY PCB MAIN",invoiceDate:"",returnQty:1,coreValue:49.47,partStatus:"Claimed",scheduleDate:"06/27/2023",technician:"Nelson Ogutu",coreRA:""},
-];
-const REGULAR_PARTS = [
-  {id:1,ticketNo:"TK-2026-1000",uniqueId:"UID-10000",partNo:"ACQ86576404",description:"Compressor Motor",invoiceDate:"2026-05-01",returnQty:1,coreValue:0,partStatus:"Claimed",scheduleDate:"05/30/2026",technician:"Nelson Ogutu",coreRA:"RA-0001"},
-  {id:2,ticketNo:"TK-2026-1001",uniqueId:"UID-10001",partNo:"WPW10217825",description:"Wire Harness",invoiceDate:"2026-04-28",returnQty:1,coreValue:0,partStatus:"Pending",scheduleDate:"05/29/2026",technician:"Sean Smith",coreRA:""},
-  {id:3,ticketNo:"TK-2026-1002",uniqueId:"UID-10002",partNo:"RPS345-78",description:"Pump Assembly",invoiceDate:"2026-04-25",returnQty:2,coreValue:0,partStatus:"Returned",scheduleDate:"05/28/2026",technician:"Christian Newson",coreRA:"RA-0003"},
-  {id:4,ticketNo:"TK-2026-1003",uniqueId:"UID-10003",partNo:"EVT456-12",description:"Evaporator Coil",invoiceDate:"2026-04-20",returnQty:1,coreValue:0,partStatus:"Claimed",scheduleDate:"05/27/2026",technician:"Jacob Morehouse",coreRA:""},
-  {id:5,ticketNo:"TK-2026-1004",uniqueId:"UID-10004",partNo:"LG123-456",description:"Door Seal",invoiceDate:"2026-04-18",returnQty:1,coreValue:0,partStatus:"Used",scheduleDate:"05/26/2026",technician:"Nelson Ogutu",coreRA:"RA-0005"},
-];
+const STATUS_COLOR: Record<string, React.CSSProperties> = {
+  Claimed: { background: "#d1fae5", color: "#065f46" },
+  "PO Made": { background: "#fef3c7", color: "#92400e" },
+  "Need PO": { background: "#fee2e2", color: "#991b1b" },
+  "Part Ready": { background: "#d1fae5", color: "#065f46" },
+  "Tech Pickup": { background: "#e0e7ff", color: "#3730a3" },
+  "RA - PNN": { background: "#f3e8ff", color: "#6b21a8" },
+  Used: { background: "#e5e7eb", color: "#374151" },
+  Cancelled: { background: "#e5e7eb", color: "#6b7280" },
+  "Not Used & Stocked": { background: "#e5e7eb", color: "#374151" },
+  "Hold for next vist": { background: "#fef3c7", color: "#92400e" },
+  "CX Home": { background: "#e5e7eb", color: "#374151" },
+};
 
-const DROP_STYLE: React.CSSProperties = { background:"var(--color-card)", color:"var(--color-foreground)", border:"1px solid var(--color-panel-border)", borderRadius:6, boxShadow:"0 8px 32px rgba(0,0,0,0.5)", zIndex:999999, position:"fixed", maxHeight:260, overflowY:"auto" };
-const Chevron = ({open}:{open:boolean}) => <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
+function formatMoney(value: number) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
 
-function usePortalPos(open: boolean) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{top:number;left:number;width:number}|null>(null);
-  const reposition = useCallback(() => {
-    if (!triggerRef.current) return;
-    const r = triggerRef.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 2, left: r.left, width: r.width });
-  }, []);
-  useLayoutEffect(() => { if (open) reposition(); }, [open, reposition]);
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener("scroll", reposition, true);
-    window.addEventListener("resize", reposition);
-    return () => { window.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
-  }, [open, reposition]);
-  return { triggerRef, pos };
+function formatUsd(value: number | undefined): string {
+  return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
 }
 
 export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [tab, setTab] = useState<"return"|"core">("return");
-  const [provider, setProvider] = useState("Samsung");
-  const [providerOpen, setProviderOpen] = useState(false);
+  const [tab, setTab] = useState<"return" | "core">("return");
+  const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
+  const [providers, setProviders] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [provider, setProvider] = useState("");
   const [location, setLocation] = useState("");
-  const [locOpen, setLocOpen] = useState(false);
   const [agingMin, setAgingMin] = useState(0);
   const [agingMax, setAgingMax] = useState(90);
   const [uniqueIdSearch, setUniqueIdSearch] = useState("");
   const [includeReturned, setIncludeReturned] = useState(false);
-  const [includeReserved, setIncludeReserved] = useState(false);
-  const [sortCol, setSortCol] = useState<string|null>(null);
-  const [sortDir, setSortDir] = useState<"asc"|"desc">("asc");
-  const [lotFilter, setLotFilter] = useState<string[]>([...LOT_STATUSES.filter(s=>s!=="All")]);
-  const [lotFilterOpen, setLotFilterOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string[]>([...LOT_STATUSES.filter(s=>s!=="All")]);
-  const [statusFilterOpen, setStatusFilterOpen] = useState(false);
-  const [savedToast, setSavedToast] = useState(false);
-  // editable rows state: inReview, defect, pnn per row id
-  const [edits, setEdits] = useState<Record<number,{inReview:string;defect:string;pnn:string}>>({});
+  const [resultSearch, setResultSearch] = useState("");
 
-  const handleSort = (col: string) => {
-    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortCol(col); setSortDir("asc"); }
-  };
-  const getEdit = (id: number, field: "inReview"|"defect"|"pnn") => edits[id]?.[field] ?? "";
-  const setEdit = (id: number, field: "inReview"|"defect"|"pnn", val: string) => {
-    setEdits(prev => ({...prev, [id]: {...(prev[id]??{inReview:"",defect:"",pnn:""}), [field]: val}}));
-  };
-  const handleSaveEdit = () => { setSavedToast(true); setTimeout(()=>setSavedToast(false),3000); };
-
-  const providerDrop = usePortalPos(providerOpen);
-  const locDrop = usePortalPos(locOpen);
-  const providerListRef = useRef<HTMLDivElement>(null);
-  const locListRef = useRef<HTMLDivElement>(null);
+  const [modalPartNo, setModalPartNo] = useState("");
+  const [modalTab, setModalTab] = useState<"encompass" | "marcone">("marcone");
+  const [marconeInfo, setMarconeInfo] = useState<MarconePartInfo | null>(null);
+  const [marconeLoading, setMarconeLoading] = useState(false);
+  const [marconeNotFound, setMarconeNotFound] = useState(false);
+  const [marconeError, setMarconeError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fn = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (providerOpen && !providerDrop.triggerRef.current?.contains(t) && !providerListRef.current?.contains(t)) setProviderOpen(false);
-      if (locOpen && !locDrop.triggerRef.current?.contains(t) && !locListRef.current?.contains(t)) setLocOpen(false);
-    };
-    document.addEventListener("mousedown", fn);
-    return () => document.removeEventListener("mousedown", fn);
-  }, [providerOpen, locOpen]);
+    setLoading(true);
+    setLoadError(null);
+    getPartReturns()
+      .then(setAllRows)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+    getDistinctProviders().then(setProviders).catch((err) => console.error("Failed to load providers:", err));
+  }, []);
 
-  const data = tab === "core" ? CORE_PARTS : REGULAR_PARTS;
-  const rows = useMemo(() => data.filter(r => {
-    if (uniqueIdSearch && !r.uniqueId.toLowerCase().includes(uniqueIdSearch.toLowerCase()) && !r.ticketNo.toLowerCase().includes(uniqueIdSearch.toLowerCase())) return false;
+  useEffect(() => {
+    if (!modalPartNo) {
+      setMarconeInfo(null);
+      setMarconeError(null);
+      setMarconeNotFound(false);
+      return;
+    }
+    let cancelled = false;
+    setMarconeLoading(true);
+    setMarconeError(null);
+    setMarconeNotFound(false);
+    marconeLookupPart({ partNumber: modalPartNo })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.notFound) {
+          setMarconeNotFound(true);
+          setMarconeInfo(null);
+          return;
+        }
+        if (!result.success) {
+          setMarconeError(result.error || "Marcone lookup failed");
+          return;
+        }
+        setMarconeInfo(result.data || null);
+      })
+      .catch((err) => { if (!cancelled) setMarconeError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (!cancelled) setMarconeLoading(false); });
+    return () => { cancelled = true; };
+  }, [modalPartNo]);
+
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setModalPartNo("");
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, []);
+
+  const openPartInfoModal = (partNo: string) => {
+    setModalPartNo(partNo);
+    setModalTab("marcone");
+  };
+
+  const setLocalField = (id: string, field: "raNo" | "raDate", value: string) => {
+    setAllRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
+  };
+  const persistField = async (id: string, field: "raNo" | "raDate", value: string) => {
+    try {
+      await updatePartReturnEntryRow(id, { [field]: value });
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save change");
+    }
+  };
+
+  const byTab = useMemo(() => allRows.filter((r) => (tab === "core" ? r.coreValue > 0 : r.coreValue <= 0)), [allRows, tab]);
+
+  const rows = useMemo(() => byTab.filter((r) => {
+    if (provider && r.claimTo !== provider) return false;
+    if (location && r.location !== location) return false;
+    if (r.aging < agingMin || r.aging > agingMax) return false;
+    if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
+    if (uniqueIdSearch && !r.id.toLowerCase().includes(uniqueIdSearch.toLowerCase()) && !r.invoiceNo.toLowerCase().includes(uniqueIdSearch.toLowerCase())) return false;
+    if (resultSearch) {
+      const blob = [r.ticketNo, r.partNo, r.description, r.status, r.claimTo, r.raNo].join(" ").toLowerCase();
+      if (!blob.includes(resultSearch.toLowerCase())) return false;
+    }
     return true;
-  }), [data, uniqueIdSearch]);
+  }), [byTab, provider, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
 
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link>
+        <style>{`
+          .pr-panel { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 1rem; color: #fff; backdrop-filter: blur(10px); width: 100%; min-width: 0; }
+          .pr-panel + .pr-panel { margin-top: 0.9rem; }
+          .controls-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 0.7rem; }
+          .field { display: flex; flex-direction: column; gap: 0.25rem; }
+          .field label { font-size: 0.78rem; font-weight: 700; color: #e5e7eb; }
+          .field input, .field select { width: 100%; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; }
+          .aging-range { display: flex; align-items: center; gap: 0.4rem; }
+          .aging-range input { width: 70px; text-align: center; }
+          .aging-range span { color: #dbeafe; font-weight: 700; font-size: 0.9rem; }
+          .checkbox-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: #e5e7eb; cursor: pointer; }
+          .actions-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.7rem; justify-content: space-between; }
+          .result-info { font-size: 0.84rem; font-weight: 600; color: #bfdbfe; }
+          .search-input { padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 220px; }
+          .tab-buttons { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
+          .tab-btn { padding: 0.55rem 1.1rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+          .tab-btn.active { background: #1d4ed8; border-color: #1d4ed8; }
+          .table-wrap { overflow-x: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: #fff; max-width: 100%; min-width: 0; }
+          .pr-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; white-space: nowrap; }
+          .pr-table thead tr { background: #1e3a5f; color: #fff; }
+          .pr-table th { padding: 0.55rem 0.7rem; text-align: left; font-weight: 700; border-bottom: 2px solid #2563eb; white-space: nowrap; }
+          .pr-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid #e5e7eb; color: #111827; vertical-align: middle; }
+          .pr-table tbody tr:hover { background: #eff6ff; }
+          .pr-table tbody tr:last-child td { border-bottom: none; }
+          .ticket-link { color: #2563eb; text-decoration: none; font-weight: 600; }
+          .ticket-link:hover { text-decoration: underline; }
+          .part-link-btn { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; color: #2563eb; font-weight: 600; text-decoration: none; cursor: pointer; }
+          .part-link-btn:hover { text-decoration: underline; }
+          .status-pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+          .cell-input { width: 100%; min-width: 90px; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.78rem; color: #111827; }
+          .money { text-align: right; }
+          .part-info-modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: none; align-items: center; justify-content: center; z-index: 2200; padding: 1rem; }
+          .part-info-modal-overlay.is-open { display: flex; }
+          .part-info-modal { width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3); }
+          .part-info-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1rem; border-bottom: 1px solid #e5e7eb; background: #f8fafc; }
+          .part-info-title { font-size: 1rem; font-weight: 700; color: #111827; }
+          .part-info-close { border: 1px solid #cbd5e1; background: #ffffff; color: #111827; border-radius: 8px; padding: 0.32rem 0.6rem; cursor: pointer; }
+          .part-info-tabs { display: flex; gap: 0.45rem; padding: 0.75rem 1rem 0; }
+          .part-info-tab-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #1f2937; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+          .part-info-tab-btn.active { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+          .part-info-body { padding: 0.8rem 1rem 1rem; }
+          .part-info-pane { display: none; }
+          .part-info-pane.active { display: block; }
+          .part-info-matrix { width: 100%; border-collapse: collapse; font-size: 0.79rem; margin-bottom: 0.85rem; }
+          .part-info-matrix th, .part-info-matrix td { border: 1px solid #d1d5db; padding: 0.45rem; text-align: left; }
+          .part-info-matrix thead th { background: #f3f4f6; font-weight: 700; }
+          .part-info-section-title { font-size: 0.82rem; font-weight: 700; color: #111827; margin: 0.2rem 0 0.4rem; }
+          .part-info-section-subtitle { font-size: 0.76rem; color: #4b5563; margin-bottom: 0.35rem; }
+          .part-info-empty { padding: 0.7rem; border: 1px dashed #d1d5db; border-radius: 8px; font-size: 0.78rem; color: #6b7280; }
+          #partInfoModalOverlay .part-info-modal, #partInfoModalOverlay .part-info-modal th, #partInfoModalOverlay .part-info-modal td, #partInfoModalOverlay .part-info-title, #partInfoModalOverlay .part-info-close, #partInfoModalOverlay .part-info-section-title, #partInfoModalOverlay .part-info-section-subtitle, #partInfoModalOverlay .part-info-empty, #partInfoModalOverlay .part-info-tab-btn { color: #111827 !important; }
+          #partInfoModalOverlay .part-info-tab-btn.active { color: #ffffff !important; }
+          @media (max-width: 1100px) { .controls-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
+          @media (max-width: 700px) { .controls-grid { grid-template-columns: 1fr; } }
+          @media print { .no-print { display: none !important; } }
+        `}</style>
+
+        <div className="flex items-center gap-3 mb-6 no-print">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
           <h1 className="text-2xl font-bold">{sub.title}</h1>
         </div>
+        {saveError && <p className="text-sm text-red-400 mb-3 no-print">{saveError}</p>}
 
-        <div className="panel mb-4">
-          <div className="flex flex-wrap items-end gap-4">
-            {/* Part Provider */}
-            <div className="flex flex-col gap-1 min-w-[160px]">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Part Provider*</label>
-              <button ref={providerDrop.triggerRef} onClick={()=>setProviderOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
-                <span>{provider}</span><Chevron open={providerOpen}/>
-              </button>
-              {providerOpen && providerDrop.pos && createPortal(
-                <div ref={providerListRef} style={{...DROP_STYLE, top:providerDrop.pos.top, left:providerDrop.pos.left, width:providerDrop.pos.width}}>
-                  {PROVIDERS.map((p,i)=><button key={i} onClick={()=>{setProvider(p);setProviderOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${provider===p?"bg-blue-600 text-white":""}`}>{p}</button>)}
-                </div>, document.body
-              )}
+        <div className="pr-panel no-print">
+          <div className="controls-grid">
+            <div className="field">
+              <label htmlFor="providerFilter">Part Provider</label>
+              <select id="providerFilter" value={provider} onChange={(e) => setProvider(e.target.value)}>
+                <option value="">All Providers</option>
+                {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
             </div>
-
-            {/* Location */}
-            <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Location</label>
-              <button ref={locDrop.triggerRef} onClick={()=>setLocOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
-                <span className={location?"":"text-muted-foreground"}>{location||"All Locations"}</span><Chevron open={locOpen}/>
-              </button>
-              {locOpen && locDrop.pos && createPortal(
-                <div ref={locListRef} style={{...DROP_STYLE, top:locDrop.pos.top, left:locDrop.pos.left, width:locDrop.pos.width}}>
-                  <button onClick={()=>{setLocation("");setLocOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===""?"bg-blue-600 text-white":"text-slate-400"}`}>— All Locations —</button>
-                  {LOCATIONS.map((l,i)=><button key={i} onClick={()=>{setLocation(l);setLocOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===l?"bg-blue-600 text-white":""}`}>{l}</button>)}
-                </div>, document.body
-              )}
+            <div className="field">
+              <label htmlFor="locationFilter">Location</label>
+              <select id="locationFilter" value={location} onChange={(e) => setLocation(e.target.value)}>
+                <option value="">All Locations</option>
+                {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
             </div>
-
-            {/* Aging */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Aging</label>
-              <div className="flex items-center gap-2">
-                <input type="number" value={agingMin} onChange={e=>setAgingMin(+e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-16 text-center"/>
-                <span className="text-muted-foreground text-xs">~</span>
-                <input type="number" value={agingMax} onChange={e=>setAgingMax(+e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-16 text-center"/>
+            <div className="field">
+              <label>Aging</label>
+              <div className="aging-range">
+                <input type="number" value={agingMin} onChange={(e) => setAgingMin(+e.target.value)} />
+                <span>~</span>
+                <input type="number" value={agingMax} onChange={(e) => setAgingMax(+e.target.value)} />
               </div>
             </div>
-
-            <div className="flex items-end gap-2 pb-0.5">
-              <button className="btn flex items-center gap-2 px-4"><Check className="h-3.5 w-3.5"/>Verify</button>
-              <button onClick={handleSaveEdit} className="btn flex items-center gap-2 px-4 bg-green-600/20 border-green-500/30 hover:bg-green-600/30 text-green-300"><Save className="h-3.5 w-3.5"/>Save Edit</button>
-              <button className="btn flex items-center gap-2 px-4"><Printer className="h-3.5 w-3.5"/>Print</button>
+            <div className="field">
+              <label htmlFor="uniqueIdSearch">Unique ID / Invoice No</label>
+              <input id="uniqueIdSearch" type="text" value={uniqueIdSearch} onChange={(e) => setUniqueIdSearch(e.target.value)} />
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-4 mt-3">
-            <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Unique ID / Invoice No</label>
-              <input type="text" value={uniqueIdSearch} onChange={e=>setUniqueIdSearch(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md"/>
-            </div>
-            <div className="flex items-end gap-4 pb-0.5">
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeReturned} onChange={e=>setIncludeReturned(e.target.checked)} className="accent-blue-500"/>Include Returned</label>
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeReserved} onChange={e=>setIncludeReserved(e.target.checked)} className="accent-blue-500"/>Include Reserved</label>
-            </div>
+          <div className="flex items-center gap-4 mt-1">
+            <label className="checkbox-row">
+              <input type="checkbox" checked={includeReturned} onChange={(e) => setIncludeReturned(e.target.checked)} className="accent-blue-500" />
+              Include Returned
+            </label>
+            <button type="button" className="btn flex items-center gap-2 px-4" onClick={() => window.print()}>
+              <Printer className="h-3.5 w-3.5" /> Print
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-3">
-          <button onClick={()=>setTab("return")} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab==="return"?"bg-blue-600 text-white":"btn"}`}>Part Return</button>
-          <button onClick={()=>setTab("core")} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab==="core"?"bg-blue-600 text-white":"btn"}`}>Core Part Return</button>
+        <div className="tab-buttons no-print">
+          <button type="button" className={`tab-btn ${tab === "return" ? "active" : ""}`} onClick={() => setTab("return")}>Part Return</button>
+          <button type="button" className={`tab-btn ${tab === "core" ? "active" : ""}`} onClick={() => setTab("core")}>Core Part Return</button>
         </div>
 
-        <div className="mb-2 text-sm text-muted-foreground"><span className="text-foreground font-medium">{rows.length}</span> records found</div>
-        <div className="panel overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-white/10 bg-white/5">
-              {/* Sortable: Lot #, Part Status, Aging */}
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">ID</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Ticket No.</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Branch</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Unique ID</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Part #</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Description</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Invoice Date</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Return Qty</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Core Value</th>
-              {/* Lot # — sortable + filterable */}
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                <div className="flex items-center gap-1">
-                  <button onClick={()=>handleSort("lot")} className="flex items-center gap-1 hover:text-white">Lot # <ArrowUpDown className="h-3 w-3"/></button>
-                  <div className="relative">
-                    <button onClick={()=>setLotFilterOpen(o=>!o)} className="hover:text-white"><ChevronDown className="h-3 w-3"/></button>
-                    {lotFilterOpen && <div className="absolute top-5 left-0 z-[99999] bg-[rgb(22,28,52)] border border-white/15 rounded shadow-2xl p-2 min-w-[140px]">
-                      {LOT_STATUSES.filter(s=>s!=="All").map(s=><label key={s} className="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-white/5 rounded">
-                        <input type="checkbox" checked={lotFilter.includes(s)} onChange={e=>setLotFilter(prev=>e.target.checked?[...prev,s]:prev.filter(x=>x!==s))} className="accent-blue-500"/>{s}
-                      </label>)}
-                    </div>}
-                  </div>
-                </div>
-              </th>
-              {/* Part Status — sortable + filterable */}
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                <div className="flex items-center gap-1">
-                  <button onClick={()=>handleSort("partStatus")} className="flex items-center gap-1 hover:text-white">Part Status <ArrowUpDown className="h-3 w-3"/></button>
-                  <div className="relative">
-                    <button onClick={()=>setStatusFilterOpen(o=>!o)} className="hover:text-white"><ChevronDown className="h-3 w-3"/></button>
-                    {statusFilterOpen && <div className="absolute top-5 left-0 z-[99999] bg-[rgb(22,28,52)] border border-white/15 rounded shadow-2xl p-2 min-w-[140px]">
-                      {LOT_STATUSES.filter(s=>s!=="All").map(s=><label key={s} className="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-white/5 rounded">
-                        <input type="checkbox" checked={statusFilter.includes(s)} onChange={e=>setStatusFilter(prev=>e.target.checked?[...prev,s]:prev.filter(x=>x!==s))} className="accent-blue-500"/>{s}
-                      </label>)}
-                    </div>}
-                  </div>
-                </div>
-              </th>
-              {/* Aging — sortable only */}
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                <button onClick={()=>handleSort("aging")} className="flex items-center gap-1 hover:text-white">Aging <ArrowUpDown className="h-3 w-3"/></button>
-              </th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">In Review</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Defect</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">PNN</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Schedule Date</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Technician</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Core RA #</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Actions</th>
-            </tr></thead>
-            <tbody>
-              {rows.length===0
-                ? <tr><td colSpan={13} className="px-4 py-12 text-center text-muted-foreground">No records found.</td></tr>
-                : rows.map((r,idx)=>(
-                  <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/[0.02]":""}`}>
-                    <td className="px-3 py-2 text-muted-foreground text-xs">{r.id}</td>
-                    <td className="px-3 py-2 font-mono text-xs">
-                      <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline">{r.ticketNo}</a>
+        <div className="pr-panel">
+          <div className="actions-row no-print">
+            <div className="result-info">{rows.length} record{rows.length !== 1 ? "s" : ""} found</div>
+            <input className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} />
+          </div>
+
+          {loadError ? (
+            <p className="text-sm text-red-400 px-2 py-6">Failed to load part returns: {loadError}</p>
+          ) : loading ? (
+            <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
+          ) : (
+          <div className="table-wrap">
+            <table className="pr-table">
+              <thead>
+                <tr>
+                  <th>Ticket No.</th>
+                  <th>Branch</th>
+                  <th>Unique ID</th>
+                  <th>Part #</th>
+                  <th>Description</th>
+                  <th>Invoice Date</th>
+                  <th>Return Qty</th>
+                  <th>Core Value</th>
+                  <th>Part Status</th>
+                  <th>Aging</th>
+                  <th>Schedule Date</th>
+                  <th>Technician</th>
+                  <th>Core RA #</th>
+                  <th>RA Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={14} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                ) : rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.ticketNo ? (
+                        <Link className="ticket-link" to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer">{r.ticketNo}</Link>
+                      ) : "—"}
                     </td>
-                    <td className="px-3 py-2 text-xs text-slate-300">{location||"—"}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{r.uniqueId}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-blue-400">{r.partNo}</td>
-                    <td className="px-3 py-2 text-xs max-w-[160px] truncate" title={r.description}>{r.description}</td>
-                    <td className="px-3 py-2 text-muted-foreground text-xs">{r.invoiceDate||"—"}</td>
-                    <td className="px-3 py-2 text-center text-xs">{r.returnQty}</td>
-                    <td className="px-3 py-2 text-right text-xs">{r.coreValue>0?r.coreValue.toFixed(2):"—"}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
-                    <td className="px-3 py-2">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.partStatus==="Claimed"?"bg-green-500/20 text-green-300 border border-green-500/30":r.partStatus==="Used"?"bg-blue-500/20 text-blue-300 border border-blue-500/30":r.partStatus==="Pending"?"bg-yellow-500/20 text-yellow-300 border border-yellow-500/30":r.partStatus==="Returned"?"bg-purple-500/20 text-purple-300 border border-purple-500/30":"bg-white/10 text-muted-foreground border border-white/15"}`}>{r.partStatus}</span>
+                    <td>{r.location || "—"}</td>
+                    <td title={r.id}>{r.id.slice(0, 8)}</td>
+                    <td>
+                      <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">—</td>
-                    <td className="px-3 py-2"><input value={getEdit(r.id,"inReview")} onChange={e=>setEdit(r.id,"inReview",e.target.value)} className="glass-input text-xs py-0.5 px-2 rounded w-20" placeholder="—"/></td>
-                    <td className="px-3 py-2"><input value={getEdit(r.id,"defect")} onChange={e=>setEdit(r.id,"defect",e.target.value)} className="glass-input text-xs py-0.5 px-2 rounded w-20" placeholder="—"/></td>
-                    <td className="px-3 py-2"><input value={getEdit(r.id,"pnn")} onChange={e=>setEdit(r.id,"pnn",e.target.value)} className="glass-input text-xs py-0.5 px-2 rounded w-20" placeholder="—"/></td>
-                    <td className="px-3 py-2 text-muted-foreground text-xs">{r.scheduleDate}</td>
-                    <td className="px-3 py-2 text-xs">{r.technician}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.coreRA||"—"}</td>
-                    <td className="px-3 py-2"><button className="px-2 py-1 text-xs rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 hover:bg-blue-500/30">Edit</button></td>
+                    <td>{r.description || "—"}</td>
+                    <td>{r.invoiceDate || "—"}</td>
+                    <td className="money">{r.quantity}</td>
+                    <td className="money">{r.coreValue > 0 ? formatMoney(r.coreValue) : "—"}</td>
+                    <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
+                    <td className="money">{r.aging}</td>
+                    <td>{r.scheduleDate || "—"}</td>
+                    <td>{r.technician || "—"}</td>
+                    <td>
+                      <input
+                        className="cell-input"
+                        type="text"
+                        placeholder="RA #"
+                        value={r.raNo}
+                        onChange={(e) => setLocalField(r.id, "raNo", e.target.value)}
+                        onBlur={(e) => persistField(r.id, "raNo", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="cell-input"
+                        type="date"
+                        value={r.raDate}
+                        onChange={(e) => setLocalField(r.id, "raDate", e.target.value)}
+                        onBlur={(e) => persistField(r.id, "raDate", e.target.value)}
+                      />
+                    </td>
                   </tr>
                 ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          )}
         </div>
-      {savedToast && <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/15 px-4 py-3 text-sm text-green-300 shadow-2xl backdrop-blur-md"><Check className="h-4 w-4"/>Changes saved.</div>}
       </main>
+
+      <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${modalPartNo ? "is-open" : ""}`} onClick={(event) => {
+        if (event.target === event.currentTarget) setModalPartNo("");
+      }}>
+        <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
+          <div className="part-info-header">
+            <div id="partInfoTitle" className="part-info-title">{modalPartNo ? `Part Info. of (${modalPartNo})` : "Part Info. of ()"}</div>
+            <button type="button" className="part-info-close" onClick={() => setModalPartNo("")}>Close</button>
+          </div>
+
+          <div className="part-info-tabs">
+            <button type="button" className={`part-info-tab-btn ${modalTab === "encompass" ? "active" : ""}`} onClick={() => setModalTab("encompass")}>Encompass</button>
+            <button type="button" className={`part-info-tab-btn ${modalTab === "marcone" ? "active" : ""}`} onClick={() => setModalTab("marcone")}>Marcone</button>
+          </div>
+
+          <div className="part-info-body">
+            <div className={`part-info-pane ${modalTab === "encompass" ? "active" : ""}`}>
+              <div className="part-info-empty">No Encompass part-lookup API is wired into this app yet.</div>
+            </div>
+
+            <div className={`part-info-pane ${modalTab === "marcone" ? "active" : ""}`}>
+              {marconeLoading ? (
+                <div className="part-info-empty">Looking up {modalPartNo} on Marcone…</div>
+              ) : marconeError ? (
+                <div className="part-info-empty">Marcone lookup failed: {marconeError}</div>
+              ) : marconeNotFound ? (
+                <div className="part-info-empty">Marcone has no record of part {modalPartNo}.</div>
+              ) : marconeInfo ? (
+                <>
+                  <table className="part-info-matrix">
+                    <thead>
+                      <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>Make</td><td>{marconeInfo.make || "—"}</td><td>Part #</td><td>{marconeInfo.partNumber || modalPartNo}</td></tr>
+                      <tr><td>Net Price</td><td>{formatUsd(marconeInfo.netPrice)}</td><td>List Price</td><td>{formatUsd(marconeInfo.listPrice)}</td></tr>
+                      <tr><td>Core Value</td><td>{formatUsd(marconeInfo.coreValue)}</td><td>Discontinued?</td><td>{marconeInfo.isDiscontinued ? "Yes" : "No"}</td></tr>
+                      <tr><td>Description</td><td colSpan={3}>{marconeInfo.description || "—"}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="part-info-section-title">Availability (Marcone)</div>
+                  <div className="part-info-section-subtitle">
+                    {marconeInfo.totalAvailable ?? 0} available across {(marconeInfo.inventory || []).length} warehouse(s)
+                  </div>
+                  {(marconeInfo.inventory || []).length === 0 ? (
+                    <div className="part-info-empty">No stock currently available.</div>
+                  ) : (
+                    <table className="part-info-matrix">
+                      <thead><tr><th>Warehouse</th><th>Available Qty</th></tr></thead>
+                      <tbody>
+                        {marconeInfo.inventory!.map((inv, i) => (
+                          <tr key={i}><td>{inv.warehouseName || "—"}</td><td>{inv.quantityAvailable ?? 0}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              ) : (
+                <div className="part-info-empty">No lookup performed yet.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
