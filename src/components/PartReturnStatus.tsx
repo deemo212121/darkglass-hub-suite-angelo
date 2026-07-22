@@ -9,35 +9,16 @@ import {
   getDistinctDistributors,
   type PartReturnRow,
 } from "@/lib/supabase/partReturnStatus";
-
-type PartInfoRow = { leftLabel: string; leftValue: string; rightLabel: string; rightValue: string };
-type PartInfoAvailability = { id: string; name: string; qty: number };
-type PartInfoData = { rows: PartInfoRow[]; availability: PartInfoAvailability[] };
+import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 
 const TAB_KEY = "partReturnStatusTab";
-
-// TODO: this modal still shows placeholder part-lookup data (no real
-// Encompass/Marcone part-info API wired in yet) - the return records
-// themselves below are real, this is a separate, known gap.
-const PART_INFO_BY_PART: Record<string, PartInfoData> = {
-  DEFAULT: {
-    rows: [
-      { leftLabel: "Make", leftValue: "—", rightLabel: "Part #", rightValue: "" },
-      { leftLabel: "Price", leftValue: "—", rightLabel: "Dealer Price", rightValue: "—" },
-      { leftLabel: "Retail Price", leftValue: "—", rightLabel: "List Price", rightValue: "—" },
-      { leftLabel: "Core Price", leftValue: "", rightLabel: "Core?", rightValue: "" },
-      { leftLabel: "Description", leftValue: "—", rightLabel: "Discontinue?", rightValue: "" },
-      { leftLabel: "Drop Shop only?", leftValue: "", rightLabel: "Hazmat?", rightValue: "" },
-      { leftLabel: "Refrigerant?", leftValue: "", rightLabel: "Oversize?", rightValue: "" },
-    ],
-    availability: [],
-  },
-};
 
 const REGULAR_STATUS_OPTIONS = ["NOT RECEIVED", "RECEIVED", "PROCESSED", "DISPUTED"];
 const CORE_STATUS_OPTIONS = ["NOT RECEIVED", "CORE RETURN", "RECEIVED", "PROCESSED", "DISPUTED"];
 
-const emptyPartInfo = PART_INFO_BY_PART.DEFAULT;
+function formatUsd(value: number | undefined): string {
+  return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
+}
 
 function formatMoney(value: number | string) {
   const num = Number(value || 0);
@@ -88,6 +69,43 @@ export function PartReturnStatusPage() {
   const [coreResultSearch, setCoreResultSearch] = useState("");
   const [modalPartNo, setModalPartNo] = useState("");
   const [modalTab, setModalTab] = useState<"encompass" | "marcone">("marcone");
+  const [marconeInfo, setMarconeInfo] = useState<MarconePartInfo | null>(null);
+  const [marconeLoading, setMarconeLoading] = useState(false);
+  const [marconeNotFound, setMarconeNotFound] = useState(false);
+  const [marconeError, setMarconeError] = useState<string | null>(null);
+
+  // Real Marcone part lookup (make/pricing/per-warehouse availability) —
+  // no equivalent Encompass part-info API is wired into this app yet, so
+  // that tab stays a plain "not available" message rather than fake data.
+  useEffect(() => {
+    if (!modalPartNo) {
+      setMarconeInfo(null);
+      setMarconeError(null);
+      setMarconeNotFound(false);
+      return;
+    }
+    let cancelled = false;
+    setMarconeLoading(true);
+    setMarconeError(null);
+    setMarconeNotFound(false);
+    marconeLookupPart({ partNumber: modalPartNo })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.notFound) {
+          setMarconeNotFound(true);
+          setMarconeInfo(null);
+          return;
+        }
+        if (!result.success) {
+          setMarconeError(result.error || "Marcone lookup failed");
+          return;
+        }
+        setMarconeInfo(result.data || null);
+      })
+      .catch((err) => { if (!cancelled) setMarconeError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (!cancelled) setMarconeLoading(false); });
+    return () => { cancelled = true; };
+  }, [modalPartNo]);
 
   const regularTableWrapRef = useRef<HTMLDivElement | null>(null);
   const coreTableWrapRef = useRef<HTMLDivElement | null>(null);
@@ -161,20 +179,6 @@ export function PartReturnStatusPage() {
       setSaveError(err instanceof Error ? err.message : "Failed to save change");
     }
   };
-
-  const renderPartInfoFields = (partNo: string, tab: "encompass" | "marcone") => {
-    const data = PART_INFO_BY_PART[partNo] || emptyPartInfo;
-    return data.rows.map((row) => (
-      <tr key={`${tab}-${row.leftLabel}-${row.rightLabel}`}>
-        <td>{row.leftLabel}</td>
-        <td>{row.leftValue}</td>
-        <td>{row.rightLabel}</td>
-        <td>{row.rightValue}</td>
-      </tr>
-    ));
-  };
-
-  const activePartInfo = PART_INFO_BY_PART[modalPartNo] || emptyPartInfo;
 
   useEffect(() => {
     const sync = (tableWrap: HTMLDivElement | null, floatingBar: HTMLDivElement | null, floatingInner: HTMLDivElement | null) => {
@@ -549,26 +553,49 @@ export function PartReturnStatusPage() {
 
           <div className="part-info-body">
             <div className={`part-info-pane ${modalTab === "encompass" ? "active" : ""}`} data-part-pane="encompass">
-              <table className="part-info-matrix">
-                <thead>
-                  <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
-                </thead>
-                <tbody>{renderPartInfoFields(modalPartNo, "encompass")}</tbody>
-              </table>
-              <div className="part-info-section-title">Availability (Encompass)</div>
-              <div className="part-info-empty">Not wired up to a real parts-lookup API yet.</div>
+              <div className="part-info-empty">No Encompass part-lookup API is wired into this app yet.</div>
             </div>
 
             <div className={`part-info-pane ${modalTab === "marcone" ? "active" : ""}`} data-part-pane="marcone">
-              <table className="part-info-matrix">
-                <thead>
-                  <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
-                </thead>
-                <tbody>{renderPartInfoFields(modalPartNo, "marcone")}</tbody>
-              </table>
-              <div className="part-info-section-title">Availability (Marcone)</div>
-              <div id="partInfoAvailabilityCount" className="part-info-section-subtitle">{(activePartInfo.availability || []).length} records found</div>
-              <div className="part-info-empty">Not wired up to a real parts-lookup API yet.</div>
+              {marconeLoading ? (
+                <div className="part-info-empty">Looking up {modalPartNo} on Marcone…</div>
+              ) : marconeError ? (
+                <div className="part-info-empty">Marcone lookup failed: {marconeError}</div>
+              ) : marconeNotFound ? (
+                <div className="part-info-empty">Marcone has no record of part {modalPartNo}.</div>
+              ) : marconeInfo ? (
+                <>
+                  <table className="part-info-matrix">
+                    <thead>
+                      <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>Make</td><td>{marconeInfo.make || "—"}</td><td>Part #</td><td>{marconeInfo.partNumber || modalPartNo}</td></tr>
+                      <tr><td>Net Price</td><td>{formatUsd(marconeInfo.netPrice)}</td><td>List Price</td><td>{formatUsd(marconeInfo.listPrice)}</td></tr>
+                      <tr><td>Core Value</td><td>{formatUsd(marconeInfo.coreValue)}</td><td>Discontinued?</td><td>{marconeInfo.isDiscontinued ? "Yes" : "No"}</td></tr>
+                      <tr><td>Description</td><td colSpan={3}>{marconeInfo.description || "—"}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="part-info-section-title">Availability (Marcone)</div>
+                  <div id="partInfoAvailabilityCount" className="part-info-section-subtitle">
+                    {marconeInfo.totalAvailable ?? 0} available across {(marconeInfo.inventory || []).length} warehouse(s)
+                  </div>
+                  {(marconeInfo.inventory || []).length === 0 ? (
+                    <div className="part-info-empty">No stock currently available.</div>
+                  ) : (
+                    <table className="part-info-matrix">
+                      <thead><tr><th>Warehouse</th><th>Available Qty</th></tr></thead>
+                      <tbody>
+                        {marconeInfo.inventory!.map((inv, i) => (
+                          <tr key={i}><td>{inv.warehouseName || "—"}</td><td>{inv.quantityAvailable ?? 0}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              ) : (
+                <div className="part-info-empty">No lookup performed yet.</div>
+              )}
             </div>
           </div>
         </div>
