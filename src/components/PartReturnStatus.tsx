@@ -534,11 +534,6 @@ export function PartReturnStatusPage() {
         )}
       </main>
 
-      <footer id="contact" className="status-footer">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="status-footer-note">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
-
       <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${modalPartNo ? "is-open" : ""}`} onClick={(event) => { if (event.target === event.currentTarget) setModalPartNo(""); }}>
         <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
           <div className="part-info-header">

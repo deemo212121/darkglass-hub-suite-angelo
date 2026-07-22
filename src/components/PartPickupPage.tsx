@@ -646,11 +646,6 @@ export function PartPickupPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         </div>
       </main>
 
-      <footer id="contact">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
-
       <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${activePartNo ? "is-open" : ""}`} onClick={(event) => { if (event.target === event.currentTarget) setActivePartNo(""); }}>
         <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
           <div className="part-info-header">

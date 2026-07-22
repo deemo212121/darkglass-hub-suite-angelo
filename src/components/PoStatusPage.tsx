@@ -350,11 +350,6 @@ export function PoStatusPage() {
           <div className="report-footer">Showing {filteredOrders.length} part order(s) auto-populated from Service Tracking.</div>
         </div>
       </main>
-
-      <footer id="contact">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
     </div>
   );
 }

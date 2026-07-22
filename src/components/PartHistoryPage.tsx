@@ -371,11 +371,6 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           <p><strong>*Note 2:</strong> The inventory information below reflects the current inventory record for the selected unique ID.</p>
         </div>
       </main>
-
-      <footer id="contact">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
     </div>
   );
 }

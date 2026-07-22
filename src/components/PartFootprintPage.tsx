@@ -281,11 +281,6 @@ export function PartFootprintPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
         </div>
       </main>
 
-      <footer id="contact">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="footer-copy">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
-
       <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${modalPartNo ? "is-open" : ""}`} onClick={(event) => {
         if (event.target === event.currentTarget) setModalPartNo("");
       }}>

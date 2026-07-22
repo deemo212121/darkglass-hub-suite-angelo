@@ -482,11 +482,6 @@ export function ReturnPickupPage() {
           </div>
         </div>
       </div>
-
-      <footer id="contact" className="po-footer">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="po-footer-note">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
     </div>
   );
 }
