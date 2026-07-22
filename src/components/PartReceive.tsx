@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
@@ -8,6 +8,7 @@ import {
   getDistinctPartSources,
   type PartReceiveRow,
 } from "@/lib/supabase/partReceive";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 function getTrackingUrl(tracking: string, partFrom: string) {
@@ -49,6 +50,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -237,7 +239,8 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
           ) : loading ? (
             <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
           ) : (
-          <div className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
+          <>
+          <div ref={tableScrollRef} className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
@@ -364,6 +367,8 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </tfoot>
             </table>
           </div>
+          <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+          </>
           )}
         </div>
       </main>
