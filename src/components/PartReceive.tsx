@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import {
   getPartsToReceive,
@@ -111,15 +111,39 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     }
   };
 
+  const [savingInvoiceIds, setSavingInvoiceIds] = useState<Set<string>>(new Set());
+  const [savedInvoiceIds, setSavedInvoiceIds] = useState<Set<string>>(new Set());
+
   const setLocalInvoiceNo = (id: string, value: string) => {
     setReceiveItems((current) => current.map((item) => (item.id === id ? { ...item, invoiceNo: value } : item)));
+    setSavedInvoiceIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
-  const persistInvoiceNo = async (id: string, value: string) => {
+  const saveInvoiceNo = async (id: string, value: string) => {
+    setSavingInvoiceIds((prev) => new Set(prev).add(id));
     try {
       await updatePartReceiveRow(id, { invoiceNo: value });
       setSaveError(null);
+      setSavedInvoiceIds((prev) => new Set(prev).add(id));
+      window.setTimeout(() => {
+        setSavedInvoiceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 2000);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save invoice #");
+    } finally {
+      setSavingInvoiceIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -304,16 +328,26 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     <td className="px-4 py-3 text-slate-300">{item.poDate}</td>
                     <td className="px-4 py-3 text-slate-300">{item.orderNo || "—"}</td>
                     <td className="px-4 py-3 text-slate-300">
-                      <label className="sr-only" htmlFor={`invoice-no-${item.id}`}>Invoice number for {item.id}</label>
-                      <input
-                        id={`invoice-no-${item.id}`}
-                        type="text"
-                        value={item.invoiceNo}
-                        placeholder="e.g. JS-TS-26000792299DF"
-                        onChange={(event) => setLocalInvoiceNo(item.id, event.target.value)}
-                        onBlur={(event) => persistInvoiceNo(item.id, event.target.value)}
-                        className="w-40 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400"
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <label className="sr-only" htmlFor={`invoice-no-${item.id}`}>Invoice number for {item.id}</label>
+                        <input
+                          id={`invoice-no-${item.id}`}
+                          type="text"
+                          value={item.invoiceNo}
+                          placeholder="e.g. JS-TS-26000792299DF"
+                          onChange={(event) => setLocalInvoiceNo(item.id, event.target.value)}
+                          className="w-36 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveInvoiceNo(item.id, item.invoiceNo)}
+                          disabled={savingInvoiceIds.has(item.id)}
+                          className="shrink-0 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                          title="Save invoice #"
+                        >
+                          {savingInvoiceIds.has(item.id) ? "…" : savedInvoiceIds.has(item.id) ? <Check className="h-3.5 w-3.5 text-green-400" /> : "Save"}
+                        </button>
+                      </div>
                     </td>
                     <td className="px-4 py-3 font-mono text-slate-300">{item.partNo}</td>
                     <td className="px-4 py-3 text-slate-300">{item.partDesc}</td>
