@@ -109,6 +109,18 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     }
   };
 
+  const setLocalInvoiceNo = (id: string, value: string) => {
+    setReceiveItems((current) => current.map((item) => (item.id === id ? { ...item, invoiceNo: value } : item)));
+  };
+  const persistInvoiceNo = async (id: string, value: string) => {
+    try {
+      await updatePartReceiveRow(id, { invoiceNo: value });
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save invoice #");
+    }
+  };
+
   const filteredItems = receiveItems.filter((item) => {
     if (location && item.location !== location) return false;
     if (partFrom && item.partFrom !== partFrom) return false;
@@ -244,6 +256,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part From</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">P/O Date</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Order No</th>
+                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Invoice #</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Number*</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Desc*</th>
                   <th className="px-4 py-3 text-left font-semibold text-blue-300">ETA</th>
@@ -256,7 +269,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <th className="px-4 py-3 text-center font-semibold text-blue-300">$ Core</th>
                 </tr>
                 <tr className="bg-blue-900/30 border-b border-blue-500/20">
-                  <th colSpan={12} className="px-4 py-2"></th>
+                  <th colSpan={13} className="px-4 py-2"></th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Ticket No</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Status</th>
                   <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Tech</th>
@@ -266,7 +279,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </thead>
               <tbody>
                 {filteredItems.length === 0 ? (
-                  <tr><td colSpan={20} className="px-4 py-8 text-center text-slate-400">No parts match these filters.</td></tr>
+                  <tr><td colSpan={21} className="px-4 py-8 text-center text-slate-400">No parts match these filters.</td></tr>
                 ) : filteredItems.map((item) => (
                   <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                     <td className="px-4 py-3 text-center">
@@ -286,6 +299,18 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     <td className="px-4 py-3 text-slate-300">{item.partFrom}</td>
                     <td className="px-4 py-3 text-slate-300">{item.poDate}</td>
                     <td className="px-4 py-3 text-slate-300">{item.orderNo || "—"}</td>
+                    <td className="px-4 py-3 text-slate-300">
+                      <label className="sr-only" htmlFor={`invoice-no-${item.id}`}>Invoice number for {item.id}</label>
+                      <input
+                        id={`invoice-no-${item.id}`}
+                        type="text"
+                        value={item.invoiceNo}
+                        placeholder="e.g. JS-TS-26000792299DF"
+                        onChange={(event) => setLocalInvoiceNo(item.id, event.target.value)}
+                        onBlur={(event) => persistInvoiceNo(item.id, event.target.value)}
+                        className="w-40 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400"
+                      />
+                    </td>
                     <td className="px-4 py-3 font-mono text-slate-300">{item.partNo}</td>
                     <td className="px-4 py-3 text-slate-300">{item.partDesc}</td>
                     <td className="px-4 py-3 text-slate-300">{item.eta || "—"}</td>
@@ -330,7 +355,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </tbody>
               <tfoot>
                 <tr className="bg-blue-900/50 border-t-2 border-blue-500/30 font-semibold text-blue-300">
-                  <td colSpan={16} className="px-4 py-3 text-right">Totals:</td>
+                  <td colSpan={17} className="px-4 py-3 text-right">Totals:</td>
                   <td className="px-4 py-3 text-center">{totals.total}</td>
                   <td className="px-4 py-3 text-center text-green-400">{totals.rcvd}</td>
                   <td className="px-4 py-3 text-right">${totals.partCost.toFixed(2)}</td>

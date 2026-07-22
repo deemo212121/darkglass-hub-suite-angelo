@@ -4,6 +4,10 @@
  * filtering. See migration 0071 for the qty_received/received_date columns
  * this reads and writes — tracked as their own fields, never changing the
  * part's ticket-facing `status`.
+ *
+ * invoice_no is editable here too: for branch-to-branch transfers there's
+ * no real distributor invoice, so staff enter a synthetic reference like
+ * "JS-TS-26000792299DF" (TS for Truck Stock, 2-letter branch, ticket #).
  */
 
 import { supabase } from "./client";
@@ -13,6 +17,7 @@ export interface PartReceiveRow {
   poNo: string;
   poDate: string;
   orderNo: string;
+  invoiceNo: string;
   partNo: string;
   partDesc: string;
   eta: string;
@@ -34,7 +39,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, po_no, po_date, order_no, part_no, part_desc, eta, received_date, in_tracking, part_dist, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+      "id, po_no, po_date, order_no, invoice_no, part_no, part_desc, eta, received_date, in_tracking, part_dist, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
     )
     .eq("status", "PO Made");
 
@@ -48,6 +53,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
     poNo: row.po_no || "",
     poDate: row.po_date || "",
     orderNo: row.order_no || "",
+    invoiceNo: row.invoice_no || "",
     partNo: row.part_no || "",
     partDesc: row.part_desc || "",
     eta: row.eta || "",
@@ -68,11 +74,12 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
 
 export async function updatePartReceiveRow(
   id: string,
-  updates: { qtyReceived?: number; receivedDate?: string }
+  updates: { qtyReceived?: number; receivedDate?: string; invoiceNo?: string }
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
   if (updates.qtyReceived !== undefined) payload.qty_received = updates.qtyReceived;
   if (updates.receivedDate !== undefined) payload.received_date = updates.receivedDate || null;
+  if (updates.invoiceNo !== undefined) payload.invoice_no = updates.invoiceNo;
   if (Object.keys(payload).length === 0) return;
 
   const { error } = await supabase.from("parts").update(payload).eq("id", id);
