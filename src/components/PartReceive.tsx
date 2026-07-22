@@ -232,15 +232,16 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Receive Table */}
-          {loadError ? (
-            <p className="text-sm text-red-400 px-2 py-6">Failed to load parts: {loadError}</p>
-          ) : loading ? (
-            <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
-          ) : (
-          <>
-          <div ref={tableScrollRef} className="mt-8 overflow-x-auto border border-white/10 rounded-lg">
+        {/* Receive Table */}
+        {loadError ? (
+          <p className="text-sm text-red-400 px-2 py-6">Failed to load parts: {loadError}</p>
+        ) : loading ? (
+          <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
+        ) : (
+        <>
+        <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
             <table className="w-full min-w-[2400px] text-sm">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
@@ -367,10 +368,9 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </tfoot>
             </table>
           </div>
-          <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
-          </>
-          )}
-        </div>
+        <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+        </>
+        )}
       </main>
     </div>
   );
