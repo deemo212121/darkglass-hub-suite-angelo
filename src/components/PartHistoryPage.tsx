@@ -14,35 +14,36 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
   const [loadError, setLoadError] = useState<string | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const runSearch = (queryOverride?: string) => {
-    const query = (queryOverride ?? uniqueIdFilter).trim();
+  // Other Parts pages link here as ?uniqueId=<id> (e.g. "View History" on
+  // Part Inventory / Part Daily Pickup) expecting the search to run
+  // automatically, matching the original page's own behavior.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const uniqueId = params.get("uniqueId");
+    if (uniqueId) setUniqueIdFilter(uniqueId);
+  }, []);
+
+  // Auto-search as the user types, debounced so a fast typist doesn't fire
+  // a Supabase query per keystroke.
+  useEffect(() => {
+    const query = uniqueIdFilter.trim();
     if (!query) {
       setRows([]);
       setSearched(false);
       setLoadError(null);
       return;
     }
+    setSearched(true);
     setLoading(true);
     setLoadError(null);
-    setSearched(true);
-    searchPartHistory(query)
-      .then(setRows)
-      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  };
-
-  // Other Parts pages link here as ?uniqueId=<id> (e.g. "View History" on
-  // Part Inventory / Part Daily Pickup) expecting the search to run
-  // immediately, matching the original page's own behavior.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const uniqueId = params.get("uniqueId");
-    if (uniqueId) {
-      setUniqueIdFilter(uniqueId);
-      runSearch(uniqueId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const timeout = window.setTimeout(() => {
+      searchPartHistory(query)
+        .then(setRows)
+        .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
+        .finally(() => setLoading(false));
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [uniqueIdFilter]);
 
   const filteredRows = useMemo(() => {
     const search = historySearch.trim().toLowerCase();
@@ -72,8 +73,6 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           .field label { font-size: 0.78rem; font-weight: 600; color: #e5e7eb; letter-spacing: 0.02em; }
           .field input { width: 100%; min-width: 280px; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; font-family: inherit; }
           .field input:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.16); }
-          .refresh-btn { height: 38px; padding: 0 1rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.25); background: #1d4ed8; color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
-          .refresh-btn:hover { background: #1e40af; }
           .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; margin: 0.8rem 0 0.6rem; }
           .record-count { font-size: 0.88rem; font-weight: 700; color: #bfdbfe; }
           .search-inline input { padding: 0.45rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.84rem; min-width: 210px; }
@@ -113,11 +112,9 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
                 type="text"
                 value={uniqueIdFilter}
                 onChange={(event) => setUniqueIdFilter(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") runSearch(); }}
                 placeholder="Unique ID, Part #, Invoice #, or PO #"
               />
             </div>
-            <button type="button" className="refresh-btn" onClick={() => runSearch()}>Refresh</button>
           </div>
 
           {loadError ? (
@@ -125,7 +122,7 @@ export function PartHistoryPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
           ) : loading ? (
             <p className="text-sm text-muted-foreground px-2 py-6">Searching…</p>
           ) : !searched ? (
-            <p className="text-sm text-muted-foreground px-2 py-6">Enter a Unique ID (or part #, invoice #, PO #) and click Refresh.</p>
+            <p className="text-sm text-muted-foreground px-2 py-6">Enter a Unique ID (or part #, invoice #, PO #) to search.</p>
           ) : (
           <>
           <div className="meta-row">
