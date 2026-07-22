@@ -11,9 +11,16 @@
  * how long the *ticket* has been open, an unrelated concept. Confirmed
  * with the user: an invoice_date of 04/29/2026 should show as 84 days
  * aging as of 07/22/2026, which only invoice_date math produces.
+ *
+ * Excludes status IN ('Need PO', 'PO Made') - claim_to can get set on a
+ * ticket before its part is even ordered, but you can't return a part
+ * you don't physically have yet. Caught by the user looking at a real
+ * "Need PO" row sitting in this list.
  */
 
 import { supabase } from "./client";
+
+const NOT_YET_RECEIVED_STATUSES = ["Need PO", "PO Made"];
 
 export interface PartReturnRow {
   id: string;
@@ -55,7 +62,8 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
       "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, schedule_date, technician, status)"
     )
     .not("claim_to", "is", null)
-    .neq("claim_to", "");
+    .neq("claim_to", "")
+    .not("status", "in", `(${NOT_YET_RECEIVED_STATUSES.join(",")})`);
 
   if (error) {
     console.error("getPartReturns error:", error.message);
