@@ -16,6 +16,13 @@
  * ticket before its part is even ordered, but you can't return a part
  * you don't physically have yet. Caught by the user looking at a real
  * "Need PO" row sitting in this list.
+ *
+ * Return submission (Reason/Return Qty/the "Return {Provider}" batch
+ * action) writes to real fields (return_reason/return_qty, migration
+ * 0073, plus the existing ra_date) - it does NOT call Marcone's or
+ * Encompass's actual return/RMA API, since neither is documented or
+ * wired into this app. Confirming a batch here records that staff
+ * locally initiated the return; it doesn't generate a real RMA #.
  */
 
 import { supabase } from "./client";
@@ -43,6 +50,8 @@ export interface PartReturnRow {
   claimTo: string;
   returnStatus: string;
   repairStatus: string;
+  returnReason: string;
+  returnQty: number;
 }
 
 function daysSince(dateStr: string | null): number | null {
@@ -59,7 +68,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, tickets!inner(ticket_no, location, schedule_date, technician, status)"
+      "id, part_no, part_dist, part_desc, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
     )
     .not("claim_to", "is", null)
     .neq("claim_to", "")
@@ -90,6 +99,8 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     claimTo: row.claim_to || "",
     returnStatus: row.return_status || "NOT RECEIVED",
     repairStatus: row.tickets?.status || "",
+    returnReason: row.return_reason || "",
+    returnQty: row.return_qty !== null && row.return_qty !== undefined ? Number(row.return_qty) : Number(row.quantity ?? 0),
   }));
 }
 
@@ -106,17 +117,47 @@ export async function getDistinctPartDist(): Promise<string[]> {
 
 export async function updatePartReturnEntryRow(
   id: string,
-  updates: { raNo?: string; raDate?: string }
+  updates: { raNo?: string; raDate?: string; returnReason?: string; returnQty?: number }
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
   if (updates.raNo !== undefined) payload.ra_no = updates.raNo;
   if (updates.raDate !== undefined) payload.ra_date = updates.raDate || null;
+  if (updates.returnReason !== undefined) payload.return_reason = updates.returnReason || null;
+  if (updates.returnQty !== undefined) payload.return_qty = updates.returnQty;
   if (Object.keys(payload).length === 0) return;
 
   const { error } = await supabase.from("parts").update(payload).eq("id", id);
   if (error) {
     console.error("updatePartReturnEntryRow error:", error.message);
     throw new Error(error.message);
+  }
+}
+
+/**
+ * "Return {Provider}" batch confirm — records that staff locally initiated
+ * the return for these rows (stamps ra_date to today, only where it isn't
+ * already set). Does NOT call any distributor's real return/RMA API - see
+ * the file header note. Caller is responsible for restricting `ids` to
+ * rows that all share one provider before calling this.
+ */
+export async function submitPartReturnBatch(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: existing, error: fetchError } = await supabase
+    .from("parts")
+    .select("id, ra_date")
+    .in("id", ids);
+  if (fetchError) {
+    console.error("submitPartReturnBatch fetch error:", fetchError.message);
+    throw new Error(fetchError.message);
+  }
+  const needsDate = (existing ?? []).filter((r: any) => !r.ra_date).map((r: any) => r.id);
+  if (needsDate.length > 0) {
+    const { error } = await supabase.from("parts").update({ ra_date: today }).in("id", needsDate);
+    if (error) {
+      console.error("submitPartReturnBatch error:", error.message);
+      throw new Error(error.message);
+    }
   }
 }
 

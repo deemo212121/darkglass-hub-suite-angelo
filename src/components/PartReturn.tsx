@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { getPartReturns, updatePartReturnEntryRow, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
+import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, getDistinctProviders, getDistinctPartDist, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
@@ -21,6 +21,12 @@ const STATUS_COLOR: Record<string, React.CSSProperties> = {
   "Hold for next vist": { background: "#fef3c7", color: "#92400e" },
   "CX Home": { background: "#e5e7eb", color: "#374151" },
 };
+
+// Reuses the same reason vocabulary already established on the sibling
+// Part Return Status page's RA-status suffixes (Defect/DMG/PNN/Qty
+// Discrepancy), plus "Not Needed" from the training manual - not a
+// fabricated taxonomy, just the real categories this app already uses.
+const RETURN_REASONS = ["Not Needed", "Defect", "DMG", "PNN", "Qty Discrepancy"];
 
 function formatMoney(value: number) {
   return `$${Number(value || 0).toFixed(2)}`;
@@ -49,6 +55,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [uniqueIdSearch, setUniqueIdSearch] = useState("");
   const [includeReturned, setIncludeReturned] = useState(false);
   const [resultSearch, setResultSearch] = useState("");
+
+  const [selectedForReturn, setSelectedForReturn] = useState<Set<string>>(new Set());
+  const [showReturnConfirm, setShowReturnConfirm] = useState(false);
+  const [submittingReturn, setSubmittingReturn] = useState(false);
+  const [returnSubmitMessage, setReturnSubmitMessage] = useState<string | null>(null);
 
   const [modalPartNo, setModalPartNo] = useState("");
   const [modalTab, setModalTab] = useState<"encompass" | "marcone">("marcone");
@@ -111,15 +122,67 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     setModalTab("marcone");
   };
 
-  const setLocalField = (id: string, field: "raNo" | "raDate", value: string) => {
+  // A return batch can only target one provider at a time (that's who the
+  // "Return {Provider}" action would be for) - drop the selection whenever
+  // the provider filter changes or is cleared to "All Providers".
+  useEffect(() => {
+    setSelectedForReturn(new Set());
+  }, [provider, tab]);
+
+  const setLocalField = (id: string, field: "raNo" | "raDate" | "returnReason", value: string) => {
     setAllRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
   };
-  const persistField = async (id: string, field: "raNo" | "raDate", value: string) => {
+  const persistField = async (id: string, field: "raNo" | "raDate" | "returnReason", value: string) => {
     try {
       await updatePartReturnEntryRow(id, { [field]: value });
       setSaveError(null);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save change");
+    }
+  };
+
+  const setLocalReturnQty = (id: string, value: number) => {
+    setAllRows((current) => current.map((row) => (row.id === id ? { ...row, returnQty: value } : row)));
+  };
+  const persistReturnQty = async (id: string, value: number) => {
+    try {
+      await updatePartReturnEntryRow(id, { returnQty: value });
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save return qty");
+    }
+  };
+
+  const toggleSelectForReturn = (id: string) => {
+    setSelectedForReturn((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedRows = useMemo(() => allRows.filter((r) => selectedForReturn.has(r.id)), [allRows, selectedForReturn]);
+
+  const submitReturn = async () => {
+    setSubmittingReturn(true);
+    setSaveError(null);
+    try {
+      await submitPartReturnBatch(Array.from(selectedForReturn));
+      // Reflect the stamped ra_date locally so the RA Date column updates
+      // without a full refetch.
+      const today = new Date().toISOString().slice(0, 10);
+      setAllRows((current) => current.map((row) =>
+        selectedForReturn.has(row.id) && !row.raDate ? { ...row, raDate: today } : row
+      ));
+      setReturnSubmitMessage(`Return submitted for ${selectedForReturn.size} part${selectedForReturn.size !== 1 ? "s" : ""} to ${provider}.`);
+      setSelectedForReturn(new Set());
+      setShowReturnConfirm(false);
+      window.setTimeout(() => setReturnSubmitMessage(null), 5000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to submit return");
+    } finally {
+      setSubmittingReturn(false);
     }
   };
 
@@ -278,7 +341,23 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         <div className="pr-panel">
           <div className="actions-row no-print">
             <div className="result-info">{rows.length} record{rows.length !== 1 ? "s" : ""} found</div>
-            <input className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} />
+            <div className="flex items-center gap-3">
+              {returnSubmitMessage && <span className="text-sm font-semibold text-green-300">{returnSubmitMessage}</span>}
+              {provider ? (
+                <button
+                  type="button"
+                  className="btn px-4 bg-blue-600 hover:bg-blue-700 border-blue-600"
+                  disabled={selectedForReturn.size === 0}
+                  style={selectedForReturn.size === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+                  onClick={() => setShowReturnConfirm(true)}
+                >
+                  Return {provider} {selectedForReturn.size > 0 ? `(${selectedForReturn.size})` : ""}
+                </button>
+              ) : (
+                <span className="text-xs text-muted-foreground">Select a Part Provider to process returns</span>
+              )}
+              <input className="search-input" type="text" placeholder="search in result" value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} />
+            </div>
           </div>
 
           {loadError ? (
@@ -304,6 +383,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   <th>Dist.</th>
                   <th>Description</th>
                   <th>Invoice Date</th>
+                  <th>Reason</th>
                   <th>Return Qty</th>
                   <th>Core Value</th>
                   <th>Part Status</th>
@@ -312,11 +392,12 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   <th>Technician</th>
                   <th>Core RA #</th>
                   <th>RA Date</th>
+                  <th>Return</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={16} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                  <tr><td colSpan={18} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
                 ) : rows.map((r) => (
                   <tr key={r.id}>
                     <td>
@@ -333,7 +414,27 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     <td>{r.partDist || "—"}</td>
                     <td>{r.description || "—"}</td>
                     <td>{r.invoiceDate || "—"}</td>
-                    <td className="money">{r.quantity}</td>
+                    <td>
+                      <select
+                        className="cell-input"
+                        value={r.returnReason}
+                        onChange={(e) => { setLocalField(r.id, "returnReason", e.target.value); persistField(r.id, "returnReason", e.target.value); }}
+                      >
+                        <option value="">—</option>
+                        {RETURN_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        className="cell-input"
+                        type="number"
+                        min={0}
+                        max={r.quantity}
+                        value={r.returnQty}
+                        onChange={(e) => setLocalReturnQty(r.id, Number(e.target.value))}
+                        onBlur={(e) => persistReturnQty(r.id, Number(e.target.value))}
+                      />
+                    </td>
                     <td className="money">{r.coreValue > 0 ? formatMoney(r.coreValue) : "—"}</td>
                     <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
                     <td className="money">{r.aging === null ? "—" : r.aging}</td>
@@ -358,6 +459,14 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                         onBlur={(e) => persistField(r.id, "raDate", e.target.value)}
                       />
                     </td>
+                    <td>
+                      {provider ? (
+                        <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+                          <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
+                          <span className="text-xs">Return {provider}</span>
+                        </label>
+                      ) : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -368,6 +477,43 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           )}
         </div>
       </main>
+
+      <div className={`part-info-modal-overlay ${showReturnConfirm ? "is-open" : ""}`} onClick={(event) => {
+        if (event.target === event.currentTarget && !submittingReturn) setShowReturnConfirm(false);
+      }}>
+        <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="returnConfirmTitle">
+          <div className="part-info-header">
+            <div id="returnConfirmTitle" className="part-info-title">Confirm Return to {provider}</div>
+            <button type="button" className="part-info-close" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Close</button>
+          </div>
+          <div className="part-info-body">
+            <p style={{ fontSize: "0.85rem", color: "#374151", marginBottom: "0.75rem" }}>
+              {selectedRows.length} part{selectedRows.length !== 1 ? "s" : ""} will be marked as returned to <strong>{provider}</strong>. This records the return in our own system — it does not submit anything to {provider}'s own website.
+            </p>
+            <table className="part-info-matrix">
+              <thead>
+                <tr><th>Part #</th><th>Description</th><th>Reason</th><th>Return Qty</th></tr>
+              </thead>
+              <tbody>
+                {selectedRows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.partNo || "—"}</td>
+                    <td>{r.description || "—"}</td>
+                    <td>{r.returnReason || "—"}</td>
+                    <td>{r.returnQty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem", justifyContent: "flex-end" }}>
+              <button type="button" className="btn" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Cancel</button>
+              <button type="button" className="btn bg-blue-600 hover:bg-blue-700 border-blue-600" onClick={submitReturn} disabled={submittingReturn}>
+                {submittingReturn ? "Submitting…" : `Return ${provider}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${modalPartNo ? "is-open" : ""}`} onClick={(event) => {
         if (event.target === event.currentTarget) setModalPartNo("");
