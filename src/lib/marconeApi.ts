@@ -608,6 +608,70 @@ export async function marconeRequestReturn(args: {
   };
 }
 
+export type MarconeReturnSearchBy = "Part" | "PO" | "InvoiceNumber";
+
+export interface MarconeReturnableItem {
+  invoiceNumber?: string;
+  poNumber?: string;
+  make?: string;
+  partNumber?: string;
+  /** How many units of this line Marcone's own records currently allow returning. */
+  returnQuantityAvailable: number;
+  unitPrice: number;
+}
+
+interface FindReturnableItemsRawResponse {
+  transactionId?: string;
+  returnableItemsList?: MarconeReturnableItem[] | null;
+  errorMessage?: string;
+}
+
+/**
+ * Pre-flight check before actually calling marconeRequestReturn: confirms a
+ * part/PO/invoice is real in Marcone's own records and still has returnable
+ * quantity, WITHOUT creating anything. POST /returns/findreturnableitems —
+ * confirmed directly against Marcone's Swagger spec (fetched the raw
+ * swagger.json, not the rendered UI, since components.schemas.
+ * FindReturnableItemsRequest is {custNo, searchBy: "Part"|"PO"|
+ * "InvoiceNumber", itemSearch: string} - NOT make/partNumber/poNumber/
+ * invoiceNumber as separate fields, which an earlier summarized read of
+ * this same spec had wrong). Doubles as an answer to "was this actually
+ * ordered from Marcone" - if Marcone's own system has no record of it,
+ * that's a strong signal our part_dist tagging is wrong, not that
+ * Marcone is out of sync.
+ */
+export async function marconeFindReturnableItems(args: {
+  searchBy: MarconeReturnSearchBy;
+  itemSearch: string;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReturnableItem[]>> {
+  const itemSearch = args.itemSearch?.trim();
+  if (!itemSearch) {
+    return { success: false, error: "itemSearch is required" };
+  }
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const result = await marconeRequest<FindReturnableItemsRawResponse>(
+    "/returns/findreturnableitems",
+    { method: "POST", body: { custNo, searchBy: args.searchBy, itemSearch } },
+  );
+  if (!result.success) {
+    const data = (result.data as FindReturnableItemsRawResponse) || {};
+    return { success: false, status: result.status, error: data.errorMessage || result.error };
+  }
+  const raw = (result.data as FindReturnableItemsRawResponse) || {};
+  return { success: true, status: result.status, data: raw.returnableItemsList || [] };
+}
+
 export interface MarconeReaQrCode {
   /** Object URL (from a decoded blob) ready to drop straight into an <img src>. */
   imageUrl: string;

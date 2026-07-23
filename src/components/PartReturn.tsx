@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
-import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, type MarconePartInfo } from "@/lib/marconeApi";
+import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, marconeFindReturnableItems, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
@@ -247,6 +247,60 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const selectedRows = useMemo(() => allRows.filter((r) => selectedForReturn.has(r.id)), [allRows, selectedForReturn]);
   const isMarconeDist = provider === "Marcone";
+
+  // Pre-flight check, run whenever the confirm modal opens for a Marcone
+  // batch: asks Marcone's own /returns/findreturnableitems whether it
+  // actually recognizes each part as returnable BEFORE we call the real
+  // requestreturnauthorization endpoint. Prefers PO # - confirmed against
+  // real production data that our stored po_no matches Marcone's own PO
+  // format exactly and returns one precise match. Falls back to bare part #
+  // only if po_no is blank (a part # alone can match several unrelated
+  // invoices for accounts that reorder the same part - real test returned
+  // 6 different invoices for one part #, so it's a last resort, not
+  // reliably precise to this specific row). Does NOT search by our stored
+  // invoice_no - confirmed against real data that it carries a "-N"
+  // line-item suffix ("74445360-1") that Marcone's own invoice numbers
+  // don't have ("74445360"), so a raw invoice_no search reliably fails.
+  const [marconeVerify, setMarconeVerify] = useState<Record<string, { loading: boolean; found: boolean; qtyAvailable?: number; error?: string }>>({});
+
+  useEffect(() => {
+    if (!showReturnConfirm || !isMarconeDist) return;
+    let cancelled = false;
+    setMarconeVerify(Object.fromEntries(selectedRows.map((r) => [r.id, { loading: true, found: false }])));
+    selectedRows.forEach(async (r) => {
+      const searchBy: "PO" | "Part" = r.poNo ? "PO" : "Part";
+      const itemSearch = r.poNo || r.partNo;
+      if (!itemSearch) {
+        if (!cancelled) setMarconeVerify((prev) => ({ ...prev, [r.id]: { loading: false, found: false, error: "No PO # or part # to check" } }));
+        return;
+      }
+      const res = await marconeFindReturnableItems({ searchBy, itemSearch });
+      if (cancelled) return;
+      if (!res.success) {
+        // Confirmed against real data: Marcone answers a genuine "nothing
+        // matches" with HTTP 400 + this exact message, not an empty 200
+        // list - treat that as a clean "not found" (the interesting,
+        // expected negative result this check exists for), not a technical
+        // failure like a network/auth error.
+        const notFound = (res.error || "").toLowerCase().includes("no returnable items found");
+        setMarconeVerify((prev) => ({
+          ...prev,
+          [r.id]: notFound
+            ? { loading: false, found: false }
+            : { loading: false, found: false, error: res.error || "Lookup failed" },
+        }));
+        return;
+      }
+      const match = (res.data || []).find((it) => (it.partNumber || "").toLowerCase() === r.partNo.toLowerCase());
+      setMarconeVerify((prev) => ({
+        ...prev,
+        [r.id]: match
+          ? { loading: false, found: true, qtyAvailable: match.returnQuantityAvailable }
+          : { loading: false, found: false },
+      }));
+    });
+    return () => { cancelled = true; };
+  }, [showReturnConfirm, isMarconeDist, selectedRows]);
 
   const submitReturn = async () => {
     setSubmittingReturn(true);
@@ -685,19 +739,43 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             </p>
             <table className="part-info-matrix">
               <thead>
-                <tr><th>Part #</th><th>Description</th><th>Reason</th><th>Return Qty</th></tr>
+                <tr>
+                  <th>Part #</th><th>Description</th><th>Reason</th><th>Return Qty</th>
+                  {isMarconeDist && <th>Marcone Confirms</th>}
+                </tr>
               </thead>
               <tbody>
-                {selectedRows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.partNo || "—"}</td>
-                    <td>{r.description || "—"}</td>
-                    <td>{r.returnReason || "—"}</td>
-                    <td>{r.returnQty}</td>
-                  </tr>
-                ))}
+                {selectedRows.map((r) => {
+                  const verify = marconeVerify[r.id];
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.partNo || "—"}</td>
+                      <td>{r.description || "—"}</td>
+                      <td>{r.returnReason || "—"}</td>
+                      <td>{r.returnQty}</td>
+                      {isMarconeDist && (
+                        <td>
+                          {!verify || verify.loading ? (
+                            <span style={{ color: "#6b7280" }}>Checking…</span>
+                          ) : verify.error ? (
+                            <span style={{ color: "#b91c1c" }} title={verify.error}>Check failed</span>
+                          ) : verify.found ? (
+                            <span style={{ color: "#15803d", fontWeight: 700 }}>✓ {verify.qtyAvailable} returnable</span>
+                          ) : (
+                            <span style={{ color: "#b91c1c", fontWeight: 700 }} title="Marcone has no record of this part on this invoice/PO — double-check it was actually ordered from Marcone.">✗ Not found</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            {isMarconeDist && (
+              <p style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
+                "Marcone Confirms" is a real, read-only check against Marcone's own returnable-items records — it does not create anything. A "Not found" doesn't block the return, but means Marcone's system doesn't recognize this part as coming from them; worth confirming before submitting.
+              </p>
+            )}
             <div style={{ display: "flex", gap: "0.6rem", marginTop: "1rem", justifyContent: "flex-end" }}>
               <button type="button" className="btn" onClick={() => setShowReturnConfirm(false)} disabled={submittingReturn}>Cancel</button>
               <button type="button" className="btn bg-blue-600 hover:bg-blue-700 border-blue-600" onClick={submitReturn} disabled={submittingReturn}>
