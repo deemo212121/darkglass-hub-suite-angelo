@@ -98,7 +98,7 @@ function statusColorClass(status: string): string {
   return map[key] ?? "text-blue-300";
 }
 
-const COLUMN_FILTER_KEYS = ["ticketNo", "warranty", "customer", "model", "customerPref", "status"] as const;
+const COLUMN_FILTER_KEYS = ["ticketNo", "warranty", "customer", "model", "customerPref", "status", "aging"] as const;
 type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
 
 export function TodoListPage({ mod, sub }: Props) {
@@ -148,6 +148,8 @@ export function TodoListPage({ mod, sub }: Props) {
     setColumnFilters((prev) => ({ ...prev, [key]: next }));
   };
 
+  // aging's getter matches the exact "Nd" text rendered in the cell, so the
+  // funnel's checkbox list reads the same as what's on screen.
   const columnValueGetters: Record<ColumnFilterKey, (r: TodoRow) => string> = {
     ticketNo: (r) => r.ticketNo,
     warranty: (r) => r.warranty,
@@ -155,6 +157,7 @@ export function TodoListPage({ mod, sub }: Props) {
     model: (r) => r.model,
     customerPref: (r) => r.customerPref,
     status: (r) => r.status,
+    aging: (r) => `${daysSinceStatusChange(r.statusChangedAt, r.created)}d`,
   };
 
   // Shared predicate so each column filter's own option list can cascade off
@@ -308,7 +311,7 @@ export function TodoListPage({ mod, sub }: Props) {
                   {renderHeader("model", "Model", { filterKey: "model" })}
                   {renderHeader("customerPref", "Cx Prefer", { filterKey: "customerPref", align: "center" })}
                   {renderHeader("status", "Status", { filterKey: "status" })}
-                  {renderHeader("aging", "Aging", { align: "center" })}
+                  {renderHeader("aging", "Aging", { align: "center", filterKey: "aging" })}
                   {renderHeader("created", "Created")}
                 </tr>
               </thead>
