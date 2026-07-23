@@ -148,8 +148,8 @@ export function TodoListPage({ mod, sub }: Props) {
     setColumnFilters((prev) => ({ ...prev, [key]: next }));
   };
 
-  // aging's getter matches the exact "Nd" text rendered in the cell, so the
-  // funnel's checkbox list reads the same as what's on screen.
+  // aging's getter is the bare day count (no "d" suffix) - reads as a clean
+  // list of numbers in the funnel, e.g. 0, 1, 2 ... 79.
   const columnValueGetters: Record<ColumnFilterKey, (r: TodoRow) => string> = {
     ticketNo: (r) => r.ticketNo,
     warranty: (r) => r.warranty,
@@ -157,7 +157,7 @@ export function TodoListPage({ mod, sub }: Props) {
     model: (r) => r.model,
     customerPref: (r) => r.customerPref,
     status: (r) => r.status,
-    aging: (r) => `${daysSinceStatusChange(r.statusChangedAt, r.created)}d`,
+    aging: (r) => String(daysSinceStatusChange(r.statusChangedAt, r.created)),
   };
 
   // Shared predicate so each column filter's own option list can cascade off
