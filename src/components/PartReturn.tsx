@@ -3,9 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
-import { marconeLookupPart, marconeRequestReturn, type MarconePartInfo } from "@/lib/marconeApi";
+import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
-import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const STATUS_COLOR: Record<string, React.CSSProperties> = {
@@ -15,6 +14,9 @@ const STATUS_COLOR: Record<string, React.CSSProperties> = {
   "Part Ready": { background: "#d1fae5", color: "#065f46" },
   "Tech Pickup": { background: "#e0e7ff", color: "#3730a3" },
   "RA - PNN": { background: "#f3e8ff", color: "#6b21a8" },
+  "In Review": { background: "#fef9c3", color: "#854d0e" },
+  PNN: { background: "#f3e8ff", color: "#6b21a8" },
+  Defective: { background: "#fee2e2", color: "#991b1b" },
   Used: { background: "#e5e7eb", color: "#374151" },
   Cancelled: { background: "#e5e7eb", color: "#6b7280" },
   "Not Used & Stocked": { background: "#e5e7eb", color: "#374151" },
@@ -48,6 +50,50 @@ function formatUsd(value: number | undefined): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
 }
 
+// "Inventory" bucket group, computed entirely from fields already on
+// PartReturnRow - see the header comment in lib/supabase/partReturn.ts for
+// why each one means what it means (Rec'd in particular is about the
+// DISTRIBUTOR receiving the return, not us receiving the part).
+function recdQty(r: PartReturnRow): number {
+  return r.returnStatus !== "NOT RECEIVED" ? r.returnQty : 0;
+}
+function inReviewQty(r: PartReturnRow): number {
+  return r.status === "In Review" ? r.quantity : 0;
+}
+function defectQty(r: PartReturnRow): number {
+  return r.status === "Defective" ? r.quantity : 0;
+}
+function pnnQty(r: PartReturnRow): number {
+  return r.status === "PNN" ? r.quantity : 0;
+}
+function currentQty(r: PartReturnRow): number {
+  return Math.max(0, r.quantity - r.scanOutQty);
+}
+function reservedQty(_r: PartReturnRow): number {
+  // Always 0 - no "earmarked vs. general stock" concept exists anywhere in
+  // this schema (every parts row already always has a ticket_id). Shown
+  // honestly as 0 rather than invented.
+  return 0;
+}
+// Compact tag mirroring whichever Inventory bucket(s) are active on this
+// row - not a real lot-tracking field (no such data exists), just a
+// readable summary of the same status-driven buckets above.
+function lotTag(r: PartReturnRow): string {
+  const tags: string[] = [];
+  const ir = inReviewQty(r);
+  const d = defectQty(r);
+  const p = pnnQty(r);
+  if (ir > 0) tags.push(`In Review(${ir})`);
+  if (d > 0) tags.push(`Defect(${d})`);
+  if (p > 0) tags.push(`PNN(${p})`);
+  return tags.join(" ");
+}
+
+function marconeAccountNumber(): string {
+  const env = (import.meta as any).env || {};
+  return String(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || "").trim();
+}
+
 export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [tab, setTab] = useState<"return" | "core">("return");
   const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
@@ -60,9 +106,9 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [location, setLocation] = useState("");
   const [agingMin, setAgingMin] = useState(0);
   const [agingMax, setAgingMax] = useState(90);
-  const [repairStatusFilter, setRepairStatusFilter] = useState<Set<string>>(new Set());
   const [uniqueIdSearch, setUniqueIdSearch] = useState("");
   const [includeReturned, setIncludeReturned] = useState(false);
+  const [includeReserved, setIncludeReserved] = useState(false);
   const [resultSearch, setResultSearch] = useState("");
 
   const [selectedForReturn, setSelectedForReturn] = useState<Set<string>>(new Set());
@@ -76,6 +122,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [marconeLoading, setMarconeLoading] = useState(false);
   const [marconeNotFound, setMarconeNotFound] = useState(false);
   const [marconeError, setMarconeError] = useState<string | null>(null);
+
+  const [raLabelRaNo, setRaLabelRaNo] = useState<string | null>(null);
+  const [raLabelUrl, setRaLabelUrl] = useState<string | null>(null);
+  const [raLabelLoading, setRaLabelLoading] = useState(false);
+  const [raLabelError, setRaLabelError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -127,6 +178,32 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const openPartInfoModal = (partNo: string) => {
     setModalPartNo(partNo);
     setModalTab("marcone");
+  };
+
+  const openRaLabel = async (raNo: string) => {
+    setRaLabelRaNo(raNo);
+    setRaLabelUrl(null);
+    setRaLabelError(null);
+    setRaLabelLoading(true);
+    const raNum = Number(raNo);
+    if (!raNum || Number.isNaN(raNum)) {
+      setRaLabelError(`"${raNo}" isn't a Marcone RA number Marcone's label lookup can use.`);
+      setRaLabelLoading(false);
+      return;
+    }
+    const res = await marconeGetReaQrCode({ returnAuthorizationNumber: raNum });
+    if (!res.success || !res.data) {
+      setRaLabelError(res.error || "Failed to fetch RA label from Marcone");
+    } else {
+      setRaLabelUrl(res.data.imageUrl);
+    }
+    setRaLabelLoading(false);
+  };
+  const closeRaLabel = () => {
+    if (raLabelUrl) URL.revokeObjectURL(raLabelUrl);
+    setRaLabelRaNo(null);
+    setRaLabelUrl(null);
+    setRaLabelError(null);
   };
 
   // A return batch can only target one provider bucket at a time. Drop the
@@ -238,15 +315,12 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const byTab = useMemo(() => allRows.filter((r) => (tab === "core" ? r.coreValue > 0 : r.coreValue <= 0)), [allRows, tab]);
 
-  // Shared predicate so the Repair Status column filter's own option list can
-  // cascade off every OTHER active filter (aging included) while excluding
-  // its own selection - same "Excel autofilter" pattern Ticket List uses.
-  const matchesCommonFilters = (r: PartReturnRow, opts: { skipRepairStatus?: boolean } = {}) => {
+  const matchesCommonFilters = (r: PartReturnRow) => {
     if (provider && providerGroupOf(r.partDist) !== provider) return false;
     if (location && r.location !== location) return false;
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
-    if (!opts.skipRepairStatus && repairStatusFilter.size > 0 && !repairStatusFilter.has(r.repairStatus)) return false;
     if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
+    if (!includeReserved && reservedQty(r) > 0) return false;
     if (uniqueIdSearch && !r.id.toLowerCase().includes(uniqueIdSearch.toLowerCase()) && !r.invoiceNo.toLowerCase().includes(uniqueIdSearch.toLowerCase())) return false;
     if (resultSearch) {
       const blob = [r.ticketNo, r.partNo, r.description, r.status, r.claimTo, r.raNo, r.repairStatus].join(" ").toLowerCase();
@@ -257,16 +331,8 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const rows = useMemo(
     () => byTab.filter((r) => matchesCommonFilters(r)),
-    [byTab, provider, location, agingMin, agingMax, repairStatusFilter, includeReturned, uniqueIdSearch, resultSearch]
+    [byTab, provider, location, agingMin, agingMax, includeReturned, includeReserved, uniqueIdSearch, resultSearch]
   );
-
-  const repairStatusOptions = useMemo(() => {
-    const values = new Set<string>();
-    for (const r of byTab) {
-      if (matchesCommonFilters(r, { skipRepairStatus: true })) values.add(r.repairStatus);
-    }
-    return Array.from(values);
-  }, [byTab, provider, location, agingMin, agingMax, includeReturned, uniqueIdSearch, resultSearch]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -277,6 +343,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           .controls-grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 0.7rem; }
           .field { display: flex; flex-direction: column; gap: 0.25rem; }
           .field label { font-size: 0.78rem; font-weight: 700; color: #e5e7eb; }
+          .field label.required::after { content: " *"; color: #ef4444; }
+          .inventory-subhead th { background: #e2e8f0; font-size: 0.72rem; color: #1f2937; }
+          .lot-tag { font-size: 0.72rem; color: #6b7280; white-space: normal; }
+          .ra-label-btn { border: 1px solid #cbd5e1; background: #fff; color: #1f2937; border-radius: 6px; padding: 0.18rem 0.4rem; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
+          .ra-label-btn:hover { background: #f1f5f9; }
           .field input, .field select { width: 100%; padding: 0.55rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(17, 24, 39, 0.95); color: #fff; font-size: 0.85rem; }
           .aging-range { display: flex; align-items: center; gap: 0.4rem; }
           .aging-range input { width: 70px; text-align: center; }
@@ -338,7 +409,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         <div className="pr-panel no-print">
           <div className="controls-grid">
             <div className="field">
-              <label htmlFor="providerFilter">Part Provider</label>
+              <label className="required" htmlFor="providerFilter">Part Provider</label>
               <select id="providerFilter" value={provider} onChange={(e) => setProvider(e.target.value)}>
                 <option value="">All Providers</option>
                 {PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -368,6 +439,10 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
             <label className="checkbox-row">
               <input type="checkbox" checked={includeReturned} onChange={(e) => setIncludeReturned(e.target.checked)} className="accent-blue-500" />
               Include Returned
+            </label>
+            <label className="checkbox-row" title="Reserved always reads 0 today — no 'earmarked vs. general stock' concept exists in this app yet.">
+              <input type="checkbox" checked={includeReserved} onChange={(e) => setIncludeReserved(e.target.checked)} className="accent-blue-500" />
+              Include Reserved
             </label>
             <button type="button" className="btn flex items-center gap-2 px-4" onClick={() => window.print()}>
               <Printer className="h-3.5 w-3.5" /> Print
@@ -410,108 +485,181 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           <>
           <div ref={tableScrollRef} className="table-wrap">
             <table className="pr-table min-w-max">
-              <thead>
-                <tr>
-                  <th>Ticket No.</th>
-                  <th>Branch</th>
-                  <th>
-                    <span className="inline-flex items-center">
-                      Repair Status
-                      <TicketColumnFilter options={repairStatusOptions} selected={repairStatusFilter} onChange={setRepairStatusFilter} label="Filter by Repair Status" />
-                    </span>
-                  </th>
-                  <th>Unique ID</th>
-                  <th>Part #</th>
-                  <th>Dist.</th>
-                  <th>Description</th>
-                  <th>Invoice Date</th>
-                  <th>Reason</th>
-                  <th>Return Qty</th>
-                  <th>Core Value</th>
-                  <th>Part Status</th>
-                  <th>Aging</th>
-                  <th>Schedule Date</th>
-                  <th>Technician</th>
-                  <th>{tab === "core" ? "Core RA #" : "RA #"}</th>
-                  <th>RA Date</th>
-                  <th>Return</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr><td colSpan={18} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
-                ) : rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      {r.ticketNo ? (
-                        <Link className="ticket-link" to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer">{r.ticketNo}</Link>
-                      ) : "—"}
-                    </td>
-                    <td>{r.location || "—"}</td>
-                    <td>{r.repairStatus || "—"}</td>
-                    <td title={r.id}>{r.id.slice(0, 8)}</td>
-                    <td>
-                      <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>
-                    </td>
-                    <td>{r.partDist || "—"}</td>
-                    <td>{r.description || "—"}</td>
-                    <td>{r.invoiceDate || "—"}</td>
-                    <td>
-                      <select
-                        className="cell-input"
-                        value={r.returnReason}
-                        onChange={(e) => { setLocalField(r.id, "returnReason", e.target.value); persistField(r.id, "returnReason", e.target.value); }}
-                      >
-                        <option value="">—</option>
-                        {RETURN_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        type="number"
-                        min={0}
-                        max={r.quantity}
-                        value={r.returnQty}
-                        onChange={(e) => setLocalReturnQty(r.id, Number(e.target.value))}
-                        onBlur={(e) => persistReturnQty(r.id, Number(e.target.value))}
-                      />
-                    </td>
-                    <td className="money">{r.coreValue > 0 ? formatMoney(r.coreValue) : "—"}</td>
-                    <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
-                    <td className="money">{r.aging === null ? "—" : r.aging}</td>
-                    <td>{r.scheduleDate || "—"}</td>
-                    <td>{r.technician || "—"}</td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        type="text"
-                        placeholder="RA #"
-                        value={r.raNo}
-                        onChange={(e) => setLocalField(r.id, "raNo", e.target.value)}
-                        onBlur={(e) => persistField(r.id, "raNo", e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        type="date"
-                        value={r.raDate}
-                        onChange={(e) => setLocalField(r.id, "raDate", e.target.value)}
-                        onBlur={(e) => persistField(r.id, "raDate", e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      {provider ? (
-                        <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
-                          <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
-                          <span className="text-xs">Return {provider}</span>
-                        </label>
-                      ) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
+              {tab === "return" ? (
+                <>
+                  <thead>
+                    <tr>
+                      <th rowSpan={2}>Account #</th>
+                      <th rowSpan={2}>Unique ID</th>
+                      <th rowSpan={2}>Part #</th>
+                      <th rowSpan={2}>Description</th>
+                      <th rowSpan={2}>Lot #</th>
+                      <th colSpan={6}>Inventory</th>
+                      <th rowSpan={2}>Reserved Ticket #</th>
+                      <th rowSpan={2}>Part Status</th>
+                      <th rowSpan={2}>Invoice Date</th>
+                      <th rowSpan={2}>Aging</th>
+                      <th rowSpan={2}>Reason</th>
+                      <th rowSpan={2}>Return Qty</th>
+                      <th rowSpan={2}>RA #</th>
+                      <th rowSpan={2}>RA Label</th>
+                      <th rowSpan={2}>Return</th>
+                    </tr>
+                    <tr className="inventory-subhead">
+                      <th>Rec'd</th>
+                      <th>In-Review</th>
+                      <th>Defect</th>
+                      <th>PNN</th>
+                      <th>Current</th>
+                      <th>Reserved</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 ? (
+                      <tr><td colSpan={20} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                    ) : rows.map((r) => (
+                      <tr key={r.id}>
+                        <td>{providerGroupOf(r.partDist) === "Marcone" ? (marconeAccountNumber() || "—") : "—"}</td>
+                        <td title={r.id}>{r.id.slice(0, 8)}</td>
+                        <td>
+                          <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>
+                        </td>
+                        <td>{r.description || "—"}</td>
+                        <td className="lot-tag">{lotTag(r) || "—"}</td>
+                        <td className="money">{recdQty(r)}</td>
+                        <td className="money">{inReviewQty(r)}</td>
+                        <td className="money">{defectQty(r)}</td>
+                        <td className="money">{pnnQty(r)}</td>
+                        <td className="money">{currentQty(r)}</td>
+                        <td className="money">{reservedQty(r)}</td>
+                        <td>
+                          {r.ticketNo ? (
+                            <Link className="ticket-link" to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer">{r.ticketNo}</Link>
+                          ) : "—"}
+                        </td>
+                        <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
+                        <td>{r.invoiceDate || "—"}</td>
+                        <td className="money">{r.aging === null ? "—" : r.aging}</td>
+                        <td>
+                          <select
+                            className="cell-input"
+                            value={r.returnReason}
+                            onChange={(e) => { setLocalField(r.id, "returnReason", e.target.value); persistField(r.id, "returnReason", e.target.value); }}
+                          >
+                            <option value="">—</option>
+                            {RETURN_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            className="cell-input"
+                            type="number"
+                            min={0}
+                            max={r.quantity}
+                            value={r.returnQty}
+                            onChange={(e) => setLocalReturnQty(r.id, Number(e.target.value))}
+                            onBlur={(e) => persistReturnQty(r.id, Number(e.target.value))}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="cell-input"
+                            type="text"
+                            placeholder="RA #"
+                            value={r.raNo}
+                            onChange={(e) => setLocalField(r.id, "raNo", e.target.value)}
+                            onBlur={(e) => persistField(r.id, "raNo", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          {providerGroupOf(r.partDist) === "Marcone" && r.raNo ? (
+                            <button type="button" className="ra-label-btn" onClick={() => openRaLabel(r.raNo)}>Label</button>
+                          ) : "—"}
+                        </td>
+                        <td>
+                          {provider ? (
+                            <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+                              <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
+                              <span className="text-xs">Return {provider}</span>
+                            </label>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              ) : (
+                <>
+                  <thead>
+                    <tr>
+                      <th>Ticket No.</th>
+                      <th>Unique ID</th>
+                      <th>Part #</th>
+                      <th>Description</th>
+                      <th>Invoice Date</th>
+                      <th>Return Qty</th>
+                      <th>Core Value</th>
+                      <th>Part Status</th>
+                      <th>Schedule Date</th>
+                      <th>Technician</th>
+                      <th>Core RA #</th>
+                      <th>Return</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 ? (
+                      <tr><td colSpan={12} className="text-center py-8 text-muted-foreground">No records found.</td></tr>
+                    ) : rows.map((r) => (
+                      <tr key={r.id}>
+                        <td>
+                          {r.ticketNo ? (
+                            <Link className="ticket-link" to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer">{r.ticketNo}</Link>
+                          ) : "—"}
+                        </td>
+                        <td title={r.id}>{r.id.slice(0, 8)}</td>
+                        <td>
+                          <button type="button" className="part-link-btn" onClick={() => openPartInfoModal(r.partNo)}>{r.partNo}</button>
+                        </td>
+                        <td>{r.description || "—"}</td>
+                        <td>{r.invoiceDate || "—"}</td>
+                        <td>
+                          <input
+                            className="cell-input"
+                            type="number"
+                            min={0}
+                            max={r.quantity}
+                            value={r.returnQty}
+                            onChange={(e) => setLocalReturnQty(r.id, Number(e.target.value))}
+                            onBlur={(e) => persistReturnQty(r.id, Number(e.target.value))}
+                          />
+                        </td>
+                        <td className="money">{r.coreValue > 0 ? formatMoney(r.coreValue) : "—"}</td>
+                        <td><span className="status-pill" style={STATUS_COLOR[r.status] || {}}>{r.status || "—"}</span></td>
+                        <td>{r.scheduleDate || "—"}</td>
+                        <td>{r.technician || "—"}</td>
+                        <td>
+                          <input
+                            className="cell-input"
+                            type="text"
+                            placeholder="Core RA #"
+                            value={r.raNo}
+                            onChange={(e) => setLocalField(r.id, "raNo", e.target.value)}
+                            onBlur={(e) => persistField(r.id, "raNo", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          {provider ? (
+                            <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+                              <input type="checkbox" className="accent-blue-500" checked={selectedForReturn.has(r.id)} onChange={() => toggleSelectForReturn(r.id)} />
+                              <span className="text-xs">Return {provider}</span>
+                            </label>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              )}
             </table>
           </div>
           <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
@@ -621,6 +769,26 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 <div className="part-info-empty">No lookup performed yet.</div>
               )}
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className={`part-info-modal-overlay ${raLabelRaNo ? "is-open" : ""}`} onClick={(event) => {
+        if (event.target === event.currentTarget) closeRaLabel();
+      }}>
+        <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="raLabelTitle" style={{ width: "min(420px, calc(100vw - 2rem))" }}>
+          <div className="part-info-header">
+            <div id="raLabelTitle" className="part-info-title">RA Label — {raLabelRaNo}</div>
+            <button type="button" className="part-info-close" onClick={closeRaLabel}>Close</button>
+          </div>
+          <div className="part-info-body" style={{ textAlign: "center" }}>
+            {raLabelLoading ? (
+              <div className="part-info-empty">Fetching real QR label from Marcone…</div>
+            ) : raLabelError ? (
+              <div className="part-info-empty">Marcone label lookup failed: {raLabelError}</div>
+            ) : raLabelUrl ? (
+              <img src={raLabelUrl} alt={`RA ${raLabelRaNo} label`} style={{ maxWidth: "100%" }} />
+            ) : null}
           </div>
         </div>
       </div>

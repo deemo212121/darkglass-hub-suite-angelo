@@ -5,7 +5,7 @@
  * Distinct from Part Return Status, which tracks the RA shipment
  * lifecycle for the 4 real "RA - *" statuses; this page covers a much
  * broader population and is scoped down via its own filters (Part
- * Provider/Location/Aging/Repair Status) instead.
+ * Provider/Location/Aging/Unique ID/Include Returned) instead.
  *
  * claim_to is not filtered on at all here - confirmed against real data
  * that every single Marcone part in production has claim_to blank
@@ -38,6 +38,25 @@
  * so submitting for them only stamps ra_date locally (see
  * submitPartReturnBatch) rather than pretending to submit anything
  * externally.
+ *
+ * PartReturn.tsx also renders a real reference app's "Inventory" bucket
+ * group (Rec'd/In-Review/Defect/PNN/Current/Reserved) computed entirely
+ * from fields already here, no separate ledger table:
+ *   - Rec'd: return_status !== "NOT RECEIVED" - the DISTRIBUTOR has
+ *     confirmed receiving this return (NOT "we received this part" -
+ *     that's qty_received on a different page/workflow entirely; this
+ *     field name is about the return leg, easy to misread).
+ *   - In-Review / Defect / PNN: status === "In Review" / "Defective" /
+ *     "PNN" respectively - "Defective" already existed as a real status
+ *     app-wide; "In Review" and "PNN" (distinct from the post-RA
+ *     "RA - PNN") were added to the shared status vocabulary
+ *     (PartManagementPage.tsx, ticket.$ticketNo.tsx) alongside this work.
+ *   - Current: quantity - scan_out_qty - on hand and not yet physically
+ *     scanned out the door for return (scan_out_qty is written by
+ *     ReturnPickupPage.tsx).
+ *   - Reserved: always 0 - no "earmarked vs. general stock" concept
+ *     exists anywhere in this schema (every parts row already always has
+ *     a ticket_id), so this is shown honestly as 0 rather than invented.
  */
 
 import { supabase } from "./client";
@@ -56,6 +75,7 @@ export interface PartReturnRow {
   invoiceDate: string;
   quantity: number;
   coreValue: number;
+  scanOutQty: number;
   status: string;
   /** Days since invoice_date; null when invoice_date isn't set (aging can't be computed). */
   aging: number | null;
@@ -84,7 +104,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, part_no, part_dist, part_desc, po_no, invoice_no, invoice_date, quantity, core_value, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
+      "id, part_no, part_dist, part_desc, po_no, invoice_no, invoice_date, quantity, core_value, scan_out_qty, status, ra_no, ra_date, claim_to, return_status, return_reason, return_qty, tickets!inner(ticket_no, location, schedule_date, technician, status)"
     )
     .not("status", "in", `(${NOT_YET_RECEIVED_STATUSES.join(",")})`);
 
@@ -105,6 +125,7 @@ export async function getPartReturns(): Promise<PartReturnRow[]> {
     invoiceDate: row.invoice_date || "",
     quantity: Number(row.quantity ?? 0),
     coreValue: Number(row.core_value ?? 0),
+    scanOutQty: Number(row.scan_out_qty ?? 0),
     status: row.status || "",
     aging: daysSince(row.invoice_date),
     scheduleDate: row.tickets?.schedule_date || "",

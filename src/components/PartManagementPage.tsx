@@ -25,8 +25,8 @@ import {
 // are unioned in below in case something outside this list ever shows up.
 const PART_STATUS_OPTIONS = [
   "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective",
-  "Hold for Estimation", "Hold for next vist", "Lost", "Need PO", "Not Used & Stocked",
-  "PAID", "Part Ready", "PO Made", "RA - Defect", "RA- DMG", "RA - PNN",
+  "Hold for Estimation", "Hold for next vist", "In Review", "Lost", "Need PO", "Not Used & Stocked",
+  "PAID", "Part Ready", "PNN", "PO Made", "RA - Defect", "RA- DMG", "RA - PNN",
   "RA - Qty Discrepancy", "SQT Received", "Tech Pickup", "Transfer to Another Ticket", "Used",
 ];
 

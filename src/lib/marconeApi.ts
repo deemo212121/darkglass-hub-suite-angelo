@@ -607,3 +607,51 @@ export async function marconeRequestReturn(args: {
     },
   };
 }
+
+export interface MarconeReaQrCode {
+  /** Object URL (from a decoded blob) ready to drop straight into an <img src>. */
+  imageUrl: string;
+  contentType: string;
+}
+
+/**
+ * Fetch the real QR-code label image for an already-issued RA #. GET
+ * /returns/reaQrCode?returnAuthorizationNumber=...&custNo=... — confirmed
+ * against Marcone's Swagger spec to return raw binary
+ * (application/octet-stream). The server bridge base64-encodes it (see
+ * marconeBridge.ts's isBinary branch); this decodes that back into a blob
+ * URL. Read-only GET, safe to call directly (unlike marconeRequestReturn,
+ * this never creates anything on Marcone's side).
+ */
+export async function marconeGetReaQrCode(args: {
+  returnAuthorizationNumber: number;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReaQrCode>> {
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const result = await marconeRequest<{ base64?: string; contentType?: string }>(
+    "/returns/reaQrCode",
+    { method: "GET", query: { returnAuthorizationNumber: args.returnAuthorizationNumber, custNo } },
+  );
+  if (!result.success || !result.data?.base64) {
+    return { success: false, status: result.status, error: result.error || "Marcone returned no QR image" };
+  }
+
+  const contentType = result.data.contentType || "image/png";
+  const binary = atob(result.data.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: contentType });
+  const imageUrl = URL.createObjectURL(blob);
+
+  return { success: true, status: result.status, data: { imageUrl, contentType } };
+}

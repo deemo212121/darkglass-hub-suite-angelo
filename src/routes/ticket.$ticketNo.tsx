@@ -695,7 +695,9 @@ const PART_STATUS_TEXT_COLOR: Record<string, string> = {
   "Back Order": "text-slate-400",
   "Defective": "text-slate-400",
   "Hold for Estimation": "text-slate-400",
+  "In Review": "text-slate-400",
   "Not Used & Stocked": "text-slate-400",
+  "PNN": "text-slate-400",
   "Tech Pickup": "text-slate-400",
   "Transfer to Another Ticket": "text-slate-400",
 
@@ -5282,11 +5284,13 @@ function TicketDetailsPage() {
             <option>Defective</option>
             <option>Hold for Estimation</option>
             <option>Hold for next vist</option>
+            <option>In Review</option>
             <option>Lost</option>
             <option>Need PO</option>
             <option>Not Used &amp; Stocked</option>
             <option>PAID</option>
             <option>Part Ready</option>
+            <option>PNN</option>
             <option>PO Made</option>
             <option>RA - Defect</option>
             <option>RA- DMG</option>
@@ -7808,11 +7812,13 @@ function TicketDetailsPage() {
                                 <option>Defective</option>
                                 <option>Hold for Estimation</option>
                                 <option>Hold for next vist</option>
+                                <option>In Review</option>
                                 <option>Lost</option>
                                 <option>Need PO</option>
                                 <option>Not Used &amp; Stocked</option>
                                 <option>PAID</option>
                                 <option>Part Ready</option>
+                                <option>PNN</option>
                                 <option>PO Made</option>
                                 <option>RA - Defect</option>
                                 <option>RA- DMG</option>
