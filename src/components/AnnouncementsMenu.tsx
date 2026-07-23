@@ -87,7 +87,7 @@ export function AnnouncementsMenu() {
         if (cancelled) return;
         setProfileId(pid);
         setChannel(ch);
-        const rows = await getChannelMessages(ch.id, 25);
+        const rows = await getChannelMessages(ch.id, 50);
         if (cancelled) return;
         setMessages(rows);
         if (pid) await refreshUnread(pid, ch.id);
@@ -124,7 +124,13 @@ export function AnnouncementsMenu() {
       .filter((m) => m.kind === "user")
       .slice()
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
-      .slice(0, 5);
+      // DropdownMenuContent already has max-h-[available-height] +
+      // overflow-y-auto (same shared component MessagesMenu.tsx uses), so a
+      // longer list here just scrolls within the dropdown instead of pushing
+      // it off-screen - was previously capped at 5 for no functional reason,
+      // which meant there was never enough content to actually need to
+      // scroll.
+      .slice(0, 20);
   }, [messages]);
 
   const canPost = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
