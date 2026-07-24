@@ -41,6 +41,7 @@ import {
   type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
@@ -535,7 +536,7 @@ export function MobileTechApp() {
         )}
 
         {view === "payroll" && (
-          <MobilePayrollView userName={headerName} />
+          <MobilePayrollView userName={headerName} profileId={profileId} />
         )}
 
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
@@ -3054,37 +3055,61 @@ function MobileHomeView({
   );
 }
 
-// Payroll tab: table matches the /timecard MobilePayrollPage exactly
-// so users get the same experience from either entry point.
+// Payroll tab: same real payslip data (getMyPayslips) and status mapping
+// as the /timecard MobilePayrollPage, so users get the same numbers from
+// either entry point.
 interface MobilePayRowInline {
   id: string;
   periodLabel: string;
   periodEnd: string;
   amount: number;
-  status: "Paid" | "Pending" | "Processing" | "On Hold";
+  status: ReturnType<typeof payslipStatusLabel>;
+  payslip: MyPayslipRow;
 }
 
-function MobilePayrollView({ userName }: { userName: string }) {
-  const rows = useMemo<MobilePayRowInline[]>(() => {
-    const out: MobilePayRowInline[] = [];
-    const endDate = new Date();
-    for (let i = 0; i < 12; i += 1) {
-      const start = new Date(endDate);
-      start.setDate(endDate.getDate() - 13);
-      const label =
-        start.toLocaleDateString("en-US") + " – " + endDate.toLocaleDateString("en-US");
-      const iso = endDate.toISOString().slice(0, 10);
-      const amount = 850 + ((i * 137) % 620);
-      let status: MobilePayRowInline["status"];
-      if (i === 0) status = "Processing";
-      else if (i === 1) status = "Pending";
-      else if (i === 4) status = "On Hold";
-      else status = "Paid";
-      out.push({ id: "TP-" + iso, periodLabel: label, periodEnd: iso, amount, status });
-      endDate.setDate(endDate.getDate() - 14);
+function MobilePayrollView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!profileId) {
+      setPayslips([]);
+      setLoading(false);
+      return;
     }
-    return out;
-  }, []);
+    (async () => {
+      setLoading(true);
+      try {
+        const rows = await getMyPayslips(profileId);
+        if (!cancelled) setPayslips(rows);
+      } catch (e) {
+        console.error("payroll: load payslips failed", e);
+        if (!cancelled) setPayslips([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
+  };
+
+  const rows = useMemo<MobilePayRowInline[]>(
+    () =>
+      payslips.map((p) => ({
+        id: p.runId,
+        periodLabel: `${fmtDate(p.periodStart)} – ${fmtDate(p.periodEnd)}`,
+        periodEnd: p.periodEnd,
+        amount: p.netPay,
+        status: payslipStatusLabel(p.status),
+        payslip: p,
+      })),
+    [payslips],
+  );
 
   const totalPaid = rows.filter((r) => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const totalPending = rows.filter((r) => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
@@ -3093,12 +3118,14 @@ function MobilePayrollView({ userName }: { userName: string }) {
     <div className="mtech-scroll mtech-payroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">{userName}</div>
-        <div className="mtech-payroll-sub">Last 12 pay periods</div>
+        <div className="mtech-payroll-sub">
+          {rows.length > 0 ? `${rows.length} pay period${rows.length === 1 ? "" : "s"}` : "Pay history"}
+        </div>
       </div>
 
       <div className="mtech-payroll-summary">
         <div className="mtech-payroll-card">
-          <div className="mtech-payroll-card-label">YTD Paid</div>
+          <div className="mtech-payroll-card-label">Paid</div>
           <div className="mtech-payroll-card-value paid">${totalPaid.toFixed(2)}</div>
         </div>
         <div className="mtech-payroll-card">
@@ -3106,6 +3133,11 @@ function MobilePayrollView({ userName }: { userName: string }) {
           <div className="mtech-payroll-card-value pending">${totalPending.toFixed(2)}</div>
         </div>
       </div>
+
+      {loading && <div className="mtech-muted">Loading payroll…</div>}
+      {!loading && rows.length === 0 && (
+        <div className="mtech-muted">No payroll runs yet.</div>
+      )}
 
       <div className="mtech-payroll-list">
         {rows.map((row) => (
@@ -3122,11 +3154,15 @@ function MobilePayrollView({ userName }: { userName: string }) {
                 <button
                   type="button"
                   className="mtech-payroll-action"
-                  onClick={() =>
+                  onClick={() => {
+                    const p = row.payslip;
                     alert(
-                      `Pay period ${row.periodLabel}\nAmount: $${row.amount.toFixed(2)}\nStatus: ${row.status}`,
-                    )
-                  }
+                      `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
+                        `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
+                        `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
+                        `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                    );
+                  }}
                 >
                   View
                 </button>

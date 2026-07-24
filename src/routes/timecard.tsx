@@ -11,6 +11,8 @@ import {
   deleteEntry as sbDeleteEntry,
   getMyProfileSchedule,
 } from "@/lib/supabase/timecards";
+import { getMyProfileId } from "@/lib/supabase/users";
+import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
 
 interface TimeEntry {
   checkIn: string;
@@ -619,45 +621,53 @@ interface MobilePayRow {
   periodLabel: string;
   periodEnd: string;
   amount: number;
-  status: "Paid" | "Pending" | "Processing" | "On Hold";
+  status: ReturnType<typeof payslipStatusLabel>;
+  payslip: MyPayslipRow;
 }
 
 function MobilePayrollPage() {
   const navigate = useNavigate();
-  const { email, displayName } = useAuth();
+  const { uid, email, displayName } = useAuth();
 
-  // Seed 12 recent bi-weekly periods, most recent first. Amounts fluctuate
-  // so the table isn't uniform. Status skews to "Paid" for older periods,
-  // "Processing"/"Pending" for the most recent ones.
-  const rows = useMemo<MobilePayRow[]>(() => {
-    const out: MobilePayRow[] = [];
-    const today = new Date();
-    // Start from the current pay-period end, walk back in 14-day steps.
-    const endDate = new Date(today);
-    for (let i = 0; i < 12; i += 1) {
-      const start = new Date(endDate);
-      start.setDate(endDate.getDate() - 13);
-      const label =
-        start.toLocaleDateString("en-US") + " – " + endDate.toLocaleDateString("en-US");
-      const iso = endDate.toISOString().slice(0, 10);
-      // Amount: base $850 + $50 × (index * 7 % 10) so the numbers vary.
-      const amount = 850 + ((i * 137) % 620);
-      let status: MobilePayRow["status"];
-      if (i === 0) status = "Processing";
-      else if (i === 1) status = "Pending";
-      else if (i === 4) status = "On Hold";
-      else status = "Paid";
-      out.push({
-        id: "TP-" + iso,
-        periodLabel: label,
-        periodEnd: iso,
-        amount,
-        status,
-      });
-      endDate.setDate(endDate.getDate() - 14);
-    }
-    return out;
-  }, []);
+  const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!uid) return;
+    (async () => {
+      setLoading(true);
+      try {
+        const profileId = await getMyProfileId(uid);
+        const rows = profileId ? await getMyPayslips(profileId) : [];
+        if (!cancelled) setPayslips(rows);
+      } catch (e) {
+        console.error("payroll: load payslips failed", e);
+        if (!cancelled) setPayslips([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
+  };
+
+  const rows = useMemo<MobilePayRow[]>(
+    () =>
+      payslips.map((p) => ({
+        id: p.runId,
+        periodLabel: `${fmtDate(p.periodStart)} – ${fmtDate(p.periodEnd)}`,
+        periodEnd: p.periodEnd,
+        amount: p.netPay,
+        status: payslipStatusLabel(p.status),
+        payslip: p,
+      })),
+    [payslips],
+  );
 
   const displayLabel = displayName || email || "User";
 
@@ -666,7 +676,7 @@ function MobilePayrollPage() {
       Paid: { bg: "bg-emerald-500/15", text: "text-emerald-300", border: "border-emerald-400/40" },
       Pending: { bg: "bg-amber-500/15", text: "text-amber-300", border: "border-amber-400/40" },
       Processing: { bg: "bg-blue-500/15", text: "text-blue-300", border: "border-blue-400/40" },
-      "On Hold": { bg: "bg-rose-500/15", text: "text-rose-300", border: "border-rose-400/40" },
+      Approved: { bg: "bg-violet-500/15", text: "text-violet-300", border: "border-violet-400/40" },
     };
     const c = map[status];
     return (
@@ -707,7 +717,7 @@ function MobilePayrollPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              YTD Paid (last 12 periods)
+              Paid
             </p>
             <p className="mt-1 text-2xl font-bold text-emerald-300">
               ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -726,6 +736,10 @@ function MobilePayrollPage() {
         </div>
 
         {/* Table */}
+        {loading && <p className="text-sm text-slate-400 mb-3">Loading payroll…</p>}
+        {!loading && rows.length === 0 && (
+          <p className="text-sm text-slate-400 mb-3">No payroll runs yet.</p>
+        )}
         <div className="rounded-lg border border-white/10 bg-slate-900/50 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -757,11 +771,15 @@ function MobilePayrollPage() {
                           type="button"
                           className="inline-flex items-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-500/15 px-2.5 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-500/25 transition"
                           title="View payroll details"
-                          onClick={() =>
+                          onClick={() => {
+                            const p = row.payslip;
                             alert(
-                              `Pay period ${row.periodLabel}\nAmount: $${row.amount.toFixed(2)}\nStatus: ${row.status}`,
-                            )
-                          }
+                              `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
+                                `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
+                                `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
+                                `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                            );
+                          }}
                         >
                           <FileText className="h-3 w-3" />
                           View
