@@ -45,6 +45,7 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
+import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
@@ -161,6 +162,17 @@ export function MobileTechApp() {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const isSelfRole = role ? SELF_ROLES.has(role.toUpperCase()) : false;
+
+  // Resolved once for the whole app shell — needed by DetailView to know
+  // which technician is looking at a ticket, for the mobile alert-popup
+  // dismiss tracking (ticket_alert_dismissals is keyed per profile).
+  const [profileId, setProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyProfileId(uid).then((id) => { if (!cancelled) setProfileId(id); });
+    return () => { cancelled = true; };
+  }, [uid]);
 
   // Persist the mobile tech-app navigation state across page reloads.
   // The tech expects a refresh to keep them on the same view instead of
@@ -496,6 +508,7 @@ export function MobileTechApp() {
             companyId={companyId}
             authorName={displayName || email || "User"}
             authorRole={role || ""}
+            profileId={profileId}
           />
         )}
 
@@ -1243,6 +1256,7 @@ function DetailView({
   companyId,
   authorName,
   authorRole,
+  profileId,
 }: {
   ticket: Ticket;
   tab: DetailTab;
@@ -1250,9 +1264,39 @@ function DetailView({
   companyId: string | null;
   authorName: string;
   authorRole: string;
+  profileId: string | null;
 }) {
+  // Mobile popup alerts — fires once per ticket-open (this component mounts
+  // fresh whenever a different ticket is opened; it does NOT remount on tab
+  // switches, so this doesn't re-fire every time the tech taps a tab).
+  const ticketDbId = (ticket as any)._id as string | undefined;
+  const [popupAlerts, setPopupAlerts] = useState<TicketAlert[]>([]);
+  useEffect(() => {
+    setPopupAlerts([]);
+    if (!ticketDbId || !profileId) return;
+    let cancelled = false;
+    getUndismissedMobilePopupAlerts(ticketDbId, profileId)
+      .then((alerts) => { if (!cancelled) setPopupAlerts(alerts); })
+      .catch((err) => console.error("getUndismissedMobilePopupAlerts error:", err));
+    return () => { cancelled = true; };
+  }, [ticketDbId, profileId]);
+
+  const dismissPopupAlerts = async () => {
+    if (!profileId) { setPopupAlerts([]); return; }
+    const ids = popupAlerts.map((a) => a.id);
+    setPopupAlerts([]);
+    try {
+      await Promise.all(ids.map((id) => dismissTicketAlert(id, profileId)));
+    } catch (err) {
+      console.error("dismissTicketAlert error:", err);
+    }
+  };
+
   return (
     <div className="mtech-scroll">
+      {popupAlerts.length > 0 && (
+        <TicketAlertPopup alerts={popupAlerts} onDismiss={() => void dismissPopupAlerts()} />
+      )}
       {/* Always-on ticket info header */}
       <div className="mtech-detail-head">
         <div className="mtech-detail-headinfo">
@@ -1295,6 +1339,27 @@ function DetailView({
       {tab === "tracking" && <RepairTab ticket={ticket} authorName={authorName} />}
       {tab === "parts" && <PartsTab ticket={ticket} authorName={authorName} />}
       {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
+    </div>
+  );
+}
+
+/** Centered, blocking popup for mobile-flagged ticket alerts. No exact
+    centered-dialog precedent existed in this file (the only prior overlay,
+    the profile menu, is a corner dropdown) — new class names below. */
+function TicketAlertPopup({ alerts, onDismiss }: { alerts: TicketAlert[]; onDismiss: () => void }) {
+  return (
+    <div className="mtech-alert-popup-scrim">
+      <div className="mtech-alert-popup-card">
+        <div className="mtech-alert-popup-title">⚠️ Alert{alerts.length > 1 ? "s" : ""}</div>
+        <div className="mtech-alert-popup-body">
+          {alerts.map((alert) => (
+            <p key={alert.id} className="mtech-alert-popup-text">{alert.text}</p>
+          ))}
+        </div>
+        <button type="button" className="mtech-btn mtech-btn-primary mtech-alert-popup-ok" onClick={onDismiss}>
+          OK, got it
+        </button>
+      </div>
     </div>
   );
 }
