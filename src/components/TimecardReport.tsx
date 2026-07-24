@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, CSR_NAMES, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -84,7 +85,11 @@ function EmployeeDropdown({ names, value, onChange }: { names: string[]; value: 
 }
 
 export function TimecardReport({ mod, sub }: Props) {
-  const [activeTab, setActiveTab] = useState<"employee"|"tech">("employee");
+  const [activeTab, setActiveTab] = usePersistedTab<"employee" | "tech">(
+    "ahs:timecard-report-active-tab",
+    ["employee", "tech"],
+    "employee",
+  );
   const [location, setLocation] = useState("");
   const [employee, setEmployee] = useState("");
   const [attendanceMode, setAttendanceMode] = useState<"week"|"date">("week");

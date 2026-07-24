@@ -6,6 +6,7 @@ import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type P
 import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, marconeFindReturnableItems, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 const STATUS_COLOR: Record<string, React.CSSProperties> = {
   Claimed: { background: "#d1fae5", color: "#065f46" },
@@ -95,7 +96,11 @@ function marconeAccountNumber(): string {
 }
 
 export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [tab, setTab] = useState<"return" | "core">("return");
+  const [tab, setTab] = usePersistedTab<"return" | "core">(
+    "ahs:part-return-active-tab",
+    ["return", "core"],
+    "return",
+  );
   const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

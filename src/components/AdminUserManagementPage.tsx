@@ -5,6 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, deleteCompanyUser, type ProfileRow } from "@/lib/supabase/users";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 type ViewMode = "list" | "hierarchy";
 
@@ -481,7 +482,7 @@ function ColumnFilter({
 
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const auth = useAuth();
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = usePersistedTab<ViewMode>("ahs:admin-user-management-view-mode", ["list", "hierarchy"], "list");
   const [search, setSearch] = useState("");
   // Per-column funnel filters: { fieldName: Set<allowed values> }
   // Empty set or missing key = no filter on that column.

@@ -11,6 +11,7 @@ import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 import { ReportBranchBase } from "./ReportBranchBase";
 import { ReportCancellations } from "./ReportCancellations";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 // Operations staff — BizOps Manager / Senior Manager roles, same live-staff
 // pattern used on Claims/Parts Dashboards (real profiles + real
@@ -45,7 +46,11 @@ function exportStaffToXlsx(rows: { name: string; role: string; branch: string; w
 }
 
 export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [activeTab, setActiveTab] = usePersistedTab<TabKey>(
+    "ahs:operations-daily-active-tab",
+    ["overview", "east", "west", "central", "cancellations"],
+    "overview",
+  );
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [staff, setStaff] = useState<ProfileRow[]>([]);

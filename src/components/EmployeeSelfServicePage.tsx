@@ -4,6 +4,7 @@ import { Link, useSearch } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getEmployeeFromEmail } from "@/lib/userDataSync";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { LOCATIONS } from "@/lib/locations";
 import {
   type AttendanceRow,
@@ -433,7 +434,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   const employee = getEmployeeFromEmail(email);
 
-  const [activeTab, setActiveTab] = useState<"dashboard" | "payroll" | "attendance" | "requests" | "manage">("dashboard");
+  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests" | "manage">(
+    "ahs:employee-self-service-active-tab",
+    ["dashboard", "payroll", "attendance", "requests", "manage"],
+    "dashboard",
+  );
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
   const [payslipModalOpen, setPayslipModalOpen] = useState(false);
   const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);

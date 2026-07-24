@@ -10,6 +10,7 @@ import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicia
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
@@ -106,7 +107,11 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const [selectedLocation, setSelectedLocation] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<TicketRecord | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>("status");
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("tickets");
+  const [sidebarTab, setSidebarTab] = usePersistedTab<SidebarTab>(
+    "ahs:work-map-sidebar-tab",
+    ["tickets", "status"],
+    "tickets",
+  );
   const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
   const [mapDate, setMapDate] = useState(() => new Date().toISOString().slice(0, 10));
   // Work Map can either bucket per single day (mapDate === ticketDate) or

@@ -57,6 +57,7 @@ import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
 import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { canManageMisdiagnosed } from "@/lib/roleLabels";
 
 // Product category options for the ticket Product Information dropdown.
@@ -357,12 +358,6 @@ const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
 const TICKET_ACTIVE_TAB_KEY_PREFIX = "ahs:ticket-active-tab:";
 type TicketDetailsTab = "general" | "tracking" | "compensation" | "billing";
 const TICKET_DETAILS_TABS: TicketDetailsTab[] = ["general", "tracking", "compensation", "billing"];
-
-function loadActiveTab(ticketNo: string): TicketDetailsTab {
-  if (typeof window === "undefined") return "general";
-  const raw = window.localStorage.getItem(`${TICKET_ACTIVE_TAB_KEY_PREFIX}${ticketNo}`);
-  return (TICKET_DETAILS_TABS as string[]).includes(raw || "") ? (raw as TicketDetailsTab) : "general";
-}
 
 function formatAuditValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -1198,14 +1193,11 @@ function TicketDetailsPage() {
   // Remembered per-ticket so a full page reload lands back on whichever
   // tab (e.g. Service Tracking) the user had open, instead of resetting to
   // General every time.
-  const [activeTab, setActiveTab] = useState<TicketDetailsTab>(() => loadActiveTab(ticketNo));
-  useEffect(() => {
-    setActiveTab(loadActiveTab(ticketNo));
-  }, [ticketNo]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(`${TICKET_ACTIVE_TAB_KEY_PREFIX}${ticketNo}`, activeTab);
-  }, [ticketNo, activeTab]);
+  const [activeTab, setActiveTab] = usePersistedTab<TicketDetailsTab>(
+    `${TICKET_ACTIVE_TAB_KEY_PREFIX}${ticketNo}`,
+    TICKET_DETAILS_TABS,
+    "general",
+  );
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");

@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, offsetStr, todayStr } from "@/components/shared";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const GROUP_BY = ["Branch (Samsung Only)","Location","State of Customer","Technician"];
@@ -13,7 +14,7 @@ const ALL_SUMMARY = locs.map((loc,i)=>({
 }));
 
 export function SalesSummaryReport({ mod, sub }: Props) {
-  const [tab, setTab] = useState<"summary"|"detail">("summary");
+  const [tab, setTab] = usePersistedTab<"summary" | "detail">("ahs:sales-summary-active-tab", ["summary", "detail"], "summary");
   const [startDate, setStartDate] = useState(offsetStr(-30));
   const [endDate, setEndDate] = useState(todayStr());
   const [groupBy, setGroupBy] = useState("");

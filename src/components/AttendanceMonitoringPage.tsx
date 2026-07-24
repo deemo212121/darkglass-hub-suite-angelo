@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { ROLE_LABELS, canSubmitConductNote } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
@@ -131,7 +132,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"daily-attendance" | "pto-management" | "corrections" | "warnings">("daily-attendance");
+  const [activeTab, setActiveTab] = usePersistedTab<"daily-attendance" | "pto-management" | "corrections" | "warnings">(
+    "ahs:attendance-monitoring-active-tab",
+    ["daily-attendance", "pto-management", "corrections", "warnings"],
+    "daily-attendance",
+  );
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");

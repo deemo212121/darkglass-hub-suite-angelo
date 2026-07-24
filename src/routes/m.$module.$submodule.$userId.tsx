@@ -9,6 +9,7 @@ import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   ssr: false,
@@ -148,7 +149,11 @@ function UserDetailsPage() {
   const [profileId, setProfileId] = useState<string>("");
   const [seqId, setSeqId] = useState<string>("");
   const [managerCandidates, setManagerCandidates] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<(typeof USER_TABS)[number]>("General Information");
+  const [activeTab, setActiveTab] = usePersistedTab<(typeof USER_TABS)[number]>(
+    `ahs:user-details-active-tab:${userId}`,
+    USER_TABS,
+    "General Information",
+  );
   const [form, setForm] = useState({
     email: "",
     username: "",

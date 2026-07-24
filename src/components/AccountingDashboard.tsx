@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import {
   ChevronLeft,
   DollarSign,
@@ -198,7 +199,11 @@ function toUSD(li: PayrollLineItem): number {
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { uid } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "payroll" | "reports">("overview");
+  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "reports">(
+    "ahs:accounting-dashboard-active-tab",
+    ["overview", "payroll", "reports"],
+    "overview",
+  );
   // Overview KPI cards default to the live current-period preview, but can
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
