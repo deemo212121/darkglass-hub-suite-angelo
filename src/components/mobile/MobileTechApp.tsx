@@ -49,9 +49,9 @@ import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert }
 import {
   parseServicePerformed,
   composeServicePerformed,
+  composeServicePerformedForDisplay,
   emptyServicePerformed,
   appendPartUsedLine,
-  type ServicePerformedSections,
 } from "@/lib/servicePerformedNotes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -1572,12 +1572,21 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   // mobile app — everything else stays read-only because it's owned
   // by dispatch / CSR on the desktop side.
   const [editVisitId, setEditVisitId] = useState<string | null>(null);
+  // `service` holds the raw textarea text as typed, not a parsed sections
+  // object - it's only normalized (labels/blank-lines snapped back into
+  // place, Parts Used hint refreshed) on blur and on save, never on every
+  // keystroke. Recomposing live on every onChange looks tempting but fights
+  // the browser's own cursor position the instant someone types on the
+  // blank line reserved under a label (the normal, common case) - the
+  // canonical text always differs from what was just typed by one blank
+  // line, so a controlled <textarea> would reset the DOM value - and hence
+  // the cursor - on nearly every keystroke.
   const [editDraft, setEditDraft] = useState<{
     repairStatus: string;
     diagnosis: string;
-    service: ServicePerformedSections;
+    service: string;
     nonCompletionReason: string;
-  }>({ repairStatus: "", diagnosis: "", service: emptyServicePerformed(), nonCompletionReason: "" });
+  }>({ repairStatus: "", diagnosis: "", service: composeServicePerformedForDisplay(emptyServicePerformed()), nonCompletionReason: "" });
   const [savingVisit, setSavingVisit] = useState(false);
 
   useEffect(() => {
@@ -1610,21 +1619,21 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     setEditDraft({
       repairStatus: String(v.repairStatus ?? ""),
       diagnosis: String(v.diagnosis ?? ""),
-      service: parseServicePerformed(String(v.resolution ?? "")),
+      service: composeServicePerformedForDisplay(parseServicePerformed(String(v.resolution ?? ""))),
       nonCompletionReason: String(v.nonCompletionReason ?? ""),
     });
   };
 
   const cancelEdit = () => {
     setEditVisitId(null);
-    setEditDraft({ repairStatus: "", diagnosis: "", service: emptyServicePerformed(), nonCompletionReason: "" });
+    setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformedForDisplay(emptyServicePerformed()), nonCompletionReason: "" });
   };
 
   const saveEdit = async (visitId: string) => {
     setSavingVisit(true);
     try {
       const original = visits.find((row) => row.id === visitId);
-      const resolution = composeServicePerformed(editDraft.service);
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
       // updateTicketVisit overwrites every column (?? null fallback), so the
       // full existing row must be spread first or fields the tech never
       // touched (schedule date, technician, time slot, locked, ...) get
@@ -1674,7 +1683,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
       // Force the visit's repair status to Ready to Complete so the visit
       // log and the ticket status stay aligned.
       const readyStatus = "CL-Ready to Complete";
-      const resolution = composeServicePerformed(editDraft.service);
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
       const original = visits.find((row) => row.id === visitId);
       await updateTicketVisit(visitId, {
         ...original,
@@ -1719,7 +1728,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
   const canComplete =
     editDraft.diagnosis.trim().length > 0 &&
-    editDraft.service.notes.trim().length > 0 &&
+    parseServicePerformed(editDraft.service).notes.trim().length > 0 &&
     editDraft.nonCompletionReason.trim().length === 0;
 
   return (
@@ -1748,17 +1757,9 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
               {!isEditing && v.diagnosis && (
                 <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
               )}
-              {!isEditing && v.resolution && (() => {
-                const service = parseServicePerformed(String(v.resolution));
-                return (
-                  <>
-                    {service.notes && <ServiceSection label="Notes" value={service.notes} />}
-                    {service.partsNeeded && <ServiceSection label="Parts Needed" value={service.partsNeeded} />}
-                    {service.additional && <ServiceSection label="Additional" value={service.additional} />}
-                    {service.partsUsed && <ServiceSection label="Parts Used" value={service.partsUsed} />}
-                  </>
-                );
-              })()}
+              {!isEditing && v.resolution && (
+                <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
+              )}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
@@ -1786,38 +1787,18 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     placeholder="What failed and why"
                     rows={2}
                   />
-                  <div className="mtech-visit-edit-label" style={{ marginTop: "0.4rem" }}>Service Performed (Tech)</div>
-                  <label className="mtech-visit-edit-label">Notes:</label>
+                  <label className="mtech-visit-edit-label">Service Performed (Tech)</label>
                   <textarea
                     className="mtech-visit-edit-input"
-                    value={editDraft.service.notes}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, notes: e.target.value } }))}
-                    placeholder="What you did to fix it"
-                    rows={3}
-                  />
-                  <label className="mtech-visit-edit-label">Parts Needed:</label>
-                  <textarea
-                    className="mtech-visit-edit-input"
-                    value={editDraft.service.partsNeeded}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, partsNeeded: e.target.value } }))}
-                    placeholder="Parts required to complete the repair"
-                    rows={2}
-                  />
-                  <label className="mtech-visit-edit-label">Additional:</label>
-                  <textarea
-                    className="mtech-visit-edit-input"
-                    value={editDraft.service.additional}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, additional: e.target.value } }))}
-                    placeholder="Anything else worth noting"
-                    rows={2}
-                  />
-                  <label className="mtech-visit-edit-label">Parts Used:</label>
-                  <textarea
-                    className="mtech-visit-edit-input"
-                    value={editDraft.service.partsUsed}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, partsUsed: e.target.value } }))}
-                    placeholder="Auto-filled when a part is marked Used on the Parts tab"
-                    rows={2}
+                    value={editDraft.service}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: e.target.value }))}
+                    onBlur={() =>
+                      setEditDraft((d) => ({
+                        ...d,
+                        service: composeServicePerformedForDisplay(parseServicePerformed(d.service)),
+                      }))
+                    }
+                    rows={10}
                   />
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea

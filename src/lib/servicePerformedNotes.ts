@@ -1,5 +1,5 @@
 /**
- * "Service Performed (Tech)" — the mobile visit-edit form's structured
+ * "Service Performed (Tech)" — the visit-edit form's structured
  * replacement for the old free-text "Repair Notes (Tech)" field. Still
  * backed by the single `visits.repair_notes` text column (no migration) —
  * this just parses/composes a fixed 4-section shape around it:
@@ -8,6 +8,15 @@
  * No format enforcement existed anywhere on this field before, so parsing
  * is deliberately lossless for legacy text: anything that isn't inside a
  * recognized section lands in `notes` rather than being dropped.
+ *
+ * Both mobile and desktop render this as ONE textarea whose value is kept
+ * in sync with these helpers on every keystroke (parse -> compose back),
+ * so the label lines snap back into place if a user manages to disturb
+ * them — see composeServicePerformed's per-block trimEnd, which is what
+ * makes recompose(parse(x)) idempotent regardless of which sections are
+ * empty. Without that, an empty middle section would gain an extra blank
+ * line on every recompose and the field would visibly "jitter" as soon as
+ * you typed anything.
  */
 
 export interface ServicePerformedSections {
@@ -24,11 +33,20 @@ const SECTION_LABELS: Array<{ key: keyof ServicePerformedSections; label: string
   { key: "partsUsed", label: "Parts Used:" },
 ];
 
+/** Placeholder-style hint appended (display-only, never persisted) to the
+ * "Parts Used:" label while that section is empty. */
+export const PARTS_USED_HINT = " (auto-filled when a part is marked Used)";
+
+function matchesLabel(lineTrimmed: string, label: string): boolean {
+  return lineTrimmed === label || (label === "Parts Used:" && lineTrimmed === label + PARTS_USED_HINT);
+}
+
 export function emptyServicePerformed(): ServicePerformedSections {
   return { notes: "", partsNeeded: "", additional: "", partsUsed: "" };
 }
 
-/** Parses a saved resolution string back into the 4 sections. */
+/** Parses a saved (or in-progress, possibly hint-decorated) resolution
+ * string back into the 4 sections. */
 export function parseServicePerformed(text: string): ServicePerformedSections {
   const buffers: Record<keyof ServicePerformedSections, string[]> = {
     notes: [], partsNeeded: [], additional: [], partsUsed: [],
@@ -36,7 +54,8 @@ export function parseServicePerformed(text: string): ServicePerformedSections {
   if (text) {
     let currentKey: keyof ServicePerformedSections | null = null;
     for (const line of text.split("\n")) {
-      const match = SECTION_LABELS.find((s) => line.trim() === s.label);
+      const trimmed = line.trim();
+      const match = SECTION_LABELS.find((s) => matchesLabel(trimmed, s.label));
       if (match) {
         currentKey = match.key;
         continue;
@@ -52,12 +71,26 @@ export function parseServicePerformed(text: string): ServicePerformedSections {
   return sections;
 }
 
-/** Recomposes the 4 sections into one fixed-order string for storage. */
+/** Recomposes the 4 sections into one fixed-order string for storage.
+ * Each block is trimmed before joining so an empty section never leaves a
+ * dangling blank line — that's what keeps this idempotent under
+ * parse -> compose regardless of which sections are filled in. */
 export function composeServicePerformed(sections: ServicePerformedSections): string {
   return SECTION_LABELS
-    .map(({ key, label }) => `${label}\n${sections[key] ?? ""}`)
-    .join("\n\n")
-    .trimEnd();
+    .map(({ key, label }) => `${label}\n${sections[key] ?? ""}`.trimEnd())
+    .join("\n\n");
+}
+
+/** Same as composeServicePerformed, but for what's actually shown inside
+ * the single editable textarea: while Parts Used is still empty, its label
+ * carries a greyed-in-place hint that disappears the moment it's filled
+ * (by hand or by the mobile auto-fill). Never persisted — always strip
+ * back through parseServicePerformed/composeServicePerformed before
+ * saving. */
+export function composeServicePerformedForDisplay(sections: ServicePerformedSections): string {
+  const canonical = composeServicePerformed(sections);
+  if (sections.partsUsed.trim()) return canonical;
+  return canonical.replace(/^Parts Used:$/m, `Parts Used:${PARTS_USED_HINT}`);
 }
 
 /**

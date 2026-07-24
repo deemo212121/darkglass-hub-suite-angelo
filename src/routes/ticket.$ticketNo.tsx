@@ -56,6 +56,7 @@ import {
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
+import { parseServicePerformed, composeServicePerformed, composeServicePerformedForDisplay, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { canManageMisdiagnosed } from "@/lib/roleLabels";
 
 // Product category options for the ticket Product Information dropdown.
@@ -2876,7 +2877,7 @@ function TicketDetailsPage() {
         }
         return;
       }
-      if (!newVisitResolution.trim()) {
+      if (!parseServicePerformed(newVisitResolution).notes.trim()) {
         alert("Service Performed (Tech) is required before a visit can be completed.");
         const el = document.getElementById("visit-resolution-modal") as HTMLTextAreaElement | null;
         if (el) {
@@ -2888,6 +2889,9 @@ function TicketDetailsPage() {
     }
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
+    // Normalize away the Parts Used hint / any in-progress label damage
+    // regardless of whether the field was blurred before Save was clicked.
+    const composedResolution = composeServicePerformed(parseServicePerformed(newVisitResolution));
 
     const visitEntry: VisitLogEntry = {
       ...(existingVisit ?? createVisitLogEntry({
@@ -2907,7 +2911,7 @@ function TicketDetailsPage() {
         symptomCx: newVisitSymptomCx,
         diagnosis: newVisitDiagnosis,
         symptomTech: newVisitSymptomTech,
-        resolution: newVisitResolution,
+        resolution: composedResolution,
         nonCompletionReason: newVisitNonCompletionReason,
         triageNote: newVisitTriageNote,
         status: newVisitStatus,
@@ -2929,7 +2933,7 @@ function TicketDetailsPage() {
       symptomCx: newVisitSymptomCx,
       diagnosis: newVisitDiagnosis,
       symptomTech: newVisitSymptomTech,
-      resolution: newVisitResolution,
+      resolution: composedResolution,
       nonCompletionReason: newVisitNonCompletionReason,
       triageNote: newVisitTriageNote,
       status: newVisitStatus,
@@ -3055,7 +3059,7 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx("");
     setNewVisitDiagnosis("");
     setNewVisitSymptomTech("");
-    setNewVisitResolution("");
+    setNewVisitResolution(composeServicePerformedForDisplay(emptyServicePerformed()));
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
     setNewVisitSchedNotes("");
@@ -3311,7 +3315,11 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx(entry.symptomCx || "");
     setNewVisitDiagnosis(entry.diagnosis || "");
     setNewVisitSymptomTech(entry.symptomTech || "");
-    setNewVisitResolution(entry.resolution || "");
+    setNewVisitResolution(
+      entry.resolution
+        ? composeServicePerformedForDisplay(parseServicePerformed(entry.resolution))
+        : composeServicePerformedForDisplay(emptyServicePerformed()),
+    );
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
     setNewVisitSchedNotes(entry.schedNotes || "");
@@ -7244,7 +7252,7 @@ function TicketDetailsPage() {
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Service Performed (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
-                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitResolution.trim() ? "border-rose-500/50" : "border-white/15"}`} />
+                          <textarea id="visit-resolution-modal" rows={10} value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} onBlur={() => setNewVisitResolution((v) => composeServicePerformedForDisplay(parseServicePerformed(v)))} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !parseServicePerformed(newVisitResolution).notes.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
