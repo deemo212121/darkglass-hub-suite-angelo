@@ -1177,7 +1177,7 @@ function TicketDetailsPage() {
   const navigate = useNavigate();
   const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, companyId: currentCompanyId, uid } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
-  // tech app) must fill Cause of Failure + Repair Notes before saving a
+  // tech app) must fill Cause of Failure + Service Performed before saving a
   // visit. On desktop / web for other roles these stay optional.
   const isPhone = useIsPhone();
   const isTechRole = useMemo(() => {
@@ -2862,10 +2862,10 @@ function TicketDetailsPage() {
         return;
       }
     }
-    // Cause of Failure (diagnosis) + Repair Notes (resolution) are required
-    // before a technician can submit / complete a visit. Office roles on the
-    // web aren't blocked — only technicians and anyone using the mobile tech
-    // app must fill them in.
+    // Cause of Failure (diagnosis) + Service Performed (resolution) are
+    // required before a technician can submit / complete a visit. Office
+    // roles on the web aren't blocked — only technicians and anyone using
+    // the mobile tech app must fill them in.
     if (requireTechVisitFields) {
       if (!newVisitDiagnosis.trim()) {
         alert("Cause of Failure (Tech) is required before a visit can be completed.");
@@ -2877,7 +2877,7 @@ function TicketDetailsPage() {
         return;
       }
       if (!newVisitResolution.trim()) {
-        alert("Repair Notes (Tech) is required before a visit can be completed.");
+        alert("Service Performed (Tech) is required before a visit can be completed.");
         const el = document.getElementById("visit-resolution-modal") as HTMLTextAreaElement | null;
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -7044,7 +7044,7 @@ function TicketDetailsPage() {
                                 <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Cause of Failure:</span> {entry.diagnosis}</p>
                               ) : null}
                               {entry.resolution ? (
-                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Repair Notes:</span> {entry.resolution}</p>
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Service Performed:</span> {entry.resolution}</p>
                               ) : null}
                             </div>
                           ) : null}
@@ -7243,7 +7243,7 @@ function TicketDetailsPage() {
                           <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitDiagnosis.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Service Performed (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
                           <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitResolution.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
@@ -7493,7 +7493,7 @@ function TicketDetailsPage() {
                           <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Cause of Failure:</span> {viewingVisitEntry.diagnosis}</div>
                         ) : null}
                         {viewingVisitEntry.resolution ? (
-                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Repair Notes:</span> {viewingVisitEntry.resolution}</div>
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Service Performed:</span> {viewingVisitEntry.resolution}</div>
                         ) : null}
                       </div>
                     </div>

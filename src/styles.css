@@ -2301,6 +2301,14 @@
 }
 .mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
 .mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
+.mtech-service-section-value {
+  color: #0f172a;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
 a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }
@@ -7696,6 +7704,14 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 .mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
 .mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
+.mtech-service-section-value {
+  color: #0f172a;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
 a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }

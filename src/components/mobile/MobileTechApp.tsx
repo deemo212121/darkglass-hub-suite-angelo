@@ -46,6 +46,13 @@ import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
+import {
+  parseServicePerformed,
+  composeServicePerformed,
+  emptyServicePerformed,
+  appendPartUsedLine,
+  type ServicePerformedSections,
+} from "@/lib/servicePerformedNotes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
@@ -1380,6 +1387,18 @@ function InfoRow({ label, value, type }: { label: string; value?: string; type?:
   );
 }
 
+/** Like InfoRow, but stacked (label above value) with real line breaks
+    preserved — needed for the Service Performed sections, which can be
+    multi-line (Parts Used in particular: one line per part). */
+function ServiceSection({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mtech-service-section">
+      <div className="mtech-info-label">{label}</div>
+      <div className="mtech-service-section-value">{value}</div>
+    </div>
+  );
+}
+
 function DetailsTab({
   ticket,
   authorName,
@@ -1549,16 +1568,16 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
   const [loading, setLoading] = useState(true);
   // Per-visit inline edit state. Techs can edit Repair Status, Cause
-  // of Failure, Repair Notes, and Non-Completion Reason from the
+  // of Failure, Service Performed, and Non-Completion Reason from the
   // mobile app — everything else stays read-only because it's owned
   // by dispatch / CSR on the desktop side.
   const [editVisitId, setEditVisitId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
     repairStatus: string;
     diagnosis: string;
-    resolution: string;
+    service: ServicePerformedSections;
     nonCompletionReason: string;
-  }>({ repairStatus: "", diagnosis: "", resolution: "", nonCompletionReason: "" });
+  }>({ repairStatus: "", diagnosis: "", service: emptyServicePerformed(), nonCompletionReason: "" });
   const [savingVisit, setSavingVisit] = useState(false);
 
   useEffect(() => {
@@ -1591,23 +1610,30 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     setEditDraft({
       repairStatus: String(v.repairStatus ?? ""),
       diagnosis: String(v.diagnosis ?? ""),
-      resolution: String(v.resolution ?? ""),
+      service: parseServicePerformed(String(v.resolution ?? "")),
       nonCompletionReason: String(v.nonCompletionReason ?? ""),
     });
   };
 
   const cancelEdit = () => {
     setEditVisitId(null);
-    setEditDraft({ repairStatus: "", diagnosis: "", resolution: "", nonCompletionReason: "" });
+    setEditDraft({ repairStatus: "", diagnosis: "", service: emptyServicePerformed(), nonCompletionReason: "" });
   };
 
   const saveEdit = async (visitId: string) => {
     setSavingVisit(true);
     try {
+      const original = visits.find((row) => row.id === visitId);
+      const resolution = composeServicePerformed(editDraft.service);
+      // updateTicketVisit overwrites every column (?? null fallback), so the
+      // full existing row must be spread first or fields the tech never
+      // touched (schedule date, technician, time slot, locked, ...) get
+      // silently nulled out.
       await updateTicketVisit(visitId, {
+        ...original,
         repairStatus: editDraft.repairStatus,
         diagnosis: editDraft.diagnosis,
-        resolution: editDraft.resolution,
+        resolution,
         nonCompletionReason: editDraft.nonCompletionReason,
         updateReason: `Tech ${authorName || ""} updated visit`.trim(),
       } as any);
@@ -1619,7 +1645,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 ...row,
                 repairStatus: editDraft.repairStatus,
                 diagnosis: editDraft.diagnosis,
-                resolution: editDraft.resolution,
+                resolution,
                 nonCompletionReason: editDraft.nonCompletionReason,
               }
             : row,
@@ -1638,19 +1664,23 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
   // "Complete" flow — save the visit edits and flip the parent ticket's
   // repair status to "CL-Ready to Complete". Only available when the
-  // tech has filled BOTH Cause of Failure AND Repair Notes. If the tech
-  // put anything into Non-Completion Reason, we assume the job wasn't
-  // finished and hide the button entirely; they save with Save instead.
+  // tech has filled BOTH Cause of Failure AND the Notes section of
+  // Service Performed. If the tech put anything into Non-Completion
+  // Reason, we assume the job wasn't finished and hide the button
+  // entirely; they save with Save instead.
   const completeVisit = async (visitId: string) => {
     setSavingVisit(true);
     try {
       // Force the visit's repair status to Ready to Complete so the visit
       // log and the ticket status stay aligned.
       const readyStatus = "CL-Ready to Complete";
+      const resolution = composeServicePerformed(editDraft.service);
+      const original = visits.find((row) => row.id === visitId);
       await updateTicketVisit(visitId, {
+        ...original,
         repairStatus: readyStatus,
         diagnosis: editDraft.diagnosis,
-        resolution: editDraft.resolution,
+        resolution,
         nonCompletionReason: editDraft.nonCompletionReason,
         updateReason: `Tech ${authorName || ""} marked visit complete`.trim(),
       } as any);
@@ -1669,7 +1699,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 ...row,
                 repairStatus: readyStatus,
                 diagnosis: editDraft.diagnosis,
-                resolution: editDraft.resolution,
+                resolution,
                 nonCompletionReason: editDraft.nonCompletionReason,
               }
             : row,
@@ -1689,7 +1719,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
   const canComplete =
     editDraft.diagnosis.trim().length > 0 &&
-    editDraft.resolution.trim().length > 0 &&
+    editDraft.service.notes.trim().length > 0 &&
     editDraft.nonCompletionReason.trim().length === 0;
 
   return (
@@ -1718,9 +1748,17 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
               {!isEditing && v.diagnosis && (
                 <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
               )}
-              {!isEditing && v.resolution && (
-                <InfoRow label="Repair Notes (Tech)" value={v.resolution} />
-              )}
+              {!isEditing && v.resolution && (() => {
+                const service = parseServicePerformed(String(v.resolution));
+                return (
+                  <>
+                    {service.notes && <ServiceSection label="Notes" value={service.notes} />}
+                    {service.partsNeeded && <ServiceSection label="Parts Needed" value={service.partsNeeded} />}
+                    {service.additional && <ServiceSection label="Additional" value={service.additional} />}
+                    {service.partsUsed && <ServiceSection label="Parts Used" value={service.partsUsed} />}
+                  </>
+                );
+              })()}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
@@ -1748,13 +1786,38 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     placeholder="What failed and why"
                     rows={2}
                   />
-                  <label className="mtech-visit-edit-label">Repair Notes (Tech)</label>
+                  <div className="mtech-visit-edit-label" style={{ marginTop: "0.4rem" }}>Service Performed (Tech)</div>
+                  <label className="mtech-visit-edit-label">Notes:</label>
                   <textarea
                     className="mtech-visit-edit-input"
-                    value={editDraft.resolution}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, resolution: e.target.value }))}
+                    value={editDraft.service.notes}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, notes: e.target.value } }))}
                     placeholder="What you did to fix it"
                     rows={3}
+                  />
+                  <label className="mtech-visit-edit-label">Parts Needed:</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.service.partsNeeded}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, partsNeeded: e.target.value } }))}
+                    placeholder="Parts required to complete the repair"
+                    rows={2}
+                  />
+                  <label className="mtech-visit-edit-label">Additional:</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.service.additional}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, additional: e.target.value } }))}
+                    placeholder="Anything else worth noting"
+                    rows={2}
+                  />
+                  <label className="mtech-visit-edit-label">Parts Used:</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.service.partsUsed}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: { ...d.service, partsUsed: e.target.value } }))}
+                    placeholder="Auto-filled when a part is marked Used on the Parts tab"
+                    rows={2}
                   />
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea
@@ -2023,6 +2086,9 @@ function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }
         status: nextStatus,
         lastModifiedBy: authorName || row.lastModifiedBy,
       });
+      if (nextStatus === "Used") {
+        void autoFillPartsUsed(row);
+      }
     } catch (e) {
       console.error("save part status failed", e);
       alert(`Failed to update status: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -2032,6 +2098,36 @@ function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }
       );
     } finally {
       setSavingId(null);
+    }
+  };
+
+  // Best-effort: append this part to the ticket's current visit's Parts
+  // Used section. parts.visit_id is null on every real part row in
+  // production, so there's no direct part-to-visit link to walk — "current
+  // visit" is inferred the same way desktop treats visit history: newest
+  // non-locked visit, falling back to the newest overall if every visit is
+  // locked. Never blocks or alerts over this — the part-status save this
+  // rides on already succeeded and is the primary action.
+  const autoFillPartsUsed = async (row: UIPartRow) => {
+    try {
+      const visitRows = await getTicketVisits(ticket.ticketNo);
+      if (visitRows.length === 0) return;
+      const visit = visitRows.find((v) => !v.locked) ?? visitRows[0];
+      const sections = parseServicePerformed(String(visit.resolution ?? ""));
+      const qty = row.quantity ? ` (qty ${row.quantity})` : "";
+      const line = `- ${row.partNo || "?"} — ${row.partDesc || "part"}${qty}`;
+      const updatedPartsUsed = appendPartUsedLine(sections.partsUsed, row.partNo || "", line);
+      if (updatedPartsUsed === sections.partsUsed) return;
+      const resolution = composeServicePerformed({ ...sections, partsUsed: updatedPartsUsed });
+      // updateTicketVisit overwrites every column, so spread the full
+      // existing visit row before overriding resolution.
+      await updateTicketVisit(visit.id, {
+        ...visit,
+        resolution,
+        updateReason: `Tech marked part ${row.partNo || ""} Used`.trim(),
+      } as any);
+    } catch (e) {
+      console.error("auto-fill Parts Used failed", e);
     }
   };
 
