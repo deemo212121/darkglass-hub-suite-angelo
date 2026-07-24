@@ -322,14 +322,19 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
         </div>
 
         <div className="panel mb-6">
-          <div className="table-wrap overflow-x-auto">
-            <table className="data-table report-table">
+          {/* Same table treatment as the Ticket List: blue header row,
+              hairline row dividers, hover highlight - instead of the
+              plain unstyled browser table this used to render. */}
+          <div className="overflow-x-auto border border-white/10 rounded-lg">
+            <table className="w-full min-w-max text-xs leading-tight">
               <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Office</th>
-                  {BUCKET_ORDER.map((b) => <th key={b}>{BUCKET_LABEL[b]}</th>)}
-                  <th>TOTAL</th>
+                <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                  <th className="px-2 py-1.5 text-left font-semibold text-blue-300">User</th>
+                  <th className="px-2 py-1.5 text-left font-semibold text-blue-300">Office</th>
+                  {BUCKET_ORDER.map((b) => (
+                    <th key={b} className="px-2 py-1.5 text-center font-semibold text-blue-300">{BUCKET_LABEL[b]}</th>
+                  ))}
+                  <th className="px-2 py-1.5 text-center font-semibold text-blue-300">TOTAL</th>
                 </tr>
               </thead>
               <tbody>
@@ -342,15 +347,17 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
                     </td>
                   </tr>
                 ) : filteredRows.map((row) => (
-                  <tr key={row.userId}>
-                    <td>
-                      <button type="button" onClick={() => openDetails(row)} className="text-blue-500 hover:underline font-medium">
+                  <tr key={row.userId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <td className="px-2 py-1.5">
+                      <button type="button" onClick={() => openDetails(row)} className="text-blue-400 hover:underline font-medium">
                         {row.name}
                       </button>
                     </td>
-                    <td>{row.office}</td>
-                    {BUCKET_ORDER.map((b) => <td key={b}>{row.counts[b] || ""}</td>)}
-                    <td className="font-semibold">{row.total}</td>
+                    <td className="px-2 py-1.5 text-slate-300">{row.office}</td>
+                    {BUCKET_ORDER.map((b) => (
+                      <td key={b} className="px-2 py-1.5 text-center text-slate-300">{row.counts[b] || ""}</td>
+                    ))}
+                    <td className="px-2 py-1.5 text-center font-semibold text-slate-200">{row.total}</td>
                   </tr>
                 ))}
               </tbody>
