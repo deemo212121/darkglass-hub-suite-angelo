@@ -56,7 +56,7 @@ import {
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
-import { parseServicePerformed, composeServicePerformed, composeServicePerformedForDisplay, emptyServicePerformed } from "@/lib/servicePerformedNotes";
+import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { canManageMisdiagnosed } from "@/lib/roleLabels";
 
 // Product category options for the ticket Product Information dropdown.
@@ -1997,6 +1997,19 @@ function TicketDetailsPage() {
     () => `${partRows.length} distinct record${partRows.length === 1 ? "" : "s"} found`,
     [partRows.length],
   );
+  // Live, read-only readout of parts currently marked "Used" - not a
+  // section of Service Performed (a tech doesn't type it in), attached
+  // only to the latest visit log entry (visitLogEntries[0]) wherever that
+  // visit is displayed. Parts don't reliably link to a specific visit
+  // (parts.visit_id is null on every real row in production), so this is
+  // ticket-wide rather than pretending to scope per visit.
+  const usedPartsText = useMemo(() => {
+    const used = partRows.filter((p) => p.status === "Used");
+    if (used.length === 0) return "";
+    return used
+      .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
+      .join("\n");
+  }, [partRows]);
 
   const handleTicketChange = (newTicketNo: string) => {
     if (newTicketNo.trim()) {
@@ -3059,7 +3072,7 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx("");
     setNewVisitDiagnosis("");
     setNewVisitSymptomTech("");
-    setNewVisitResolution(composeServicePerformedForDisplay(emptyServicePerformed()));
+    setNewVisitResolution(composeServicePerformed(emptyServicePerformed()));
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
     setNewVisitSchedNotes("");
@@ -3317,8 +3330,8 @@ function TicketDetailsPage() {
     setNewVisitSymptomTech(entry.symptomTech || "");
     setNewVisitResolution(
       entry.resolution
-        ? composeServicePerformedForDisplay(parseServicePerformed(entry.resolution))
-        : composeServicePerformedForDisplay(emptyServicePerformed()),
+        ? composeServicePerformed(parseServicePerformed(entry.resolution))
+        : composeServicePerformed(emptyServicePerformed()),
     );
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
@@ -7042,7 +7055,7 @@ function TicketDetailsPage() {
                           ) : null}
 
                           {/* Tech Notes - Only show if has content */}
-                          {(entry.diagnosis || entry.resolution || entry.repairType) ? (
+                          {(entry.diagnosis || entry.resolution || entry.repairType || (usedPartsText && entry.id === visitLogEntries[0]?.id)) ? (
                             <div className="mt-3 rounded-md border border-green-500/20 bg-green-500/5 p-3 space-y-2">
                               <div className="text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                               {entry.repairType ? (
@@ -7053,6 +7066,9 @@ function TicketDetailsPage() {
                               ) : null}
                               {entry.resolution ? (
                                 <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Service Performed:</span> {entry.resolution}</p>
+                              ) : null}
+                              {usedPartsText && entry.id === visitLogEntries[0]?.id ? (
+                                <p className="text-sm text-slate-200 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</p>
                               ) : null}
                             </div>
                           ) : null}
@@ -7252,7 +7268,10 @@ function TicketDetailsPage() {
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Service Performed (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
-                          <textarea id="visit-resolution-modal" rows={10} value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} onBlur={() => setNewVisitResolution((v) => composeServicePerformedForDisplay(parseServicePerformed(v)))} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !parseServicePerformed(newVisitResolution).notes.trim() ? "border-rose-500/50" : "border-white/15"}`} />
+                          <textarea id="visit-resolution-modal" rows={10} value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} onBlur={() => setNewVisitResolution((v) => composeServicePerformed(parseServicePerformed(v)))} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !parseServicePerformed(newVisitResolution).notes.trim() ? "border-rose-500/50" : "border-white/15"}`} />
+                          {usedPartsText && (!editingVisitId || editingVisitId === visitLogEntries[0]?.id) ? (
+                            <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400"><span className="font-semibold">Parts Used (auto, from the Parts tab):</span> {"\n"}{usedPartsText}</p>
+                          ) : null}
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
@@ -7490,7 +7509,7 @@ function TicketDetailsPage() {
                   ) : null}
 
                   {/* Technician Information */}
-                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution) ? (
+                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution || (usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id)) ? (
                     <div className="mt-4">
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                       <div className="space-y-3 text-sm text-slate-200">
@@ -7502,6 +7521,9 @@ function TicketDetailsPage() {
                         ) : null}
                         {viewingVisitEntry.resolution ? (
                           <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Service Performed:</span> {viewingVisitEntry.resolution}</div>
+                        ) : null}
+                        {usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</div>
                         ) : null}
                       </div>
                     </div>

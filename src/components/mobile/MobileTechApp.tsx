@@ -49,9 +49,7 @@ import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert }
 import {
   parseServicePerformed,
   composeServicePerformed,
-  composeServicePerformedForDisplay,
   emptyServicePerformed,
-  appendPartUsedLine,
 } from "@/lib/servicePerformedNotes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -1388,8 +1386,8 @@ function InfoRow({ label, value, type }: { label: string; value?: string; type?:
 }
 
 /** Like InfoRow, but stacked (label above value) with real line breaks
-    preserved — needed for the Service Performed sections, which can be
-    multi-line (Parts Used in particular: one line per part). */
+    preserved — needed for the Service Performed field, which is
+    multi-line free text. */
 function ServiceSection({ label, value }: { label: string; value: string }) {
   return (
     <div className="mtech-service-section">
@@ -1397,6 +1395,17 @@ function ServiceSection({ label, value }: { label: string; value: string }) {
       <div className="mtech-service-section-value">{value}</div>
     </div>
   );
+}
+
+/** Live, read-only list of parts currently marked "Used" on this ticket -
+    not something the tech types, so it's rendered separately from
+    Service Performed rather than as one of its sections. */
+function PartsUsedList({ parts }: { parts: UIPartRow[] }) {
+  if (parts.length === 0) return null;
+  const value = parts
+    .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
+    .join("\n");
+  return <ServiceSection label="Parts Used" value={value} />;
 }
 
 function DetailsTab({
@@ -1586,19 +1595,37 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     diagnosis: string;
     service: string;
     nonCompletionReason: string;
-  }>({ repairStatus: "", diagnosis: "", service: composeServicePerformedForDisplay(emptyServicePerformed()), nonCompletionReason: "" });
+  }>({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
   const [savingVisit, setSavingVisit] = useState(false);
+
+  // Parts Used isn't part of the free-text notes anymore - it's a live,
+  // read-only readout of whichever parts the Parts tab currently has
+  // marked "Used" on this ticket, attached only to the latest visit log
+  // entry (visits[0], since getTicketVisits orders newest-first). This tab
+  // unmounts/remounts on every switch (see the `{tab === "tracking" && ...}`
+  // gate above), so re-fetching here is enough to pick up a status change
+  // made moments ago on the Parts tab without any push/sync machinery.
+  const [usedParts, setUsedParts] = useState<UIPartRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        const rows = await getTicketVisits(ticket.ticketNo);
-        if (!cancelled) setVisits(rows as any);
+        const [rows, partRows] = await Promise.all([
+          getTicketVisits(ticket.ticketNo),
+          getTicketParts(ticket.ticketNo),
+        ]);
+        if (!cancelled) {
+          setVisits(rows as any);
+          setUsedParts(partRows.filter((p) => p.status === "Used"));
+        }
       } catch (e) {
         console.error("load visits failed", e);
-        if (!cancelled) setVisits([]);
+        if (!cancelled) {
+          setVisits([]);
+          setUsedParts([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1619,14 +1646,14 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     setEditDraft({
       repairStatus: String(v.repairStatus ?? ""),
       diagnosis: String(v.diagnosis ?? ""),
-      service: composeServicePerformedForDisplay(parseServicePerformed(String(v.resolution ?? ""))),
+      service: composeServicePerformed(parseServicePerformed(String(v.resolution ?? ""))),
       nonCompletionReason: String(v.nonCompletionReason ?? ""),
     });
   };
 
   const cancelEdit = () => {
     setEditVisitId(null);
-    setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformedForDisplay(emptyServicePerformed()), nonCompletionReason: "" });
+    setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
   };
 
   const saveEdit = async (visitId: string) => {
@@ -1738,8 +1765,9 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
       {!loading && visits.length === 0 && <div className="mtech-muted">No visits recorded yet.</div>}
 
       <div className="mtech-visit-list">
-        {visits.map((v) => {
+        {visits.map((v, idx) => {
           const isEditing = editVisitId === v.id;
+          const isLatestVisit = idx === 0;
           return (
             <div key={v.id} className="mtech-visit">
               <div className="mtech-visit-head">
@@ -1760,6 +1788,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
               {!isEditing && v.resolution && (
                 <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
               )}
+              {isLatestVisit && <PartsUsedList parts={usedParts} />}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
@@ -1795,7 +1824,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     onBlur={() =>
                       setEditDraft((d) => ({
                         ...d,
-                        service: composeServicePerformedForDisplay(parseServicePerformed(d.service)),
+                        service: composeServicePerformed(parseServicePerformed(d.service)),
                       }))
                     }
                     rows={10}
@@ -2067,9 +2096,6 @@ function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }
         status: nextStatus,
         lastModifiedBy: authorName || row.lastModifiedBy,
       });
-      if (nextStatus === "Used") {
-        void autoFillPartsUsed(row);
-      }
     } catch (e) {
       console.error("save part status failed", e);
       alert(`Failed to update status: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -2079,36 +2105,6 @@ function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }
       );
     } finally {
       setSavingId(null);
-    }
-  };
-
-  // Best-effort: append this part to the ticket's current visit's Parts
-  // Used section. parts.visit_id is null on every real part row in
-  // production, so there's no direct part-to-visit link to walk — "current
-  // visit" is inferred the same way desktop treats visit history: newest
-  // non-locked visit, falling back to the newest overall if every visit is
-  // locked. Never blocks or alerts over this — the part-status save this
-  // rides on already succeeded and is the primary action.
-  const autoFillPartsUsed = async (row: UIPartRow) => {
-    try {
-      const visitRows = await getTicketVisits(ticket.ticketNo);
-      if (visitRows.length === 0) return;
-      const visit = visitRows.find((v) => !v.locked) ?? visitRows[0];
-      const sections = parseServicePerformed(String(visit.resolution ?? ""));
-      const qty = row.quantity ? ` (qty ${row.quantity})` : "";
-      const line = `- ${row.partNo || "?"} — ${row.partDesc || "part"}${qty}`;
-      const updatedPartsUsed = appendPartUsedLine(sections.partsUsed, row.partNo || "", line);
-      if (updatedPartsUsed === sections.partsUsed) return;
-      const resolution = composeServicePerformed({ ...sections, partsUsed: updatedPartsUsed });
-      // updateTicketVisit overwrites every column, so spread the full
-      // existing visit row before overriding resolution.
-      await updateTicketVisit(visit.id, {
-        ...visit,
-        resolution,
-        updateReason: `Tech marked part ${row.partNo || ""} Used`.trim(),
-      } as any);
-    } catch (e) {
-      console.error("auto-fill Parts Used failed", e);
     }
   };
 
