@@ -2122,24 +2122,40 @@
 /* Expand / collapse pill floating over the map */
 .mtech-map-expand {
   position: absolute;
-  top: 0.55rem;
+  top: 0.6rem;
   right: 0.6rem;
-  z-index: 5;
-  padding: 0.35rem 0.7rem;
+  z-index: 20;
+  padding: 0.5rem 0.9rem;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  background: rgba(15, 23, 42, 0.85);
+  border: 1.5px solid rgba(226, 232, 240, 0.8);
+  background: rgba(15, 23, 42, 0.95);
   color: #f8fafc;
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.5);
 }
 .mtech-map-expand:hover { background: rgba(30, 41, 59, 0.9); }
+/* env()'s fallback only kicks in when the browser doesn't support the
+   variable at all - on virtually every non-notched device (i.e. almost
+   all of them) safe-area-inset-top is a defined 0px, so the fallback
+   never actually applied here and this sat flush at the true top of the
+   screen, behind the fixed header - the exact same bug the zoom control
+   had. Add the header height explicitly instead of relying on the
+   fallback to provide it. */
 .mtech-map-wrap.expanded .mtech-map-expand {
-  top: env(safe-area-inset-top, 0.55rem);
-  right: env(safe-area-inset-right, 0.6rem);
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
+  right: calc(0.6rem + env(safe-area-inset-right, 0px));
+}
+/* When expanded, the map goes position:fixed/inset:0 (true top of the
+   viewport), but the app header stays fixed on top of it at the same
+   corner - it was covering Leaflet's top-left zoom control (the "+"
+   button, being on top of the "-" button, was hidden entirely behind the
+   header). Push the whole control below the header, same offset pattern
+   as the expand pill above. */
+.mtech-map-wrap.expanded .leaflet-top.leaflet-left {
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
 }
 
 .mtech-nav-btn {
@@ -7525,24 +7541,40 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Expand / collapse pill floating over the map */
 .mtech-map-expand {
   position: absolute;
-  top: 0.55rem;
+  top: 0.6rem;
   right: 0.6rem;
-  z-index: 5;
-  padding: 0.35rem 0.7rem;
+  z-index: 20;
+  padding: 0.5rem 0.9rem;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  background: rgba(15, 23, 42, 0.85);
+  border: 1.5px solid rgba(226, 232, 240, 0.8);
+  background: rgba(15, 23, 42, 0.95);
   color: #f8fafc;
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.5);
 }
 .mtech-map-expand:hover { background: rgba(30, 41, 59, 0.9); }
+/* env()'s fallback only kicks in when the browser doesn't support the
+   variable at all - on virtually every non-notched device (i.e. almost
+   all of them) safe-area-inset-top is a defined 0px, so the fallback
+   never actually applied here and this sat flush at the true top of the
+   screen, behind the fixed header - the exact same bug the zoom control
+   had. Add the header height explicitly instead of relying on the
+   fallback to provide it. */
 .mtech-map-wrap.expanded .mtech-map-expand {
-  top: env(safe-area-inset-top, 0.55rem);
-  right: env(safe-area-inset-right, 0.6rem);
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
+  right: calc(0.6rem + env(safe-area-inset-right, 0px));
+}
+/* When expanded, the map goes position:fixed/inset:0 (true top of the
+   viewport), but the app header stays fixed on top of it at the same
+   corner - it was covering Leaflet's top-left zoom control (the "+"
+   button, being on top of the "-" button, was hidden entirely behind the
+   header). Push the whole control below the header, same offset pattern
+   as the expand pill above. */
+.mtech-map-wrap.expanded .leaflet-top.leaflet-left {
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
 }
 
 .mtech-nav-btn {
