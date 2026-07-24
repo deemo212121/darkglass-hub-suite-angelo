@@ -1025,16 +1025,6 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
             {/* Column visibility filter + Map View shortcut */}
             <div className="relative flex justify-end items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleExportXlsx()}
-                disabled={exporting || sortedItems.length === 0}
-                className="btn hover:bg-white/15 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Export the currently filtered tickets, with their full Visit Log and Parts history, to an Excel workbook"
-              >
-                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                {exporting ? "Exporting…" : `Export (${sortedItems.length})`}
-              </button>
               <Link
                 to="/tickets/map"
                 search={{
@@ -1095,6 +1085,16 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               Total Tickets: <span className="font-semibold text-foreground">{filteredItems.length}</span>
             </span>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => void handleExportXlsx()}
+                disabled={exporting || sortedItems.length === 0}
+                className="px-2 py-1 rounded border border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground transition-colors inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Export the currently filtered tickets, with their full Visit Log and Parts history, to an Excel workbook"
+              >
+                {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                {exporting ? "Exporting…" : `Export (${sortedItems.length})`}
+              </button>
               <span>Show:</span>
               {PAGE_SIZE_OPTIONS.map((size) => (
                 <button
