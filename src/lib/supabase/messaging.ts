@@ -399,6 +399,86 @@ export async function getUnreadCounts(profileId: string): Promise<{
   return { perChannel, perDm, total };
 }
 
+export interface DmInboxEntry {
+  threadId: string;
+  otherProfileId: string;
+  lastMessageBody: string;
+  lastMessageAt: string;
+  lastMessageSenderId: string | null;
+  unreadCount: number;
+}
+
+/**
+ * Messenger-style inbox: every DM thread the user is part of, with its
+ * other participant, last message preview, and unread count - the shape a
+ * real chat list needs (contact name + last message + timestamp + unread
+ * badge), not just a bare list of thread ids.
+ *
+ * Three queries total regardless of how many threads exist (my threads,
+ * my read pointers, every message across those threads) - reduced to
+ * "latest + unread count per thread" client-side, same bulk-then-reduce
+ * shape as getUnreadCounts, rather than one query per thread.
+ */
+export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> {
+  if (!profileId) return [];
+
+  const { data: threads, error: threadsErr } = await supabase
+    .from("dm_threads")
+    .select("id, participant_a, participant_b, created_at")
+    .or(`participant_a.eq.${profileId},participant_b.eq.${profileId}`);
+  if (threadsErr) throw new Error(threadsErr.message);
+  const threadRows = threads || [];
+  if (threadRows.length === 0) return [];
+  const threadIds = threadRows.map((t: any) => t.id as string);
+
+  const [readsRes, messagesRes] = await Promise.all([
+    supabase
+      .from("message_reads")
+      .select("dm_thread_id, last_read_at")
+      .eq("profile_id", profileId)
+      .in("dm_thread_id", threadIds),
+    supabase
+      .from("messages")
+      .select("dm_thread_id, sender_id, body, created_at")
+      .in("dm_thread_id", threadIds)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
+  ]);
+  if (readsRes.error) throw new Error(readsRes.error.message);
+  if (messagesRes.error) throw new Error(messagesRes.error.message);
+
+  const readAt = new Map<string, string>();
+  for (const r of readsRes.data || []) {
+    if (r.dm_thread_id) readAt.set(r.dm_thread_id as string, r.last_read_at as string);
+  }
+
+  // Messages arrive newest-first, so the first row seen per thread is its
+  // latest message.
+  const lastByThread = new Map<string, any>();
+  const unreadByThread = new Map<string, number>();
+  for (const m of messagesRes.data || []) {
+    const tid = m.dm_thread_id as string | null;
+    if (!tid) continue;
+    if (!lastByThread.has(tid)) lastByThread.set(tid, m);
+    const since = readAt.get(tid);
+    const isUnread = m.sender_id !== profileId && (!since || (m.created_at as string) > since);
+    if (isUnread) unreadByThread.set(tid, (unreadByThread.get(tid) ?? 0) + 1);
+  }
+
+  return threadRows.map((t: any) => {
+    const otherProfileId = t.participant_a === profileId ? t.participant_b : t.participant_a;
+    const last = lastByThread.get(t.id);
+    return {
+      threadId: t.id as string,
+      otherProfileId: otherProfileId as string,
+      lastMessageBody: last?.body ?? "",
+      lastMessageAt: (last?.created_at ?? t.created_at) as string,
+      lastMessageSenderId: (last?.sender_id ?? null) as string | null,
+      unreadCount: unreadByThread.get(t.id) ?? 0,
+    };
+  });
+}
+
 export interface SystemNotification {
   id: string;
   dmThreadId: string;

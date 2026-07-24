@@ -5327,9 +5327,43 @@ a.mtech-phone-link:active { opacity: 0.7; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-role-label {
-  font-size: 0.75rem;
+.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+/* Last-message preview (falls back to the role label when no
+   conversation exists yet) - single-line truncated like a real chat
+   list, not the plain role subtitle it replaced. */
+.mtech-chat-contact-preview {
+  font-size: 0.8rem;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+
+.mtech-chat-contact-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.mtech-chat-contact-time {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.mtech-chat-contact-unread-badge {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  background: var(--mt-blue, #5b7eff);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mtech-chat-contact-chev {
@@ -10744,9 +10778,43 @@ a.mtech-phone-link:active { opacity: 0.7; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-role-label {
-  font-size: 0.75rem;
+.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+/* Last-message preview (falls back to the role label when no
+   conversation exists yet) - single-line truncated like a real chat
+   list, not the plain role subtitle it replaced. */
+.mtech-chat-contact-preview {
+  font-size: 0.8rem;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+
+.mtech-chat-contact-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.mtech-chat-contact-time {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.mtech-chat-contact-unread-badge {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  background: var(--mt-blue, #5b7eff);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mtech-chat-contact-chev {

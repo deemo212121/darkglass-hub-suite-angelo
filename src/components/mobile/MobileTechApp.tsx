@@ -34,8 +34,11 @@ import {
   getOrCreateDmThread,
   sendMessage,
   subscribeToMessages,
+  listMyDmInbox,
+  markThreadRead,
   type MessageRow,
   type DmThreadRow,
+  type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
@@ -2245,6 +2248,20 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
   const [sending, setSending] = useState(false);
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [searchName, setSearchName] = useState("");
+  // Last message + unread count per teammate, keyed by their profile id -
+  // what turns the plain contact directory into a real messenger-style
+  // inbox (last message preview, timestamp, unread badge, most-recent-
+  // first ordering) without changing how contacts themselves are loaded.
+  const [inboxByContact, setInboxByContact] = useState<Map<string, DmInboxEntry>>(new Map());
+
+  const refreshInbox = async (pid: string) => {
+    try {
+      const entries = await listMyDmInbox(pid);
+      setInboxByContact(new Map(entries.map((e) => [e.otherProfileId, e])));
+    } catch (e) {
+      console.error("chat: load inbox failed", e);
+    }
+  };
 
   // 1. Resolve my Supabase profile id from my Firebase uid.
   useEffect(() => {
@@ -2261,6 +2278,13 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
     })();
     return () => { cancelled = true; };
   }, [firebaseUid]);
+
+  // 1b. Once we know who I am, load my inbox (last message + unread per
+  // teammate) for the contact list.
+  useEffect(() => {
+    if (!profileId) return;
+    void refreshInbox(profileId);
+  }, [profileId]);
 
   // 2. Load company users, filter to allowed chat roles.
   useEffect(() => {
@@ -2311,6 +2335,19 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
         setThread(t);
         const rows = await getDmMessages(t.id);
         if (!cancelled) setMessages(rows);
+        // Opening the thread reads it - clear its unread badge on the
+        // contact list right away rather than waiting for the next
+        // inbox refresh.
+        await markThreadRead({ profileId, dmThreadId: t.id });
+        if (!cancelled) {
+          setInboxByContact((prev) => {
+            const existing = prev.get(selected.id);
+            if (!existing || existing.unreadCount === 0) return prev;
+            const next = new Map(prev);
+            next.set(selected.id, { ...existing, unreadCount: 0 });
+            return next;
+          });
+        }
       } catch (e) {
         console.error("chat: open thread failed", e);
       } finally {
@@ -2396,12 +2433,39 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
 
   const visibleContacts = useMemo(() => {
     const q = searchName.trim().toLowerCase();
-    return contacts.filter((c) => {
+    const filtered = contacts.filter((c) => {
       if (roleFilter && c.roleLabel !== roleFilter) return false;
       if (q && !c.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [contacts, roleFilter, searchName]);
+    // Messenger-style ordering: teammates with an existing conversation
+    // float to the top, most recently active first (contacts is already
+    // alphabetical, so everyone without a thread yet just keeps that
+    // order beneath them).
+    return [...filtered].sort((a, b) => {
+      const ea = inboxByContact.get(a.id);
+      const eb = inboxByContact.get(b.id);
+      if (ea && !eb) return -1;
+      if (!ea && eb) return 1;
+      if (ea && eb) return eb.lastMessageAt.localeCompare(ea.lastMessageAt);
+      return 0;
+    });
+  }, [contacts, roleFilter, searchName, inboxByContact]);
+
+  // Compact "messenger" timestamp for the inbox row: clock time for
+  // today, weekday for the last week, short date beyond that - same
+  // convention most chat apps use so recent activity stays scannable.
+  const fmtInboxTime = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (diffDays < 7) return d.toLocaleDateString("en-US", { weekday: "short" });
+    return d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+  };
 
   const fmtTime = (iso: string) => {
     if (!iso) return "";
@@ -2429,6 +2493,9 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
               setSelected(null);
               setThread(null);
               setMessages([]);
+              // Refresh so the contact list's last-message preview picks
+              // up anything just sent in this thread.
+              if (profileId) void refreshInbox(profileId);
             }}
           >
             <ArrowLeft className="h-5 w-5" />
@@ -2558,23 +2625,46 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
       )}
 
       <div className="mtech-chat-contact-list">
-        {visibleContacts.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className="mtech-chat-contact-row"
-            onClick={() => setSelected(c)}
-          >
-            <div className="mtech-chat-contact-avatar">
-              {c.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="mtech-chat-contact-info">
-              <span className="mtech-chat-contact-name">{c.name}</span>
-              <span className="mtech-chat-contact-role-label">{c.roleLabel}</span>
-            </div>
-            <ChevronRight className="mtech-chat-contact-chev h-4 w-4" />
-          </button>
-        ))}
+        {visibleContacts.map((c) => {
+          const entry = inboxByContact.get(c.id);
+          const preview = entry?.lastMessageBody
+            ? `${entry.lastMessageSenderId === profileId ? "You: " : ""}${entry.lastMessageBody}`
+            : "";
+          const hasUnread = (entry?.unreadCount ?? 0) > 0;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              className="mtech-chat-contact-row"
+              onClick={() => setSelected(c)}
+            >
+              <div className="mtech-chat-contact-avatar">
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="mtech-chat-contact-info">
+                <span className={`mtech-chat-contact-name${hasUnread ? " unread" : ""}`}>
+                  {c.name}
+                </span>
+                {/* Last message preview once a conversation exists; falls
+                    back to the role label for teammates never messaged
+                    yet, same as before. */}
+                <span className={`mtech-chat-contact-preview${hasUnread ? " unread" : ""}`}>
+                  {preview || c.roleLabel}
+                </span>
+              </div>
+              <div className="mtech-chat-contact-meta">
+                {entry?.lastMessageAt && (
+                  <span className="mtech-chat-contact-time">{fmtInboxTime(entry.lastMessageAt)}</span>
+                )}
+                {hasUnread ? (
+                  <span className="mtech-chat-contact-unread-badge">{entry!.unreadCount}</span>
+                ) : (
+                  <ChevronRight className="mtech-chat-contact-chev h-4 w-4" />
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
