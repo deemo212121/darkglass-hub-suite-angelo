@@ -10,6 +10,7 @@ import {
   MessageCircle,
   FileText,
   DollarSign,
+  ExternalLink,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -43,6 +44,7 @@ import { uploadTicketSignature } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
+import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
@@ -1315,6 +1317,56 @@ function DetailsTab({
   authorName: string;
   authorRole: string;
 }) {
+  // Per-model reference links (Exploded View / Service Bulletin) — same
+  // model_resources data the desktop ticket page's Product Information
+  // section shows, just never wired up on mobile before. Shared across
+  // every ticket carrying this model number, so a tech adding one in the
+  // field also benefits everyone else on the same model.
+  const [modelResources, setModelResources] = useState<ModelResources>({
+    model: "", explodedViewUrl: "", serviceBulletinUrl: "",
+  });
+  const [editingResource, setEditingResource] = useState<"exploded" | "bulletin" | null>(null);
+  const [resourceDraft, setResourceDraft] = useState("");
+  const [savingResource, setSavingResource] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!ticket.model) {
+      setModelResources({ model: "", explodedViewUrl: "", serviceBulletinUrl: "" });
+      return;
+    }
+    getModelResources(ticket.model)
+      .then((res) => { if (!cancelled) setModelResources(res); })
+      .catch((err) => console.error("getModelResources error:", err));
+    return () => { cancelled = true; };
+  }, [ticket.model]);
+
+  const beginEditResource = (kind: "exploded" | "bulletin") => {
+    setEditingResource(kind);
+    setResourceDraft(kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl);
+  };
+  const cancelEditResource = () => {
+    setEditingResource(null);
+    setResourceDraft("");
+  };
+  const saveEditResource = async () => {
+    if (!editingResource || !ticket.model) return;
+    setSavingResource(true);
+    try {
+      const updated = await saveModelResources(ticket.model, {
+        explodedViewUrl: editingResource === "exploded" ? resourceDraft.trim() : modelResources.explodedViewUrl,
+        serviceBulletinUrl: editingResource === "bulletin" ? resourceDraft.trim() : modelResources.serviceBulletinUrl,
+      });
+      setModelResources(updated);
+      cancelEditResource();
+    } catch (err) {
+      console.error("saveModelResources error:", err);
+      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingResource(false);
+    }
+  };
+
   return (
     <div className="mtech-panel">
       <div className="mtech-actions">
@@ -1344,6 +1396,64 @@ function DetailsTab({
       <InfoRow label="Email" value={ticket.email} />
 
       <div className="mtech-section-title">Product Information</div>
+      {ticket.model && (
+        <div className="mtech-visit-actions" style={{ flexWrap: "wrap" }}>
+          {(["exploded", "bulletin"] as const).map((kind) => {
+            const label = kind === "exploded" ? "Exploded View" : "Service Bulletin";
+            const url = kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl;
+            return url ? (
+              <a
+                key={kind}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mtech-btn mtech-btn-primary"
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}
+              >
+                <ExternalLink size={14} /> {label}
+              </a>
+            ) : (
+              <button
+                key={kind}
+                type="button"
+                className="mtech-btn"
+                onClick={() => beginEditResource(kind)}
+              >
+                + Add {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {editingResource && (
+        <div className="mtech-visit-edit">
+          <label className="mtech-visit-edit-label">
+            {editingResource === "exploded" ? "Exploded View" : "Service Bulletin"} link
+          </label>
+          <input
+            className="mtech-visit-edit-input"
+            type="url"
+            inputMode="url"
+            value={resourceDraft}
+            onChange={(e) => setResourceDraft(e.target.value)}
+            placeholder="https://…"
+            autoFocus
+          />
+          <div className="mtech-visit-edit-actions">
+            <button
+              type="button"
+              className="mtech-btn mtech-btn-primary"
+              disabled={savingResource}
+              onClick={() => void saveEditResource()}
+            >
+              {savingResource ? "Saving…" : "Save"}
+            </button>
+            <button type="button" className="mtech-btn" disabled={savingResource} onClick={cancelEditResource}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <InfoRow label="Brand" value={ticket.manufacturer} />
       <InfoRow label="Product Category" value={productLabel(ticket)} />
       <InfoRow label="Model Code" value={ticket.model} />
