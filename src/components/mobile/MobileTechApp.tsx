@@ -1299,11 +1299,18 @@ function DetailView({
   );
 }
 
-function InfoRow({ label, value }: { label: string; value?: string }) {
+function InfoRow({ label, value, type }: { label: string; value?: string; type?: "phone" }) {
+  const digits = type === "phone" ? String(value || "").replace(/[^\d+]/g, "") : "";
   return (
     <div className="mtech-inforow">
       <span className="mtech-info-label">{label}</span>
-      <span className="mtech-info-value">{value || "—"}</span>
+      {type === "phone" && digits ? (
+        <a href={`tel:${digits}`} className="mtech-info-value mtech-phone-link" title={`Call ${value}`}>
+          {value}
+        </a>
+      ) : (
+        <span className="mtech-info-value">{value || "—"}</span>
+      )}
     </div>
   );
 }
@@ -1377,7 +1384,7 @@ function DetailsTab({
 
       <div className="mtech-section-title">Customer</div>
       <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
-      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} />
+      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} type="phone" />
       <InfoRow label="Location" value={resolveLocation(ticket)} />
       {/* Tier Code — derived from warranty + zip. Shows "N/A" for warranty
           companies outside the Assurant / GE / Miele set so techs can see
@@ -1391,8 +1398,8 @@ function DetailsTab({
       <InfoRow label="Address" value={ticket.address} />
       <InfoRow label="Address 2" value={ticket.address2} />
       <InfoRow label="State/Zip" value={[ticket.state, ticket.zip].filter(Boolean).join(" ")} />
-      <InfoRow label="Home Phone" value={ticket.phone} />
-      <InfoRow label="Cell Phone" value={ticket.secondPhone} />
+      <InfoRow label="Home Phone" value={ticket.phone} type="phone" />
+      <InfoRow label="Cell Phone" value={ticket.secondPhone} type="phone" />
       <InfoRow label="Email" value={ticket.email} />
 
       <div className="mtech-section-title">Product Information</div>
