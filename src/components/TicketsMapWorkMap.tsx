@@ -873,14 +873,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
-              <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+        <div className="flex items-center gap-3 mb-8">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <ChevronLeft className="h-4 w-4" /> {mod.label}
+          </Link>
+          <div>
+            <h1 className="text-4xl font-display font-bold tracking-tight">{sub.title}</h1>
+            <p className="text-lg text-muted-foreground">{sub.description}</p>
           </div>
-          <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
-          <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
         {!ready ? (
