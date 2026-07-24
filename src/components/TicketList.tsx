@@ -851,6 +851,13 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [exporting, setExporting] = useState(false);
   const handleExportXlsx = async () => {
     if (exporting || sortedItems.length === 0) return;
+    // Cheap to trigger by accident (it's a small button sitting right next
+    // to the page-size row) and not cheap to run (bulk-fetches every
+    // filtered ticket's full visit/parts history) — confirm first.
+    const count = sortedItems.length;
+    if (!window.confirm(`Export ${count} ticket${count === 1 ? "" : "s"} (with full Visit Log and Parts history) to Excel?`)) {
+      return;
+    }
     setExporting(true);
     try {
       const ticketIds = sortedItems
