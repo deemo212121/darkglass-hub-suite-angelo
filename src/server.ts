@@ -6,6 +6,9 @@ import { handleSupabaseTokenRequest } from "./lib/server/supabaseTokenBridge";
 import { handleServicePowerRequest } from "./lib/server/servicePowerBridge";
 import { handleMarconeRequest } from "./lib/server/marconeBridge";
 import { handleJotformRequest } from "./lib/server/jotformBridge";
+import { handleCustomFormsRequest } from "./lib/server/customFormsBridge";
+import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
+import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -120,6 +123,17 @@ export default {
     if (url.pathname === "/api/jotform") {
       const merged = await resolveServerEnv(env);
       return await handleJotformRequest(request, merged);
+    }
+    if (url.pathname === "/api/custom-forms") {
+      const merged = await resolveServerEnv(env);
+      return await handleCustomFormsRequest(request, merged);
+    }
+    if (url.pathname === "/api/image-proxy") {
+      return await handleImageProxyRequest(request);
+    }
+    if (url.pathname === "/api/google-drive") {
+      const merged = await resolveServerEnv(env);
+      return await handleGoogleDriveRequest(request, merged);
     }
 
     try {

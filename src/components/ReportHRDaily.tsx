@@ -59,6 +59,8 @@ import { getAppUrl } from "@/lib/appUrl";
 import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate } from "@/lib/supabase/companySettings";
 import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
+import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
+import { CustomFormsPanel } from "./CustomFormsPanel";
 
 // Certificate of Employment's editable body — the prose paragraphs between
 // the greeting and the signature block (see companySettings.ts's
@@ -242,7 +244,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -255,7 +257,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -310,6 +312,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     void loadJotformSubmissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, canViewJotformTab]);
+
+  // Fetched here (not left to CustomFormsPanel's own internal state) purely
+  // so the "Custom Forms" tab can show a "N new" badge before the tab's
+  // ever been opened this session — same reasoning/pattern as
+  // jotformSubmissions above. CustomFormsPanel still does its own separate
+  // fetch when actually opened; a little duplicated work, same trade-off
+  // already accepted for the Jotform tab.
+  const [newCustomFormSubmissionsCount, setNewCustomFormSubmissionsCount] = useState(0);
+  useEffect(() => {
+    if (!ready) return;
+    (async () => {
+      try {
+        const subs = await getCustomFormSubmissions();
+        setNewCustomFormSubmissionsCount(subs.filter((s) => s.status === "new").length);
+      } catch (err) {
+        console.error("Failed to load custom form submissions count:", err);
+      }
+    })();
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || !companyId || !canViewJotformTab) return;
@@ -3225,6 +3246,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Paperclip,
       tabs: [
         ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
+        { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
         { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
         { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
@@ -4219,6 +4241,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
       )}
+
+      {/* ── Custom Forms — the in-house Form Maker, runs alongside Jotform ── */}
+      {activeTab === "customForms" && <CustomFormsPanel />}
 
       {/* ── Applicant Documents preview modal ── */}
       {jotformPreview && (
