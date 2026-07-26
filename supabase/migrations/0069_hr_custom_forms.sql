@@ -24,7 +24,7 @@
 -- open for a future client-only public renderer without widening anything
 -- else.
 --
--- Run once in the Supabase SQL Editor, after 0059.
+-- Run once in the Supabase SQL Editor, after 0068.
 -- =====================================================================
 
 create table if not exists hr_custom_forms (

@@ -12,7 +12,7 @@
 -- everything else uses, and the per-employee Documents page gets one more
 -- upload/link drop zone for it automatically.
 --
--- Run once in the Supabase SQL Editor, after 0063.
+-- Run once in the Supabase SQL Editor, after 0072.
 -- =====================================================================
 
 create table if not exists hr_onboarding_document_columns (

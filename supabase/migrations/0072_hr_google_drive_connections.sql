@@ -15,7 +15,7 @@
 -- the two RPCs below, which expose just a connected/not-connected status,
 -- never the token itself.
 --
--- Run once in the Supabase SQL Editor, after 0062.
+-- Run once in the Supabase SQL Editor, after 0071.
 -- =====================================================================
 
 create table if not exists hr_google_drive_connections (
