@@ -11,7 +11,7 @@
 export async function captureHtmlToPdfBlob(
   bodyHtml: string,
   styles: string,
-  opts?: { width?: number; height?: number }
+  opts?: { width?: number; height?: number; beforeCapture?: (doc: Document) => void }
 ): Promise<Blob> {
   const width = opts?.width ?? 816;
   // Matches the US Letter 8.5x11in @ 96dpi target every template (COE,
@@ -33,6 +33,12 @@ export async function captureHtmlToPdfBlob(
     });
     const body = iframe.contentDocument?.body;
     if (!body) throw new Error("Could not prepare document for capture.");
+    // Runs against the real (already-loaded) iframe document just before
+    // rasterizing — lets a caller measure actual rendered layout (e.g. a
+    // pinned logo's real height, only known once its image has loaded) and
+    // adjust the DOM in response, so html2canvas captures the adjusted
+    // result rather than the pre-adjustment layout.
+    opts?.beforeCapture?.(iframe.contentDocument!);
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
     // useCORS: true — a signature image (uploaded to Firebase Storage,
     // a real cross-origin URL, unlike the logo which is embedded as a

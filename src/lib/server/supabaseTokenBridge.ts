@@ -40,11 +40,12 @@ function bytesToB64url(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function strToB64url(input: string): string {
+/** UTF-8-safe (unlike plain btoa) — used elsewhere for encoding small JSON payloads into a URL-safe string, e.g. googleDriveBridge.ts's OAuth `state` param. */
+export function strToB64url(input: string): string {
   return bytesToB64url(new TextEncoder().encode(input));
 }
 
-function b64urlToString(input: string): string {
+export function b64urlToString(input: string): string {
   return new TextDecoder().decode(b64urlToBytes(input));
 }
 
@@ -70,7 +71,7 @@ async function getGoogleJwks(): Promise<Record<string, Jwk>> {
   return keys;
 }
 
-interface FirebaseClaims {
+export interface FirebaseClaims {
   sub: string;
   email?: string;
   aud: string;
@@ -79,8 +80,8 @@ interface FirebaseClaims {
   [k: string]: unknown;
 }
 
-/** Verify a Firebase ID token (RS256) with Web Crypto. Throws if invalid. */
-async function verifyFirebaseToken(idToken: string, projectId: string): Promise<FirebaseClaims> {
+/** Verify a Firebase ID token (RS256) with Web Crypto. Throws if invalid. Exported so other bridges (e.g. googleDriveBridge.ts) can identify a caller from their existing Firebase login without a separate verification path. */
+export async function verifyFirebaseToken(idToken: string, projectId: string): Promise<FirebaseClaims> {
   const parts = idToken.split(".");
   if (parts.length !== 3) throw new Error("Malformed token");
   const [headerB64, payloadB64, signatureB64] = parts;

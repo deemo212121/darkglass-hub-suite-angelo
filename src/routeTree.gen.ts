@@ -29,8 +29,10 @@ import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as FillW9DocIdRouteImport } from './routes/fill-w9.$docId'
 import { Route as FillW8benDocIdRouteImport } from './routes/fill-w8ben.$docId'
 import { Route as FillW4DocIdRouteImport } from './routes/fill-w4.$docId'
+import { Route as FillFormFormIdRouteImport } from './routes/fill-form.$formId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
 import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
+import { Route as ApplySlugRouteImport } from './routes/apply.$slug'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 import { Route as MModuleSubmoduleUserIdRouteImport } from './routes/m.$module.$submodule.$userId'
@@ -135,6 +137,11 @@ const FillW4DocIdRoute = FillW4DocIdRouteImport.update({
   path: '/fill-w4/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillFormFormIdRoute = FillFormFormIdRouteImport.update({
+  id: '/fill-form/$formId',
+  path: '/fill-form/$formId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EmployeeEmployeeIdRoute = EmployeeEmployeeIdRouteImport.update({
   id: '/employee/$employeeId',
   path: '/employee/$employeeId',
@@ -143,6 +150,11 @@ const EmployeeEmployeeIdRoute = EmployeeEmployeeIdRouteImport.update({
 const CsrAgentAgentIdRoute = CsrAgentAgentIdRouteImport.update({
   id: '/csr-agent/$agentId',
   path: '/csr-agent/$agentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApplySlugRoute = ApplySlugRouteImport.update({
+  id: '/apply/$slug',
+  path: '/apply/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
@@ -176,8 +188,10 @@ export interface FileRoutesByFullPath {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
@@ -203,8 +217,10 @@ export interface FileRoutesByTo {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
@@ -231,8 +247,10 @@ export interface FileRoutesById {
   '/superadmin': typeof SuperadminRoute
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
+  '/apply/$slug': typeof ApplySlugRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
+  '/fill-form/$formId': typeof FillFormFormIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
@@ -260,8 +278,10 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-form/$formId'
     | '/fill-w4/$docId'
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
@@ -287,8 +307,10 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-form/$formId'
     | '/fill-w4/$docId'
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
@@ -314,8 +336,10 @@ export interface FileRouteTypes {
     | '/superadmin'
     | '/timecard'
     | '/admin/users'
+    | '/apply/$slug'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
+    | '/fill-form/$formId'
     | '/fill-w4/$docId'
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
@@ -342,8 +366,10 @@ export interface RootRouteChildren {
   SuperadminRoute: typeof SuperadminRoute
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
+  ApplySlugRoute: typeof ApplySlugRoute
   CsrAgentAgentIdRoute: typeof CsrAgentAgentIdRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
+  FillFormFormIdRoute: typeof FillFormFormIdRoute
   FillW4DocIdRoute: typeof FillW4DocIdRoute
   FillW8benDocIdRoute: typeof FillW8benDocIdRoute
   FillW9DocIdRoute: typeof FillW9DocIdRoute
@@ -495,6 +521,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillW4DocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-form/$formId': {
+      id: '/fill-form/$formId'
+      path: '/fill-form/$formId'
+      fullPath: '/fill-form/$formId'
+      preLoaderRoute: typeof FillFormFormIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/employee/$employeeId': {
       id: '/employee/$employeeId'
       path: '/employee/$employeeId'
@@ -507,6 +540,13 @@ declare module '@tanstack/react-router' {
       path: '/csr-agent/$agentId'
       fullPath: '/csr-agent/$agentId'
       preLoaderRoute: typeof CsrAgentAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apply/$slug': {
+      id: '/apply/$slug'
+      path: '/apply/$slug'
+      fullPath: '/apply/$slug'
+      preLoaderRoute: typeof ApplySlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/users': {
@@ -570,8 +610,10 @@ const rootRouteChildren: RootRouteChildren = {
   SuperadminRoute: SuperadminRoute,
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
+  ApplySlugRoute: ApplySlugRoute,
   CsrAgentAgentIdRoute: CsrAgentAgentIdRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
+  FillFormFormIdRoute: FillFormFormIdRoute,
   FillW4DocIdRoute: FillW4DocIdRoute,
   FillW8benDocIdRoute: FillW8benDocIdRoute,
   FillW9DocIdRoute: FillW9DocIdRoute,

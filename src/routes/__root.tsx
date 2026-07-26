@@ -88,7 +88,11 @@ function RootComponent() {
   const isLandingPage = location.pathname === "/landing" || location.pathname === "/announcements";
   const isSuperAdminPage = location.pathname === "/superadmin";
   const isMobilePage = location.pathname === "/mobile";
-  const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage;
+  // Public custom-form fill page — no AHS account, so none of the
+  // authenticated chrome below (announcement banner, ticket search, module
+  // navigator) applies or would even render sensibly.
+  const isApplyPage = location.pathname.startsWith("/apply/");
+  const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage || isApplyPage;
   
   return (
     <QueryClientProvider client={queryClient}>

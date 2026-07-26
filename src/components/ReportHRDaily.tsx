@@ -30,6 +30,13 @@ import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, addAgentNote, 
 import { parseBranchAccess } from "@/lib/locations";
 import { OnboardingApplicantDocuments } from "./OnboardingApplicantDocuments";
 import { getOnboardingDocumentCategoriesByProfileIds } from "@/lib/supabase/onboardingDocuments";
+import {
+  getOnboardingDocumentColumns,
+  addOnboardingDocumentColumn,
+  deleteOnboardingDocumentColumn,
+  type OnboardingDocumentColumn,
+  type OnboardingGroupKey,
+} from "@/lib/supabase/onboardingDocumentColumns";
 import { uploadCoeCertificate, uploadWarningForm, uploadW8benForm, uploadW4Form } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
@@ -59,6 +66,8 @@ import { getAppUrl } from "@/lib/appUrl";
 import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate } from "@/lib/supabase/companySettings";
 import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
+import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
+import { CustomFormsPanel } from "./CustomFormsPanel";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
 // ("July 17, 2026") via the multi-arg Date constructor (new Date(y, m-1, d),
@@ -254,7 +263,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -267,7 +276,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -322,6 +331,25 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     void loadJotformSubmissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, canViewJotformTab]);
+
+  // Fetched here (not left to CustomFormsPanel's own internal state) purely
+  // so the "Custom Forms" tab can show a "N new" badge before the tab's
+  // ever been opened this session — same reasoning/pattern as
+  // jotformSubmissions above. CustomFormsPanel still does its own separate
+  // fetch when actually opened; a little duplicated work, same trade-off
+  // already accepted for the Jotform tab.
+  const [newCustomFormSubmissionsCount, setNewCustomFormSubmissionsCount] = useState(0);
+  useEffect(() => {
+    if (!ready) return;
+    (async () => {
+      try {
+        const subs = await getCustomFormSubmissions();
+        setNewCustomFormSubmissionsCount(subs.filter((s) => s.status === "new").length);
+      } catch (err) {
+        console.error("Failed to load custom form submissions count:", err);
+      }
+    })();
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || !companyId || !canViewJotformTab) return;
@@ -3069,11 +3097,60 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [onboardingSearch, setOnboardingSearch] = useState("");
   // Clicking a name drills into that applicant's document repository (drag-and-drop from the Jotform inbox + manual upload) instead of the checklist grid.
   const [onboardingSelectedEmployee, setOnboardingSelectedEmployee] = useState<{ id: string; name: string; docList: string[] } | null>(null);
+
+  // Extra columns HR has added from the "+ Add Column" button, per group —
+  // merged with the hardcoded TECHNICIAN/PARTS_MANAGER/PH_ONBOARDING_DOCS
+  // lists below. A custom column behaves exactly like a hardcoded one: it's
+  // just another free-text category name, so the same YES/NO lookup and the
+  // same per-employee drop zone work for it with no other changes.
+  const [customOnboardingColumns, setCustomOnboardingColumns] = useState<OnboardingDocumentColumn[]>([]);
+  const [addColumnGroup, setAddColumnGroup] = useState<OnboardingGroupKey | null>(null);
+  const [newColumnLabel, setNewColumnLabel] = useState("");
+  const [addColumnSaving, setAddColumnSaving] = useState(false);
+  const [addColumnError, setAddColumnError] = useState<string | null>(null);
+
+  const defaultOnboardingDocsFor = (groupKey: OnboardingGroupKey) =>
+    groupKey === "PH" ? PH_ONBOARDING_DOCS
+    : groupKey === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
+    : PARTS_MANAGER_ONBOARDING_DOCS;
+  const onboardingDocsForGroup = (groupKey: OnboardingGroupKey) => [
+    ...defaultOnboardingDocsFor(groupKey),
+    ...customOnboardingColumns.filter((c) => c.groupKey === groupKey).map((c) => c.label),
+  ];
+
+  const handleAddOnboardingColumn = async () => {
+    if (!addColumnGroup || !newColumnLabel.trim()) return;
+    setAddColumnSaving(true);
+    setAddColumnError(null);
+    try {
+      await addOnboardingDocumentColumn(addColumnGroup, newColumnLabel);
+      setCustomOnboardingColumns(await getOnboardingDocumentColumns());
+      setAddColumnGroup(null);
+      setNewColumnLabel("");
+    } catch (err) {
+      setAddColumnError(err instanceof Error ? err.message : "Failed to add column.");
+    } finally {
+      setAddColumnSaving(false);
+    }
+  };
+  const handleRemoveOnboardingColumn = async (col: OnboardingDocumentColumn) => {
+    if (!window.confirm(`Remove the "${col.label}" column? This won't delete any files already filed under it.`)) return;
+    setCustomOnboardingColumns((prev) => prev.filter((c) => c.id !== col.id));
+    try {
+      await deleteOnboardingDocumentColumn(col.id);
+    } catch (err) {
+      console.error("Failed to remove onboarding column:", err);
+      setCustomOnboardingColumns(await getOnboardingDocumentColumns());
+    }
+  };
+
   // Same US-Technician/US-other/PH split as onboardingEmployees above, just evaluated for one specific employee — used to pick their document list regardless of whichever group tab happens to be selected at click-time.
   const getOnboardingDocListForEmployee = (employee: { country: string; position: string }) =>
-    employee.country === "PH" ? PH_ONBOARDING_DOCS
-    : normalizeRole(employee.position) === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
-    : PARTS_MANAGER_ONBOARDING_DOCS;
+    onboardingDocsForGroup(
+      employee.country === "PH" ? "PH"
+      : normalizeRole(employee.position) === "TECHNICIAN" ? "TECHNICIAN"
+      : "PARTS_MANAGER"
+    );
   const onboardingEmployees = useMemo(() => {
     const byGroup =
       onboardingGroup === "PH" ? employees.filter((e) => e.country === "PH")
@@ -3108,10 +3185,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     } as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, onboardingSelectedEmployee?.id]);
-  const onboardingDocColumns =
-    onboardingGroup === "TECHNICIAN" ? TECHNICIAN_ONBOARDING_DOCS
-    : onboardingGroup === "PARTS_MANAGER" ? PARTS_MANAGER_ONBOARDING_DOCS
-    : PH_ONBOARDING_DOCS;
+  const onboardingDocColumns = onboardingDocsForGroup(onboardingGroup);
+
+  // Custom columns are company-wide (not filtered by the currently visible
+  // employee list), so just load them once when the tab is first opened.
+  const customOnboardingColumnsLoadedRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== "onboarding" || customOnboardingColumnsLoadedRef.current) return;
+    customOnboardingColumnsLoadedRef.current = true;
+    getOnboardingDocumentColumns()
+      .then(setCustomOnboardingColumns)
+      .catch((err) => console.error("Failed to load custom onboarding columns:", err));
+  }, [activeTab]);
 
   // YES/NO on the checklist grid reflects whether a real document has
   // actually been filed (uploaded, linked, or dragged in from Jotform) for
@@ -3239,6 +3324,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Paperclip,
       tabs: [
         ...(canViewJotformTab ? [{ key: "jotformDocuments", label: "Applicant Documents", count: newJotformSubmissionsCount, icon: Forward }] as const : []),
+        { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
         { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
         { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
@@ -4238,6 +4324,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       )}
 
+      {/* ── Custom Forms — the in-house Form Maker, runs alongside Jotform ── */}
+      {activeTab === "customForms" && <CustomFormsPanel />}
+
       {/* ── Applicant Documents preview modal ── */}
       {jotformPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setJotformPreview(null)}>
@@ -4567,6 +4656,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 className="glass-input text-xs py-1.5 pl-8 pr-3 rounded-md w-40 h-7.5"
               />
             </div>
+            <button
+              type="button"
+              onClick={() => { setAddColumnGroup(onboardingGroup); setNewColumnLabel(""); setAddColumnError(null); }}
+              className="btn text-xs px-3 py-1.5 h-7.5 flex items-center gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Column
+            </button>
           </div>
         </div>
 
@@ -4576,9 +4672,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[9%]">Name</th>
                 <th className="px-1.5 py-2 text-left text-[10px] text-muted-foreground uppercase w-[7%]">{onboardingGroup === "PH" ? "Dept." : "Branch"}</th>
-                {onboardingDocColumns.map((doc) => (
-                  <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">{doc}</th>
-                ))}
+                {onboardingDocColumns.map((doc) => {
+                  const customCol = customOnboardingColumns.find((c) => c.groupKey === onboardingGroup && c.label === doc);
+                  return (
+                    <th key={doc} className="px-1 py-2 text-center text-[9px] leading-tight text-muted-foreground uppercase break-words">
+                      {doc}
+                      {customCol && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveOnboardingColumn(customCol)}
+                          title="Remove this column"
+                          className="ml-1 text-muted-foreground hover:text-red-300 normal-case"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -4624,6 +4735,43 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </table>
         </div>
       </div>
+      )}
+
+      {/* Add Column dialog — new document category for the group open when the button was clicked, works exactly like the built-in columns once saved (free-text category, matched the same way on the checklist grid and the per-employee Documents page). */}
+      {addColumnGroup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setAddColumnGroup(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-2">Add Column</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              New document column for{" "}
+              <span className="font-semibold text-white">
+                {addColumnGroup === "PH" ? "Philippines" : addColumnGroup === "TECHNICIAN" ? "Technician" : "Parts Manager"}
+              </span>
+              . It works exactly like the others — upload or link a file for it from each employee's Documents page.
+            </p>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Document Name</label>
+            <input
+              type="text"
+              value={newColumnLabel}
+              onChange={(e) => setNewColumnLabel(e.target.value)}
+              placeholder="e.g. Background Check"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter") void handleAddOnboardingColumn(); }}
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-3"
+            />
+            {addColumnError && <p className="text-xs text-red-300 mb-3">{addColumnError}</p>}
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAddColumnGroup(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={() => void handleAddOnboardingColumn()}
+                disabled={!newColumnLabel.trim() || addColumnSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {addColumnSaving ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Generate Report ── */}
