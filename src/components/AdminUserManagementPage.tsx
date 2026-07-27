@@ -533,7 +533,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return users.filter((record) => {
+    const matches = users.filter((record) => {
       // Free-text search across the visible fields.
       if (query) {
         const blob = [record.id, record.loginName, record.userName, record.type, record.email, record.manager, record.technicianId, record.office, record.locations]
@@ -550,7 +550,26 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
       return true;
     });
+    if (!query) return matches;
+    // The blob search above matches ANY field, including "Manager" - so
+    // searching a manager's own name previously surfaced every one of
+    // their direct reports (whose row also contains that name) ahead of
+    // the manager themselves, in whatever order the data happened to load.
+    // Sort (stably) so a match on the person's own login/username always
+    // outranks a match that only came from some other field.
+    const isDirectMatch = (r: UserRow) =>
+      r.loginName.toLowerCase().includes(query) || r.userName.toLowerCase().includes(query);
+    return [...matches].sort((a, b) => Number(isDirectMatch(b)) - Number(isDirectMatch(a)));
   }, [search, users, colFilters]);
+
+  // Manager cells store a free-text display name (profiles.manager_name),
+  // not a real foreign key - so linking to "the manager" needs this lookup
+  // to find the actual profile (and its real loginName) behind that name.
+  const loginNameByDisplayName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of users) if (u.userName) map.set(u.userName, u.loginName);
+    return map;
+  }, [users]);
 
   // Distinct values per column for the funnel dropdowns. Built from the
   // free-text-filtered set so column dropdowns shrink with the search.
@@ -833,7 +852,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-4 py-3 whitespace-nowrap">{record.type}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
-                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
+                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
                       <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.office}</td>
                       <td className="px-4 py-3 text-slate-300">{record.locations}</td>
@@ -861,7 +880,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     <div className="text-lg font-semibold">{managerName}</div>
                     <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{users.length} direct reports</div>
                   </div>
-                  <UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={users[0]?.loginName ?? managerName}>
+                  <UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(managerName) ?? managerName}>
                     Open
                   </UserLink>
                 </div>
