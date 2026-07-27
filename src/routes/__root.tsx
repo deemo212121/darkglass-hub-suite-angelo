@@ -92,7 +92,10 @@ function RootComponent() {
   // authenticated chrome below (announcement banner, ticket search, module
   // navigator) applies or would even render sensibly.
   const isApplyPage = location.pathname.startsWith("/apply/");
-  const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage || isApplyPage;
+  // No-login page — an anonymous external recipient signing a document has
+  // no Firebase session, so the authenticated chrome below can't render.
+  const isSignExternalPage = location.pathname.startsWith("/sign-external/");
+  const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage || isApplyPage || isSignExternalPage;
   
   return (
     <QueryClientProvider client={queryClient}>

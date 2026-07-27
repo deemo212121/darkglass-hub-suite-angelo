@@ -28,7 +28,7 @@ import {
   slugifyFieldName, uniqueFieldName,
   type CustomFormField, type ConditionOperator, type FieldCondition,
 } from "@/lib/formElements";
-import { createCustomForm, updateCustomForm, publishCustomForm, type CustomForm, type CustomFormAccess } from "@/lib/supabase/customForms";
+import { createCustomForm, updateCustomForm, publishCustomForm, sendDiscordTestMessage, type CustomForm, type CustomFormAccess } from "@/lib/supabase/customForms";
 import { DocumentTemplateEditor } from "./DocumentTemplateEditor";
 import { normalizeDocumentBlock, type DocumentBlock } from "@/lib/documentTemplates/types";
 import { StyleFields } from "./StyleFields";
@@ -348,6 +348,8 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
   const [description, setDescription] = useState(initial?.description ?? "");
   const [access, setAccess] = useState<CustomFormAccess>(initial?.access ?? "internal");
   const [notifyFirebaseUids, setNotifyFirebaseUids] = useState<string[]>(initial?.notifyFirebaseUids ?? []);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState(initial?.discordWebhookUrl ?? "");
+  const [discordTestState, setDiscordTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [fields, setFields] = useState<CustomFormField[]>(initial?.fields ?? []);
   const [documentBlocks, setDocumentBlocks] = useState<DocumentBlock[]>((initial?.documentTemplate?.blocks ?? []).map(normalizeDocumentBlock));
   const [activeTab, setActiveTab] = useState<"fields" | "document">("fields");
@@ -427,7 +429,7 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
     setSaving(publish ? "publish" : "draft");
     try {
-      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: { blocks: documentBlocks }, notifyFirebaseUids };
+      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: { blocks: documentBlocks }, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
       let form: CustomForm;
       if (initial) {
         form = await updateCustomForm(initial.id, { ...input, currentPublicSlug: initial.publicSlug });
@@ -440,6 +442,19 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
       setError(err instanceof Error ? err.message : "Failed to save form.");
     } finally {
       setSaving(null);
+    }
+  };
+
+  const handleDiscordTest = async () => {
+    if (!discordWebhookUrl.trim()) return;
+    setDiscordTestState("sending");
+    try {
+      await sendDiscordTestMessage(discordWebhookUrl.trim());
+      setDiscordTestState("sent");
+    } catch {
+      setDiscordTestState("error");
+    } finally {
+      setTimeout(() => setDiscordTestState("idle"), 3000);
     }
   };
 
@@ -474,6 +489,30 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Set Notifications</label>
         <NotifyRecipientsPicker value={notifyFirebaseUids} onChange={setNotifyFirebaseUids} />
         <p className="text-[10px] text-muted-foreground">Who gets notified when someone submits this form. Leave blank to notify every HR/Admin/Manager account (the default); pick specific people to notify only them instead.</p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Discord Notification (optional)</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={discordWebhookUrl}
+            onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+            placeholder="https://discord.com/api/webhooks/…"
+            className="glass-input text-sm py-2 px-3 rounded-md flex-1"
+          />
+          <button
+            type="button"
+            onClick={handleDiscordTest}
+            disabled={!discordWebhookUrl.trim() || discordTestState === "sending"}
+            className="btn text-xs px-3 py-2 shrink-0 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {discordTestState === "sending" && <Loader2 className="h-3 w-3 animate-spin" />}
+            {discordTestState === "sent" ? "Sent!" : discordTestState === "error" ? "Failed" : "Send Test"}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Every submission posts a message to this channel. Get a URL from Discord: right-click a channel → Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL.
+        </p>
       </div>
 
       <div className="flex gap-1 border-b border-white/10">

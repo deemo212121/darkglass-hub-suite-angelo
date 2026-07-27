@@ -36,6 +36,7 @@
  */
 
 import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
+import { postDiscordSubmissionNotice, postDiscordTestMessage } from "./discordNotify";
 // Type-only import — erased at compile time, so this never actually pulls
 // the (React/JSX-heavy) element registry into this Worker/Node bundle.
 // Importing straight from ./types rather than the registry's index.ts
@@ -82,12 +83,14 @@ interface FormRow {
   fields: CustomFormField[];
   notify_firebase_uids: string[] | null;
   document_template: DocumentTemplate | null;
+  drive_upload_enabled: boolean;
+  discord_webhook_url: string | null;
 }
 
 async function fetchPublishedPublicForm(env: EnvBag, slug: string): Promise<FormRow | null> {
   const url =
     `${env.supabaseUrl}/rest/v1/hr_custom_forms` +
-    `?select=id,company_id,title,description,fields,notify_firebase_uids,document_template` +
+    `?select=id,company_id,title,description,fields,notify_firebase_uids,document_template,drive_upload_enabled,discord_webhook_url` +
     `&public_slug=eq.${encodeURIComponent(slug)}` +
     `&status=eq.published&access=eq.public&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
@@ -104,25 +107,26 @@ async function fetchPublishedPublicForm(env: EnvBag, slug: string): Promise<Form
  * — googleDriveBridge.ts has no serviceAccountEmail/privateKey, it doesn't
  * need Firestore — can still call this directly.
  */
-export async function fetchSubmissionForNotify(env: { supabaseUrl: string; supabaseServiceKey: string }, submissionId: string): Promise<{ companyId: string; formId: string; formTitle: string; submitterName: string | null } | null> {
+export async function fetchSubmissionForNotify(env: { supabaseUrl: string; supabaseServiceKey: string }, submissionId: string): Promise<{ companyId: string; formId: string; formTitle: string; submitterName: string | null; responses: Record<string, unknown> } | null> {
   const url =
     `${env.supabaseUrl}/rest/v1/hr_custom_form_submissions` +
-    `?select=company_id,form_id,form_title,submitter_name&id=eq.${encodeURIComponent(submissionId)}&limit=1`;
+    `?select=company_id,form_id,form_title,submitter_name,responses&id=eq.${encodeURIComponent(submissionId)}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase submission lookup failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as Array<{ company_id: string; form_id: string; form_title: string; submitter_name: string | null }>;
+  const rows = (await res.json()) as Array<{ company_id: string; form_id: string; form_title: string; submitter_name: string | null; responses: Record<string, unknown> | null }>;
   const r = rows[0];
   if (!r) return null;
-  return { companyId: r.company_id, formId: r.form_id, formTitle: r.form_title, submitterName: r.submitter_name };
+  return { companyId: r.company_id, formId: r.form_id, formTitle: r.form_title, submitterName: r.submitter_name, responses: r.responses ?? {} };
 }
 
-/** The form's own explicitly-picked notify list (see CustomFormBuilder.tsx's "Set Notifications" picker) — fetched separately from fetchSubmissionForNotify above since that only reads hr_custom_form_submissions, not the form itself. */
-async function fetchFormNotifyRecipients(env: EnvBag, formId: string): Promise<string[] | null> {
-  const url = `${env.supabaseUrl}/rest/v1/hr_custom_forms?select=notify_firebase_uids&id=eq.${encodeURIComponent(formId)}&limit=1`;
+/** The form's own explicitly-picked notify list (see CustomFormBuilder.tsx's "Set Notifications" picker) plus its Discord webhook + field list — fetched separately from fetchSubmissionForNotify above since that only reads hr_custom_form_submissions, not the form itself. Used by the internal-submission notify path only; the public path already has the form loaded. */
+async function fetchFormNotifyRecipients(env: EnvBag, formId: string): Promise<{ notifyFirebaseUids: string[] | null; discordWebhookUrl: string | null; fields: CustomFormField[] }> {
+  const url = `${env.supabaseUrl}/rest/v1/hr_custom_forms?select=notify_firebase_uids,discord_webhook_url,fields&id=eq.${encodeURIComponent(formId)}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase form notify-recipients lookup failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as Array<{ notify_firebase_uids: string[] | null }>;
-  return rows[0]?.notify_firebase_uids ?? null;
+  const rows = (await res.json()) as Array<{ notify_firebase_uids: string[] | null; discord_webhook_url: string | null; fields: CustomFormField[] | null }>;
+  const r = rows[0];
+  return { notifyFirebaseUids: r?.notify_firebase_uids ?? null, discordWebhookUrl: r?.discord_webhook_url ?? null, fields: r?.fields ?? [] };
 }
 
 async function insertSubmission(
@@ -227,8 +231,8 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
       const submission = await fetchSubmissionForNotify(envBag, body.submissionId);
       if (!submission) return json({ error: "Submission not found" }, 404);
       const accessToken = await getGoogleAccessToken(envBag.serviceAccountEmail, envBag.privateKey);
-      const explicitUids = await fetchFormNotifyRecipients(envBag, submission.formId);
-      const hrUids = await resolveNotifyRecipients(envBag, submission.companyId, explicitUids);
+      const formExtras = await fetchFormNotifyRecipients(envBag, submission.formId);
+      const hrUids = await resolveNotifyRecipients(envBag, submission.companyId, formExtras.notifyFirebaseUids);
       const dedupeId = `customform_${body.submissionId}`;
       const link = `/m/dashboard/hr-dashboard?tab=customForms`;
       await Promise.all(
@@ -242,10 +246,35 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
           })
         )
       );
+      if (formExtras.discordWebhookUrl) {
+        try {
+          await postDiscordSubmissionNotice(formExtras.discordWebhookUrl, {
+            formTitle: submission.formTitle,
+            submitterName: submission.submitterName,
+            submittedAt: new Date().toISOString(),
+            fields: formExtras.fields,
+            responses: submission.responses,
+          });
+        } catch (err) {
+          console.error("[custom-forms] Discord notify failed (submission was still saved):", err);
+        }
+      }
       return json({ success: true });
     } catch (err) {
       console.error("[custom-forms] internal notify error:", err);
       return json({ error: err instanceof Error ? err.message : "Notify failed" }, 500);
+    }
+  }
+
+  if (url.searchParams.get("action") === "discord-test") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const body = (await request.json()) as { webhookUrl?: string };
+      if (!body.webhookUrl?.trim()) return json({ error: "Missing webhookUrl" }, 400);
+      await postDiscordTestMessage(body.webhookUrl.trim());
+      return json({ success: true });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : "Discord test failed" }, 500);
     }
   }
 
@@ -257,7 +286,7 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
     if (!form) return json({ error: "Form not found" }, 404);
 
     if (request.method === "GET") {
-      return json({ id: form.id, title: form.title, description: form.description, fields: form.fields, documentTemplate: form.document_template });
+      return json({ id: form.id, title: form.title, description: form.description, fields: form.fields, documentTemplate: form.document_template, driveUploadEnabled: form.drive_upload_enabled });
     }
 
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -314,6 +343,20 @@ export async function handleCustomFormsRequest(request: Request, env?: Record<st
       );
     } catch (err) {
       console.error("[custom-forms] notification failed (submission was still saved):", err);
+    }
+
+    if (form.discord_webhook_url) {
+      try {
+        await postDiscordSubmissionNotice(form.discord_webhook_url, {
+          formTitle: form.title,
+          submitterName,
+          submittedAt: new Date().toISOString(),
+          fields: form.fields,
+          responses,
+        });
+      } catch (err) {
+        console.error("[custom-forms] Discord notify failed (submission was still saved):", err);
+      }
     }
 
     return json({ success: true, submissionId });

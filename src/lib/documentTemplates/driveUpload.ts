@@ -18,10 +18,12 @@ import type { CustomFormResponseValue } from "@/lib/supabase/customForms";
 
 export async function uploadSubmissionToDriveIfConfigured(
   documentTemplate: DocumentTemplate | null | undefined,
-  form: { fields: CustomFormField[] },
+  form: { fields: CustomFormField[]; driveUploadEnabled?: boolean },
   submission: { id: string; responses: Record<string, CustomFormResponseValue>; submittedAt: string }
 ): Promise<void> {
   if (!documentTemplate || documentTemplate.blocks.length === 0) return;
+  // driveUploadEnabled defaults true for any caller that doesn't pass it (older shape), so this is purely additive — see CustomFormsPanel.tsx's per-form "Drive" toggle.
+  if (form.driveUploadEnabled === false) return;
   try {
     const blob = await generateSubmissionPdf(documentTemplate, form, submission);
     const body = new FormData();

@@ -24,6 +24,7 @@ import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TicketsMapRouteImport } from './routes/tickets.map'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
+import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as FillW9DocIdRouteImport } from './routes/fill-w9.$docId'
@@ -112,6 +113,11 @@ const TicketTicketNoRoute = TicketTicketNoRouteImport.update({
   path: '/ticket/$ticketNo',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignExternalDocIdRoute = SignExternalDocIdRouteImport.update({
+  id: '/sign-external/$docId',
+  path: '/sign-external/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignDocumentDocIdRoute = SignDocumentDocIdRouteImport.update({
   id: '/sign-document/$docId',
   path: '/sign-document/$docId',
@@ -197,6 +203,7 @@ export interface FileRoutesByFullPath {
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
+  '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -226,6 +233,7 @@ export interface FileRoutesByTo {
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
+  '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -256,6 +264,7 @@ export interface FileRoutesById {
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
+  '/sign-external/$docId': typeof SignExternalDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -287,6 +296,7 @@ export interface FileRouteTypes {
     | '/fill-w9/$docId'
     | '/m/$module'
     | '/sign-document/$docId'
+    | '/sign-external/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -316,6 +326,7 @@ export interface FileRouteTypes {
     | '/fill-w9/$docId'
     | '/m/$module'
     | '/sign-document/$docId'
+    | '/sign-external/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -345,6 +356,7 @@ export interface FileRouteTypes {
     | '/fill-w9/$docId'
     | '/m/$module'
     | '/sign-document/$docId'
+    | '/sign-external/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -375,6 +387,7 @@ export interface RootRouteChildren {
   FillW9DocIdRoute: typeof FillW9DocIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
+  SignExternalDocIdRoute: typeof SignExternalDocIdRoute
   TicketTicketNoRoute: typeof TicketTicketNoRoute
   TicketsMapRoute: typeof TicketsMapRoute
 }
@@ -484,6 +497,13 @@ declare module '@tanstack/react-router' {
       path: '/ticket/$ticketNo'
       fullPath: '/ticket/$ticketNo'
       preLoaderRoute: typeof TicketTicketNoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-external/$docId': {
+      id: '/sign-external/$docId'
+      path: '/sign-external/$docId'
+      fullPath: '/sign-external/$docId'
+      preLoaderRoute: typeof SignExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-document/$docId': {
@@ -619,6 +639,7 @@ const rootRouteChildren: RootRouteChildren = {
   FillW9DocIdRoute: FillW9DocIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
+  SignExternalDocIdRoute: SignExternalDocIdRoute,
   TicketTicketNoRoute: TicketTicketNoRoute,
   TicketsMapRoute: TicketsMapRoute,
 }

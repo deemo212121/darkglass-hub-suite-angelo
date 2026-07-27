@@ -335,6 +335,43 @@ function customFormsDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/signable-documents locally — same shape
+// as customFormsDevPlugin above (GET for the doc, POST multipart for the
+// signature + PDF upload).
+function signableDocumentsDevPlugin() {
+  return {
+    name: "signable-documents-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/signable-documents", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleSignableDocumentsRequest } = await server.ssrLoadModule(
+            "/src/lib/server/signableDocumentsBridge.ts"
+          );
+          const webReq = new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/octet-stream" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleSignableDocumentsRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Signable document request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Dev-only middleware: serve /api/image-proxy locally — same bridge as
 // production. Unlike the other dev plugins above, the response body is
 // binary image bytes, not text/JSON, so it's streamed back as a Buffer
@@ -439,7 +476,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), signableDocumentsDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up

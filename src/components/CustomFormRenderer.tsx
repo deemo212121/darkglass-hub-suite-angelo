@@ -84,6 +84,11 @@ function groupFieldsIntoPages(fields: CustomFormField[]): FormPage[] {
   return pages.length > 0 ? pages : [{ groups: [] }];
 }
 
+/** Whether the form's own fields already give deriveSubmitterName something to work with — a dedicated Full Name field, or a short text/email field clearly labeled as one. When neither exists (e.g. a form built entirely from Fill in the Blank/rating/checkbox fields), the submitter's name would otherwise be lost, showing as "Someone" everywhere it's displayed. */
+function hasNameYieldingField(fields: CustomFormField[]): boolean {
+  return fields.some((f) => f.type === "fullName" || ((f.type === "shortText" || f.type === "email") && /name/i.test(f.label)));
+}
+
 function deriveSubmitterName(fields: CustomFormField[], values: Record<string, any>): string | null {
   const fullName = fields.find((f) => f.type === "fullName");
   if (fullName) {
@@ -184,6 +189,12 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
   const isLastPage = pageIndex === pages.length - 1;
   const setValue = (id: string, v: any) => setValues((prev) => ({ ...prev, [id]: v }));
 
+  // Only asked when the form itself has no way to identify who filled it out — a form
+  // that already asks for a name (Full Name field, or a "Name"-labeled text/email field)
+  // never shows this, so nobody types their name twice.
+  const needsAutoName = useMemo(() => !hasNameYieldingField(fields), [fields]);
+  const [autoName, setAutoName] = useState("");
+
   const valuesByName = useMemo(() => Object.fromEntries(fields.map((f) => [f.name, values[f.id]])), [fields, values]);
 
   // Calculated fields recompute from every other field's live value and are never directly edited.
@@ -199,7 +210,8 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valuesByName]);
 
-  const validatePage = (page: FormPage): string | null => {
+  const validatePage = (page: FormPage, isFirstPage: boolean): string | null => {
+    if (isFirstPage && needsAutoName && !autoName.trim()) return "Please enter your name.";
     for (const group of page.groups) {
       for (const f of group.fields) {
         const { visible } = computeFieldState(f, valuesByName);
@@ -212,7 +224,7 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
   };
 
   const handleNext = () => {
-    const validationError = validatePage(pages[pageIndex]);
+    const validationError = validatePage(pages[pageIndex], pageIndex === 0);
     if (validationError) { setError(validationError); return; }
     setError(null);
     setPageIndex((p) => p + 1);
@@ -223,12 +235,12 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
   const submitConfig = findSubmitConfig(fields);
 
   const handleSubmit = async () => {
-    const validationError = validatePage(pages[pageIndex]);
+    const validationError = validatePage(pages[pageIndex], pageIndex === 0);
     if (validationError) { setError(validationError); return; }
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(values, deriveSubmitterName(fields, values));
+      await onSubmit(values, needsAutoName ? autoName.trim() || null : deriveSubmitterName(fields, values));
       setSubmitted(true);
       if (submitConfig.redirectUrl) window.location.href = submitConfig.redirectUrl;
     } catch (err) {
@@ -254,6 +266,20 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
               <div className="h-full bg-blue-500 transition-all" style={{ width: `${((pageIndex + 1) / pages.length) * 100}%` }} />
             </div>
           )}
+        </div>
+      )}
+
+      {/* Only shown when the form has no field of its own that would identify the submitter — otherwise every submission would just show as "Someone" in the HR review list. */}
+      {pageIndex === 0 && needsAutoName && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium">Your Name<span className="text-red-400 ml-0.5">*</span></label>
+          <input
+            type="text"
+            value={autoName}
+            onChange={(e) => setAutoName(e.target.value)}
+            placeholder="Full name"
+            className="glass-input text-sm py-2 px-3 rounded-md"
+          />
         </div>
       )}
 

@@ -10,6 +10,7 @@ import { handleNsaRequest } from "./lib/server/nsaBridge";
 import { handleCustomFormsRequest } from "./lib/server/customFormsBridge";
 import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
 import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
+import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -139,6 +140,10 @@ export default {
     if (url.pathname === "/api/google-drive") {
       const merged = await resolveServerEnv(env);
       return await handleGoogleDriveRequest(request, merged);
+    }
+    if (url.pathname === "/api/signable-documents") {
+      const merged = await resolveServerEnv(env);
+      return await handleSignableDocumentsRequest(request, merged);
     }
 
     try {

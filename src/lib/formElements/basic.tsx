@@ -6,7 +6,7 @@
  * string) — Email/Phone/Date Picker are bespoke too now that they carry
  * real type-specific settings beyond a plain text input.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Heading as HeadingIcon, User, Mail, MapPin, Phone as PhoneIcon, Calendar, CalendarClock, PenTool, Pilcrow, ShoppingCart, Trash2, Plus } from "lucide-react";
 import type { ElementDefinition } from "./types";
 import { makeDisplayElement } from "./factories";
@@ -347,8 +347,8 @@ export const signatureElement: ElementDefinition = {
   isEmptyValue: (value) => !(value instanceof File),
 };
 
-/** Splits a "___"-blank template into alternating text/blank segments, e.g. "I ___ to ___" → ["I ", BLANK, " to ", BLANK]. */
-function parseBlankTemplate(template: string): (string | null)[] {
+/** Splits a "___"-blank template into alternating text/blank segments, e.g. "I ___ to ___" → ["I ", BLANK, " to ", BLANK]. Exported so DocumentTemplateEditor.tsx can preview a referenced Fill in the Blank field's own template (with visible blanks) instead of just the raw {{fieldName}} token. */
+export function parseBlankTemplate(template: string): (string | null)[] {
   return template.split(/(_{2,}|\{\{[^}]+\}\})/).map((part) => (/^_{2,}$/.test(part) || /^\{\{[^}]+\}\}$/.test(part) ? null : part)).filter((p) => p !== "");
 }
 
@@ -366,6 +366,13 @@ export const fillInTheBlankElement: ElementDefinition = {
   ),
   PropertiesPanel: ({ field, onChange, allFields }) => {
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    // Auto-grows with content instead of scrolling inside a fixed-height box — a multi-sentence template needs to stay fully visible while typing.
+    useEffect(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }, [field.config.template]);
     const insertVariable = (name: string) => {
       const token = `{{${name}}}`;
       const el = textareaRef.current;
@@ -390,7 +397,7 @@ export const fillInTheBlankElement: ElementDefinition = {
             onChange={(e) => onChange({ ...field, config: { ...field.config, template: e.target.value } })}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const name = e.dataTransfer.getData("text/plain"); if (name) insertVariable(name); }}
-            className="glass-input text-sm py-1.5 px-2.5 rounded-md min-h-16"
+            className="glass-input text-sm py-1.5 px-2.5 rounded-md min-h-24 resize-none overflow-hidden"
           />
         </div>
         {otherFields.length > 0 && (
@@ -439,6 +446,19 @@ export const fillInTheBlankElement: ElementDefinition = {
     );
   },
   isEmptyValue: (value) => !Array.isArray(value) || value.some((v) => !v?.trim()),
+  /** Reconstructs the actual filled-in sentence (blanks replaced by their answers) rather than the generic "join the raw answers array with commas" fallback — otherwise the submissions table and any Document Template referencing this field just dump "answer1, answer2, ..." instead of the sentence itself. */
+  formatValue: (value, field) => {
+    const segments = parseBlankTemplate(field.config.template ?? "");
+    const answers: string[] = Array.isArray(value) ? value : [];
+    let blankIndex = -1;
+    return segments
+      .map((seg) => {
+        if (seg !== null) return seg;
+        blankIndex += 1;
+        return answers[blankIndex]?.trim() || "____";
+      })
+      .join("");
+  },
 };
 
 interface Product { id: string; name: string; price: number; image?: string; discountPct?: number; taxPct?: number }

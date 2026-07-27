@@ -28,6 +28,7 @@ interface PublicForm {
   description: string | null;
   fields: CustomFormField[];
   documentTemplate: DocumentTemplate | null;
+  driveUploadEnabled: boolean;
 }
 
 export function ApplyFormPage({ slug }: Props) {

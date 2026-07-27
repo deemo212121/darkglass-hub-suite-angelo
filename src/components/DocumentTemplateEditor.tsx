@@ -27,6 +27,7 @@ import {
   type DocumentBlock, type DocumentBlockType,
 } from "@/lib/documentTemplates/types";
 import { ELEMENT_REGISTRY, applyFieldStyle, type CustomFormField } from "@/lib/formElements";
+import { parseBlankTemplate } from "@/lib/formElements/basic";
 import { uploadCustomFormAsset } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { StyleFields } from "./StyleFields";
@@ -75,15 +76,40 @@ function PaletteItem({ type, icon: Icon, onClick }: { type: DocumentBlockType; i
 }
 
 /**
+ * A paragraph's raw {{fieldName}} tokens show verbatim at design time for
+ * every field type except Fill in the Blank — that field's own "value" is
+ * itself a sentence-with-blanks, so showing its own template (with visible
+ * blanks) here gives a far more useful preview than the literal token text.
+ * Still just a preview: the actual PDF substitutes the real submitted
+ * answers, same as any other field (see generate.ts's formatFieldValue).
+ */
+function renderParagraphPreview(text: string, fillInTheBlankTemplate: (name: string) => string | null) {
+  const parts = text.split(/(\{\{[^}]+\}\})/g);
+  return parts.map((part, i) => {
+    const m = /^\{\{([^}]+)\}\}$/.exec(part);
+    if (!m) return <span key={i}>{part}</span>;
+    const template = fillInTheBlankTemplate(m[1]);
+    if (template == null) return <span key={i} className="italic opacity-60">{part}</span>;
+    return (
+      <span key={i}>
+        {parseBlankTemplate(template).map((seg, j) =>
+          seg === null ? <span key={j} className="inline-block w-16 border-b border-current opacity-60 mx-0.5" /> : <span key={j}>{seg}</span>
+        )}
+      </span>
+    );
+  });
+}
+
+/**
  * Renders plain, unstyled content — text-align/font-size/font-weight/color
  * come from the block's own Style tab and are set once, on BlockRow's outer
  * wrapper (via applyFieldStyle), then inherited here. Mirrors generate.ts's
  * renderBlockContent(), which does the same for the actual PDF output, so
  * the builder preview matches what gets produced.
  */
-function BlockPreview({ block, fieldLabel }: { block: DocumentBlock; fieldLabel: (name: string) => string }) {
+function BlockPreview({ block, fieldLabel, fillInTheBlankTemplate }: { block: DocumentBlock; fieldLabel: (name: string) => string; fillInTheBlankTemplate: (name: string) => string | null }) {
   if (block.type === "heading") return <h2>{block.text || "Heading"}</h2>;
-  if (block.type === "paragraph") return <p className="whitespace-pre-wrap">{block.text || "Paragraph text"}</p>;
+  if (block.type === "paragraph") return <p className="whitespace-pre-wrap">{renderParagraphPreview(block.text || "Paragraph text", fillInTheBlankTemplate)}</p>;
   if (block.type === "image") return block.imageUrl ? <img src={block.imageUrl} alt="" className="max-h-32" /> : <div className="w-full h-16 rounded-md border border-dashed border-slate-300 flex items-center justify-center text-xs text-slate-400">No image set</div>;
   if (block.type === "fieldValue") {
     if (!block.fieldName) return <p className="text-sm italic opacity-60">Choose a field →</p>;
@@ -100,13 +126,14 @@ function BlockPreview({ block, fieldLabel }: { block: DocumentBlock; fieldLabel:
 }
 
 function BlockRow({
-  block, selected, rowRef, showIndicatorAbove, fieldLabel, onSelect, onDelete,
+  block, selected, rowRef, showIndicatorAbove, fieldLabel, fillInTheBlankTemplate, onSelect, onDelete,
 }: {
   block: DocumentBlock;
   selected: boolean;
   rowRef: (el: HTMLDivElement | null) => void;
   showIndicatorAbove: boolean;
   fieldLabel: (name: string) => string;
+  fillInTheBlankTemplate: (name: string) => string | null;
   onSelect: () => void;
   onDelete: () => void;
 }) {
@@ -127,7 +154,7 @@ function BlockRow({
         <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete" className="absolute right-2 top-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
           <Trash2 className="h-4 w-4" />
         </button>
-        <BlockPreview block={block} fieldLabel={fieldLabel} />
+        <BlockPreview block={block} fieldLabel={fieldLabel} fillInTheBlankTemplate={fillInTheBlankTemplate} />
       </div>
     </div>
   );
@@ -141,12 +168,13 @@ function BlockRow({
  * doesn't collide with the click-to-select behavior on the rest of the box.
  */
 function PinnedBlock({
-  block, selected, blockRef, fieldLabel, onSelect, onDelete,
+  block, selected, blockRef, fieldLabel, fillInTheBlankTemplate, onSelect, onDelete,
 }: {
   block: DocumentBlock;
   selected: boolean;
   blockRef: (el: HTMLDivElement | null) => void;
   fieldLabel: (name: string) => string;
+  fillInTheBlankTemplate: (name: string) => string | null;
   onSelect: () => void;
   onDelete: () => void;
 }) {
@@ -168,7 +196,7 @@ function PinnedBlock({
       <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete" className="absolute -right-2 -top-2 bg-white rounded-full shadow p-0.5 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
         <Trash2 className="h-3 w-3" />
       </button>
-      <BlockPreview block={block} fieldLabel={fieldLabel} />
+      <BlockPreview block={block} fieldLabel={fieldLabel} fillInTheBlankTemplate={fillInTheBlankTemplate} />
     </div>
   );
 }
@@ -314,6 +342,11 @@ export function DocumentTemplateEditor({ blocks, onChange, formFields, formTitle
   // Field Value block — only actual data-collecting fields are offered.
   const dataFields = useMemo(() => formFields.filter((f) => ELEMENT_REGISTRY[f.type]?.kind === "field"), [formFields]);
   const fieldLabel = (name: string) => dataFields.find((f) => f.name === name)?.label || name;
+  /** Null for any field that isn't a Fill in the Blank (or doesn't exist) — those tokens keep showing verbatim, same as today. */
+  const fillInTheBlankTemplate = (name: string): string | null => {
+    const f = dataFields.find((x) => x.name === name);
+    return f?.type === "fillInTheBlank" ? (f.config.template ?? "") : null;
+  };
 
   // A brand-new (empty) document design starts pre-populated with every
   // form field, in form order, so there's already something to organize
@@ -500,7 +533,7 @@ export function DocumentTemplateEditor({ blocks, onChange, formFields, formTitle
             <div ref={pageRef} className="bg-white shadow-xl" style={{ width: PAGE_WIDTH, minHeight: PAGE_HEIGHT, padding: PAGE_PADDING, boxSizing: "border-box", position: "relative", color: "#111827" }}>
               <div className="flex flex-wrap" style={{ paddingTop: headerReserve || undefined }}>
                 {flowBlocks.map((b) => (
-                  <BlockRow key={b.id} block={b} selected={selectedId === b.id} rowRef={setRowRef(b.id)} showIndicatorAbove={isDragging && insertBeforeId === b.id} fieldLabel={fieldLabel} onSelect={() => setSelectedId(b.id)} onDelete={() => deleteBlock(b.id)} />
+                  <BlockRow key={b.id} block={b} selected={selectedId === b.id} rowRef={setRowRef(b.id)} showIndicatorAbove={isDragging && insertBeforeId === b.id} fieldLabel={fieldLabel} fillInTheBlankTemplate={fillInTheBlankTemplate} onSelect={() => setSelectedId(b.id)} onDelete={() => deleteBlock(b.id)} />
                 ))}
               </div>
               {isDragging && insertBeforeId === null && flowBlocks.length > 0 && <div className="h-0.5 mb-1.5 rounded bg-blue-400" />}
@@ -509,7 +542,7 @@ export function DocumentTemplateEditor({ blocks, onChange, formFields, formTitle
               </div>
 
               {pinnedBlocks.map((b) => (
-                <PinnedBlock key={b.id} block={b} selected={selectedId === b.id} blockRef={setPinnedRef(b.id)} fieldLabel={fieldLabel} onSelect={() => setSelectedId(b.id)} onDelete={() => deleteBlock(b.id)} />
+                <PinnedBlock key={b.id} block={b} selected={selectedId === b.id} blockRef={setPinnedRef(b.id)} fieldLabel={fieldLabel} fillInTheBlankTemplate={fillInTheBlankTemplate} onSelect={() => setSelectedId(b.id)} onDelete={() => deleteBlock(b.id)} />
               ))}
             </div>
           </div>

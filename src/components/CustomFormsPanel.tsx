@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { CustomFormBuilder } from "./CustomFormBuilder";
+import { Switch } from "@/components/ui/switch";
 import { generateSubmissionPdf } from "@/lib/documentTemplates/generate";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
 import {
@@ -22,6 +23,7 @@ import {
   restoreCustomFormSubmission,
   archiveCustomForm,
   setCustomFormDraft,
+  setCustomFormDriveUpload,
   deleteCustomForm,
   getGoogleDriveConnectionStatus,
   disconnectGoogleDrive,
@@ -271,6 +273,17 @@ export function CustomFormsPanel() {
     }
   };
 
+  /** On = every submission's PDF auto-uploads to the connected Google Drive; off = the Document Template still works for on-demand PDF downloads, it just never files to Drive. */
+  const handleToggleDriveUpload = async (form: CustomForm, enabled: boolean) => {
+    setForms((prev) => prev.map((f) => (f.id === form.id ? { ...f, driveUploadEnabled: enabled } : f)));
+    try {
+      await setCustomFormDriveUpload(form.id, enabled);
+    } catch (err) {
+      console.error("Failed to update Drive upload setting:", err);
+      void loadForms();
+    }
+  };
+
   const handleDeleteForm = async (form: CustomForm) => {
     if (!confirm(`Delete "${form.title}"? Its past submissions are kept, but the form itself (and its public link, if any) will be gone.`)) return;
     setForms((prev) => prev.filter((f) => f.id !== form.id));
@@ -427,6 +440,12 @@ export function CustomFormsPanel() {
                               <ExternalLink className="h-3.5 w-3.5" />
                             </a>
                           </>
+                        )}
+                        {f.documentTemplate && (
+                          <div className="flex items-center gap-1.5 mr-1" title={f.driveUploadEnabled ? "Drive upload is on — every submission's PDF files to the connected Google Drive" : "Drive upload is off — submissions still save, just no Drive copy"}>
+                            <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+                            <Switch checked={f.driveUploadEnabled} onCheckedChange={(checked) => void handleToggleDriveUpload(f, checked)} />
+                          </div>
                         )}
                         <button type="button" onClick={() => { setEditingForm(f); setBuilderOpen(true); }} title="Edit" className="text-muted-foreground hover:text-foreground transition-colors">
                           <Pencil className="h-3.5 w-3.5" />

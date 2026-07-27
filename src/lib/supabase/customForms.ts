@@ -32,8 +32,12 @@ export interface CustomForm {
   publicSlug: string | null;
   fields: CustomFormField[];
   documentTemplate: DocumentTemplate | null;
+  /** Per-form on/off switch for the Drive auto-upload — only meaningful when documentTemplate is set. Defaults true so existing forms keep uploading until someone flips it off. */
+  driveUploadEnabled: boolean;
   /** Firebase uids of the specific accounts to notify on submission — empty means "no explicit picks", falling back to the default (every HR/Admin/Manager account, see findHrFirebaseUids in customFormsBridge.ts). */
   notifyFirebaseUids: string[];
+  /** Discord "Incoming Webhook" URL — every submission posts a message here too, alongside the in-app notification. Null means no Discord channel configured for this form. */
+  discordWebhookUrl: string | null;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -67,7 +71,7 @@ export interface CustomFormSubmission {
   deletedAt: string | null;
 }
 
-const FORM_SELECT = "id, company_id, title, description, access, status, public_slug, fields, document_template, notify_firebase_uids, created_by, created_at, updated_at";
+const FORM_SELECT = "id, company_id, title, description, access, status, public_slug, fields, document_template, drive_upload_enabled, notify_firebase_uids, discord_webhook_url, created_by, created_at, updated_at";
 
 function formFromRow(r: any): CustomForm {
   return {
@@ -80,7 +84,9 @@ function formFromRow(r: any): CustomForm {
     publicSlug: r.public_slug,
     fields: (r.fields ?? []) as CustomFormField[],
     documentTemplate: (r.document_template ?? null) as DocumentTemplate | null,
+    driveUploadEnabled: r.drive_upload_enabled ?? true,
     notifyFirebaseUids: (r.notify_firebase_uids ?? []) as string[],
+    discordWebhookUrl: r.discord_webhook_url ?? null,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -107,11 +113,11 @@ export function generatePublicSlug(title: string): string {
   return `${base}-${suffix}`;
 }
 
-export async function createCustomForm(input: { title: string; description: string; access: CustomFormAccess; fields: CustomFormField[]; documentTemplate?: DocumentTemplate | null; notifyFirebaseUids?: string[] }): Promise<CustomForm> {
+export async function createCustomForm(input: { title: string; description: string; access: CustomFormAccess; fields: CustomFormField[]; documentTemplate?: DocumentTemplate | null; notifyFirebaseUids?: string[]; discordWebhookUrl?: string | null }): Promise<CustomForm> {
   const publicSlug = input.access === "public" ? generatePublicSlug(input.title) : null;
   const { data, error } = await supabase
     .from("hr_custom_forms")
-    .insert({ title: input.title, description: input.description || null, access: input.access, fields: input.fields, document_template: input.documentTemplate ?? null, notify_firebase_uids: input.notifyFirebaseUids ?? [], public_slug: publicSlug })
+    .insert({ title: input.title, description: input.description || null, access: input.access, fields: input.fields, document_template: input.documentTemplate ?? null, notify_firebase_uids: input.notifyFirebaseUids ?? [], discord_webhook_url: input.discordWebhookUrl?.trim() || null, public_slug: publicSlug })
     .select(FORM_SELECT)
     .single();
   if (error) throw error;
@@ -120,7 +126,7 @@ export async function createCustomForm(input: { title: string; description: stri
 
 export async function updateCustomForm(
   id: string,
-  input: { title: string; description: string; access: CustomFormAccess; fields: CustomFormField[]; documentTemplate?: DocumentTemplate | null; notifyFirebaseUids?: string[]; currentPublicSlug: string | null }
+  input: { title: string; description: string; access: CustomFormAccess; fields: CustomFormField[]; documentTemplate?: DocumentTemplate | null; notifyFirebaseUids?: string[]; discordWebhookUrl?: string | null; currentPublicSlug: string | null }
 ): Promise<CustomForm> {
   // Access is freely editable at any time (not just at publish) — switching to
   // Public here must not silently leave the form linkless until someone
@@ -131,7 +137,7 @@ export async function updateCustomForm(
   const publicSlug = input.access === "public" ? (input.currentPublicSlug || generatePublicSlug(input.title)) : input.currentPublicSlug;
   const { data, error } = await supabase
     .from("hr_custom_forms")
-    .update({ title: input.title, description: input.description || null, access: input.access, fields: input.fields, document_template: input.documentTemplate ?? null, notify_firebase_uids: input.notifyFirebaseUids ?? [], public_slug: publicSlug })
+    .update({ title: input.title, description: input.description || null, access: input.access, fields: input.fields, document_template: input.documentTemplate ?? null, notify_firebase_uids: input.notifyFirebaseUids ?? [], discord_webhook_url: input.discordWebhookUrl?.trim() || null, public_slug: publicSlug })
     .eq("id", id)
     .select(FORM_SELECT)
     .single();
@@ -159,6 +165,12 @@ export async function archiveCustomForm(id: string): Promise<void> {
 
 export async function setCustomFormDraft(id: string): Promise<void> {
   const { error } = await supabase.from("hr_custom_forms").update({ status: "draft" }).eq("id", id);
+  if (error) throw error;
+}
+
+/** The "Drive" toggle on the forms list — only meaningful for a form that has a Document Template attached. */
+export async function setCustomFormDriveUpload(id: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase.from("hr_custom_forms").update({ drive_upload_enabled: enabled }).eq("id", id);
   if (error) throw error;
 }
 
@@ -270,6 +282,19 @@ export async function notifyInternalSubmission(submissionId: string): Promise<vo
     body: JSON.stringify({ submissionId }),
   });
   if (!res.ok) throw new Error(`Notify failed (${res.status}): ${await res.text()}`);
+}
+
+/** Posts a one-off test message straight to a Discord webhook URL (before it's even saved on the form) — routed through the server rather than fetched directly from the browser so this doesn't depend on Discord's webhook endpoint allowing cross-origin requests. */
+export async function sendDiscordTestMessage(webhookUrl: string): Promise<void> {
+  const res = await fetch("/api/custom-forms?action=discord-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ webhookUrl }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Test message failed (${res.status})`);
+  }
 }
 
 export interface GoogleDriveConnectionStatus {
