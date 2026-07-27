@@ -1619,6 +1619,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     previousWarnings: warnPreviousWarnings,
     recipientSlot,
     recipientName,
+    recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
   });
 
   const [warnLogoDataUrl, setWarnLogoDataUrl] = useState("");
@@ -2321,7 +2322,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleSendWarningForm = async () => {
-    if (!warnForm.employeeId || !warnRecipientId || !uid) return;
+    if (!warnForm.employeeName.trim() || !warnRecipientId || !uid) return;
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -2364,7 +2365,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out, which is why it always lands there instead of just closing. */
   const handleGenerateExternalWarningLink = async () => {
-    if (!warnForm.employeeId || !warnExternalName.trim()) return;
+    if (!warnForm.employeeName.trim() || !warnExternalName.trim()) return;
     setWarnSending(true);
     setWarnSendError(null);
     try {
@@ -2424,13 +2425,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [warnActionError, setWarnActionError] = useState<string | null>(null);
 
   const handleConfirmWarningForm = async (doc: SignableDocument) => {
-    if (!window.confirm("Confirm this warning? This finalizes it and adds it to the employee's official warning record.")) return;
+    const data = doc.formData as unknown as WarningFormData;
+    // A warning typed in manually (no matching AHS employee picked) has no
+    // real profile to attach a conduct note to — the document can still be
+    // finalized, it just won't count toward anyone's official warning
+    // history, so the confirmation makes that trade-off explicit.
+    const confirmMessage = data.employeeId
+      ? "Confirm this warning? This finalizes it and adds it to the employee's official warning record."
+      : `Confirm this warning? "${data.employeeName}" isn't a matched AHS employee, so this will finalize the document but won't count toward any employee's official warning record.`;
+    if (!window.confirm(confirmMessage)) return;
     setWarnActionBusyId(doc.id);
     setWarnActionError(null);
     try {
-      const data = doc.formData as unknown as WarningFormData;
-      const noteText = buildWarnNoteText(data);
-      const noteId = await addAgentNote({ agentProfileId: data.employeeId, type: "warning", note: noteText, fastTrackToApproved: true });
+      let noteId: string | null = null;
+      if (data.employeeId) {
+        const noteText = buildWarnNoteText(data);
+        noteId = await addAgentNote({ agentProfileId: data.employeeId, type: "warning", note: noteText, fastTrackToApproved: true });
+      }
       await confirmSignableDocument(doc.id, noteId);
       await Promise.all([loadSentWarningForms(), (async () => setAllNotes(await getAllAgentNotes()))()]);
       void logActivity({ action: "warning_form_confirmed", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
@@ -2529,7 +2540,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipient = employees.find((e) => e.id === reassignRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
-      await reassignSignableDocument(reassignDialog.id, { recipientId: reassignRecipientId }, reassignSlot);
+      await reassignSignableDocument(reassignDialog.id, { recipientId: reassignRecipientId, recipientName: recipient.name }, reassignSlot);
 
       const myProfileId = await getMyProfileId(uid);
       if (!myProfileId) throw new Error("Could not resolve your profile.");
@@ -5641,6 +5652,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
               </div>
             )}
+            {!warnForm.employeeId && warnForm.employeeName.trim() && (
+              <p className="text-[10px] text-yellow-400/80 mt-0.5">No matching AHS employee — you can still continue, but this won't count toward anyone's official warning record once confirmed.</p>
+            )}
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Branch Location</label>
@@ -5734,7 +5748,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="px-4 py-4 border-t border-white/10 flex justify-end">
           <button
             onClick={handleOpenWarnPreview}
-            disabled={warnGenerating || !warnForm.employeeId}
+            disabled={warnGenerating || !warnForm.employeeName.trim()}
             className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5" /> {warnGenerating ? "Loading…" : "Preview & Send"}

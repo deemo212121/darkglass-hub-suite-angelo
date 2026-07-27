@@ -138,17 +138,47 @@ export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, f
   if (error) throw new Error(error.message);
 }
 
-/** Reassigns a document to another recipient/slot for signature ("Send to Next Recipient" / "Send to Another Recipient") — previously captured signatures are untouched. Exactly one of target.recipientId or target.recipientName should be set, same rule as createSignableDocument. */
-export async function reassignSignableDocument(id: string, target: { recipientId?: string; recipientName?: string }, recipientSlot: SignatureSlot): Promise<void> {
+/**
+ * Reassigns a document to another recipient/slot for signature ("Send to
+ * Next Recipient" / "Send to Another Recipient") — previously captured
+ * signatures are untouched. `recipientName` is required (not just for the
+ * recipient_name column, which only applies to an external/no-account
+ * recipient) because the document's rendered preview/PDF pre-fills the
+ * "Name:" line at the target slot from form_data.recipientName, not from
+ * the row's own recipient columns — skipping this update would reassign
+ * the document but leave the wrong (or blank) name showing until someone
+ * actually signs it.
+ */
+export async function reassignSignableDocument(id: string, target: { recipientId?: string; recipientName: string }, recipientSlot: SignatureSlot): Promise<void> {
+  const doc = await getSignableDocument(id);
+  if (!doc) throw new Error("Document not found.");
+  // Merged, not replaced — a slot's name from an earlier round (e.g. Manager,
+  // before this reassign moved it to Senior Manager) must keep showing on
+  // the document even though it's no longer the active recipientSlot.
+  const recipientNames = { ...(doc.formData as { recipientNames?: Record<string, string> }).recipientNames, [recipientSlot]: target.recipientName };
+  const formData = { ...doc.formData, recipientSlot, recipientName: target.recipientName, recipientNames };
   const { error } = await supabase
     .from("hr_signable_documents")
-    .update({ recipient_id: target.recipientId ?? null, recipient_name: target.recipientName ?? null, recipient_slot: recipientSlot, status: "pending_signature" })
+    .update({
+      recipient_id: target.recipientId ?? null,
+      recipient_name: target.recipientId ? null : target.recipientName,
+      recipient_slot: recipientSlot,
+      form_data: formData,
+      status: "pending_signature",
+    })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
-/** HR's final "Confirm Warning" — the moment the warning actually becomes official (see addAgentNote in ReportHRDaily.tsx's handleConfirmWarningForm). */
-export async function confirmSignableDocument(id: string, agentNoteId: string): Promise<void> {
+/**
+ * HR's final "Confirm Warning" — the moment the warning actually becomes
+ * official (see addAgentNote in ReportHRDaily.tsx's handleConfirmWarningForm).
+ * agentNoteId is null when the warning is about someone typed in manually
+ * rather than picked from the employee list — there's no real profile to
+ * attach a conduct note to, so the document itself still finalizes, it
+ * just doesn't count toward any employee's official warning history.
+ */
+export async function confirmSignableDocument(id: string, agentNoteId: string | null): Promise<void> {
   const { error } = await supabase
     .from("hr_signable_documents")
     .update({ status: "confirmed", agent_note_id: agentNoteId, confirmed_at: new Date().toISOString() })
