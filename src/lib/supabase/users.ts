@@ -459,10 +459,34 @@ export async function createSupabaseAdminProfile(input: {
  * (if any) should be removed separately in the Firebase console or via admin SDK.
  */
 export async function deleteCompanyUser(profileId: string): Promise<void> {
+  // manager_name is free text (not a real foreign key to another profile),
+  // so nothing clears it automatically - without this, everyone who had
+  // this person as their manager would keep showing that name forever,
+  // pointing at someone who no longer exists. Capture it before the delete
+  // since there's nothing left to look up afterward.
+  const { data: deletedProfile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", profileId)
+    .maybeSingle();
+
   const { error } = await supabase.from("profiles").delete().eq("id", profileId);
   if (error) {
     console.error("deleteCompanyUser error:", error.message);
     throw new Error(error.message);
+  }
+
+  const deletedDisplayName = deletedProfile?.display_name;
+  if (deletedDisplayName) {
+    const { error: clearErr } = await supabase
+      .from("profiles")
+      .update({ manager_name: null })
+      .eq("manager_name", deletedDisplayName);
+    // Best-effort - the delete itself already succeeded and is the
+    // primary action; don't fail the whole operation over this cleanup.
+    if (clearErr) {
+      console.warn("deleteCompanyUser: failed to clear manager_name references:", clearErr.message);
+    }
   }
 }
 
