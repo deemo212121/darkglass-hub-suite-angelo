@@ -44,6 +44,8 @@ const STATUS_COLORS: Record<string, string> = {
 
 const colorFor = (status: string) => STATUS_COLORS[status] || "#94a3b8";
 
+const HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Closed"]);
+
 // High-contrast tooltip — always readable in both light & dark mode
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -383,6 +385,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
     const fromN = parseInputDate(startDateFilter);
     const toN = parseInputDate(endDateFilter);
     return tickets.filter((t) => {
+      if (HIDDEN_STATUSES.has(t.status)) return false;
       if (repairStatusFilter && t.status !== repairStatusFilter) return false;
       if (locationFilter && t.location !== locationFilter) return false;
       if (ticketSourceFilter && t.ticketSource !== ticketSourceFilter) return false;

@@ -105,8 +105,15 @@ export async function getMonthEntries(
 export async function saveEntry(
   profileId: string,
   workDate: string,
-  entry: UITimeEntry
+  entry: UITimeEntry,
+  opts?: { clockedInBy?: string }
 ): Promise<void> {
+  // clocked_in_by is only ever included in the payload when this save is
+  // itself a manager's proxy clock-in — omitting the key entirely (rather
+  // than sending it as null) means a later self-punch save for the same
+  // day (e.g. the technician's own Time Out) doesn't wipe out that audit
+  // trail, since PostgREST's upsert only updates columns present in the
+  // payload.
   const { error } = await supabase
     .from("timecard_entries")
     .upsert(
@@ -118,6 +125,7 @@ export async function saveEntry(
         meal_start: entry.mealStart || null,
         meal_end: entry.mealEnd || null,
         notes: entry.notes || null,
+        ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
       },
       { onConflict: "profile_id,work_date" }
     );
@@ -380,6 +388,8 @@ export interface CompanyTimecardEntry {
   checkOut: string;
   mealStart: string;
   mealEnd: string;
+  /** Profile id of whoever performed the clock-in, if not the technician themselves (a manager's proxy clock-in). Null for a normal self-punch. */
+  clockedInBy: string | null;
 }
 
 /**
@@ -394,7 +404,7 @@ export async function getCompanyTimecardEntries(
 ): Promise<CompanyTimecardEntry[]> {
   const { data, error } = await supabase
     .from("timecard_entries")
-    .select("profile_id, work_date, check_in, check_out, meal_start, meal_end")
+    .select("profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by")
     .gte("work_date", startDate)
     .lte("work_date", endDate);
   if (error) {
@@ -408,5 +418,6 @@ export async function getCompanyTimecardEntries(
     checkOut: row.check_out ?? "",
     mealStart: row.meal_start ?? "",
     mealEnd: row.meal_end ?? "",
+    clockedInBy: row.clocked_in_by ?? null,
   }));
 }

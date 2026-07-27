@@ -137,10 +137,24 @@ export default {
     }
   },
 
-  // Cron Trigger (see wrangler.jsonc "triggers.crons") — hourly pull of any
-  // new parts NSA has added to open NSA tickets since the last run.
-  async scheduled(_event: unknown, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
+  // Cron Trigger (see wrangler.jsonc "triggers.crons") — dispatches on which
+  // schedule fired: hourly runs the NSA parts pull, every 5 minutes runs the
+  // attendance grace-period check.
+  async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
+
+    if (event?.cron === "*/5 * * * *") {
+      ctx.waitUntil(
+        import("./lib/server/attendanceAlerts").then(
+          ({ runAttendanceAlertCheck }) => runAttendanceAlertCheck(merged),
+        ).then(
+          (result) => console.log("attendanceAlerts:", JSON.stringify(result)),
+          (error) => console.error("attendanceAlerts failed:", error),
+        ),
+      );
+      return;
+    }
+
     ctx.waitUntil(
       import("./lib/server/nsaPartsSync").then(
         ({ runNsaPartsSync }) => runNsaPartsSync(merged),

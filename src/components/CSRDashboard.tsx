@@ -28,12 +28,17 @@ import {
 } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers } from "@/lib/supabase/users";
-import { getTicketAuditLog } from "@/lib/supabase/tickets";
+import { getTicketAuditLog, getCompanyTickets } from "@/lib/supabase/tickets";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { LOCATIONS, mergeLocationOptions, parseBranchAccess } from "@/lib/locations";
+import type { Ticket } from "@/lib/ticketData";
 
 const COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15"];
+// These statuses are restricted for CSR-facing views (Claims/financial-close
+// states CSRs shouldn't be working from) — excluded from the ticket-status
+// breakdown below, unlike the full Status Summary page which shows everyone.
+const CSR_HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Closed"]);
 // Stage 1 of the two-stage review chain (Team Leader submits -> CSR
 // Manager reviews first -> HR makes the final call). This panel only
 // handles stage 1 — items CSR Managers weigh in on before they go to HR.
@@ -114,6 +119,24 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateTo, setDateTo] = useState("");
   const [showPieLabels, setShowPieLabels] = useState(true);
   const [showTeamComposition, setShowTeamComposition] = useState(false);
+
+  // ── Ticket Status breakdown (Location Distribution panel) ──
+  // Independent of the agent roster/filters above — its own ticket fetch and
+  // its own location scope, since it's counting tickets, not agents.
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [statusLocationFilter, setStatusLocationFilter] = useState("All Locations");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getCompanyTickets();
+        if (!cancelled) setTickets(rows);
+      } catch (err) {
+        console.error("Failed to load tickets for status breakdown:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Generate Report (CSV export) ──
   // Independent of the on-screen filters above — this covers every CSR
@@ -235,15 +258,19 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
 
   const agentNameById = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
 
-  const locationBreakdown = useMemo(() => {
+  // Ticket count by status — scoped to statusLocationFilter, excluding
+  // statuses restricted for CSR-facing views (see CSR_HIDDEN_STATUSES).
+  const statusBreakdown = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredAgents.forEach((a) => {
-      a.locations.forEach((loc) => {
-        map[loc] = (map[loc] || 0) + 1;
-      });
+    tickets.forEach((t) => {
+      if (statusLocationFilter !== "All Locations" && t.location !== statusLocationFilter) return;
+      if (CSR_HIDDEN_STATUSES.has(t.status)) return;
+      map[t.status] = (map[t.status] || 0) + 1;
     });
-    return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [filteredAgents]);
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [tickets, statusLocationFilter]);
 
   const csvEscape = (v: string | number) => {
     const s = String(v);
@@ -397,19 +424,19 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="flex items-center gap-3 mb-2">
+      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-5">
+        <div className="flex items-center gap-3 mb-1">
           <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
             <ChevronLeft className="h-4 w-4" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">CSR Dashboard</h1>
+            <h1 className="text-xl font-bold">CSR Dashboard</h1>
             <p className="text-xs text-muted-foreground mt-0.5">{totals.agents} agents active</p>
           </div>
         </div>
 
         {/* Quick nav */}
-        <div className="flex flex-wrap gap-2 mb-6 mt-4">
+        <div className="flex flex-wrap gap-2 mb-4 mt-3">
           {[
             { slug: "csr-team-leader-dashboard", label: "My Team Dashboard", icon: "🧑‍💼" },
             { slug: "csr-daily-report", label: "CSR Daily Report", icon: "📋" },
@@ -423,7 +450,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               key={item.slug}
               to="/m/$module/$submodule"
               params={{ module: "dashboard", submodule: item.slug }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
             >
               <span>{item.icon}</span>{item.label}
             </Link>
@@ -431,14 +458,14 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           <button
             type="button"
             onClick={() => { setShowTeamComposition((v) => !v); setShowGenerateReport(false); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
           >
             <span>👥</span>Team Composition
           </button>
           <button
             type="button"
             onClick={() => { setShowGenerateReport((v) => !v); setShowTeamComposition(false); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
           >
             <span>📄</span>Generate Report
           </button>
@@ -446,7 +473,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
 
         {/* Pending warning/mistake submissions awaiting a manager's decision. */}
         {canReviewNotes && (
-          <div className="panel p-4 mb-6">
+          <div className="panel p-3 mb-4">
             <p className="text-sm font-semibold mb-3 flex items-center gap-1.5">
               <AlertTriangle className="h-4 w-4 text-yellow-400" /> Pending Reviews
               {pendingNotes.length > 0 && (
@@ -460,7 +487,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             ) : (
               <div className="space-y-2">
                 {pendingNotes.map((n) => (
-                  <div key={n.id} className="rounded-lg border border-white/10 bg-white/5 p-3 flex items-start gap-3">
+                  <div key={n.id} className="rounded-lg border border-white/10 bg-white/5 p-2 flex items-start gap-2">
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${n.type === "warning" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-orange-500/20 text-orange-300 border border-orange-500/30"}`}>
                       {n.type === "warning" ? "Warning" : "Mistake"}
                     </span>
@@ -500,7 +527,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         {showTeamComposition && <CsrTeamComposition />}
 
         {showGenerateReport && (
-          <div className="panel p-4 mb-6">
+          <div className="panel p-3 mb-4">
             <p className="text-sm font-semibold mb-2 flex items-center gap-1.5">
               <Download className="h-4 w-4" /> Generate Report
             </p>
@@ -537,8 +564,8 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         )}
 
         {/* Filters */}
-        <div className="panel p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="panel p-3 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <div>
               <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Location</label>
               <select
@@ -601,35 +628,35 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         </div>
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div className="panel p-6 mb-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Dashboard…
           </div>
         ) : agents.length === 0 ? (
-          <p className="panel p-8 mb-6 text-center text-sm text-muted-foreground">
+          <p className="panel p-6 mb-4 text-center text-sm text-muted-foreground">
             No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
           </p>
         ) : (
         <>
         {/* KPI cards */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-2 mb-4">
           {[
             { label: "Agents", value: totals.agents, color: "text-white", icon: <Users className="h-4 w-4" /> },
             { label: "Schedule", value: totals.schedule, color: "text-green-300", icon: <CheckCircle className="h-4 w-4" /> },
             { label: "Update", value: totals.update, color: "text-purple-300", icon: <MessageSquare className="h-4 w-4" /> },
           ].map((k) => (
-            <div key={k.label} className="panel p-4 text-center">
+            <div key={k.label} className="panel p-3 text-center">
               <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
-              <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
+              <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
             </div>
           ))}
         </div>
 
         {/* Charts row 1 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-          <div className="panel p-4 lg:col-span-2">
-            <p className="text-sm font-semibold mb-4">Team Performance</p>
-            <ResponsiveContainer width="100%" height={220}>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+          <div className="panel p-3 lg:col-span-2">
+            <p className="text-sm font-semibold mb-2">Team Performance</p>
+            <ResponsiveContainer width="100%" height={180}>
               <BarChart data={teamData} margin={{ left: -10 }}>
                 {/* Team names move to the legend row below instead of
                     crowding the axis as tick labels. */}
@@ -644,13 +671,13 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             {/* Team legend — which bar group is which team, plus each
                 team's Agents/Schedule/Update, so this replaces the old
                 per-team card grid entirely. */}
-            <div className="mt-3 pt-3 border-t border-white/10 divide-y divide-white/5">
+            <div className="mt-2 pt-2 border-t border-white/10 divide-y divide-white/5">
               {teamData.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2 text-center">
                   No agents placed on a team yet — use Team Composition to assign them.
                 </p>
               ) : teamData.map((t) => (
-                <div key={t.key} className="flex items-center gap-3 py-1.5 px-1 hover:bg-white/5 rounded">
+                <div key={t.key} className="flex items-center gap-3 py-1 px-1 hover:bg-white/5 rounded">
                   <span className="h-2 w-2 rounded-full shrink-0" style={{ background: t.color }} />
                   <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color: t.color }}>{t.name}</span>
                   <span className="text-[10px] text-muted-foreground w-16 text-right shrink-0">{t.agents} agent{t.agents === 1 ? "" : "s"}</span>
@@ -660,29 +687,43 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               ))}
             </div>
           </div>
-          <div className="panel p-4">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-semibold">Location Distribution</p>
+          <div className="panel p-3">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <p className="text-sm font-semibold shrink-0">Ticket Status</p>
+              <select
+                value={statusLocationFilter}
+                onChange={(e) => setStatusLocationFilter(e.target.value)}
+                className="glass-input text-[10px] py-1 px-2 rounded-md flex-1 min-w-0"
+              >
+                {locationOptions.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
               <button
                 onClick={() => setShowPieLabels((v) => !v)}
-                className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded border transition-colors ${showPieLabels ? "border-white/20 bg-white/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+                className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded border transition-colors shrink-0 ${showPieLabels ? "border-white/20 bg-white/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
               >
                 {showPieLabels ? "Hide Legend" : "Show Legend"}
               </button>
             </div>
-            <ResponsiveContainer width="100%" height={showPieLabels ? 340 : 220}>
+            {/* This panel's legend can list many distinct statuses — a fixed
+                height tight enough for other charts squeezes/clips the pie
+                itself once the legend wraps to that many rows, so it keeps
+                more room (and a denser legend line-height) than its
+                neighbors when expanded. */}
+            <ResponsiveContainer width="100%" height={showPieLabels ? 320 : 170}>
               <PieChart>
                 <Pie
-                  data={locationBreakdown}
+                  data={statusBreakdown}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="45%"
-                  outerRadius={80}
+                  cy="38%"
+                  outerRadius={62}
                   label={false}
                   labelLine={false}
                 >
-                  {locationBreakdown.map((_, i) => (
+                  {statusBreakdown.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
                   ))}
                 </Pie>
@@ -695,7 +736,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                     layout="horizontal"
                     verticalAlign="bottom"
                     align="center"
-                    wrapperStyle={{ fontSize: 10, color: "var(--foreground)", paddingTop: 8, lineHeight: "1.8" }}
+                    wrapperStyle={{ fontSize: 9, color: "var(--foreground)", paddingTop: 6, lineHeight: "1.4" }}
                     formatter={(value) => <span style={{ color: "var(--foreground)" }}>{value}</span>}
                   />
                 )}

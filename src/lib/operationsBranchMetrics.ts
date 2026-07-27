@@ -24,6 +24,67 @@ export const CANCEL_REASONS = [
   "NOT COVERED",
 ] as const;
 
+// LTP aging bucket: 1-7 mean "aged exactly N days", 8 means "aged 8+ days"
+// (the dropdown's open-ended catch-all bucket). A ticket with aging 0 never
+// matches any bucket — same-day tickets aren't "late" by definition.
+export const LTP_AGING_MAX_BUCKET = 8;
+
+export function matchesAgingBucket(aging: number | null | undefined, buckets: Set<number>): boolean {
+  if (buckets.size === 0) return false;
+  const a = Math.floor(aging ?? 0);
+  if (a >= LTP_AGING_MAX_BUCKET) return buckets.has(LTP_AGING_MAX_BUCKET);
+  return buckets.has(a);
+}
+
+/** Human label for the current bucket selection, e.g. "7+ Days", "3, 5, 8+ Days", "All Days". */
+export function describeAgingBuckets(buckets: Set<number>): string {
+  if (buckets.size === 0) return "None";
+  if (buckets.size === LTP_AGING_MAX_BUCKET) return "All Days";
+  const sorted = Array.from(buckets).sort((a, b) => a - b);
+  // A contiguous run ending at the open-ended "8+" bucket (e.g. {7,8}) is
+  // really just a single "N+ days" threshold — read that way ("7+ Days")
+  // rather than as an enumerated list ("7, 8+ Days").
+  const isContiguousToMax =
+    sorted[sorted.length - 1] === LTP_AGING_MAX_BUCKET && sorted.every((n, i) => i === 0 || n === sorted[i - 1] + 1);
+  if (isContiguousToMax) return `${sorted[0]}+ Days`;
+  const parts = sorted.map((n) => (n >= LTP_AGING_MAX_BUCKET ? `${n}+` : `${n}`));
+  return `${parts.join(", ")} Days`;
+}
+
+// Accepts ISO, MM/DD/YY and MM/DD/YYYY formats (same formats TicketList's
+// equivalent daysSinceCreated/daysAgo helpers handle).
+function daysSince(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const raw = String(dateStr).trim();
+  let d: Date | null = null;
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    const mm = parseInt(slash[1], 10) - 1;
+    const dd = parseInt(slash[2], 10);
+    let yy = parseInt(slash[3], 10);
+    if (yy < 100) yy += 2000;
+    d = new Date(yy, mm, dd);
+  } else {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) d = parsed;
+  }
+  if (!d || isNaN(d.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+// The stored `t.aging` column is written once — always 0 — at ticket
+// creation/sync (see NewTicketPage.tsx, servicePowerSync.ts) and nothing
+// ever increments it afterward, so it's permanently 0 for essentially every
+// ticket rather than a live day-count. Real elapsed time is derived the same
+// way TicketList's actual "Aging" column does: days since the last status
+// change, falling back to days since the ticket was created when there's no
+// recorded status change yet (skips TicketList's further localStorage-only
+// statusLog fallback — that's per-browser and not appropriate for a
+// company-wide report).
+function liveAgingDays(t: Ticket): number {
+  return daysSince(t.statusChangedAt) ?? daysSince(t.created) ?? 0;
+}
+
 function isMorningSlot(t: Ticket): boolean {
   const period = (t.schedulePeriod || "").toUpperCase();
   const slot = (t.timeSlot || "").toUpperCase();
@@ -58,10 +119,18 @@ export function isCancelled(t: Ticket): boolean {
 
 export interface BranchRow {
   branch: string;
-  /** % of currently-open tickets at this branch aged past the LTP threshold. Null when there are no open tickets. */
+  /** % of tickets entered within [dateFrom, dateTo] that are still open ("pending") and match the selected LTP aging bucket(s). Null when there are no such tickets. */
   dailyLTP: number | null;
-  /** Same ratio, restricted to open tickets created in the selected range's month. Null when there are none. */
+  /** Count of date-range tickets that are still open and match the selected aging bucket(s) — the numerator behind dailyLTP. */
+  lateCount: number;
+  /** Count of date-range tickets that are still open, any aging — the denominator behind dailyLTP. */
+  pendingCount: number;
+  /** % of tickets entered this month (any status) that are currently open and match the selected aging bucket(s). Null when no tickets were entered this month. */
   monthlyLTP: number | null;
+  /** Count of this-month tickets that are currently open and match the selected aging bucket(s) — the numerator behind monthlyLTP. */
+  monthlyLateCount: number;
+  /** Count of all tickets entered this month at this branch, any status — the denominator behind monthlyLTP. */
+  monthlyTotalCount: number;
   /** Tickets scheduled within [dateFrom, dateTo]. */
   assigned: number;
   completed: number;
@@ -80,34 +149,41 @@ export interface BranchRow {
 
 /**
  * Compute one row per branch in `regionLocations` for tickets scheduled
- * within [dateFrom, dateTo]. `ltpAgingDays` is the user-adjustable LTP
- * threshold (default 14 elsewhere). LTP and Need Cancel are live snapshots
- * (open-ticket state doesn't have historical date scoping in this schema),
- * everything else is scoped to the date range.
+ * within [dateFrom, dateTo]. `agingBuckets` is the user-selected set of LTP
+ * aging buckets (1-7 = exact days, 8 = "8+ days") — see matchesAgingBucket.
+ * Daily LTP is scoped to tickets CREATED within [dateFrom, dateTo] that are
+ * still open today (so changing the date range actually moves the number);
+ * Need Cancel stays a live snapshot (a cancel request stays live until
+ * resolved, independent of any date range) — everything else is scoped to
+ * the date range.
  */
 export function computeBranchRows(
   tickets: Ticket[],
   regionLocations: string[],
   dateFrom: string,
   dateTo: string,
-  ltpAgingDays: number,
+  agingBuckets: Set<number>,
 ): BranchRow[] {
   const month = dateTo.slice(0, 7);
 
   return regionLocations.map((branch) => {
     const branchTickets = tickets.filter((t) => normalizeLocation(t.location) === normalizeLocation(branch));
 
-    const openTickets = branchTickets.filter((t) => statusGroupOf(t.status) === "open");
-    const dailyLTP =
-      openTickets.length > 0
-        ? (openTickets.filter((t) => (t.aging ?? 0) >= ltpAgingDays).length / openTickets.length) * 100
-        : null;
+    const openTickets = branchTickets.filter(
+      (t) => statusGroupOf(t.status) === "open" && inRange(t.created, dateFrom, dateTo),
+    );
+    const lateCount = openTickets.filter((t) => matchesAgingBucket(liveAgingDays(t), agingBuckets)).length;
+    const dailyLTP = openTickets.length > 0 ? (lateCount / openTickets.length) * 100 : null;
 
-    const monthlyOpenTickets = openTickets.filter((t) => dateOnly(t.created).slice(0, 7) === month);
-    const monthlyLTP =
-      monthlyOpenTickets.length > 0
-        ? (monthlyOpenTickets.filter((t) => (t.aging ?? 0) >= ltpAgingDays).length / monthlyOpenTickets.length) * 100
-        : null;
+    // Monthly LTP: numerator is this-month tickets that are currently open
+    // AND late; denominator is every ticket entered this month regardless of
+    // status (open, completed, or cancelled) — "number of tickets entered
+    // for this location," not just the ones still open today.
+    const monthlyTickets = branchTickets.filter((t) => dateOnly(t.created).slice(0, 7) === month);
+    const monthlyLateCount = monthlyTickets.filter(
+      (t) => statusGroupOf(t.status) === "open" && matchesAgingBucket(liveAgingDays(t), agingBuckets),
+    ).length;
+    const monthlyLTP = monthlyTickets.length > 0 ? (monthlyLateCount / monthlyTickets.length) * 100 : null;
 
     const assignedTickets = branchTickets.filter((t) => inRange(t.schedule, dateFrom, dateTo));
     const completed = assignedTickets.filter((t) => statusGroupOf(t.status) === "completed").length;
@@ -145,8 +221,12 @@ export function computeBranchRows(
 
     return {
       branch,
-      dailyLTP: dailyLTP !== null ? Math.round(dailyLTP * 10) / 10 : null,
-      monthlyLTP: monthlyLTP !== null ? Math.round(monthlyLTP * 10) / 10 : null,
+      dailyLTP: dailyLTP !== null ? Math.round(dailyLTP * 100) / 100 : null,
+      lateCount,
+      pendingCount: openTickets.length,
+      monthlyLTP: monthlyLTP !== null ? Math.round(monthlyLTP * 100) / 100 : null,
+      monthlyLateCount,
+      monthlyTotalCount: monthlyTickets.length,
       assigned: assignedTickets.length,
       completed,
       compPct: compPct !== null ? Math.round(compPct * 10) / 10 : null,
@@ -158,6 +238,79 @@ export function computeBranchRows(
       reasonCounts: Object.fromEntries(reasonTally),
     };
   });
+}
+
+export interface DailyLtpRow {
+  /** YYYY-MM-DD — the day tickets in this row were CREATED, not a historical status snapshot (see computeDailyLtpBreakdown). */
+  date: string;
+  /** Currently-open tickets from this day's cohort matching the selected aging bucket(s). */
+  lateCount: number;
+  /** Currently-open tickets from this day's cohort, any aging. */
+  pendingCount: number;
+  /** Running cumulative sum of pendingCount from day 1 of the month through this day. */
+  monthTotalPending: number;
+  /** lateCount / pendingCount for this day. Null when pendingCount is 0. */
+  ltpPct: number | null;
+  /** Comma-joined tally of which branch(es) this day's pending tickets belong to, e.g. "Asheville (2), Atlanta (1)". Empty string when pendingCount is 0. */
+  locations: string;
+}
+
+/**
+ * Per-day breakdown for one calendar month: tickets are grouped by the day
+ * they were CREATED, then evaluated against their CURRENT open/aging state —
+ * there's no stored historical snapshot of pending/aging counts to look back
+ * on (aging is always computed live, as of right now; see liveAgingDays).
+ * So a row doesn't mean "this was pending on that day" — it means "of the
+ * tickets created that day, this many are still pending today, and this many
+ * of those are aged into the selected bucket(s)."
+ *
+ * Stops at today for the current month (no point listing future empty days);
+ * runs the full month otherwise.
+ */
+export function computeDailyLtpBreakdown(
+  tickets: Ticket[],
+  regionLocations: string[],
+  monthYYYYMM: string,
+  agingBuckets: Set<number>,
+): DailyLtpRow[] {
+  const locations = new Set(regionLocations.map(normalizeLocation));
+  const scoped = tickets.filter((t) => locations.has(normalizeLocation(t.location)));
+
+  const [y, m] = monthYYYYMM.split("-").map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const lastDay = monthYYYYMM === todayIso.slice(0, 7) ? Number(todayIso.slice(8, 10)) : daysInMonth;
+
+  let cumPending = 0;
+  const rows: DailyLtpRow[] = [];
+  for (let day = 1; day <= lastDay; day++) {
+    const dateStr = `${monthYYYYMM}-${String(day).padStart(2, "0")}`;
+    const cohort = scoped.filter((t) => dateOnly(t.created) === dateStr);
+    const openCohort = cohort.filter((t) => statusGroupOf(t.status) === "open");
+    const late = openCohort.filter((t) => matchesAgingBucket(liveAgingDays(t), agingBuckets)).length;
+    const pending = openCohort.length;
+    cumPending += pending;
+
+    const locationTally = new Map<string, number>();
+    for (const t of openCohort) {
+      const loc = normalizeLocation(t.location) || "Unknown";
+      locationTally.set(loc, (locationTally.get(loc) ?? 0) + 1);
+    }
+    const locations = Array.from(locationTally.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([loc, count]) => `${loc} (${count})`)
+      .join(", ");
+
+    rows.push({
+      date: dateStr,
+      lateCount: late,
+      pendingCount: pending,
+      monthTotalPending: cumPending,
+      ltpPct: pending > 0 ? Math.round((late / pending) * 10000) / 100 : null,
+      locations,
+    });
+  }
+  return rows;
 }
 
 export interface DailyCount {

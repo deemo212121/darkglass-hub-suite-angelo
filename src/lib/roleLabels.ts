@@ -161,3 +161,30 @@ const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
 export function isJotformHrRole(role: string | null | undefined): boolean {
   return JOTFORM_HR_ROLES.has(normalizeRole(role));
 }
+
+/**
+ * "Manager tier" for Attendance Monitoring: every department-manager-flavored
+ * role. These roles see only their own direct reports on that page (resolved
+ * via manager_name / CSR team leadership — see notifyRouting.ts), unlike
+ * ADMIN/SUPERADMIN/HR/FINANCE who continue to see the whole company.
+ */
+const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
+  "MANAGER",
+  "TECHNICIAN_MANAGER",
+  "CSR_MANAGER",
+  "CSR_TEAM_LEADER",
+  "BRANCH_MANAGER",
+  "SENIOR_BRANCH_MANAGER",
+  "PARTS_MANAGER",
+  "CLAIMS_MANAGER",
+  "TRIAGE_MANAGER",
+  "BIZOPS_MANAGER",
+  "BIZOPS_SENIOR_MANAGER",
+]);
+
+export function isAttendanceManagerTierRole(role: string | null | undefined): boolean {
+  return ATTENDANCE_MANAGER_TIER_ROLES.has(normalizeRole(role));
+}
+
+/** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */
+export const ATTENDANCE_MANAGER_TIER_ROLES_ARRAY = Array.from(ATTENDANCE_MANAGER_TIER_ROLES);

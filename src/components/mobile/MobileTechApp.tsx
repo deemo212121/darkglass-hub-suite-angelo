@@ -42,6 +42,11 @@ import {
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
@@ -66,6 +71,8 @@ type View =
   | "chat"
   | "home"
   | "payroll"
+  | "timecard"
+  | "clockinteam"
   | "parts"
   | "sheets";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
@@ -451,6 +458,9 @@ export function MobileTechApp() {
         userName={headerName}
         showBack={showTopBack}
         onBack={handleTopBack}
+        onOpenTimecard={() => setView("timecard")}
+        showClockInTeam={isAttendanceManagerTierRole(role)}
+        onOpenClockInTeam={() => setView("clockinteam")}
         onLogout={logout}
       />
 
@@ -539,6 +549,14 @@ export function MobileTechApp() {
           <MobilePayrollView userName={headerName} profileId={profileId} />
         )}
 
+        {view === "timecard" && (
+          <MobileTimecardView uid={uid} profileId={profileId} userName={headerName} />
+        )}
+
+        {view === "clockinteam" && (
+          <MobileClockInTeamView profileId={profileId} />
+        )}
+
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
@@ -578,12 +596,18 @@ function AppHeaderMobile({
   userName,
   showBack,
   onBack,
+  onOpenTimecard,
+  showClockInTeam,
+  onOpenClockInTeam,
   onLogout,
 }: {
   logoSrc: string;
   userName: string;
   showBack: boolean;
   onBack: () => void;
+  onOpenTimecard: () => void;
+  showClockInTeam: boolean;
+  onOpenClockInTeam: () => void;
   onLogout: () => void;
 }) {
   const [menu, setMenu] = useState(false);
@@ -628,6 +652,22 @@ function AppHeaderMobile({
             <div className="mtech-app-profile-menu">
               <div className="mtech-app-profile-name">{userName}</div>
               <div className="mtech-app-profile-divider" />
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenTimecard(); }}
+              >
+                🕐 Timecard
+              </button>
+              {showClockInTeam && (
+                <button
+                  type="button"
+                  className="mtech-app-profile-timecard"
+                  onClick={() => { setMenu(false); onOpenClockInTeam(); }}
+                >
+                  👥 Clock In Team
+                </button>
+              )}
               <button
                 type="button"
                 className="mtech-app-profile-logout"
@@ -3187,6 +3227,314 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
       <p className="mtech-payroll-note">
         Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
       </p>
+    </div>
+  );
+}
+
+// Timecard tab: real punch clock (Time In/Out, Meal In/Out), reached from
+// the profile menu. Unlike desktop's FullTimecardPage this only ever shows
+// TODAY — no calendar to browse, since desktop already locks editing to
+// today's date anyway (timecard.tsx) — so there's no "locked past day" state
+// to handle here at all. Business rules (meal break requires an 8+ hour
+// scheduled shift, checked-in first) are copied verbatim from
+// FullTimecardPage's handleMealToggle so mobile and desktop never disagree.
+function MobileTimecardView({
+  uid,
+  profileId,
+  userName,
+}: {
+  uid: string | null;
+  profileId: string | null;
+  userName: string;
+}) {
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayLabel = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+  useEffect(() => {
+    if (!uid) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const schedule = await getMyProfileSchedule(uid);
+        if (cancelled) return;
+        setRequiredCheckIn(schedule.requiredCheckIn);
+        setRequiredCheckOut(schedule.requiredCheckOut);
+        if (!schedule.profileId) {
+          setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+          return;
+        }
+        const monthEntries = await getMonthEntries(schedule.profileId, now.getFullYear(), now.getMonth());
+        if (cancelled) return;
+        setEntry(monthEntries[todayKey] || { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+      } catch (e) {
+        console.error("MobileTimecardView: load failed", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const getNowTime = (): string => {
+    const t = new Date();
+    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+  };
+
+  const timeDiff = (t1: string, t2: string): number => {
+    if (!t1 || !t2) return 0;
+    const [h1, m1, s1 = 0] = t1.split(":").map(Number);
+    const [h2, m2, s2 = 0] = t2.split(":").map(Number);
+    return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
+  };
+
+  const persist = async (next: UITimeEntry) => {
+    setEntry(next);
+    if (!profileId) {
+      alert("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveTimecardEntry(profileId, todayKey, next);
+    } catch (e) {
+      console.error("MobileTimecardView: save failed", e);
+      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTimeToggle = () => {
+    if (!entry.checkIn) persist({ ...entry, checkIn: getNowTime() });
+    else if (!entry.checkOut) persist({ ...entry, checkOut: getNowTime() });
+  };
+
+  const handleMealToggle = () => {
+    if (!entry.checkIn) {
+      alert("Please log time in first.");
+      return;
+    }
+    if (!requiredCheckIn || !requiredCheckOut) {
+      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
+      return;
+    }
+    const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
+    if (scheduledShift < 8) {
+      alert(`Lunch break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+      return;
+    }
+    if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });
+    else if (!entry.mealEnd) persist({ ...entry, mealEnd: getNowTime() });
+  };
+
+  const hoursToday = entry.checkIn && entry.checkOut
+    ? Math.max(0, timeDiff(entry.checkIn, entry.checkOut) - (entry.mealStart && entry.mealEnd ? timeDiff(entry.mealStart, entry.mealEnd) : 0))
+    : null;
+
+  return (
+    <div className="mtech-scroll mtech-timecard">
+      <div className="mtech-timecard-heading">
+        <div className="mtech-timecard-name">{userName}</div>
+        <div className="mtech-timecard-sub">{todayLabel}</div>
+      </div>
+
+      {loading ? (
+        <div className="mtech-muted">Loading timecard…</div>
+      ) : (
+        <>
+          <div className="mtech-timecard-summary">
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check In</div>
+              <div className="mtech-timecard-card-value in">{entry.checkIn ? entry.checkIn.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check Out</div>
+              <div className="mtech-timecard-card-value out">{entry.checkOut ? entry.checkOut.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal Start</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealStart ? entry.mealStart.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal End</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealEnd ? entry.mealEnd.slice(0, 5) : "—"}</div>
+            </div>
+          </div>
+
+          {hoursToday !== null && <div className="mtech-timecard-hours">{hoursToday.toFixed(1)}h worked today</div>}
+
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-time"
+            disabled={!!entry.checkOut || saving}
+            onClick={handleTimeToggle}
+          >
+            {!entry.checkIn ? "🕐 Time In" : !entry.checkOut ? "🛑 Time Out" : "✓ Shift Complete"}
+          </button>
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-meal"
+            disabled={!!entry.mealEnd || saving}
+            onClick={handleMealToggle}
+          >
+            {!entry.mealStart ? "🍽 Meal In" : !entry.mealEnd ? "✓ Meal Out" : "Meal Done"}
+          </button>
+
+          {requiredCheckIn && requiredCheckOut && (
+            <p className="mtech-timecard-note">Scheduled shift: {requiredCheckIn}–{requiredCheckOut}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Clock In Team: a manager-tier viewer's direct-report technicians, each
+// with a Clock In button — reachable from the profile menu. Deliberately
+// Clock-In-only; there is no Clock Out or Meal action here at all, since
+// only the technician themselves ends their own shift. Reuses the exact
+// same manager -> direct-reports scoping already built for Attendance
+// Monitoring (visibleAttendanceProfileIds), so "my team" here always
+// matches what that dashboard already shows for this same viewer.
+interface ClockInTechRow {
+  id: string;
+  name: string;
+  branch: string | null;
+  checkIn: string;
+  clockedInByName: string | null;
+}
+
+function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
+  const [rows, setRows] = useState<ClockInTechRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [clockingIn, setClockingIn] = useState<Set<string>>(new Set());
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const load = async () => {
+    if (!profileId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+        getCompanyUsers(),
+        getCsrTeamComposition().catch(() => null),
+        getCompanyTimecardEntries(todayKey, todayKey),
+      ]);
+      const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
+      if (!myProfile) {
+        setRows([]);
+        return;
+      }
+      const nameById = new Map(allProfiles.map((p) => [p.id, p.display_name || p.email]));
+      const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
+      const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
+      const myTechnicians = allProfiles.filter(
+        (p) => (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+      );
+      setRows(
+        myTechnicians
+          .map((p) => {
+            const entry = entryByProfile.get(p.id);
+            return {
+              id: p.id,
+              name: p.display_name || p.email,
+              branch: p.assigned_branch,
+              checkIn: entry?.checkIn || "",
+              clockedInByName: entry?.clockedInBy ? nameById.get(entry.clockedInBy) || null : null,
+            };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (e) {
+      console.error("MobileClockInTeamView: load failed", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const handleClockIn = async (tech: ClockInTechRow) => {
+    if (!profileId) return;
+    if (!window.confirm(`Clock in ${tech.name} now?`)) return;
+    setClockingIn((prev) => new Set(prev).add(tech.id));
+    try {
+      const branchTz = timezoneForBranch(tech.branch);
+      const hhmm = nowInTimezone(branchTz).hhmm;
+      const seconds = String(new Date().getSeconds()).padStart(2, "0");
+      await saveTimecardEntry(
+        tech.id,
+        todayKey,
+        { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
+        { clockedInBy: profileId }
+      );
+      await load();
+    } catch (e) {
+      alert(`Failed to clock in: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setClockingIn((prev) => {
+        const next = new Set(prev);
+        next.delete(tech.id);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Clock In Team</div>
+        <div className="mtech-clockin-sub">Your direct-report technicians, today</div>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading your team…</div>}
+      {!loading && rows.length === 0 && <div className="mtech-muted">No technicians report to you.</div>}
+
+      <div className="mtech-clockin-list">
+        {rows.map((tech) => (
+          <div key={tech.id} className="mtech-clockin-row">
+            <div className="mtech-clockin-row-info">
+              <div className="mtech-clockin-row-name">{tech.name}</div>
+              <div className="mtech-clockin-row-status">
+                {tech.checkIn
+                  ? `Clocked in ${tech.checkIn.slice(0, 5)}${tech.clockedInByName ? ` (by ${tech.clockedInByName})` : ""}`
+                  : "Not clocked in yet"}
+              </div>
+            </div>
+            {!tech.checkIn && (
+              <button
+                type="button"
+                className="mtech-clockin-btn"
+                disabled={clockingIn.has(tech.id)}
+                onClick={() => handleClockIn(tech)}
+              >
+                {clockingIn.has(tech.id) ? "…" : "Clock In"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
