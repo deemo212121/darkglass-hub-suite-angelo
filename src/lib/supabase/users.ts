@@ -490,6 +490,7 @@ export async function getProfileByUsername(username: string): Promise<ProfileRow
 export async function updateCompanyUser(
   profileId: string,
   fields: Partial<{
+    username: string;
     displayName: string;
     role: UserRole;
     /** Additional roles beyond the primary (e.g. a manager who is also a TECHNICIAN). */
@@ -511,6 +512,7 @@ export async function updateCompanyUser(
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+  if (fields.username !== undefined) payload.username = fields.username;
   if (fields.displayName !== undefined) payload.display_name = fields.displayName;
   if (fields.role !== undefined) payload.role = fields.role;
   if (fields.extraRoles !== undefined) {
@@ -538,6 +540,12 @@ export async function updateCompanyUser(
   const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
   if (error) {
     console.error("updateCompanyUser error:", error.message);
+    // Postgres unique_violation on (company_id, username) - surface this
+    // specific, foreseeable case in plain language instead of the raw
+    // constraint-name error.
+    if (error.code === "23505" && fields.username !== undefined) {
+      throw new Error(`"${fields.username}" is already taken by another user in this company.`);
+    }
     throw new Error(error.message);
   }
 }

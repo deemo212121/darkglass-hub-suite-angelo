@@ -1,4 +1,4 @@
-import { createFileRoute, notFound, Link } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
@@ -141,6 +141,7 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready } = useAuth();
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);
@@ -294,7 +295,9 @@ function UserDetailsPage() {
       // used by src/lib/auth.tsx), keeps the two permanently in sync
       // instead of just fixing today's snapshot.
       const branchAccess = (accessibleLocations(workPlan) ?? []).join("|");
+      const newUsername = form.username.trim();
       await updateCompanyUser(profileId, {
+        username: newUsername,
         displayName: form.displayName,
         role: primaryRole,
         extraRoles,
@@ -318,6 +321,16 @@ function UserDetailsPage() {
         console.warn("Employee info save skipped:", e);
       }
       setStatus("Saved.");
+      // The URL is keyed by username (userId route param) - if it just
+      // changed, the address bar is now stale (a refresh would 404 via
+      // getProfileByUsername). Move to the new URL so it keeps working.
+      if (newUsername && newUsername.toLowerCase() !== userId.toLowerCase()) {
+        void navigate({
+          to: "/m/$module/$submodule/$userId",
+          params: { module: module.slug, submodule: submodule.slug, userId: newUsername },
+          replace: true,
+        });
+      }
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : "Save failed"}`);
     } finally {
@@ -424,10 +437,7 @@ function UserDetailsPage() {
                           <option>Inactive</option>
                         </select>
                       </label>
-                      <label className="space-y-1.5 text-sm">
-                        <span className={labelCls}>Login ID</span>
-                        <input value={form.username} disabled className={readonlyCls} />
-                      </label>
+                      {textField("Login ID", "username", { note: "(used to log in — must stay unique)" })}
 
                       <label className="space-y-1.5 text-sm">
                         <span className={labelCls}>User Type <span className="normal-case text-[10px] text-slate-500">(tick all that apply — first ticked is primary)</span></span>
