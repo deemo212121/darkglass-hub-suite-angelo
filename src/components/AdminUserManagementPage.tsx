@@ -365,6 +365,61 @@ function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug:
   );
 }
 
+const EMPTY_ANCESTORS: ReadonlySet<string> = new Set();
+
+/**
+ * One row of the Hierarchy tree, recursing into its own direct reports.
+ * A manager gets a filled dot + its children indented under a connecting
+ * line; a leaf (no reports) just gets a short tick mark — same visual
+ * language as a standard file/org-chart tree. `ancestors` guards against a
+ * bad manager chain (e.g. two people accidentally set as each other's
+ * manager) recursing forever — free-text manager names have no DB
+ * constraint stopping that.
+ */
+function HierarchyTreeNode({
+  record, childrenByManagerName, moduleSlug, submoduleSlug, ancestors,
+}: {
+  record: UserManagementRecord;
+  childrenByManagerName: Map<string, UserManagementRecord[]>;
+  moduleSlug: string;
+  submoduleSlug: string;
+  ancestors: ReadonlySet<string>;
+}) {
+  const children = ancestors.has(record.userName) ? [] : (childrenByManagerName.get(record.userName) ?? []);
+  const hasChildren = children.length > 0;
+  const childAncestors = useMemo(() => new Set(ancestors).add(record.userName), [ancestors, record.userName]);
+
+  return (
+    <div>
+      <div className="flex items-center gap-2.5 py-1.5">
+        <div className="flex h-4 w-4 shrink-0 items-center justify-center">
+          {hasChildren ? <span className="h-2 w-2 rounded-full bg-blue-400" /> : <span className="h-px w-2.5 bg-white/25" />}
+        </div>
+        <div className="flex items-baseline gap-1.5 min-w-0">
+          <UserLink moduleSlug={moduleSlug} submoduleSlug={submoduleSlug} userId={record.loginName}>
+            {record.userName}
+          </UserLink>
+          <span className="text-xs text-slate-400 whitespace-nowrap">({record.type})</span>
+        </div>
+      </div>
+      {hasChildren && (
+        <div className="ml-[7px] border-l border-white/15 pl-[17px]">
+          {children.map((child) => (
+            <HierarchyTreeNode
+              key={child.loginName}
+              record={child}
+              childrenByManagerName={childrenByManagerName}
+              moduleSlug={moduleSlug}
+              submoduleSlug={submoduleSlug}
+              ancestors={childAncestors}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Per-column funnel filter ──
 // Mirrors the Ticket List / CSR Status Summary pattern: each column header
 // gets a small funnel icon that opens a checkbox list of the distinct values
@@ -583,14 +638,31 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [users]);
 
-  const managerGroups = useMemo(() => {
-    const groups = new Map<string, UserManagementRecord[]>();
-    filtered.forEach((record) => {
-      const key = record.manager || "Unassigned";
-      groups.set(key, [...(groups.get(key) ?? []), record]);
-    });
-    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  // manager is free text (matched against real profiles by display name —
+  // see resolveTeamLeadOrManager in notifyRouting.ts), so building the tree
+  // is just: group everyone by their manager's name, then start from
+  // whoever's own manager name doesn't resolve to a real person in view
+  // (blank, "Unassigned", or a typo/former manager) — those are the roots.
+  const usersByName = useMemo(() => {
+    const map = new Map<string, UserManagementRecord>();
+    filtered.forEach((r) => { if (r.userName) map.set(r.userName, r); });
+    return map;
   }, [filtered]);
+
+  const childrenByManagerName = useMemo(() => {
+    const map = new Map<string, UserManagementRecord[]>();
+    filtered.forEach((record) => {
+      if (!record.manager) return;
+      map.set(record.manager, [...(map.get(record.manager) ?? []), record]);
+    });
+    for (const list of map.values()) list.sort((a, b) => a.userName.localeCompare(b.userName));
+    return map;
+  }, [filtered]);
+
+  const hierarchyRoots = useMemo(
+    () => filtered.filter((record) => !record.manager || !usersByName.has(record.manager)).sort((a, b) => a.userName.localeCompare(b.userName)),
+    [filtered, usersByName],
+  );
 
   // Manager dropdown candidates: real users with a manager-ish or admin
   // role, not the old hardcoded name list. Stored as free-text (manager_name
@@ -872,27 +944,21 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </table>
           </div>
         ) : (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            {managerGroups.map(([managerName, users]) => (
-              <section key={managerName} className="rounded-xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-lg font-semibold">{managerName}</div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{users.length} direct reports</div>
-                  </div>
-                  <UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(managerName) ?? managerName}>
-                    Open
-                  </UserLink>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {users.map((record) => (
-                    <UserLink key={record.loginName} moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>
-                      {record.userName}
-                    </UserLink>
-                  ))}
-                </div>
-              </section>
-            ))}
+          <div className="mt-5 rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+            {hierarchyRoots.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-400">No hierarchy to show yet.</p>
+            ) : (
+              hierarchyRoots.map((root) => (
+                <HierarchyTreeNode
+                  key={root.loginName}
+                  record={root}
+                  childrenByManagerName={childrenByManagerName}
+                  moduleSlug={mod.slug}
+                  submoduleSlug={sub.slug}
+                  ancestors={EMPTY_ANCESTORS}
+                />
+              ))
+            )}
           </div>
         )}
       </div>

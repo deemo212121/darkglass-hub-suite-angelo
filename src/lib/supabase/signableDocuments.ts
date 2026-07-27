@@ -18,7 +18,10 @@ export interface SignableDocument {
   formData: Record<string, any>;
   signatures: Partial<Record<SignatureSlot, SignatureEntry>>;
   status: SignableDocumentStatus;
-  recipientId: string;
+  /** Null for an external (no-login) recipient — see recipientName instead. */
+  recipientId: string | null;
+  /** Set only for an external recipient (no AHS profile) — a name HR typed in, not looked up from `employees`. */
+  recipientName: string | null;
   recipientSlot: SignatureSlot;
   pdfUrl: string | null;
   agentNoteId: string | null;
@@ -35,7 +38,7 @@ export interface SignableDocument {
 // a warning form created while signed in as one would otherwise always
 // show a blank "Issued By").
 const SELECT =
-  "id, company_id, document_type, form_data, signatures, status, recipient_id, recipient_slot, pdf_url, agent_note_id, created_by, created_at, signed_at, confirmed_at, cancelled_at, creator:created_by (display_name, username)";
+  "id, company_id, document_type, form_data, signatures, status, recipient_id, recipient_name, recipient_slot, pdf_url, agent_note_id, created_by, created_at, signed_at, confirmed_at, cancelled_at, creator:created_by (display_name, username)";
 
 function mapRow(r: any): SignableDocument {
   return {
@@ -46,6 +49,7 @@ function mapRow(r: any): SignableDocument {
     signatures: r.signatures ?? {},
     status: r.status,
     recipientId: r.recipient_id,
+    recipientName: r.recipient_name,
     recipientSlot: r.recipient_slot,
     pdfUrl: r.pdf_url,
     agentNoteId: r.agent_note_id,
@@ -58,10 +62,12 @@ function mapRow(r: any): SignableDocument {
   };
 }
 
+/** Exactly one of recipientId (existing AHS teammate — the normal, login-gated flow) or recipientName (a freely-typed name, no AHS account — see createExternalSignableDocument's header comment on why that path opens a separate no-login link) should be set. */
 export async function createSignableDocument(input: {
   documentType: SignableDocumentType;
   formData: Record<string, any>;
-  recipientId: string;
+  recipientId?: string;
+  recipientName?: string;
   recipientSlot: SignatureSlot;
   pdfUrl: string;
 }): Promise<SignableDocument> {
@@ -70,7 +76,8 @@ export async function createSignableDocument(input: {
     .insert({
       document_type: input.documentType,
       form_data: input.formData,
-      recipient_id: input.recipientId,
+      recipient_id: input.recipientId ?? null,
+      recipient_name: input.recipientName ?? null,
       recipient_slot: input.recipientSlot,
       pdf_url: input.pdfUrl,
     })
@@ -131,17 +138,47 @@ export async function updateSignableDocumentPdfUrl(id: string, pdfUrl: string, f
   if (error) throw new Error(error.message);
 }
 
-/** Reassigns a signed-back document to another recipient/slot for further signature ("Send to Next Recipient") — previously captured signatures are untouched. */
-export async function reassignSignableDocument(id: string, recipientId: string, recipientSlot: SignatureSlot): Promise<void> {
+/**
+ * Reassigns a document to another recipient/slot for signature ("Send to
+ * Next Recipient" / "Send to Another Recipient") — previously captured
+ * signatures are untouched. `recipientName` is required (not just for the
+ * recipient_name column, which only applies to an external/no-account
+ * recipient) because the document's rendered preview/PDF pre-fills the
+ * "Name:" line at the target slot from form_data.recipientName, not from
+ * the row's own recipient columns — skipping this update would reassign
+ * the document but leave the wrong (or blank) name showing until someone
+ * actually signs it.
+ */
+export async function reassignSignableDocument(id: string, target: { recipientId?: string; recipientName: string }, recipientSlot: SignatureSlot): Promise<void> {
+  const doc = await getSignableDocument(id);
+  if (!doc) throw new Error("Document not found.");
+  // Merged, not replaced — a slot's name from an earlier round (e.g. Manager,
+  // before this reassign moved it to Senior Manager) must keep showing on
+  // the document even though it's no longer the active recipientSlot.
+  const recipientNames = { ...(doc.formData as { recipientNames?: Record<string, string> }).recipientNames, [recipientSlot]: target.recipientName };
+  const formData = { ...doc.formData, recipientSlot, recipientName: target.recipientName, recipientNames };
   const { error } = await supabase
     .from("hr_signable_documents")
-    .update({ recipient_id: recipientId, recipient_slot: recipientSlot, status: "pending_signature" })
+    .update({
+      recipient_id: target.recipientId ?? null,
+      recipient_name: target.recipientId ? null : target.recipientName,
+      recipient_slot: recipientSlot,
+      form_data: formData,
+      status: "pending_signature",
+    })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
-/** HR's final "Confirm Warning" — the moment the warning actually becomes official (see addAgentNote in ReportHRDaily.tsx's handleConfirmWarningForm). */
-export async function confirmSignableDocument(id: string, agentNoteId: string): Promise<void> {
+/**
+ * HR's final "Confirm Warning" — the moment the warning actually becomes
+ * official (see addAgentNote in ReportHRDaily.tsx's handleConfirmWarningForm).
+ * agentNoteId is null when the warning is about someone typed in manually
+ * rather than picked from the employee list — there's no real profile to
+ * attach a conduct note to, so the document itself still finalizes, it
+ * just doesn't count toward any employee's official warning history.
+ */
+export async function confirmSignableDocument(id: string, agentNoteId: string | null): Promise<void> {
   const { error } = await supabase
     .from("hr_signable_documents")
     .update({ status: "confirmed", agent_note_id: agentNoteId, confirmed_at: new Date().toISOString() })

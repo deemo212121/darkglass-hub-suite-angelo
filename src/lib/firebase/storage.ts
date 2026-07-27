@@ -197,6 +197,55 @@ export async function deleteOnboardingDocumentFile(fullPath: string): Promise<vo
 }
 
 /**
+ * Upload one file/signature answer from an in-house custom form submission
+ * (see CustomFormRenderer.tsx) — only used for the internal (logged-in)
+ * fill path, which already has an authenticated Firebase session same as
+ * every other upload in this file. Public (anonymous) submissions instead
+ * go through api/custom-forms.ts, which has no client session to upload
+ * with. Stored under companies/{companyId}/custom-forms/{formId}/{submissionId}/.
+ */
+export async function uploadCustomFormFile(
+  companyId: string,
+  formId: string,
+  submissionId: string,
+  file: File
+): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/custom-forms/${formId}/${submissionId}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, {
+    contentType: file.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
+/**
+ * Uploads an image embedded directly in a form's design (the Image
+ * element's "Upload" option, see src/lib/formElements/basicInputs.tsx) —
+ * deliberately NOT keyed by a form id, since a brand-new unsaved form
+ * doesn't have one yet. Stored under companies/{companyId}/custom-forms/_assets/.
+ */
+export async function uploadCustomFormAsset(companyId: string, file: File): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/custom-forms/_assets`;
+  const objectName = `${Date.now()}-${sanitizeFileName(file.name)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, file, {
+    contentType: file.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
+/**
  * Delete a Jotform-generated document (companies/{companyId}/jotform-documents/…)
  * by its full storage path — used when HR deletes a submission row (e.g. a
  * test/junk one) so the file doesn't linger orphaned in Storage.

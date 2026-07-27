@@ -42,8 +42,20 @@ export interface WarningFormData {
   /** Frozen at generation time — a warning added afterward shouldn't retroactively change a document already out for signature. */
   previousWarnings: WarningFormPreviousWarning[];
   recipientSlot: SignatureSlot;
-  /** The recipient's display name, snapshotted at send time — pre-fills their "Name:" line before they've signed. */
+  /** The CURRENT recipient's display name — pre-fills their "Name:" line before they've signed. Kept for backward compatibility with documents saved before recipientNames existed; only actually read as a fallback, see resolvedSignerName below. */
   recipientName: string;
+  /**
+   * One pre-fill name per slot, accumulated as a document is sent/reassigned
+   * across several signers over its lifetime — unlike recipientSlot/
+   * recipientName above (which only ever describe whoever is CURRENTLY
+   * assigned), this remembers every slot's name even after the document
+   * moves on to a different one, so reassigning Manager -> Senior Manager
+   * doesn't blank out the Manager's name once they're no longer the active
+   * recipient. Once a slot actually signs, signatures[slot].name takes
+   * over as the authoritative source (see resolvedSignerName) — this is
+   * only ever the pre-signature placeholder.
+   */
+  recipientNames?: Partial<Record<SignatureSlot, string>>;
 }
 
 export interface SignatureEntry {
@@ -94,6 +106,11 @@ export const warningFormStyles = `
   .warn-sign-date { flex: 1; }
   .warn-sig-img { max-height: 36px; max-width: 140px; object-fit: contain; }
 `;
+
+/** A signed slot's captured name always wins (it's the real signer); otherwise falls back to that slot's own remembered pre-fill name, then (for documents saved before recipientNames existed) the legacy single current-recipient field. */
+function resolvedSignerName(data: WarningFormData, slot: SignatureSlot, signatures: WarningFormSignatures): string {
+  return signatures[slot]?.name || data.recipientNames?.[slot] || (data.recipientSlot === slot ? data.recipientName : "") || "";
+}
 
 function signRow(label: string, name: string, entry: SignatureEntry | undefined) {
   return `
@@ -162,9 +179,9 @@ export function buildWarningFormBodyMarkup(data: WarningFormData, logoDataUrl: s
       <p class="warn-notice">Please be advised that failure to demonstrate immediate and sustained improvement may result in further disciplinary action.</p>
 
       ${signRow("Employee Name", data.employeeName, signatures.employee)}
-      ${signRow("Manager Name", data.recipientSlot === "manager" ? data.recipientName : "", signatures.manager)}
-      ${signRow("Senior Manager Name", data.recipientSlot === "senior_manager" ? data.recipientName : "", signatures.senior_manager)}
-      ${signRow("HR Staff Name", data.recipientSlot === "hr_staff" ? data.recipientName : "", signatures.hr_staff)}
+      ${signRow("Manager Name", resolvedSignerName(data, "manager", signatures), signatures.manager)}
+      ${signRow("Senior Manager Name", resolvedSignerName(data, "senior_manager", signatures), signatures.senior_manager)}
+      ${signRow("HR Staff Name", resolvedSignerName(data, "hr_staff", signatures), signatures.hr_staff)}
     </div>
   `;
 }
