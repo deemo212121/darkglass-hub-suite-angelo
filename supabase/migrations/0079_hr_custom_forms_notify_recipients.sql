@@ -12,7 +12,7 @@
 -- existing default behavior (notify every HR/Admin/Manager account)
 -- applies unchanged; this column only narrows that down when populated.
 --
--- Run once in the Supabase SQL Editor, after 0069/0070.
+-- Run once in the Supabase SQL Editor, after 0077/0078.
 -- =====================================================================
 
 alter table hr_custom_forms add column if not exists notify_firebase_uids text[];

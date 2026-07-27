@@ -1,6 +1,6 @@
 /**
  * In-house Form Maker — form definitions + submissions (see
- * supabase/migrations/0069_hr_custom_forms.sql). Runs alongside the
+ * supabase/migrations/0077_hr_custom_forms.sql). Runs alongside the
  * existing Jotform pipeline (jotformSubmissions.ts); this is the
  * self-built equivalent, with submissions stored as structured JSON
  * instead of a per-submission generated PDF.

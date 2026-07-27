@@ -12,7 +12,7 @@
 -- as a bearer credential for that channel (see customFormsBridge.ts's
 -- GET handler, which intentionally does not return this column).
 --
--- Run once in the Supabase SQL Editor, after 0074.
+-- Run once in the Supabase SQL Editor, after 0082.
 -- =====================================================================
 
 alter table hr_custom_forms add column if not exists discord_webhook_url text;

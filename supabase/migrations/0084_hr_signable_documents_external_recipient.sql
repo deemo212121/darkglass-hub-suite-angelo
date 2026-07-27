@@ -12,7 +12,7 @@
 -- this can never become a backdoor into an internal (recipient_id-based)
 -- document's normal login-gated flow.
 --
--- Run once in the Supabase SQL Editor, after 0075.
+-- Run once in the Supabase SQL Editor, after 0083.
 -- =====================================================================
 
 alter table hr_signable_documents alter column recipient_id drop not null;

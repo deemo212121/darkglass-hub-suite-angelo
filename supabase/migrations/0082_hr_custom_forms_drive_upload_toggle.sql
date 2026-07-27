@@ -10,7 +10,7 @@
 -- Defaults to true so existing forms with a Document Template keep
 -- uploading exactly as before until someone explicitly flips it off.
 --
--- Run once in the Supabase SQL Editor, after 0073.
+-- Run once in the Supabase SQL Editor, after 0081.
 -- =====================================================================
 
 alter table hr_custom_forms add column if not exists drive_upload_enabled boolean not null default true;
