@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0061 — "Turn submissions into documents": an optional PDF template per
+-- 0078 — "Turn submissions into documents": an optional PDF template per
 -- custom form (see supabase/migrations/0077_hr_custom_forms.sql).
 --
 -- One template per form (1:1), so it's just one nullable jsonb column

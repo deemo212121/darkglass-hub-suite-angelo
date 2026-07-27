@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0062 — "Set notifications": lets a form's admin pick specific company
+-- 0079 — "Set notifications": lets a form's admin pick specific company
 -- accounts to notify on submission, instead of always notifying every
 -- HR/Admin/Manager account (see findHrFirebaseUids in
 -- src/lib/server/customFormsBridge.ts).
