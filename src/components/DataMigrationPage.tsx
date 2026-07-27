@@ -83,7 +83,13 @@ function MigrationCard({
 }
 
 function ServicePowerMigrationCard() {
-  const [startDate, setStartDate] = useState(isoDaysAgo(7));
+  // Defaults to today (this is meant to run daily) but stays freely
+  // changeable - pick an earlier date to catch up on a day that was
+  // missed. ServicePower's API has no independent end date, so it always
+  // walks forward from whatever date you pick through today - handy here,
+  // since it means picking the earliest missed day also catches every day
+  // after it in one go, not just that one.
+  const [startDate, setStartDate] = useState(isoDaysAgo(0));
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
 
@@ -111,13 +117,13 @@ function ServicePowerMigrationCard() {
   return (
     <MigrationCard
       title="(Ticket) Service Power Migration"
-      caption="Pulls all ServicePower calls from this date through today."
+      caption="Pulls all ServicePower calls from this date through today. Pick an earlier date to catch up on a day you forgot to sync."
       running={running}
       result={result}
       onSubmit={() => void handleSubmit()}
     >
       <div>
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Start Date</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Date</label>
         <input
           type="date"
           value={startDate}
@@ -130,17 +136,19 @@ function ServicePowerMigrationCard() {
 }
 
 function NsaMigrationCard() {
-  const [startDate, setStartDate] = useState(isoDaysAgo(7));
-  const [endDate, setEndDate] = useState(isoDaysAgo(0));
+  // One date, defaulting to today but freely changeable - pick an earlier
+  // day to catch up on tickets that were missed that day (startDate and
+  // endDate both get set to it, so this pulls exactly that single day).
+  const [date, setDate] = useState(isoDaysAgo(0));
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
 
   const handleSubmit = async () => {
-    if (!window.confirm(`Sync NSA tickets from ${startDate} to ${endDate} into Supabase?`)) return;
+    if (!window.confirm(`Sync NSA tickets for ${date} into Supabase?`)) return;
     setRunning(true);
     setResult(null);
     try {
-      const r = await syncNsaToSupabase({ startDate, endDate });
+      const r = await syncNsaToSupabase({ startDate: date, endDate: date });
       setResult(r);
     } catch (err) {
       setResult({
@@ -159,26 +167,17 @@ function NsaMigrationCard() {
   return (
     <MigrationCard
       title="(Ticket) NSA Migration"
-      caption="Pulls all NSA dispatches in this date range."
+      caption="Pulls all NSA dispatches for this day. Pick an earlier date to catch up on a day you forgot to sync."
       running={running}
       result={result}
       onSubmit={() => void handleSubmit()}
     >
       <div>
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Start Date</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Date</label>
         <input
           type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="glass-input mt-1 w-full"
-        />
-      </div>
-      <div>
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">End Date</label>
-        <input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
           className="glass-input mt-1 w-full"
         />
       </div>
