@@ -6,7 +6,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
-import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
+import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -284,6 +284,16 @@ function UserDetailsPage() {
       // First role in the list is the primary; the rest land in extra_roles.
       const primaryRole = (form.roles[0] || form.role || "") as any;
       const extraRoles = form.roles.slice(1) as any;
+      // branch_access had no edit path anywhere in this page before - it
+      // could only ever be set once, at user creation, and then silently
+      // drifted out of sync with whatever the Work Plan tab actually said
+      // (that's how a profile can end up with branch_access holding a
+      // stray value that bears no relation to its real work plan). Deriving
+      // it fresh from the work plan on every save, the same way the
+      // location-restriction check itself does (see accessibleLocations,
+      // used by src/lib/auth.tsx), keeps the two permanently in sync
+      // instead of just fixing today's snapshot.
+      const branchAccess = (accessibleLocations(workPlan) ?? []).join("|");
       await updateCompanyUser(profileId, {
         displayName: form.displayName,
         role: primaryRole,
@@ -291,6 +301,7 @@ function UserDetailsPage() {
         phoneNumber: form.phoneNumber,
         managerName: form.managerName,
         assignedBranch: form.assignedBranch,
+        branchAccess,
         emailReportLocation: form.emailReportLocation,
         technicianId: form.technicianId,
         poInitials: form.poInitials,
