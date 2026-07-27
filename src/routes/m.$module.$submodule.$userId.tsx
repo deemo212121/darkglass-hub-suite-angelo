@@ -444,6 +444,7 @@ function UserDetailsPage() {
                       </label>
                       {textField("User Name", "displayName")}
                       {textField("PO # Initial", "poInitials", { note: "(used as part of PO #)" })}
+                      {textField("Technician ID", "technicianId")}
 
                       {textField("Work Phone #", "phoneNumber", { type: "tel" })}
                       <label className="space-y-1.5 text-sm">
