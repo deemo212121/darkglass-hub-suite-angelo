@@ -172,6 +172,8 @@ function UserDetailsPage() {
     smsStatus: "Not available",
     offDays: [] as number[],
     isActive: true,
+    requiredCheckIn: "",
+    requiredCheckOut: "",
   });
   // Work plan grid state (per-location weekday/weekend + per-day slot).
   const [workPlan, setWorkPlan] = useState<WorkPlan>({});
@@ -226,6 +228,8 @@ function UserDetailsPage() {
           smsStatus: p.sms_status || "Not available",
           offDays: Array.isArray(p.off_days) ? p.off_days : [],
           isActive: p.is_active,
+          requiredCheckIn: p.required_check_in || "",
+          requiredCheckOut: p.required_check_out || "",
         });
         const { normalizeWorkPlan } = await import("@/lib/workPlan");
         setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
@@ -312,6 +316,8 @@ function UserDetailsPage() {
         offDays: form.offDays,
         workPlan: workPlan,
         isActive: form.isActive,
+        requiredCheckIn: form.requiredCheckIn,
+        requiredCheckOut: form.requiredCheckOut,
       });
       // Persist Employee Information (powers Work Map house pins).
       try {
@@ -490,6 +496,8 @@ function UserDetailsPage() {
                           {SMS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </label>
+                      {textField("Time In Required", "requiredCheckIn", { type: "time" })}
+                      {textField("Time Out Required", "requiredCheckOut", { type: "time" })}
                     </div>
 
                     {/* Time Off Schedule */}

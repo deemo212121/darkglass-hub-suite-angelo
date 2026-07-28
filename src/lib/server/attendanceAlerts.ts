@@ -4,8 +4,9 @@
  * their scheduled clock-in or clock-out — never clocked in past
  * required_check_in, or clocked in but never clocked out past
  * required_check_out — and hasn't already been notified about this exact
- * gap today, then ping HR/Finance/Admin/SuperAdmin plus their resolved
- * manager. Mirrors nsaPartsSync.ts's structure (raw REST + service key,
+ * gap today, then ping HR/Finance plus their resolved manager (Admin/
+ * SuperAdmin deliberately excluded — see NOTIFY_ROLES below). Mirrors
+ * nsaPartsSync.ts's structure (raw REST + service key,
  * per-item try/catch, a plain summary object).
  *
  * Notifications are batched per (recipient, alert type) per run, not sent
@@ -18,7 +19,7 @@
  * Escalation: when an employee's daily grace-period miss (of the same type)
  * extends to exactly 3 consecutive scheduled work days, a second, distinctly
  * worded notification fires alongside the daily one — same recipients
- * (HR/Finance/Admin/SuperAdmin + resolved manager). "Exactly 3" (not "3 or
+ * (HR/Finance + resolved manager). "Exactly 3" (not "3 or
  * more") is deliberate: attendance_alerts is an append-only daily ledger, so
  * checking "were the last 3 scheduled days all misses" is naturally true on
  * every day of a 4th, 5th, ... day streak too — gating on exactly 3 means
@@ -124,7 +125,9 @@ interface ServerProfile {
   off_days: number[] | null;
 }
 
-const NOTIFY_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE"]);
+// Admin/SuperAdmin deliberately excluded — routine attendance misses are
+// HR/Finance's job to track, not something every admin needs pinged about.
+const NOTIFY_ROLES = new Set(["HR", "FINANCE"]);
 
 function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
@@ -248,7 +251,7 @@ export async function runAttendanceAlertCheck(
     return leader?.profile_id ?? null;
   }
 
-  // Per-company HR/Finance/Admin/SuperAdmin recipient list.
+  // Per-company HR/Finance recipient list.
   const notifyRolesByCompany = new Map<string, Set<string>>();
   profiles.forEach((p) => {
     const roles = [p.role, ...(p.extra_roles ?? [])].map((r) => normalizeRole(r));

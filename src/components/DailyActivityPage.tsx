@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Loader2, Search, X } from "lucide-react";
+import { ChevronLeft, Loader2, Search, SlidersHorizontal, X } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
@@ -106,6 +106,82 @@ const AUTO_REFRESH_OPTIONS = [
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 500];
 
+// Checkbox dropdown controlling which action-type lines render on a trend
+// chart. Portaled to <body> with `fixed` positioning (same fix as the User
+// Type filter above) since the trigger sits inside a .panel — an absolute-
+// positioned menu would get stuck behind the next sibling .panel, as each
+// forms its own stacking context via backdrop-blur.
+function ChartLineFilter({ selected, onChange }: { selected: Set<ActionBucket>; onChange: (next: Set<ActionBucket>) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const openMenu = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open) return;
+    // `capture: true` is needed so scrolling the page (which this fixed-
+    // position menu doesn't track) closes it — but scroll events fire on
+    // ancestors during capture too, so scrolling the menu's own internal
+    // checkbox list would otherwise also trigger this and close it before
+    // the scroll could happen. Ignore scrolls that originate inside the menu.
+    const close = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("scroll", close, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", close, { capture: true });
+  }, [open]);
+
+  const allChecked = selected.size === BUCKET_ORDER.length;
+  const toggleAll = () => onChange(allChecked ? new Set() : new Set(BUCKET_ORDER));
+  const toggleOne = (b: ActionBucket) => {
+    const next = new Set(selected);
+    if (next.has(b)) next.delete(b); else next.add(b);
+    onChange(next);
+  };
+
+  return (
+    <span className="relative inline-block">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10"
+      >
+        <SlidersHorizontal className="h-3.5 w-3.5" />
+        Lines ({selected.size}/{BUCKET_ORDER.length})
+      </button>
+      {open && pos && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            ref={menuRef}
+            className="fixed z-50 w-48 max-h-72 overflow-y-auto rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl"
+            style={{ top: pos.top, right: pos.right }}
+          >
+            <label className="flex items-center gap-2 px-2 py-1 mb-1 rounded border-b border-white/10 hover:bg-white/5 cursor-pointer text-xs font-semibold text-slate-100">
+              <input type="checkbox" checked={allChecked} onChange={toggleAll} className="accent-blue-500" />
+              Select All
+            </label>
+            {BUCKET_ORDER.map((b) => (
+              <label key={b} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 cursor-pointer text-xs">
+                <input type="checkbox" checked={selected.has(b)} onChange={() => toggleOne(b)} className="accent-blue-500" />
+                <span style={{ color: BUCKET_COLOR[b] }}>{BUCKET_LABEL[b]}</span>
+              </label>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
 function formatDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -152,6 +228,12 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
   const [detailsSearch, setDetailsSearch] = useState("");
   const [detailsPageSize, setDetailsPageSize] = useState(50);
   const [detailsPage, setDetailsPage] = useState(1);
+
+  // Which action-type lines to draw on each trend chart — independent per
+  // chart since the aggregate and per-user views are separate contexts.
+  // Both default to "everything visible."
+  const [overallVisibleBuckets, setOverallVisibleBuckets] = useState<Set<ActionBucket>>(new Set(BUCKET_ORDER));
+  const [detailsVisibleBuckets, setDetailsVisibleBuckets] = useState<Set<ActionBucket>>(new Set(BUCKET_ORDER));
 
   const load = useCallback(async () => {
     try {
@@ -409,7 +491,10 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
 
             {/* Right: overall activity trend across every filtered user, colored by action type */}
             <div className="lg:w-3/5 min-w-0 lg:border-l lg:border-white/10 lg:pl-4">
-              <p className="text-sm font-semibold mb-2">Overall Activity Trend</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold">Overall Activity Trend</p>
+                <ChartLineFilter selected={overallVisibleBuckets} onChange={setOverallVisibleBuckets} />
+              </div>
               {overallDailySeries.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-8 text-center">No activity to chart for this range.</p>
               ) : (
@@ -420,7 +505,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
                     <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
                     <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600 }} />
                     <Legend wrapperStyle={{ fontSize: 9, color: "#94a3b8" }} />
-                    {BUCKET_ORDER.map((b) => (
+                    {BUCKET_ORDER.filter((b) => overallVisibleBuckets.has(b)).map((b) => (
                       <Line key={b} type="monotone" dataKey={b} name={BUCKET_LABEL[b]} stroke={BUCKET_COLOR[b]} strokeWidth={1.5} dot={{ r: 2 }} />
                     ))}
                   </LineChart>
@@ -431,53 +516,44 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
         </div>
 
         <div className="panel mb-3">
-          {/* Same table treatment as the Ticket List: blue header row,
-              hairline row dividers, hover highlight - instead of the
-              plain unstyled browser table this used to render. */}
-          <div className="overflow-x-auto border border-white/10 rounded-lg">
-            <table className="w-full min-w-max text-xs leading-tight">
+          <div className="table-wrap overflow-x-auto">
+            <table className="data-table report-table">
               <thead>
-                <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                  <th className="px-2 py-1.5 text-left font-semibold text-blue-300">User</th>
-                  <th className="px-2 py-1.5 text-left font-semibold text-blue-300">Office</th>
-                  {BUCKET_ORDER.map((b) => (
-                    <th key={b} className="px-2 py-1.5 text-center font-semibold text-blue-300">{BUCKET_LABEL[b]}</th>
-                  ))}
-                  <th className="px-2 py-1.5 text-center font-semibold text-blue-300">TOTAL</th>
+                <tr>
+                  <th>User</th>
+                  <th>Office</th>
+                  {BUCKET_ORDER.map((b) => <th key={b}>{BUCKET_LABEL[b]}</th>)}
+                  <th>TOTAL</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={13} className="py-10 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading activity…</td></tr>
+                  <tr><td colSpan={13} className="py-6 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading activity…</td></tr>
                 ) : filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="py-10 text-center text-muted-foreground">
+                    <td colSpan={13} className="py-6 text-center text-muted-foreground">
                       No live activity records available.
                     </td>
                   </tr>
                 ) : filteredRows.map((row) => (
-                  <tr key={row.userId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td className="px-2 py-1.5">
-                      <button type="button" onClick={() => openDetails(row)} className="text-blue-400 hover:underline font-medium">
+                  <tr key={row.userId}>
+                    <td>
+                      <button type="button" onClick={() => openDetails(row)} className="text-blue-500 hover:underline font-medium">
                         {row.name}
                       </button>
                     </td>
-                    <td className="px-2 py-1.5 text-slate-300">{row.office}</td>
-                    {BUCKET_ORDER.map((b) => (
-                      <td key={b} className="px-2 py-1.5 text-center text-slate-300">{row.counts[b] || ""}</td>
-                    ))}
-                    <td className="px-2 py-1.5 text-center font-semibold text-slate-200">{row.total}</td>
+                    <td>{row.office}</td>
+                    {BUCKET_ORDER.map((b) => <td key={b}>{row.counts[b] || ""}</td>)}
+                    <td className="font-semibold">{row.total}</td>
                   </tr>
                 ))}
               </tbody>
               {!loading && filteredRows.length > 0 && (
                 <tfoot>
-                  <tr className="bg-white/5 border-t border-white/10 font-semibold">
-                    <td colSpan={2} className="px-2 py-1.5 text-slate-200">Total</td>
-                    {BUCKET_ORDER.map((b) => (
-                      <td key={b} className="px-2 py-1.5 text-center text-slate-200">{columnTotals.counts[b] || ""}</td>
-                    ))}
-                    <td className="px-2 py-1.5 text-center text-slate-200">{columnTotals.total}</td>
+                  <tr className="font-semibold" style={{ background: "rgba(255,255,255,0.06)" }}>
+                    <td colSpan={2}>Total</td>
+                    {BUCKET_ORDER.map((b) => <td key={b}>{columnTotals.counts[b] || ""}</td>)}
+                    <td>{columnTotals.total}</td>
                   </tr>
                 </tfoot>
               )}
@@ -555,7 +631,10 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
 
                 {/* Right: per-user daily activity trend, colored by action type */}
                 <div className="flex-2 min-w-0 p-4 overflow-y-auto">
-                  <p className="text-sm font-semibold mb-3">Activity Trend</p>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold">Activity Trend</p>
+                    <ChartLineFilter selected={detailsVisibleBuckets} onChange={setDetailsVisibleBuckets} />
+                  </div>
                   {detailsDailySeries.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-8 text-center">No activity to chart yet.</p>
                   ) : (
@@ -566,7 +645,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
                         <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
                         <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600 }} />
                         <Legend wrapperStyle={{ fontSize: 9, color: "#94a3b8" }} formatter={(value) => value} />
-                        {BUCKET_ORDER.map((b) => (
+                        {BUCKET_ORDER.filter((b) => detailsVisibleBuckets.has(b)).map((b) => (
                           <Line key={b} type="monotone" dataKey={b} name={BUCKET_LABEL[b]} stroke={BUCKET_COLOR[b]} strokeWidth={1.5} dot={{ r: 2 }} />
                         ))}
                       </LineChart>
