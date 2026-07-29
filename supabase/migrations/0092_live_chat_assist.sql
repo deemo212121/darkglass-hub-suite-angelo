@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0079 — "Assist" claim on live chat sessions
+-- 0092 — "Assist" claim on live chat sessions
 --
 -- Lets one staff member claim a chat so others in the queue see it's
 -- already being handled, instead of two people replying at once. Race-safe
@@ -14,7 +14,7 @@
 -- queue list can render it without an extra round trip, same convention as
 -- sender_name on live_chat_messages.
 --
--- Run once in the Supabase SQL Editor, after 0078.
+-- Run once in the Supabase SQL Editor, after 0091.
 -- =====================================================================
 
 alter table live_chat_sessions add column if not exists assigned_to uuid references profiles(id) on delete set null;

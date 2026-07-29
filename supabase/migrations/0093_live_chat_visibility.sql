@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0080 — Tiered visibility for the Live Chat queue
+-- 0093 — Tiered visibility for the Live Chat queue
 --
 -- CSR Agents and Team Leaders should only see chats they can act on: the
 -- open (unclaimed) queue, plus whatever's assigned to them personally.
@@ -14,7 +14,7 @@
 -- about who's allowed to see a customer's conversation, not just who's
 -- allowed to reply to it.
 --
--- Run once in the Supabase SQL Editor, after 0079.
+-- Run once in the Supabase SQL Editor, after 0092.
 -- =====================================================================
 
 -- Checks role OR extra_roles, same "primary-or-secondary" convention as

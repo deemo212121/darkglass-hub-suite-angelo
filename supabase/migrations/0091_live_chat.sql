@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0078 — Public "quick live chat" widget on the landing page
+-- 0091 — Public "quick live chat" widget on the landing page
 --
 -- A landing-page visitor has no AHS account, so this is deliberately NOT
 -- routed through Team Messenger (dm_threads/messages — see 0001_init.sql)
@@ -19,7 +19,7 @@
 -- "primary" company this public site represents. See resolvePrimaryCompanyId()
 -- in liveChatBridge.ts.
 --
--- Run once in the Supabase SQL Editor, after 0077.
+-- Run once in the Supabase SQL Editor, after 0090.
 -- =====================================================================
 
 create table if not exists live_chat_sessions (

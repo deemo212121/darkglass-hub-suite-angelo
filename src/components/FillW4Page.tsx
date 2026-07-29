@@ -340,7 +340,7 @@ export function FillW4Page({ docId }: Props) {
         });
       }
 
-      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       getHrNotificationSettings()
         .then(({ taxForms }) => {
           if (!taxForms) return;

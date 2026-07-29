@@ -1,6 +1,6 @@
 /**
  * Fan-out helper for the "also notify HR" notification settings (see
- * companySettings.ts's getHrNotificationSettings / migration 0077). Warning
+ * companySettings.ts's getHrNotificationSettings / migration 0090). Warning
  * Form, COE, and W-8BEN/W-4/W-9 are otherwise strictly one-to-one DMs
  * between HR/the employee and whoever sent or is signing the document —
  * this is the opt-in broadcast layered on top, reusing the same Team

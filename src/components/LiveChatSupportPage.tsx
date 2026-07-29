@@ -1,6 +1,6 @@
 /**
  * Live Chat — staff inbox for the public landing-page widget (see
- * src/components/LiveChatWidget.tsx and migration 0078). Unlike Team
+ * src/components/LiveChatWidget.tsx and migration 0091). Unlike Team
  * Messenger, the other side of this conversation has no AHS account —
  * every visitor message came in through the anonymous service-role bridge
  * (src/lib/server/liveChatBridge.ts), while staff read/reply here directly
@@ -57,7 +57,7 @@ import {
 } from "@/lib/supabase/liveChat";
 
 // Anyone who could plausibly pick up or be handed a chat — same roles as
-// is_csr_wide_visibility() (migration 0080) plus the agent/team-leader tier.
+// is_csr_wide_visibility() (migration 0093) plus the agent/team-leader tier.
 const LIVE_CHAT_ELIGIBLE_ROLES = new Set([
   "ADMIN",
   "SUPERADMIN",
@@ -140,7 +140,7 @@ interface Props {
   sub: SubModuleDef;
 }
 
-// Same tier as is_csr_wide_visibility() in migration 0080 — full,
+// Same tier as is_csr_wide_visibility() in migration 0093 — full,
 // unrestricted company-wide visibility instead of just "mine"/"my team".
 const WIDE_VISIBILITY_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"];
 

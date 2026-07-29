@@ -146,7 +146,7 @@ export function SignDocumentPage({ docId }: Props) {
         });
       }
 
-      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       getHrNotificationSettings()
         .then(({ warningForm }) => {
           if (!warningForm) return;

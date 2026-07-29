@@ -1534,7 +1534,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         .then(() => void loadCoeDocuments())
         .catch((err) => console.error("Failed to record COE sent-history row:", err));
 
-      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       // COE has no separate "submission" step, so the send itself is the event.
       getHrNotificationSettings()
         .then(({ coe }) => {
