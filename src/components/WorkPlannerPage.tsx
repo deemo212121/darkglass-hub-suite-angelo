@@ -979,7 +979,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   const currentLocationLabel = location || "Select a location";
 
   return (
-    <main className="max-w-[1400px] mx-auto px-6 py-6">
+    <main className="w-full px-6 py-6 flex-none">
       <div className="flex items-center gap-3 mb-4">
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
           <ChevronLeft className="h-4 w-4" /> Back to Tickets

@@ -32,7 +32,7 @@ export type UserRole =
   | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
   | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
   | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
-  | "TRIAGE_USER" | "TRIAGE_MANAGER";
+  | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR";
 
 export interface ProfileRow {
   id: string;
@@ -147,6 +147,24 @@ export async function getUserByUsername(
   // RPC returns the email string (or null) for an active matching profile.
   if (!data) return null;
   return { email: data as string, isActive: true };
+}
+
+/**
+ * Is this Company ID currently valid for any company? Called only after
+ * getUserByUsername comes back empty, to tell the user "wrong company
+ * code" apart from "wrong username" instead of always blaming the
+ * username.
+ */
+export async function isValidCompanyCode(companyCode: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("login_company_code_is_valid", {
+    p_company_code: companyCode,
+  });
+  if (error) {
+    console.error("isValidCompanyCode RPC error:", error);
+    // Fail open — don't invent a "wrong company code" message off a broken check.
+    return true;
+  }
+  return Boolean(data);
 }
 
 /**

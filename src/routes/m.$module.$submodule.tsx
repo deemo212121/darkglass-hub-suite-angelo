@@ -51,6 +51,7 @@ import { PoStatusPage } from "@/components/PoStatusPage";
 import { ReturnPickupPage } from "@/components/ReturnPickupPage";
 import { RepairStatusesPage } from "@/components/RepairStatusesPage";
 import { DataMigrationPage } from "@/components/DataMigrationPage";
+import { LoginSecurityPage } from "@/components/LoginSecurityPage";
 // Richer parts components pulled from the upstream usapp repo. Where they
 // overlap with the existing *Page wrappers above we prefer the upstream
 // component because it has the full UI; the wrappers remain available as
@@ -446,9 +447,11 @@ function SubModule() {
         : sub.custom === "return-pickup"
         ? <ReturnPickupPage />
         : sub.custom === "repair-statuses"
-        ? <RepairStatusesPage />
+        ? <RepairStatusesPage mod={mod} />
         : (sub as any).custom === "data-migration"
         ? <DataMigrationPage mod={mod} sub={sub} />
+        : (sub as any).custom === "login-security"
+        ? <LoginSecurityPage mod={mod} sub={sub} />
         : (sub as any).custom === "parts-dashboard"
         ? <PartsDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "claims-dashboard"

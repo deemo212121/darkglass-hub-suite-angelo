@@ -15,6 +15,8 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase/client";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 
 interface Props {
   mod: ModuleDef;
@@ -364,6 +366,44 @@ export function NeedClaimList({ mod, sub }: Props) {
     search,
   ]);
 
+  // ── Office-to-customer mileage ──
+  // Real driving distance, same calculation the ticket detail page shows
+  // (see computeOfficeDistanceMiles in mapEngine.ts) — but this page can
+  // have dozens of tickets visible at once, and each mileage figure is a
+  // real geocoding/distance-matrix API call, so they're kicked off a few at
+  // a time instead of all at once. `mileageStartedRef` marks a ticket the
+  // moment it's kicked off and is never cleared, so re-filtering (which
+  // gives `filtered` a new array reference) never re-fetches a ticket
+  // that's already resolved or still in flight.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  const [mileageByTicket, setMileageByTicket] = useState<Record<string, number | null>>({});
+  const mileageStartedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    getCompanyMapProvider().then(setMapProvider);
+  }, []);
+
+  useEffect(() => {
+    if (!mapProvider) return;
+    const toFetch = filtered
+      .map((r) => r.ticket)
+      .filter((t) => !mileageStartedRef.current.has(t.ticketNo));
+    if (toFetch.length === 0) return;
+    toFetch.forEach((t) => mileageStartedRef.current.add(t.ticketNo));
+
+    const CONCURRENCY = 5;
+    let idx = 0;
+    const runNext = () => {
+      if (idx >= toFetch.length) return;
+      const t = toFetch[idx++];
+      computeOfficeDistanceMiles(t, mapProvider)
+        .then((miles) => setMileageByTicket((prev) => ({ ...prev, [t.ticketNo]: miles })))
+        .catch(() => setMileageByTicket((prev) => ({ ...prev, [t.ticketNo]: null })))
+        .finally(runNext);
+    };
+    for (let i = 0; i < CONCURRENCY; i++) runNext();
+  }, [filtered, mapProvider]);
+
   // ── Selection helpers ──
   const toggleRow = (ticketNo: string) =>
     setSelectedIds((prev) => {
@@ -626,6 +666,7 @@ export function NeedClaimList({ mod, sub }: Props) {
                 "Technician",
                 "Product",
                 "Comp/Cancel",
+                "Mileage",
                 "Parts",
                 "REDO",
                 "Claim To",
@@ -648,7 +689,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={17} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={18} className="px-4 py-12 text-center text-muted-foreground">
                   {loading
                     ? "Loading tickets…"
                     : tickets.length === 0
@@ -698,6 +739,13 @@ export function NeedClaimList({ mod, sub }: Props) {
                     </td>
                     <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
                       {r.compCancelIso || "—"}
+                    </td>
+                    <td className="px-2 py-2 whitespace-nowrap text-center text-muted-foreground">
+                      {!(t.ticketNo in mileageByTicket)
+                        ? "…"
+                        : mileageByTicket[t.ticketNo] != null
+                        ? `${mileageByTicket[t.ticketNo]!.toFixed(1)} mi`
+                        : "—"}
                     </td>
                     <td className="px-2 py-2 text-center">
                       {r.partsCount > 0 ? (

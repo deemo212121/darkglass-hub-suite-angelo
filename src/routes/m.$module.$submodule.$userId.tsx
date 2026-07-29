@@ -43,12 +43,15 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "BRANCH_MANAGER", label: "Branch Manager" },
   { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
   { value: "CLAIMS_MANAGER", label: "Claims Manager" },
+  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
   { value: "PARTS_MANAGER", label: "Parts Manager" },
   { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
   { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Triage User" },
-  { value: "TRIAGE_MANAGER", label: "Triage Manager" },
-];
+  { value: "TRIAGE_USER", label: "Technical Support" },
+  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
+  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
+  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
+].sort((a, b) => a.label.localeCompare(b.label));
 
 /**
  * Multi-select dropdown for User Type. Mirrors the look + behavior of the

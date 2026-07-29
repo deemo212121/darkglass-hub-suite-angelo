@@ -25,11 +25,14 @@ export const ROLE_LABELS: Record<string, string> = {
   BRANCH_MANAGER: "Branch Manager",
   SENIOR_BRANCH_MANAGER: "Senior Branch Manager",
   CLAIMS_MANAGER: "Claims Manager",
+  CLAIMS_TEAM_LEADER: "Claims Team Leader",
   PARTS_MANAGER: "Parts Manager",
   BIZOPS_MANAGER: "BizOps Manager",
   BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
-  TRIAGE_USER: "Triage User",
-  TRIAGE_MANAGER: "Triage Manager",
+  TRIAGE_USER: "Technical Support",
+  TRIAGE_MANAGER: "Technical Support Manager",
+  TECHNICAL_DIRECTOR: "Technical Director",
+  TECHNICAL_ASSISTANT_DIRECTOR: "Technical Assistant Director",
 };
 
 /**

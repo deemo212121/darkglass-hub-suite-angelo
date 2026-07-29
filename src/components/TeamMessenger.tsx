@@ -319,6 +319,7 @@ export function TeamMessenger({ mod, sub }: Props) {
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
           <ChevronLeft className="h-4 w-4" />
+          {mod.label}
         </Link>
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Team Messenger</h1>

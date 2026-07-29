@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Save, Settings2, Download, Printer, Trash2, X } from "lucide-react";
+import type { ModuleDef } from "@/lib/modules";
 
 type RepairStatusRow = {
   code: string;
@@ -131,7 +132,7 @@ function ToggleCell({ checked, onToggle, label }: { checked: boolean; onToggle: 
   );
 }
 
-export function RepairStatusesPage() {
+export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
   const [rows, setRows] = useState<RepairStatusRow[]>(() => loadRows());
   const [savedRows, setSavedRows] = useState<RepairStatusRow[]>(() => loadRows());
   const [draft, setDraft] = useState<RepairStatusRow>(blankDraft);
@@ -198,19 +199,6 @@ export function RepairStatusesPage() {
           .repair-title-wrap { display: flex; align-items: center; gap: 0.85rem; }
           .repair-title { font-size: 1.9rem; font-weight: 700; color: #fff; line-height: 1.1; }
           .repair-subtitle { color: #cbd5e1; font-size: 0.9rem; }
-          .back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.5rem 0.85rem;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-            font-weight: 700;
-            transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-          }
-          .back-btn:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.14); border-color: rgba(255, 255, 255, 0.28); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16); }
           .top-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
           .btn {
             height: 34px;
@@ -288,8 +276,8 @@ export function RepairStatusesPage() {
 
         <div className="repair-toolbar">
           <div className="repair-title-wrap">
-            <Link to="/m/$module" params={{ module: "admin" }} className="back-btn">
-              <ChevronLeft className="h-4 w-4" /> Repair Status
+            <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+              <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
             <div>
               <div className="repair-title">Repair Statuses</div>

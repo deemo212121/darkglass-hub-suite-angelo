@@ -2261,8 +2261,8 @@ function readableRoleLabel(role: string): string {
     PARTS_MANAGER: "Parts Manager",
     CLAIMS: "Claims",
     CLAIMS_MANAGER: "Claims Manager",
-    TRIAGE_USER: "Triage",
-    TRIAGE_MANAGER: "Triage Manager",
+    TRIAGE_USER: "Technical Support",
+    TRIAGE_MANAGER: "Technical Support Manager",
     DISPATCHER: "Dispatcher",
     TECHNICIAN: "Technician",
   };

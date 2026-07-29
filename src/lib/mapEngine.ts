@@ -22,6 +22,8 @@
 
 import type * as Leaflet from "leaflet";
 import { lookupGeocode, storeGeocode } from "@/lib/supabase/geocodeCache";
+import { normalizeLocationForRegionMatch, normalizeLocationName } from "@/lib/locations";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 
 export type LatLng = { lat: number; lng: number };
 
@@ -331,6 +333,217 @@ export async function routeGeoapify(waypoints: LatLng[], mode: "drive" = "drive"
     console.warn("routeGeoapify failed:", err);
     return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Office-to-customer driving distance ("ticket mileage") — shared by the
+// ticket detail page (one ticket at a time) and Need Claim List (many
+// tickets at once, called with a concurrency limit by the caller).
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface MileageTicketInput {
+  location?: string;
+  city?: string;
+  address?: string;
+  state?: string;
+  zip?: string;
+  account?: string;
+}
+
+// Resolve the office coordinates for a location: prefer Location Management
+// coordinates, fall back to the static LOCATIONS_DATA lat/lng.
+// Same localStorage key LocationManagementPage.tsx saves its rows under.
+// Duplicated here (rather than importing getLocationManagementCoordinates
+// from that component) deliberately: LocationManagementPage.tsx already
+// imports from this file (loadGoogleMapsScript, makeGeocoder, ...), so a
+// lib -> component import back the other way would make this file and
+// that component circularly dependent. Rollup then has to split the pair
+// across chunk boundaries, and the load order it picks can leave one side
+// reading the other's export before that module's own top-level code has
+// finished running — surfaced in production as `Uncaught ReferenceError:
+// Cannot access 'X' before initialization` (hit exactly this with 'cva'
+// in the ui-kit chunk once this import made "vendor" and "app-components"
+// mutually dependent — every chunk transitively between them got swept
+// into the same hazard, not just these two files).
+const LOCATION_MGMT_STORAGE_KEY = "ahs:location-management:locations";
+function normalizeLocationKey(value: string): string {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function parseLatLngString(coordinates?: string): LatLng | null {
+  if (!coordinates) return null;
+  const parts = String(coordinates).split(",").map((p) => parseFloat(p.trim()));
+  if (parts.length !== 2) return null;
+  const [lat, lng] = parts;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+function getSavedLocationCoordinates(location: string): LatLng | null {
+  const normalizedLocation = normalizeLocationName(location);
+  if (!normalizedLocation) return null;
+  const key = normalizeLocationKey(normalizedLocation);
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(LOCATION_MGMT_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { rows?: Array<{ location: string; coordinates?: string }> };
+    const savedRow = parsed.rows?.find((row) => normalizeLocationKey(row.location) === key);
+    return parseLatLngString(savedRow?.coordinates);
+  } catch {
+    return null;
+  }
+}
+
+export function getOfficeCoordinates(location: string): LatLng | null {
+  const fromMgmt = getSavedLocationCoordinates(location);
+  if (fromMgmt) return fromMgmt;
+  // LOCATIONS_DATA stores a few branches (Jackson,MS / Jackson,TN) without
+  // the space canonicalBranchLabel() puts in real ticket.location values —
+  // normalize both sides the same way locationRegion() already does, or
+  // those branches silently never resolve an office and mileage shows "—".
+  const normalized = normalizeLocationForRegionMatch(location).toLowerCase();
+  const match = LOCATIONS_DATA.find((l) => normalizeLocationForRegionMatch(l.location).toLowerCase() === normalized);
+  if (match && match.lat && match.lng) {
+    const lat = parseFloat(match.lat);
+    const lng = parseFloat(match.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
+}
+
+// Electrolux tickets logged under the "Huntsville" location actually
+// dispatch from one of two different real offices depending on which state
+// the customer is in — the branch name alone doesn't disambiguate this.
+// Overrides the normal location-based mileage starting point for just this
+// account + location + state combination; every other account's Huntsville
+// tickets keep using the location's own stored coordinates. Returns a plain
+// address string (not lat/lng) so the Distance Matrix API geocodes it the
+// same way it already does for destinations, instead of us hand-typing
+// coordinates for a calculation that affects mileage reimbursement.
+const ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN: Record<string, string> = {
+  AL: "631 Beacon Pkwy W #106, Birmingham, AL 35209, USA",
+  TN: "163 N Mt Juliet Rd, Mt. Juliet, TN 37122, USA",
+};
+function getElectroluxHuntsvilleMileageOrigin(ticket: MileageTicketInput): string | null {
+  const account = String(ticket.account || "").trim().toLowerCase();
+  const location = String(ticket.location || "").trim().toLowerCase();
+  const state = String(ticket.state || "").trim().toUpperCase();
+  if (!account.includes("electrolux") || location !== "huntsville") return null;
+  return ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN[state] ?? null;
+}
+
+async function computeOfficeDistanceMilesLeaflet(
+  overrideOrigin: string | null,
+  office: LatLng | null,
+  destinationCandidates: string[],
+): Promise<number | null> {
+  // Geocode via Geoapify, then get real driving distance via Geoapify's
+  // Routing API (same key) — falls back to straight-line only if the
+  // routing call itself fails.
+  const geocode = makeGeocoder("leaflet");
+  let destCoords: LatLng | null = null;
+  for (const candidate of destinationCandidates) {
+    destCoords = await geocode(candidate);
+    if (destCoords) break;
+  }
+  if (!destCoords) return null;
+  const originCoords = overrideOrigin ? await geocode(overrideOrigin) : office;
+  if (!originCoords) return null;
+  const route = await routeGeoapify([originCoords, destCoords], "drive");
+  return route ? metersToMiles(route.totalDistanceMeters) : haversineMiles(originCoords, destCoords);
+}
+
+async function computeOfficeDistanceMilesGoogle(
+  overrideOrigin: string | null,
+  office: LatLng | null,
+  destinationCandidates: string[],
+): Promise<number | null> {
+  const apiKey = GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return null;
+  await loadGoogleMapsScript();
+  const maps = (window as any).google?.maps;
+  if (!maps) return null;
+  const service = new maps.DistanceMatrixService();
+  // The Distance Matrix API accepts a plain address string for origins too
+  // (it geocodes it the same way it does destinations), so the Electrolux/
+  // Huntsville override just passes its address straight through — no need
+  // to resolve it to lat/lng ourselves.
+  const origin = overrideOrigin ?? new maps.LatLng(office!.lat, office!.lng);
+
+  for (const candidate of destinationCandidates) {
+    const miles = await new Promise<number | null>((resolve) => {
+      service.getDistanceMatrix(
+        {
+          origins: [origin],
+          destinations: [candidate],
+          travelMode: maps.TravelMode.DRIVING,
+          unitSystem: maps.UnitSystem.IMPERIAL,
+        },
+        (response: any, status: string) => {
+          const element = response?.rows?.[0]?.elements?.[0];
+          if (status === "OK" && element?.status === "OK" && element.distance?.value != null) {
+            resolve(element.distance.value / 1609.344);
+          } else {
+            resolve(null);
+          }
+        },
+      );
+    });
+    if (miles != null) return miles;
+  }
+
+  // Last resort: straight-line distance via geocoding the best candidate string.
+  const geocoder = new maps.Geocoder();
+  const destCoords = await new Promise<LatLng | null>((resolve) => {
+    geocoder.geocode({ address: destinationCandidates[0] }, (results: any, status: string) => {
+      if (status !== "OK" || !results?.[0]) { resolve(null); return; }
+      const pos = results[0].geometry.location;
+      resolve({ lat: pos.lat(), lng: pos.lng() });
+    });
+  });
+  if (!destCoords) return null;
+  if (!overrideOrigin) return haversineMiles(office!, destCoords);
+  // Origin is an address string here — geocode it too so the Haversine
+  // fallback has coordinates to work with.
+  const originCoords = await new Promise<LatLng | null>((resolve) => {
+    geocoder.geocode({ address: overrideOrigin }, (results: any, status: string) => {
+      if (status !== "OK" || !results?.[0]) { resolve(null); return; }
+      const pos = results[0].geometry.location;
+      resolve({ lat: pos.lat(), lng: pos.lng() });
+    });
+  });
+  return originCoords ? haversineMiles(originCoords, destCoords) : null;
+}
+
+/**
+ * Compute real driving miles from the office to a ticket's address — matches
+ * what Google Maps shows. Falls back through progressively looser
+ * destination strings so a slightly-off address still resolves instead of
+ * showing null. Returns null when the ticket/office can't be resolved at
+ * all, or the map provider isn't loaded yet.
+ */
+export async function computeOfficeDistanceMiles(
+  ticket: MileageTicketInput,
+  mapProvider: "google" | "leaflet" | null,
+): Promise<number | null> {
+  if (!mapProvider) return null;
+  const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(ticket);
+  const office = overrideOrigin ? null : getOfficeCoordinates(ticket.location || ticket.city || "");
+  if (!overrideOrigin && !office) return null;
+
+  const destinationCandidates = [
+    [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.zip, "USA"].filter(Boolean).join(", "),
+    [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
+  ]
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "USA");
+  if (destinationCandidates.length === 0) return null;
+
+  return mapProvider === "leaflet"
+    ? computeOfficeDistanceMilesLeaflet(overrideOrigin, office, destinationCandidates)
+    : computeOfficeDistanceMilesGoogle(overrideOrigin, office, destinationCandidates);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

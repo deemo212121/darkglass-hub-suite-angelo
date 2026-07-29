@@ -1419,6 +1419,14 @@ const adminMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    {
+      slug: "login-security",
+      title: "Login Security",
+      description: "Last/most-used login IP, browser, and device per user — flags unusual locations and IPs shared between employees.",
+      custom: "login-security" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
@@ -101,6 +101,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [allowedLocations, setAllowedLocations] = useState<string[] | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Set by login() right before signing in, consumed by the very next
+  // onAuthStateChanged firing — so only that one Supabase-token exchange
+  // (the actual login page submit) gets recorded to login_events, not the
+  // 45-min background refresh, the tab-focus refresh, or the initial
+  // onAuthStateChanged firing from an already-persisted Firebase session on
+  // page load (none of those are "at the login page").
+  const pendingInteractiveLoginRef = useRef(false);
 
   useEffect(() => {
     // Initialize database on app startup (client-side only)
@@ -152,10 +159,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
             console.log("✅ Firebase user authenticated:", firebaseUser.email);
-            
+
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            await refreshSupabaseSession(firebaseUser);
+            const isInteractiveLogin = pendingInteractiveLoginRef.current;
+            pendingInteractiveLoginRef.current = false;
+            await refreshSupabaseSession(firebaseUser, { recordLogin: isInteractiveLogin });
             startTokenRefresh();
             
             try {
@@ -279,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
+    pendingInteractiveLoginRef.current = true;
     try {
       console.log("🔐 Attempting Firebase login for:", email);
       const authUser = await firebaseSignIn(email, password);
@@ -292,6 +302,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // State will be updated by onAuthStateChanged listener
     } catch (error: any) {
       console.error("❌ Login failed:", error.message);
+      // Sign-in never went through, so onAuthStateChanged won't fire to
+      // consume this — clear it now or it'd wrongly tag some later,
+      // unrelated auth event (e.g. a background token refresh) as an
+      // interactive login.
+      pendingInteractiveLoginRef.current = false;
       throw error;
     } finally {
       setLoading(false);

@@ -98,6 +98,24 @@
       linear-gradient(180deg, oklch(0.16 0.04 260) 0%, oklch(0.12 0.03 265) 100%);
     background-attachment: fixed;
     font-family: var(--font-sans);
+    /* Every page renders as flat <AppHeader/><main className="flex-1">...
+       <Footer/> siblings straight under <body> (no wrapping div - see
+       RootShell in __root.tsx) - without body itself being a flex column,
+       main's flex-1 has no flex parent to grow against, so on short-content
+       pages the footer floats up right under the content instead of
+       pinning to the bottom of the viewport. */
+    display: flex;
+    flex-direction: column;
+  }
+  /* About half the app's pages never added flex-1 to their own <main> (a
+     per-page opt-in that's easy to forget), so body's new flex-column
+     alone doesn't pin their footer either - give every top-level <main>
+     (always a direct child of body here) flex:1 by default. A page that
+     already sets flex-1 via Tailwind still wins (class beats this
+     element selector) with an equivalent value, so this is additive, not
+     a behavior change for pages that already worked. */
+  body > main {
+    flex: 1 0 auto;
   }
   h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -0.01em; }
 }
@@ -934,7 +952,7 @@
 
   .tech-schedule {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
     margin-bottom: 1.5rem;
   }
@@ -6598,7 +6616,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 
   .tech-schedule {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
     margin-bottom: 1.5rem;
   }
