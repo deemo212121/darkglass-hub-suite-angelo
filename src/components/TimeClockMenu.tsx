@@ -1,0 +1,190 @@
+/**
+ * TimeClockButtons — quick Time In / Meal In / Meal Out / Time Out punch
+ * clock in AppHeader, same level as Announcements/Notifications/Messages.
+ * Mirrors the toggle logic in routes/timecard.tsx's day modal
+ * (handleTimeToggle / handleMealToggle) but punches instantly against
+ * today's row instead of opening the full calendar day modal — same
+ * underlying timecard_entries row, so it stays in sync with My Timecard.
+ *
+ * Each step gates the next: Meal In needs Time In, Meal Out needs Meal In,
+ * and — for anyone whose scheduled shift requires a meal break — Time Out
+ * needs Meal Out too, so nobody can clock out mid-break. Employees whose
+ * scheduled shift is under 8 hours (or has no schedule set at all) aren't
+ * eligible for a meal break at all (same rule as the full timecard page),
+ * so they only ever see Time In / Time Out.
+ *
+ * Once a step is punched, its recorded time is stamped permanently
+ * underneath that button (read straight from the saved entry, not a
+ * transient toast) — so it stays visible/correct even after a refresh.
+ */
+import { useEffect, useState } from "react";
+import { useAuth } from "@/lib/auth";
+import { getMyProfileSchedule, getEntryForDate, saveEntry, hoursDiff, type UITimeEntry } from "@/lib/supabase/timecards";
+
+const EMPTY_ENTRY: UITimeEntry = { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" };
+
+function todayKey(): string {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+
+function nowTime(): string {
+  const t = new Date();
+  return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+}
+
+function fmtTime(t: string): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+export function TimeClockButtons() {
+  const { uid, ready } = useAuth();
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [entry, setEntry] = useState<UITimeEntry>(EMPTY_ENTRY);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!ready || !uid) return;
+    let cancelled = false;
+    getMyProfileSchedule(uid).then((s) => {
+      if (cancelled) return;
+      setProfileId(s.profileId);
+      setRequiredCheckIn(s.requiredCheckIn);
+      setRequiredCheckOut(s.requiredCheckOut);
+    });
+    return () => { cancelled = true; };
+  }, [ready, uid]);
+
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getEntryForDate(profileId, todayKey())
+      .then((e) => { if (!cancelled) setEntry(e ?? EMPTY_ENTRY); })
+      .catch((err) => console.error("Failed to load today's timecard entry:", err));
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  // Same rule as the full timecard page's handleMealToggle: eligibility is
+  // based on the SCHEDULED shift length, not actual hours worked.
+  const scheduledShift = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 0;
+  const mealEligible = scheduledShift >= 8;
+
+  const persist = async (next: UITimeEntry) => {
+    if (!profileId) return;
+    setSaving(true);
+    setEntry(next);
+    try {
+      await saveEntry(profileId, todayKey(), next);
+    } catch (err) {
+      console.error("Failed to save time punch:", err);
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTimeIn = () => {
+    if (entry.checkIn) return;
+    void persist({ ...entry, checkIn: nowTime() });
+  };
+
+  const handleTimeOut = () => {
+    if (!entry.checkIn || entry.checkOut) return;
+    if (mealEligible && !entry.mealEnd) {
+      alert("Please finish your meal break (Meal In / Meal Out) before timing out.");
+      return;
+    }
+    void persist({ ...entry, checkOut: nowTime() });
+  };
+
+  const handleMealIn = () => {
+    if (!entry.checkIn) {
+      alert("Please time in first.");
+      return;
+    }
+    if (entry.mealStart) return;
+    if (!mealEligible) {
+      alert(
+        requiredCheckIn && requiredCheckOut
+          ? `Meal break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`
+          : "No scheduled shift is set for your account. Contact your admin to set your required schedule."
+      );
+      return;
+    }
+    void persist({ ...entry, mealStart: nowTime() });
+  };
+
+  const handleMealOut = () => {
+    if (!entry.mealStart || entry.mealEnd) return;
+    void persist({ ...entry, mealEnd: nowTime() });
+  };
+
+  const btnClass =
+    "rounded-full px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-30";
+  // Stamps are absolutely positioned (not stacked in normal flow) so this
+  // component's box stays exactly h-9, same as every other header icon.
+  // ModuleNavigator.tsx (and the mobile ticket page's tab strip) both
+  // hardcode an assumed header height and float/stick relative to it — if
+  // this grew the header's actual rendered height, those would silently
+  // start overlapping the header on every page.
+  const stampClass = "pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold";
+
+  return (
+    <div className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={handleTimeIn}
+          disabled={saving || !!entry.checkIn}
+          className={`${btnClass} text-green-300 hover:bg-green-500/15`}
+        >
+          Time In
+        </button>
+        {entry.checkIn && <span className={`${stampClass} text-green-300/80`}>{fmtTime(entry.checkIn)}</span>}
+      </div>
+      {mealEligible && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={handleMealIn}
+            disabled={saving || !entry.checkIn || !!entry.mealStart}
+            className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
+          >
+            Meal In
+          </button>
+          {entry.mealStart && <span className={`${stampClass} text-orange-300/80`}>{fmtTime(entry.mealStart)}</span>}
+        </div>
+      )}
+      {mealEligible && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={handleMealOut}
+            disabled={saving || !entry.mealStart || !!entry.mealEnd}
+            className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
+          >
+            Meal Out
+          </button>
+          {entry.mealEnd && <span className={`${stampClass} text-orange-300/80`}>{fmtTime(entry.mealEnd)}</span>}
+        </div>
+      )}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={handleTimeOut}
+          disabled={saving || !entry.checkIn || !!entry.checkOut || (mealEligible && !entry.mealEnd)}
+          className={`${btnClass} text-red-300 hover:bg-red-500/15`}
+        >
+          Time Out
+        </button>
+        {entry.checkOut && <span className={`${stampClass} text-red-300/80`}>{fmtTime(entry.checkOut)}</span>}
+      </div>
+    </div>
+  );
+}

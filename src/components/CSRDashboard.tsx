@@ -441,6 +441,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             { slug: "csr-team-leader-dashboard", label: "My Team Dashboard", icon: "🧑‍💼" },
             { slug: "csr-daily-report", label: "CSR Daily Report", icon: "📋" },
             { slug: "csr-status-summary", label: "Status Summary", icon: "📊" },
+            { slug: "live-chat-support", label: "Live Chat", icon: "💬" },
           ]
             // CSR Managers oversee every team, not one of their own — the
             // personal/team dashboard doesn't apply to them.

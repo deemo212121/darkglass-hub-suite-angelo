@@ -63,6 +63,7 @@ const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
   "employee-self-service",
   "csr-dashboard", // redirects them to their own csr-team-leader-dashboard
   "csr-team-leader-dashboard", // the personal dashboard that redirect lands on
+  "live-chat-support",
 ]);
 
 export function isCsrRestrictedRole(role: string | null | undefined): boolean {

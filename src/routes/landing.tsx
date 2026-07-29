@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Footer } from "@/components/Footer";
+import { LiveChatWidget } from "@/components/LiveChatWidget";
 import { ArrowRight } from "lucide-react";
 
 export const Route = createFileRoute("/landing")({
@@ -200,6 +201,8 @@ function Landing() {
       </section>
 
       <Footer />
+
+      <LiveChatWidget />
 
       {/* Login Modal */}
       <Dialog open={open} onOpenChange={setOpen}>

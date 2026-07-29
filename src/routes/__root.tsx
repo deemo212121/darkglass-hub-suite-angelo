@@ -11,6 +11,7 @@ import {
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { SystemDataInitializer } from "@/components/SystemDataInitializer";
@@ -103,6 +104,7 @@ function RootComponent() {
         <AuthProvider>
           <SystemDataInitializer />
           {!hideChrome && <AnnouncementBanner />}
+          {!hideChrome && <PasswordChangeReminder />}
           <Outlet />
           {!hideChrome && <TicketSearchFab />}
           {/* Floating module navigator — sits below the AppHeader on every

@@ -32,6 +32,26 @@ function stringifyResponseValue(value: unknown): string {
 // Discord's own "blurple" — reads as on-brand inside a Discord channel rather than an arbitrary color.
 const DISCORD_EMBED_COLOR = 0x5865f2;
 
+interface FileResponseValue {
+  url: string;
+  fileName?: string;
+  mimeType?: string;
+}
+
+function isFileResponseValue(value: unknown): value is FileResponseValue {
+  return !!value && typeof value === "object" && "url" in (value as Record<string, unknown>) && "fileName" in (value as Record<string, unknown>);
+}
+
+/** Every file/signature answer on the submission — fetched and attached to the Discord message itself, not just named in the embed text. Discord caps a single message at 10 attachments, so anything past that is silently skipped (the embed's field list above still names every answer regardless). */
+function collectFileAttachments(fields: CustomFormField[], responses: Record<string, unknown>): FileResponseValue[] {
+  const out: FileResponseValue[] = [];
+  for (const f of fields) {
+    const v = responses[f.id];
+    if (isFileResponseValue(v)) out.push(v);
+  }
+  return out.slice(0, 10);
+}
+
 export async function postDiscordSubmissionNotice(
   webhookUrl: string,
   opts: { formTitle: string; submitterName: string | null; submittedAt: string; fields: CustomFormField[]; responses: Record<string, unknown> }
@@ -41,21 +61,54 @@ export async function postDiscordSubmissionNotice(
     .map((f) => ({ name: (f.label || "Untitled field").slice(0, 256), value: stringifyResponseValue(opts.responses[f.id]).slice(0, 1024), inline: false }))
     .slice(0, 24); // Discord's own embed limit is 25 fields total
 
-  const res = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      embeds: [
-        {
-          title: opts.formTitle.slice(0, 256),
-          description: `New submission from **${opts.submitterName || "Anonymous"}**`,
-          color: DISCORD_EMBED_COLOR,
-          timestamp: opts.submittedAt,
-          fields: answered,
-        },
-      ],
-    }),
-  });
+  const embed: Record<string, unknown> = {
+    title: opts.formTitle.slice(0, 256),
+    description: `New submission from **${opts.submitterName || "Anonymous"}**`,
+    color: DISCORD_EMBED_COLOR,
+    timestamp: opts.submittedAt,
+    fields: answered,
+  };
+
+  const attachments = collectFileAttachments(opts.fields, opts.responses);
+  if (attachments.length === 0) {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+    if (!res.ok) throw new Error(`Discord webhook responded ${res.status}: ${await res.text()}`);
+    return;
+  }
+
+  // Discord webhooks take real file uploads via multipart/form-data — a
+  // `payload_json` part (same embed JSON as the text-only path) plus one
+  // `files[n]` part per attachment. Fetched here (server-side) rather than
+  // left as a link, since Firebase Storage URLs aren't something Discord's
+  // own servers can necessarily reach/render inline, and this guarantees
+  // the file actually shows up in the channel instead of just a filename.
+  const form = new FormData();
+  let attachedCount = 0;
+  let firstImageFileName: string | null = null;
+  for (const file of attachments) {
+    try {
+      const fileRes = await fetch(file.url);
+      if (!fileRes.ok) continue;
+      const blob = await fileRes.blob();
+      const fileName = (file.fileName || `attachment-${attachedCount}`).replace(/[^a-zA-Z0-9._-]/g, "_");
+      form.set(`files[${attachedCount}]`, blob, fileName);
+      if (!firstImageFileName && (file.mimeType?.startsWith("image/") ?? false)) firstImageFileName = fileName;
+      attachedCount += 1;
+    } catch (err) {
+      console.error(`[discord] failed to fetch attachment "${file.fileName}" (notification still sends without it):`, err);
+    }
+  }
+
+  // The first image attachment (a drawn signature, typically) renders large
+  // and inline in the embed itself rather than just as a file below it.
+  if (firstImageFileName) embed.image = { url: `attachment://${firstImageFileName}` };
+
+  form.set("payload_json", JSON.stringify({ embeds: [embed] }));
+  const res = await fetch(webhookUrl, { method: "POST", body: form });
   if (!res.ok) throw new Error(`Discord webhook responded ${res.status}: ${await res.text()}`);
 }
 

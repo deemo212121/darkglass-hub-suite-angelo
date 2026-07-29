@@ -27,6 +27,8 @@ import { fillW8benPdf, loadBlankW8benBytes } from "@/lib/w8benPdfFill";
 import type { W8benAddress, W8benFormData } from "@/lib/w8benFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
+import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 interface Props {
@@ -256,6 +258,15 @@ export function FillW8benPage({ docId }: Props) {
           body: `📄 W-8BEN form for ${finalData.employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
         });
       }
+
+      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      getHrNotificationSettings()
+        .then(({ taxForms }) => {
+          if (!taxForms) return;
+          const excludeIds = doc.createdBy ? [doc.createdBy] : [];
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 W-8BEN form for ${finalData.employeeName} has been completed and submitted.`);
+        })
+        .catch((err) => console.error("[w8ben] hr notify check failed:", err));
 
       setDoc({ ...doc, status: "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
       void logActivity({ action: "w8ben_form_signed", targetType: "employee", targetLabel: finalData.employeeName });

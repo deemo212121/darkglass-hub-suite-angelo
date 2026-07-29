@@ -98,6 +98,28 @@ export async function getMonthEntries(
   return map;
 }
 
+/** Single day's entry for the caller's profile — lighter than getMonthEntries for callers (e.g. the header time-clock widget) that only need today. */
+export async function getEntryForDate(profileId: string, workDate: string): Promise<UITimeEntry | null> {
+  const { data, error } = await supabase
+    .from("timecard_entries")
+    .select("check_in, check_out, meal_start, meal_end, notes")
+    .eq("profile_id", profileId)
+    .eq("work_date", workDate)
+    .maybeSingle();
+  if (error) {
+    console.error("getEntryForDate error:", error.message);
+    throw new Error(error.message);
+  }
+  if (!data) return null;
+  return {
+    checkIn: data.check_in ?? "",
+    checkOut: data.check_out ?? "",
+    mealStart: data.meal_start ?? "",
+    mealEnd: data.meal_end ?? "",
+    notes: data.notes ?? "",
+  };
+}
+
 /**
  * Upsert a single day's timecard entry for the caller's profile.
  * company_id is auto-stamped by the set_company_id trigger.

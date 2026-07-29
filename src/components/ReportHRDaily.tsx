@@ -64,7 +64,8 @@ import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTime
 import { getCompanyTimecardCorrections, approveTimecardCorrection, rejectTimecardCorrection, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
 import { getAppUrl } from "@/lib/appUrl";
-import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate } from "@/lib/supabase/companySettings";
+import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate, getHrNotificationSettings } from "@/lib/supabase/companySettings";
+import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 import { getCompanyCoeDocuments, addCoeDocument, type CoeDocument } from "@/lib/supabase/coeDocuments";
 import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmissionStatus, softDeleteJotformSubmission, restoreJotformSubmission, type JotformSubmission, type JotformSubmissionStatus } from "@/lib/supabase/jotformSubmissions";
 import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
@@ -1532,6 +1533,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       addCoeDocument({ employeeName: employeeLabel, documentUrl: url, recipientId: coeRecipientId })
         .then(() => void loadCoeDocuments())
         .catch((err) => console.error("Failed to record COE sent-history row:", err));
+
+      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // COE has no separate "submission" step, so the send itself is the event.
+      getHrNotificationSettings()
+        .then(({ coe }) => {
+          if (!coe) return;
+          void notifyHrRoleUsers(myProfileId, displayName || "HR", [coeRecipientId], `📄 Certificate of Employment sent — ${employeeLabel} (to ${recipientName ?? "recipient"}).`);
+        })
+        .catch((err) => console.error("[coe] hr notify check failed:", err));
 
       setCoePreviewOpen(false);
       setCoeRecipientId("");
