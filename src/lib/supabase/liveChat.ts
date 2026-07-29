@@ -206,20 +206,23 @@ export async function addLiveChatInternalNote(sessionId: string, staffName: stri
   if (error) throw new Error(error.message);
 }
 
-/** Staff-initiated counterpart to the customer's own "Schedule Service" quick action — same badge rendering either way, just sender: "staff". Used both for the sidebar's Quick Action and for "Suggest Different Time" on an existing request. */
+/** Staff-initiated counterpart to the customer's own "Schedule Service" quick action — same badge rendering either way, just sender: "staff". Used both for the sidebar's Quick Action and for "Suggest Different Time" on an existing request. `note` (e.g. "we're fully booked that morning") is stored in request_data and rendered right on the badge, so the customer sees why, not just a new time appearing. */
 export async function requestLiveChatAppointment(
   sessionId: string,
   staffName: string,
   day: "today" | "tomorrow" | "custom",
-  date: string | null
+  date: string | null,
+  window: string,
+  note?: string
 ): Promise<void> {
   const label = day === "today" ? "Today" : day === "tomorrow" ? "Tomorrow" : date || "a preferred date";
+  const trimmedNote = note?.trim() || null;
   const { error: insertError } = await supabase.from("live_chat_messages").insert({
     session_id: sessionId,
     sender: "staff",
     sender_name: staffName,
     kind: "appointment_request",
-    request_data: { day, date, window: "9:00 AM - 12:00 PM", status: "pending" },
+    request_data: { day, date, window, status: "pending", note: trimmedNote },
     body: `Proposed a service appointment: ${label}`,
   });
   if (insertError) throw new Error(insertError.message);
@@ -232,14 +235,15 @@ export async function requestLiveChatAppointment(
 }
 
 /** Staff-initiated callback counter-proposal — same idea as requestLiveChatAppointment, for "Suggest Different Time" on a callback request. */
-export async function proposeLiveChatCallback(sessionId: string, staffName: string, preference: "now" | "30min" | "tomorrow"): Promise<void> {
+export async function proposeLiveChatCallback(sessionId: string, staffName: string, preference: "now" | "30min" | "tomorrow", note?: string): Promise<void> {
   const label = preference === "now" ? "Now" : preference === "30min" ? "In 30 minutes" : "Tomorrow";
+  const trimmedNote = note?.trim() || null;
   const { error: insertError } = await supabase.from("live_chat_messages").insert({
     session_id: sessionId,
     sender: "staff",
     sender_name: staffName,
     kind: "callback_request",
-    request_data: { preference, status: "pending" },
+    request_data: { preference, status: "pending", note: trimmedNote },
     body: `Proposed a callback: ${label}`,
   });
   if (insertError) throw new Error(insertError.message);

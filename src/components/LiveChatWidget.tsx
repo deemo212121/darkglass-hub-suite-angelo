@@ -11,7 +11,7 @@
  * for RLS to safely scope a subscription to just their own chat.
  */
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, Check, CheckCheck, ImagePlus, MessageCircle, Phone, Send, ShieldCheck, X } from "lucide-react";
+import { CalendarDays, Check, CheckCheck, CheckCircle2, ImagePlus, MessageCircle, Phone, Send, ShieldCheck, X } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
@@ -56,11 +56,19 @@ const APPLIANCE_OPTIONS = [
 ];
 
 interface ChatMessage {
+  id?: string;
   sender: "visitor" | "staff";
   sender_name: string | null;
   body: string;
   kind?: "chat" | "callback_request" | "appointment_request" | "internal_note";
-  request_data?: { preference?: string; day?: string; date?: string; window?: string } | null;
+  request_data?: {
+    preference?: string;
+    day?: string;
+    date?: string;
+    window?: string;
+    note?: string | null;
+    status?: "pending" | "accepted" | "declined";
+  } | null;
   attachment_url?: string | null;
   attachment_name?: string | null;
   attachment_mime_type?: string | null;
@@ -73,7 +81,7 @@ type Phase = "closed" | "form" | "chat";
 type QuickAction = "none" | "callback" | "schedule";
 
 async function postLiveChat(
-  action: "start" | "message" | "typing" | "callback" | "schedule",
+  action: "start" | "message" | "typing" | "callback" | "schedule" | "respond",
   sessionId: string | null,
   body: Record<string, unknown>
 ): Promise<Record<string, any>> {
@@ -147,6 +155,7 @@ export function LiveChatWidget() {
   const [scheduleDay, setScheduleDay] = useState<"today" | "tomorrow" | "custom">("today");
   const [scheduleDate, setScheduleDate] = useState("");
   const [requestSending, setRequestSending] = useState(false);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastTypingSentAtRef = useRef(0);
@@ -306,6 +315,24 @@ export function LiveChatWidget() {
     }
   };
 
+  const handleRespondToRequest = async (m: ChatMessage, responseStatus: "accepted" | "declined") => {
+    if (!sessionId || !m.id || respondingId) return;
+    setRespondingId(m.id);
+    setError(null);
+    try {
+      await postLiveChat("respond", sessionId, { messageId: m.id, status: responseStatus });
+      setMessages((current) =>
+        current.map((existing) =>
+          existing.id === m.id ? { ...existing, request_data: { ...(existing.request_data ?? {}), status: responseStatus } } : existing
+        )
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send your response.");
+    } finally {
+      setRespondingId(null);
+    }
+  };
+
   const handleNewChat = () => {
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setSessionId(null);
@@ -429,11 +456,42 @@ export function LiveChatWidget() {
             {messages.map((m, i) => {
               if (m.kind === "callback_request") {
                 const label = m.request_data?.preference ? CALLBACK_PREFERENCE_LABELS[m.request_data.preference] : undefined;
+                const reqStatus = m.request_data?.status ?? "pending";
+                const awaitingMyResponse = m.sender === "staff" && reqStatus === "pending";
                 return (
                   <div key={i} className="flex justify-center py-1">
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs">
-                      <Phone className="h-3.5 w-3.5 text-blue-300 shrink-0" />
-                      <p className="font-semibold text-blue-200">Callback requested{label ? ` — ${label}` : ""}</p>
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs max-w-[85%]">
+                      <Phone className="h-3.5 w-3.5 text-blue-300 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-blue-200">Callback requested{label ? ` — ${label}` : ""}</p>
+                        {m.request_data?.note && <p className="mt-1 italic text-muted-foreground">"{m.request_data.note}"</p>}
+                        {reqStatus === "accepted" && (
+                          <p className="flex items-center gap-1 mt-1.5 text-green-300 font-medium">
+                            <CheckCircle2 className="h-3 w-3" /> Confirmed
+                          </p>
+                        )}
+                        {reqStatus === "declined" && <p className="mt-1.5 text-muted-foreground italic">Declined.</p>}
+                        {awaitingMyResponse && (
+                          <div className="flex items-center gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRespondToRequest(m, "accepted")}
+                              disabled={respondingId === m.id}
+                              className="px-2 py-1 rounded bg-green-500/20 text-green-300 hover:bg-green-500/30 transition disabled:opacity-50 font-medium"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRespondToRequest(m, "declined")}
+                              disabled={respondingId === m.id}
+                              className="px-2 py-1 rounded border border-white/15 hover:bg-white/10 transition disabled:opacity-50 font-medium"
+                            >
+                              This won't work for me
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -441,11 +499,43 @@ export function LiveChatWidget() {
               if (m.kind === "appointment_request") {
                 const day = m.request_data?.day;
                 const label = day === "today" ? "Today" : day === "tomorrow" ? "Tomorrow" : m.request_data?.date || "your preferred date";
+                const reqStatus = m.request_data?.status ?? "pending";
+                const awaitingMyResponse = m.sender === "staff" && reqStatus === "pending";
                 return (
                   <div key={i} className="flex justify-center py-1">
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                      <CalendarDays className="h-3.5 w-3.5 text-amber-300 shrink-0" />
-                      <p className="font-semibold text-amber-200">Appointment requested — {label}</p>
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs max-w-[85%]">
+                      <CalendarDays className="h-3.5 w-3.5 text-amber-300 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-amber-200">Appointment requested — {label}</p>
+                        {m.request_data?.window && <p className="text-muted-foreground mt-0.5">{m.request_data.window}</p>}
+                        {m.request_data?.note && <p className="mt-1 italic text-muted-foreground">"{m.request_data.note}"</p>}
+                        {reqStatus === "accepted" && (
+                          <p className="flex items-center gap-1 mt-1.5 text-green-300 font-medium">
+                            <CheckCircle2 className="h-3 w-3" /> Confirmed
+                          </p>
+                        )}
+                        {reqStatus === "declined" && <p className="mt-1.5 text-muted-foreground italic">Declined.</p>}
+                        {awaitingMyResponse && (
+                          <div className="flex items-center gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRespondToRequest(m, "accepted")}
+                              disabled={respondingId === m.id}
+                              className="px-2 py-1 rounded bg-green-500/20 text-green-300 hover:bg-green-500/30 transition disabled:opacity-50 font-medium"
+                            >
+                              Accept the Schedule
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRespondToRequest(m, "declined")}
+                              disabled={respondingId === m.id}
+                              className="px-2 py-1 rounded border border-white/15 hover:bg-white/10 transition disabled:opacity-50 font-medium"
+                            >
+                              This won't work for me
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

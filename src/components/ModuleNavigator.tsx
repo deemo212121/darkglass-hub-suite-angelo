@@ -31,14 +31,26 @@ import { useAuth } from "@/lib/auth";
 // always lines up with the user pill's right edge.
 const HEADER_MAX_WIDTH = 1400;
 const HEADER_INNER_PADDING = 24; // px-6
-// Sticky header is `py-3` over a flex row of ~h-9 items → ≈ 64px total.
-// Add some breathing room below it so the Modules pill doesn't touch the
-// nav bar's bottom edge.
-const HEADER_HEIGHT = 64;
-const TOP_OFFSET = HEADER_HEIGHT + 14;
+// Fallback only, used before the real header has been measured (or if no
+// <header> is found at all).
+const FALLBACK_HEADER_HEIGHT = 64;
+// Breathing room below the (real, measured) header height so the Modules
+// pill doesn't touch the nav bar's bottom edge.
+const TOP_GAP = 14;
 
-function useRightEdgePx() {
-  const [right, setRight] = useState<number>(HEADER_INNER_PADDING);
+/**
+ * Right edge (to line up with the header's user pill) + top offset (just
+ * below the header). Both are measured from the real <header> element via
+ * ResizeObserver rather than a hardcoded height constant — a previous
+ * version hardcoded ~64px assuming the header was always a single row of
+ * h-9 icons, which silently broke (the Modules pill overlapped the header)
+ * the moment header content grew taller on any page.
+ */
+function useHeaderMetrics() {
+  const [metrics, setMetrics] = useState<{ right: number; top: number }>({
+    right: HEADER_INNER_PADDING,
+    top: FALLBACK_HEADER_HEIGHT + TOP_GAP,
+  });
 
   useLayoutEffect(() => {
     const update = () => {
@@ -48,14 +60,26 @@ function useRightEdgePx() {
       // gutter on the right is (vw - innerWidth) / 2, plus the inner px-6.
       const innerWidth = Math.min(vw, HEADER_MAX_WIDTH);
       const sideGutter = (vw - innerWidth) / 2;
-      setRight(sideGutter + HEADER_INNER_PADDING);
+      const headerEl = document.querySelector("header");
+      const headerHeight = headerEl ? headerEl.getBoundingClientRect().height : FALLBACK_HEADER_HEIGHT;
+      setMetrics({ right: sideGutter + HEADER_INNER_PADDING, top: headerHeight + TOP_GAP });
     };
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+
+    const headerEl = document.querySelector("header");
+    let observer: ResizeObserver | null = null;
+    if (headerEl && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(update);
+      observer.observe(headerEl);
+    }
+    return () => {
+      window.removeEventListener("resize", update);
+      observer?.disconnect();
+    };
   }, []);
 
-  return right;
+  return metrics;
 }
 
 export function ModuleNavigator() {
@@ -64,7 +88,7 @@ export function ModuleNavigator() {
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
   const closeTimer = useRef<number | null>(null);
-  const rightPx = useRightEdgePx();
+  const { right: rightPx, top: topPx } = useHeaderMetrics();
 
   useEffect(() => setMounted(true), []);
 
@@ -99,7 +123,7 @@ export function ModuleNavigator() {
       // matches the user pill's right edge so the two visually align.
       style={{
         position: "fixed",
-        top: TOP_OFFSET,
+        top: topPx,
         right: `${rightPx}px`,
         zIndex: 60,
         pointerEvents: "auto",

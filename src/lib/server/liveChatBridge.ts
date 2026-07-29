@@ -32,7 +32,15 @@
  *  6. POST /api/live-chat?action=schedule&sessionId=X — body { day:
  *     "today"|"tomorrow"|"custom", date? } — same idea for an appointment
  *     request (kind=appointment_request).
- *  7. GET  /api/live-chat?sessionId=X — returns the session's status + full
+ *  7. POST /api/live-chat?action=respond&sessionId=X — body { messageId,
+ *     status: "accepted"|"declined" } — the visitor's own answer to a
+ *     staff-proposed (sender=staff) callback/appointment request, e.g.
+ *     "Accept the schedule" / "This won't work for me" in the widget.
+ *     Mirrors respondToLiveChatRequest on the staff side, just reachable
+ *     without a Supabase session. Declining here does NOT auto-propose
+ *     anything new — the visitor just keeps chatting and staff sends
+ *     another counter via "Suggest Different Time" when ready.
+ *  8. GET  /api/live-chat?sessionId=X — returns the session's status + full
  *     message history + whether staff is currently typing — the widget
  *     polls this for near-real-time updates, and this is also where
  *     staff's messages get marked delivered/read (the visitor viewing the
@@ -250,7 +258,7 @@ export async function handleLiveChatRequest(request: Request, env?: Record<strin
       // same table (see migration 0084).
       const messagesRes = await sbFetch(
         envBag,
-        `live_chat_messages?select=sender,sender_name,body,kind,request_data,attachment_url,attachment_name,attachment_mime_type,delivered_at,read_at,created_at` +
+        `live_chat_messages?select=id,sender,sender_name,body,kind,request_data,attachment_url,attachment_name,attachment_mime_type,delivered_at,read_at,created_at` +
           `&session_id=eq.${encodeURIComponent(sessionId)}&kind=neq.internal_note&order=created_at.asc`
       );
       if (!messagesRes.ok) throw new Error(`messages lookup failed (${messagesRes.status}): ${await messagesRes.text()}`);
@@ -461,6 +469,45 @@ export async function handleLiveChatRequest(request: Request, env?: Record<strin
         }),
       });
       if (!msgRes.ok) throw new Error(`appointment request insert failed (${msgRes.status}): ${await msgRes.text()}`);
+
+      await sbFetch(envBag, `live_chat_sessions?id=eq.${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ last_message_at: new Date().toISOString() }),
+      });
+
+      return json({ ok: true });
+    }
+
+    if (action === "respond") {
+      const sessionId = url.searchParams.get("sessionId") ?? "";
+      if (!UUID_RE.test(sessionId)) return json({ error: "Missing or invalid sessionId" }, 400);
+      const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+      const responseStatus = typeof payload.status === "string" ? payload.status : "";
+      if (!UUID_RE.test(messageId)) return json({ error: "Invalid message id." }, 400);
+      if (responseStatus !== "accepted" && responseStatus !== "declined") return json({ error: "Invalid status." }, 400);
+
+      const session = await fetchSession(envBag, sessionId);
+      if (!session) return json({ error: "Chat session not found." }, 404);
+      if (session.status !== "open") return json({ error: "This chat has ended." }, 409);
+
+      // Only a staff-proposed request can be answered by the visitor — their
+      // own outgoing requests wait on staff, not on themselves.
+      const msgRes = await sbFetch(
+        envBag,
+        `live_chat_messages?select=id,request_data&id=eq.${encodeURIComponent(messageId)}&session_id=eq.${encodeURIComponent(sessionId)}` +
+          `&sender=eq.staff&kind=in.(callback_request,appointment_request)&limit=1`
+      );
+      if (!msgRes.ok) throw new Error(`request lookup failed (${msgRes.status}): ${await msgRes.text()}`);
+      const [message] = (await msgRes.json()) as Array<{ id: string; request_data: Record<string, any> | null }>;
+      if (!message) return json({ error: "Request not found." }, 404);
+
+      const updateRes = await sbFetch(envBag, `live_chat_messages?id=eq.${encodeURIComponent(messageId)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ request_data: { ...(message.request_data ?? {}), status: responseStatus } }),
+      });
+      if (!updateRes.ok) throw new Error(`request update failed (${updateRes.status}): ${await updateRes.text()}`);
 
       await sbFetch(envBag, `live_chat_sessions?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",

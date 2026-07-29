@@ -21,12 +21,14 @@ import {
   CheckCheck,
   CheckCircle2,
   ChevronLeft,
+  Copy,
   Home,
   MessageCircle,
   Paperclip,
   Phone,
   Search,
   Send,
+  Sparkles,
   StickyNote,
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -67,6 +69,21 @@ const LIVE_CHAT_ELIGIBLE_ROLES = new Set([
 ]);
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
+const APPOINTMENT_WINDOWS = ["9:00 AM - 12:00 PM", "12:00 PM - 3:00 PM", "3:00 PM - 6:00 PM"];
+// Parallel to APPOINTMENT_WINDOWS — the hour each window starts, used to pick
+// the next one that hasn't started yet (with a buffer so we don't recommend
+// a window that's about to start in the next hour).
+const APPOINTMENT_WINDOW_START_HOURS = [9, 12, 15];
+const APPOINTMENT_RECOMMEND_BUFFER_HOURS = 1;
+
+/** No real capacity/technician data to schedule against, so this is a simple "next window that hasn't started yet" heuristic rather than true availability — staff can always override it. */
+function recommendAppointmentSlot(): { day: "today" | "tomorrow"; window: string } {
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const idx = APPOINTMENT_WINDOW_START_HOURS.findIndex((start) => start > currentHour + APPOINTMENT_RECOMMEND_BUFFER_HOURS);
+  if (idx !== -1) return { day: "today", window: APPOINTMENT_WINDOWS[idx] };
+  return { day: "tomorrow", window: APPOINTMENT_WINDOWS[0] };
+}
 
 // Don't fire a new "typing" ping more than once per this many ms — the
 // visitor's own poll only checks every few seconds anyway.
@@ -165,12 +182,16 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleDay, setScheduleDay] = useState<"today" | "tomorrow" | "custom">("today");
   const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleWindow, setScheduleWindow] = useState(APPOINTMENT_WINDOWS[0]);
   const [scheduling, setScheduling] = useState(false);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [counteringId, setCounteringId] = useState<string | null>(null);
   const [counterCallbackPreference, setCounterCallbackPreference] = useState<"now" | "30min" | "tomorrow">("now");
   const [counterDay, setCounterDay] = useState<"today" | "tomorrow" | "custom">("today");
   const [counterDate, setCounterDate] = useState("");
+  const [counterWindow, setCounterWindow] = useState(APPOINTMENT_WINDOWS[0]);
+  const [counterNote, setCounterNote] = useState("");
+  const [phoneCopied, setPhoneCopied] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const lastTypingSentAtRef = useRef(0);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -449,13 +470,19 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     }
   };
 
+  const handleRecommendSchedule = () => {
+    const { day, window } = recommendAppointmentSlot();
+    setScheduleDay(day);
+    setScheduleWindow(window);
+  };
+
   const handleStaffSchedule = async () => {
     if (!activeId || scheduling) return;
     if (scheduleDay === "custom" && !scheduleDate) return;
     setScheduling(true);
     setError(null);
     try {
-      await requestLiveChatAppointment(activeId, currentUserName, scheduleDay, scheduleDay === "custom" ? scheduleDate : null);
+      await requestLiveChatAppointment(activeId, currentUserName, scheduleDay, scheduleDay === "custom" ? scheduleDate : null, scheduleWindow);
       setScheduleOpen(false);
       const rows = await getLiveChatMessages(activeId);
       setMessages(rows);
@@ -469,6 +496,13 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
   const handleViewAttachments = () => {
     photosRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleCopyPhone = (phone: string) => {
+    navigator.clipboard.writeText(phone).then(() => {
+      setPhoneCopied(true);
+      setTimeout(() => setPhoneCopied(false), 1500);
+    });
   };
 
   const handleAcceptRequest = async (m: LiveChatMessageRow) => {
@@ -496,11 +530,19 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
   const handleOpenCounter = (m: LiveChatMessageRow) => {
     setCounteringId(m.id);
+    setCounterNote("");
     if (m.kind === "callback_request") setCounterCallbackPreference("now");
     else {
       setCounterDay("today");
       setCounterDate("");
+      setCounterWindow(APPOINTMENT_WINDOWS[0]);
     }
+  };
+
+  const handleRecommendCounter = () => {
+    const { day, window } = recommendAppointmentSlot();
+    setCounterDay(day);
+    setCounterWindow(window);
   };
 
   const handleSubmitCounter = async (m: LiveChatMessageRow) => {
@@ -511,11 +553,12 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     try {
       await respondToLiveChatRequest(m.id, m.request_data, "declined");
       if (m.kind === "callback_request") {
-        await proposeLiveChatCallback(activeId, currentUserName, counterCallbackPreference);
+        await proposeLiveChatCallback(activeId, currentUserName, counterCallbackPreference, counterNote);
       } else {
-        await requestLiveChatAppointment(activeId, currentUserName, counterDay, counterDay === "custom" ? counterDate : null);
+        await requestLiveChatAppointment(activeId, currentUserName, counterDay, counterDay === "custom" ? counterDate : null, counterWindow, counterNote);
       }
       setCounteringId(null);
+      setCounterNote("");
       const rows = await getLiveChatMessages(activeId);
       setMessages(rows);
       loadSessions();
@@ -815,10 +858,11 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
               <div className="relative flex-1 min-h-0">
               <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="h-full overflow-y-auto px-4 py-3 space-y-2">
-                {messages.map((m) => {
+                {messages.map((m, msgIndex) => {
                   if (m.kind === "callback_request" || m.kind === "appointment_request") {
                     const isCallback = m.kind === "callback_request";
                     const status: "pending" | "accepted" | "declined" = m.request_data?.status ?? "pending";
+                    const supersededByNewer = status === "declined" && messages.slice(msgIndex + 1).some((other) => other.kind === m.kind);
                     const label = isCallback
                       ? CALLBACK_PREFERENCE_LABELS[m.request_data?.preference] ?? m.request_data?.preference
                       : m.request_data?.day === "today"
@@ -849,12 +893,18 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                             </div>
                           </div>
 
+                          {m.request_data?.note && <p className="mt-1.5 italic text-muted-foreground">"{m.request_data.note}"</p>}
+
                           {status === "accepted" && (
                             <p className="flex items-center gap-1 mt-1.5 text-green-300 font-medium">
                               <CheckCircle2 className="h-3 w-3" /> Confirmed
                             </p>
                           )}
-                          {status === "declined" && <p className="mt-1.5 text-muted-foreground italic">Superseded by a new request below.</p>}
+                          {status === "declined" && (
+                            <p className="mt-1.5 text-muted-foreground italic">
+                              {supersededByNewer ? "Superseded by a new request below." : "Declined."}
+                            </p>
+                          )}
 
                           {status === "pending" && counteringId !== m.id && (
                             <div className="flex items-center gap-2 mt-2">
@@ -879,6 +929,15 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
                           {status === "pending" && counteringId === m.id && (
                             <div className="mt-2 space-y-1.5 border-t border-white/10 pt-2">
+                              {!isCallback && (
+                                <button
+                                  type="button"
+                                  onClick={handleRecommendCounter}
+                                  className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 transition font-medium"
+                                >
+                                  <Sparkles className="h-3 w-3" /> Recommend Schedule
+                                </button>
+                              )}
                               {isCallback
                                 ? (["now", "30min", "tomorrow"] as const).map((pref) => (
                                     <label key={pref} className="flex items-center gap-2 cursor-pointer">
@@ -900,6 +959,22 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                               {!isCallback && counterDay === "custom" && (
                                 <input type="date" className="glass-input w-full text-xs" value={counterDate} onChange={(e) => setCounterDate(e.target.value)} />
                               )}
+                              {!isCallback && (
+                                <select className="glass-input w-full text-xs" value={counterWindow} onChange={(e) => setCounterWindow(e.target.value)}>
+                                  {APPOINTMENT_WINDOWS.map((w) => (
+                                    <option key={w} value={w}>
+                                      {w}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              <textarea
+                                className="glass-input w-full text-xs resize-none"
+                                rows={2}
+                                placeholder="Optional note — e.g. why the original time doesn't work"
+                                value={counterNote}
+                                onChange={(e) => setCounterNote(e.target.value)}
+                              />
                               <div className="flex items-center gap-2 pt-1">
                                 <button type="button" onClick={() => setCounteringId(null)} className="btn text-xs flex-1 justify-center">
                                   Cancel
@@ -1017,9 +1092,22 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
               <h3 className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Customer</h3>
               <p className="text-sm font-semibold">{active.visitor_name || "Anonymous visitor"}</p>
               {active.visitor_phone && (
-                <a href={`tel:${active.visitor_phone.replace(/\D/g, "")}`} className="block text-xs text-muted-foreground hover:text-foreground mt-0.5">
-                  {active.visitor_phone}
-                </a>
+                <button
+                  type="button"
+                  onClick={() => handleCopyPhone(active.visitor_phone!)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-0.5"
+                  title="Click to copy"
+                >
+                  {phoneCopied ? (
+                    <>
+                      <Check className="h-3 w-3 text-green-400" /> Copied!
+                    </>
+                  ) : (
+                    <>
+                      {active.visitor_phone} <Copy className="h-3 w-3" />
+                    </>
+                  )}
+                </button>
               )}
               {active.branch && <p className="text-xs text-muted-foreground mt-0.5">{active.branch}</p>}
             </div>
@@ -1077,6 +1165,13 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                 </button>
                 {scheduleOpen && (
                   <div className="ml-2 pl-2.5 border-l border-white/10 space-y-2 py-1">
+                    <button
+                      type="button"
+                      onClick={handleRecommendSchedule}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 transition font-medium"
+                    >
+                      <Sparkles className="h-3 w-3" /> Recommend Schedule
+                    </button>
                     {(["today", "tomorrow", "custom"] as const).map((d) => (
                       <label key={d} className="flex items-center gap-2 text-xs cursor-pointer">
                         <input type="radio" name="staff-schedule-day" checked={scheduleDay === d} onChange={() => setScheduleDay(d)} />
@@ -1086,6 +1181,13 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                     {scheduleDay === "custom" && (
                       <input type="date" className="glass-input w-full text-xs" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
                     )}
+                    <select className="glass-input w-full text-xs" value={scheduleWindow} onChange={(e) => setScheduleWindow(e.target.value)}>
+                      {APPOINTMENT_WINDOWS.map((w) => (
+                        <option key={w} value={w}>
+                          {w}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={handleStaffSchedule}

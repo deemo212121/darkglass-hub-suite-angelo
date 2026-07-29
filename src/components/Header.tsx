@@ -14,6 +14,7 @@ import {
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
 import { MessagesMenu } from "@/components/MessagesMenu";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
+import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
 
 function getInitials(value: string | null) {
@@ -67,6 +68,7 @@ export function AppHeader() {
           </div>
         </Link>
         <div className="ml-auto flex items-center gap-2 text-sm">
+          {ready && email && <TimeClockButtons />}
           {ready && email && (
             <button
               type="button"
