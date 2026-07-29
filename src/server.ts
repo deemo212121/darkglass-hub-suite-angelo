@@ -11,6 +11,7 @@ import { handleCustomFormsRequest } from "./lib/server/customFormsBridge";
 import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
 import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
+import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -144,6 +145,10 @@ export default {
     if (url.pathname === "/api/signable-documents") {
       const merged = await resolveServerEnv(env);
       return await handleSignableDocumentsRequest(request, merged);
+    }
+    if (url.pathname === "/api/live-chat") {
+      const merged = await resolveServerEnv(env);
+      return await handleLiveChatRequest(request, merged);
     }
 
     try {

@@ -18,6 +18,8 @@ import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData } from "@/lib/warningFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
+import { notifyHrRoleUsers } from "@/lib/supabase/hrRoleNotify";
 
 interface Props {
   docId: string;
@@ -143,6 +145,15 @@ export function SignDocumentPage({ docId }: Props) {
           body: `✅ Employee Warning Form for ${formData.employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
+
+      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      getHrNotificationSettings()
+        .then(({ warningForm }) => {
+          if (!warningForm) return;
+          const excludeIds = doc.createdBy ? [doc.createdBy] : [];
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `✅ Employee Warning Form for ${formData.employeeName} has been signed.`);
+        })
+        .catch((err) => console.error("[warning-form] hr notify check failed:", err));
 
       // Reflect the freshly-regenerated PDF/signature locally — `doc` was
       // loaded before signing, so its pdfUrl/signatures are the pre-sign

@@ -24,6 +24,7 @@ import { TatReport } from "@/components/TatReport";
 import { CsrDailyWork } from "@/components/CsrDailyWork";
 import { DailyActivityReport } from "@/components/DailyActivityReport";
 import { TeamMessenger } from "@/components/TeamMessenger";
+import { LiveChatSupportPage } from "@/components/LiveChatSupportPage";
 import { LoginStatistics } from "@/components/LoginStatistics";
 import { LtpProjectionReport } from "@/components/LtpProjectionReport";
 import { ModelDocuments } from "@/components/ModelDocuments";
@@ -346,6 +347,8 @@ function SubModule() {
         ? <DailyActivityReport mod={mod} sub={sub} />
         : (sub as any).custom === "internal-message-support"
         ? <TeamMessenger mod={mod} sub={sub} />
+        : (sub as any).custom === "live-chat-support"
+        ? <LiveChatSupportPage mod={mod} sub={sub} />
         : (sub as any).custom === "login-statistics"
         ? <LoginStatistics mod={mod} sub={sub} />
         : (sub as any).custom === "ltp-projection-report"

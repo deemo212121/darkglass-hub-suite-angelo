@@ -240,6 +240,17 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
           </div>
         </div>
 
+        {/* Quick nav */}
+        <div className="flex flex-wrap gap-2 mb-6 mt-4">
+          <Link
+            to="/m/$module/$submodule"
+            params={{ module: "dashboard", submodule: "live-chat-support" }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
+          >
+            <MessageSquare className="h-4 w-4" />Live Chat
+          </Link>
+        </div>
+
         {/* Filters */}
         <div className="panel p-4 mb-6 mt-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">

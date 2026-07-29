@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { Heading as HeadingIcon, User, Mail, MapPin, Phone as PhoneIcon, Calendar, CalendarClock, PenTool, Pilcrow, ShoppingCart, Trash2, Plus } from "lucide-react";
 import type { ElementDefinition } from "./types";
 import { makeDisplayElement } from "./factories";
+import { COUNTRY_CALLING_CODES } from "@/lib/countryCallingCodes";
 
 export const headingElement = makeDisplayElement({ type: "heading", label: "Heading", icon: HeadingIcon, category: "basic", variant: "heading", defaultText: "Heading" });
 
@@ -113,12 +114,26 @@ export const phoneElement: ElementDefinition = {
     const set = (patch: Record<string, any>) => onChange({ ...field, config: { ...field.config, ...patch } });
     return (
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5"><label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Country Code</label><input type="text" value={field.config.countryCode ?? ""} onChange={(e) => set({ countryCode: e.target.value })} placeholder="+1" className="glass-input text-sm py-1.5 px-2.5 rounded-md w-24" /></div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Default Country Code</label>
+          <select value={field.config.countryCode ?? "+1"} onChange={(e) => set({ countryCode: e.target.value })} className="glass-input text-sm py-1.5 px-2.5 rounded-md">
+            {COUNTRY_CALLING_CODES.map((c) => (
+              <option key={c.name} value={c.code}>{c.name} ({c.code})</option>
+            ))}
+          </select>
+          <p className="text-[10px] text-muted-foreground">Whoever fills this out can still pick a different country themselves — this just sets what's selected by default.</p>
+        </div>
         <div className="flex flex-col gap-1.5"><label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Mask (# = digit)</label><input type="text" value={field.config.mask ?? ""} onChange={(e) => set({ mask: e.target.value })} placeholder="(###) ###-####" className="glass-input text-sm py-1.5 px-2.5 rounded-md" /></div>
       </div>
     );
   },
   FillInput: ({ field, value, onChange }) => {
+    // Legacy submissions stored value as a plain string (no country picker
+    // yet) — treat that as the number with the field's default country.
+    const asObject = value && typeof value === "object" ? value : null;
+    const countryCode: string = asObject?.countryCode ?? field.config.countryCode ?? "+1";
+    const number: string = asObject?.number ?? (typeof value === "string" ? value : "");
+
     const applyMask = (raw: string): string => {
       const mask: string = field.config.mask || "";
       if (!mask) return raw;
@@ -133,12 +148,37 @@ export const phoneElement: ElementDefinition = {
     };
     return (
       <div className="flex items-center gap-1.5">
-        <span className="text-sm text-muted-foreground border border-white/15 rounded-md px-2 py-2">{field.config.countryCode || "+1"}</span>
-        <input type="tel" value={value ?? ""} readOnly={field.readonly} onChange={(e) => onChange(applyMask(e.target.value))} placeholder={field.placeholder || field.config.mask} className="glass-input text-sm py-2 px-3 rounded-md flex-1" />
+        <select
+          value={countryCode}
+          disabled={field.readonly}
+          onChange={(e) => onChange({ countryCode: e.target.value, number })}
+          className="glass-input text-sm py-2 px-2 rounded-md w-36 shrink-0"
+        >
+          {COUNTRY_CALLING_CODES.map((c) => (
+            <option key={c.name} value={c.code}>{c.name} ({c.code})</option>
+          ))}
+        </select>
+        <input
+          type="tel"
+          value={number}
+          readOnly={field.readonly}
+          onChange={(e) => onChange({ countryCode, number: applyMask(e.target.value) })}
+          placeholder={field.placeholder || field.config.mask}
+          className="glass-input text-sm py-2 px-3 rounded-md flex-1"
+        />
       </div>
     );
   },
-  isEmptyValue: (value) => !value || !String(value).trim(),
+  isEmptyValue: (value) => {
+    if (!value) return true;
+    if (typeof value === "string") return !value.trim();
+    return !value.number || !String(value.number).trim();
+  },
+  formatValue: (value) => {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    return [value.countryCode, value.number].filter(Boolean).join(" ");
+  },
 };
 
 const isWeekend = (iso: string) => { const d = new Date(`${iso}T00:00:00`); return d.getDay() === 0 || d.getDay() === 6; };

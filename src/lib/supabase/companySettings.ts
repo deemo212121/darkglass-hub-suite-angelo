@@ -93,3 +93,58 @@ export async function setCompanyDefaultTechnician(technician: string): Promise<v
     throw new Error(error.message);
   }
 }
+
+/**
+ * "Also notify HR" toggles (see migration 0077) for the three sends that
+ * are otherwise strictly one-to-one DMs — Employee Warning Form,
+ * Certificate of Employment, and the W-8BEN/W-4/W-9 tax forms. Recipients
+ * are whoever carries the HR role (primary or extra_roles) — see
+ * hrRoleNotify.ts. Custom Forms already broadcast to HR/Admin/Manager by
+ * default and aren't covered here.
+ */
+export interface HrNotificationSettings {
+  warningForm: boolean;
+  coe: boolean;
+  taxForms: boolean;
+}
+
+export async function getHrNotificationSettings(): Promise<HrNotificationSettings> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error || !data) {
+    if (error) console.error("getHrNotificationSettings error:", error.message);
+    return { warningForm: false, coe: false, taxForms: false };
+  }
+  const s = (data.settings as Record<string, unknown> | null) ?? {};
+  return {
+    warningForm: s.notifyAdminsWarningForm === true,
+    coe: s.notifyAdminsCoe === true,
+    taxForms: s.notifyAdminsTaxForms === true,
+  };
+}
+
+/** Admin/Superadmin only — enforced server-side by the set_notify_admins_warning_form RPC. */
+export async function setNotifyAdminsWarningForm(enabled: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_notify_admins_warning_form", { p_enabled: enabled });
+  if (error) {
+    console.error("setNotifyAdminsWarningForm error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Admin/Superadmin only — enforced server-side by the set_notify_admins_coe RPC. */
+export async function setNotifyAdminsCoe(enabled: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_notify_admins_coe", { p_enabled: enabled });
+  if (error) {
+    console.error("setNotifyAdminsCoe error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Admin/Superadmin only — enforced server-side by the set_notify_admins_tax_forms RPC. */
+export async function setNotifyAdminsTaxForms(enabled: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_notify_admins_tax_forms", { p_enabled: enabled });
+  if (error) {
+    console.error("setNotifyAdminsTaxForms error:", error.message);
+    throw new Error(error.message);
+  }
+}

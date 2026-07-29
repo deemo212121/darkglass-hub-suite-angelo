@@ -88,7 +88,52 @@ async function fetchExternalDoc(env: EnvBag, id: string): Promise<DocRow | null>
   return row;
 }
 
-async function writeCreatorNotification(env: EnvBag, accessToken: string, uid: string, docId: string, fields: { title: string; body: string; link: string }): Promise<void> {
+interface NotifyProfileRow {
+  id: string;
+  firebase_uid: string;
+  role: string;
+  extra_roles: string[] | null;
+}
+
+/**
+ * `hr_signable_documents.created_by` is a Supabase profiles.id, not a
+ * Firebase uid — the Firestore notifications collection this bridge writes
+ * to is keyed by Firebase uid (see NotificationsMenu.tsx's subscribeNotifications(uid, ...),
+ * called with useAuth()'s uid). Resolves the creator's real Firebase uid,
+ * plus every other active user carrying the HR role — primary or
+ * extra_roles, same definition used everywhere else in the app — for the
+ * opt-in "notify HR" broadcast (see Notifications Settings, migration 0077),
+ * in one query.
+ */
+async function fetchHrRoleAndCreatorFirebaseUids(
+  env: EnvBag,
+  companyId: string,
+  createdByProfileId: string | null
+): Promise<{ creatorFirebaseUid: string | null; hrFirebaseUids: string[] }> {
+  const idFilter = createdByProfileId ? `id.eq.${encodeURIComponent(createdByProfileId)},` : "";
+  const url =
+    `${env.supabaseUrl}/rest/v1/profiles` +
+    `?select=id,firebase_uid,role,extra_roles&company_id=eq.${encodeURIComponent(companyId)}&is_active=eq.true` +
+    `&or=(${idFilter}role.eq.HR,extra_roles.cs.{HR})`;
+  const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
+  if (!res.ok) throw new Error(`profiles lookup failed (${res.status}): ${await res.text()}`);
+  const rows = (await res.json()) as NotifyProfileRow[];
+  const creatorRow = createdByProfileId ? rows.find((r) => r.id === createdByProfileId) : undefined;
+  const isHrRole = (r: NotifyProfileRow) =>
+    r.role?.toUpperCase() === "HR" || (r.extra_roles ?? []).some((x) => x.toUpperCase() === "HR");
+  const hrFirebaseUids = rows.filter((r) => isHrRole(r) && r.id !== createdByProfileId).map((r) => r.firebase_uid).filter(Boolean);
+  return { creatorFirebaseUid: creatorRow?.firebase_uid ?? null, hrFirebaseUids };
+}
+
+async function fetchNotifyHrOnWarningFormSetting(env: EnvBag, companyId: string): Promise<boolean> {
+  const url = `${env.supabaseUrl}/rest/v1/companies?select=settings&id=eq.${encodeURIComponent(companyId)}&limit=1`;
+  const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
+  if (!res.ok) return false;
+  const rows = (await res.json()) as Array<{ settings?: Record<string, unknown> }>;
+  return rows[0]?.settings?.notifyAdminsWarningForm === true;
+}
+
+async function writeSignableDocNotification(env: EnvBag, accessToken: string, uid: string, docId: string, fields: { title: string; body: string; link: string }): Promise<void> {
   const dedupeId = `signable_${docId}_signed`;
   const res = await fetch(
     `https://firestore.googleapis.com/v1/projects/${env.projectId}/databases/(default)/documents/notifications/${uid}/items?documentId=${encodeURIComponent(dedupeId)}`,
@@ -182,17 +227,32 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
     });
     if (!patchRes.ok) throw new Error(`hr_signable_documents update failed (${patchRes.status}): ${await patchRes.text()}`);
 
-    if (doc.created_by) {
-      try {
-        const formTitle = (doc.form_data as { employeeName?: string })?.employeeName ?? "an employee";
-        await writeCreatorNotification(envBag, accessToken, doc.created_by, doc.id, {
-          title: `Signed by ${doc.recipient_name ?? "recipient"}`,
-          body: `Employee Warning Form for ${formTitle} has been signed.`,
-          link: `/m/dashboard/hr-dashboard?tab=warningForm`,
-        });
-      } catch (err) {
-        console.error("[signable-documents] creator notification failed (signature was still saved):", err);
+    try {
+      const formTitle = (doc.form_data as { employeeName?: string })?.employeeName ?? "an employee";
+      const notifyFields = {
+        title: `Signed by ${doc.recipient_name ?? "recipient"}`,
+        body: `Employee Warning Form for ${formTitle} has been signed.`,
+        link: `/m/dashboard/hr-dashboard?tab=warningForm`,
+      };
+      const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
+        fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),
+        fetchNotifyHrOnWarningFormSetting(envBag, doc.company_id),
+      ]);
+
+      if (creatorFirebaseUid) await writeSignableDocNotification(envBag, accessToken, creatorFirebaseUid, doc.id, notifyFields);
+
+      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      if (notifyHrEnabled && hrFirebaseUids.length > 0) {
+        await Promise.all(
+          hrFirebaseUids.map((uid) =>
+            writeSignableDocNotification(envBag, accessToken, uid, doc.id, notifyFields).catch((err) =>
+              console.error("[signable-documents] hr notification failed for", uid, err)
+            )
+          )
+        );
       }
+    } catch (err) {
+      console.error("[signable-documents] creator/hr notification failed (signature was still saved):", err);
     }
 
     return json({ success: true, pdfUrl });

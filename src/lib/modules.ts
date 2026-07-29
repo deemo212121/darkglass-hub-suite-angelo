@@ -259,6 +259,15 @@ const dashboardMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "live-chat-support",
+      title: "Live Chat",
+      description: "See and reply to live chat messages from the public website.",
+      custom: "live-chat-support" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "parts-dashboard",
       title: "Parts Dashboard",
       description: "Parts operations overview — PO queue, collections, receives and distributor breakdown.",
