@@ -31,6 +31,8 @@ interface NewUserFormData {
   poInitials: string;
   requiredCheckIn: string;
   requiredCheckOut: string;
+  workingHours: string;
+  mealMinutes: string;
   selectedOffDays: number[];
 }
 
@@ -576,6 +578,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     poInitials: "",
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
+    workingHours: "",
+    mealMinutes: "",
     selectedOffDays: [5, 6], // Saturday and Sunday by default
   });
 
@@ -776,6 +780,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         poInitials: newUserForm.poInitials,
         requiredCheckIn: newUserForm.requiredCheckIn,
         requiredCheckOut: newUserForm.requiredCheckOut,
+        workingHours: newUserForm.workingHours.trim() ? Number(newUserForm.workingHours) : undefined,
+        mealMinutes: newUserForm.mealMinutes.trim() ? Number(newUserForm.mealMinutes) : undefined,
       });
 
       // Save schedule / off-days / PO initials to localStorage (until employees domain is wired)
@@ -808,6 +814,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         poInitials: "",
         requiredCheckIn: "08:00",
         requiredCheckOut: "17:00",
+        workingHours: "",
+        mealMinutes: "",
         selectedOffDays: [5, 6],
       });
       setShowAddUserModal(false);
@@ -1163,6 +1171,30 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       type="time"
                       value={newUserForm.requiredCheckOut}
                       onChange={(e) => handleAddUserFormChange("requiredCheckOut", e.target.value)}
+                      className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-2">
+                    <span className="text-xs text-slate-400">Working Hours <span className="normal-case text-[10px] text-slate-500">(overrides Check-In/Out for meal eligibility)</span></span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      placeholder="e.g. 8"
+                      value={newUserForm.workingHours}
+                      onChange={(e) => handleAddUserFormChange("workingHours", e.target.value)}
+                      className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-2">
+                    <span className="text-xs text-slate-400">Meal Time (minutes)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={5}
+                      placeholder="e.g. 30"
+                      value={newUserForm.mealMinutes}
+                      onChange={(e) => handleAddUserFormChange("mealMinutes", e.target.value)}
                       className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
                     />
                   </label>

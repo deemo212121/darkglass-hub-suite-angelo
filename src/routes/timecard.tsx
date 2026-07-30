@@ -10,6 +10,7 @@ import {
   saveEntry as sbSaveEntry,
   deleteEntry as sbDeleteEntry,
   getMyProfileSchedule,
+  resolveScheduledShiftHours,
 } from "@/lib/supabase/timecards";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
@@ -60,6 +61,8 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const [profileId, setProfileId] = useState<string | null>(null);
   const [requiredCheckIn, setRequiredCheckIn] = useState("");
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [workingHours, setWorkingHours] = useState<number | null>(null);
+  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -75,6 +78,8 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
         setProfileId(s.profileId);
         setRequiredCheckIn(s.requiredCheckIn);
         setRequiredCheckOut(s.requiredCheckOut);
+        setWorkingHours(s.workingHours);
+        setMealMinutes(s.mealMinutes);
       })
       .catch((err) => console.error("Failed to resolve profile:", err));
     return () => { cancelled = true; };
@@ -238,13 +243,14 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     }
 
     // Lunch eligibility is based on the SCHEDULED shift length (set at account
-    // creation), not actual hours worked. Shifts of 6 hours or less have no
-    // meal break at all — Time In / Time Out only.
-    const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
-    if (!requiredCheckIn || !requiredCheckOut) {
+    // creation, or the explicit Working Hours override), not actual hours
+    // worked. Shifts of 6 hours or less have no meal break at all — Time In /
+    // Time Out only.
+    if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
       alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
       return;
     }
+    const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
     if (scheduledShift <= 6) {
       alert(`Lunch break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;

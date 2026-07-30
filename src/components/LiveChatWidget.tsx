@@ -15,6 +15,12 @@ import { CalendarDays, Check, CheckCheck, CheckCircle2, ImagePlus, MessageCircle
 import { LOCATIONS } from "@/lib/locations";
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
+// "custom" has no fixed label — the customer types their own preferred time,
+// stored in request_data.customTime — so this falls back to that instead.
+function callbackLabel(preference: string | undefined, customTime: string | null | undefined): string {
+  if (preference === "custom") return customTime?.trim() || "a custom time";
+  return preference ? CALLBACK_PREFERENCE_LABELS[preference] ?? preference : "";
+}
 // Sent automatically by the bridge (see AUTO_GREETING_SENDER_NAME in
 // liveChatBridge.ts) — distinguishes "just the auto-reply" from an actual
 // human having replied, for the welcome-card fade-out below.
@@ -60,9 +66,10 @@ interface ChatMessage {
   sender: "visitor" | "staff";
   sender_name: string | null;
   body: string;
-  kind?: "chat" | "callback_request" | "appointment_request" | "internal_note";
+  kind?: "chat" | "callback_request" | "appointment_request" | "internal_note" | "system";
   request_data?: {
     preference?: string;
+    customTime?: string | null;
     day?: string;
     date?: string;
     window?: string;
@@ -151,7 +158,8 @@ export function LiveChatWidget() {
   const [staffTypingAt, setStaffTypingAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [quickAction, setQuickAction] = useState<QuickAction>("none");
-  const [callbackPreference, setCallbackPreference] = useState<"now" | "30min" | "tomorrow">("now");
+  const [callbackPreference, setCallbackPreference] = useState<"now" | "30min" | "tomorrow" | "custom">("now");
+  const [customCallbackTime, setCustomCallbackTime] = useState("");
   const [scheduleDay, setScheduleDay] = useState<"today" | "tomorrow" | "custom">("today");
   const [scheduleDate, setScheduleDate] = useState("");
   const [requestSending, setRequestSending] = useState(false);
@@ -265,22 +273,25 @@ export function LiveChatWidget() {
 
   const handleRequestCallback = async () => {
     if (!sessionId || requestSending) return;
+    if (callbackPreference === "custom" && !customCallbackTime.trim()) return;
     setRequestSending(true);
     setError(null);
     try {
-      await postLiveChat("callback", sessionId, { preference: callbackPreference });
+      const customTime = callbackPreference === "custom" ? customCallbackTime.trim() : undefined;
+      await postLiveChat("callback", sessionId, { preference: callbackPreference, customTime });
       setMessages((current) => [
         ...current,
         {
           sender: "visitor",
           sender_name: name.trim() || null,
           kind: "callback_request",
-          request_data: { preference: callbackPreference },
-          body: `Requested a callback: ${CALLBACK_PREFERENCE_LABELS[callbackPreference]}`,
+          request_data: { preference: callbackPreference, customTime },
+          body: `Requested a callback: ${callbackLabel(callbackPreference, customTime)}`,
           created_at: new Date().toISOString(),
         },
       ]);
       setQuickAction("none");
+      setCustomCallbackTime("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to request a callback.");
     } finally {
@@ -454,8 +465,15 @@ export function LiveChatWidget() {
               </div>
             </div>
             {messages.map((m, i) => {
+              if (m.kind === "system") {
+                return (
+                  <div key={i} className="flex justify-center py-1">
+                    <p className="text-[11px] text-muted-foreground">{m.body}</p>
+                  </div>
+                );
+              }
               if (m.kind === "callback_request") {
-                const label = m.request_data?.preference ? CALLBACK_PREFERENCE_LABELS[m.request_data.preference] : undefined;
+                const label = callbackLabel(m.request_data?.preference, m.request_data?.customTime);
                 const reqStatus = m.request_data?.status ?? "pending";
                 const awaitingMyResponse = m.sender === "staff" && reqStatus === "pending";
                 return (
@@ -603,9 +621,28 @@ export function LiveChatWidget() {
                       {CALLBACK_PREFERENCE_LABELS[pref]}
                     </label>
                   ))}
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="radio" name="callback-preference" checked={callbackPreference === "custom"} onChange={() => setCallbackPreference("custom")} />
+                    Custom time
+                  </label>
+                  {callbackPreference === "custom" && (
+                    <input
+                      type="text"
+                      value={customCallbackTime}
+                      onChange={(e) => setCustomCallbackTime(e.target.value)}
+                      placeholder="e.g. Friday around 2 PM"
+                      maxLength={100}
+                      className="w-full rounded-md bg-white/10 border border-white/15 px-2.5 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                    />
+                  )}
                   <div className="flex items-center gap-2">
                     <button type="button" onClick={() => setQuickAction("none")} className="btn text-xs flex-1 justify-center">Cancel</button>
-                    <button type="button" onClick={handleRequestCallback} disabled={requestSending} className="btn btn-primary text-xs flex-1 justify-center disabled:opacity-50">
+                    <button
+                      type="button"
+                      onClick={handleRequestCallback}
+                      disabled={requestSending || (callbackPreference === "custom" && !customCallbackTime.trim())}
+                      className="btn btn-primary text-xs flex-1 justify-center disabled:opacity-50"
+                    >
                       {requestSending ? "Confirming…" : "Confirm"}
                     </button>
                   </div>

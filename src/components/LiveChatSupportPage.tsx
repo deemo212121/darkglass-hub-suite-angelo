@@ -24,25 +24,33 @@ import {
   Copy,
   Home,
   MessageCircle,
+  MessageSquareText,
   Paperclip,
+  Pencil,
   Phone,
   Search,
   Send,
   Sparkles,
   StickyNote,
+  Trash2,
+  X,
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, getMyRoles, type ProfileRow } from "@/lib/supabase/users";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { LOCATIONS } from "@/lib/locations";
-import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { getCsrTeamComposition, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
+import { createNotification } from "@/lib/supabase/notifications";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import {
   addLiveChatInternalNote,
   assistLiveChatSession,
   closeLiveChatSession,
+  createSavedReply,
+  deleteSavedReply,
   getLiveChatMessages,
+  getSavedReplies,
   listLiveChatSessions,
   proposeLiveChatCallback,
   releaseLiveChatSession,
@@ -52,7 +60,9 @@ import {
   setLiveChatEscalated,
   setLiveChatStaffTyping,
   transferLiveChatSession,
+  updateSavedReply,
   type LiveChatMessageRow,
+  type LiveChatSavedReplyRow,
   type LiveChatSessionRow,
 } from "@/lib/supabase/liveChat";
 
@@ -69,6 +79,13 @@ const LIVE_CHAT_ELIGIBLE_ROLES = new Set([
 ]);
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
+// "custom" has no fixed label — the customer typed their own preferred time
+// (request_data.customTime) instead, so this falls back to that.
+function callbackLabel(preference: string | undefined, customTime: string | null | undefined): string {
+  if (!preference) return "";
+  if (preference === "custom") return customTime || "a custom time";
+  return CALLBACK_PREFERENCE_LABELS[preference] ?? preference;
+}
 const APPOINTMENT_WINDOWS = ["9:00 AM - 12:00 PM", "12:00 PM - 3:00 PM", "3:00 PM - 6:00 PM"];
 // Parallel to APPOINTMENT_WINDOWS — the hour each window starts, used to pick
 // the next one that hasn't started yet (with a buffer so we don't recommend
@@ -144,7 +161,7 @@ interface Props {
 // unrestricted company-wide visibility instead of just "mine"/"my team".
 const WIDE_VISIBILITY_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"];
 
-type ViewTab = "queue" | "mine" | "team" | "all";
+type ViewTab = "queue" | "mine" | "team" | "all" | "escalated" | "transferred";
 
 function formatTimestamp(value: string) {
   const date = new Date(value);
@@ -165,6 +182,12 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   const [messages, setMessages] = useState<LiveChatMessageRow[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [savedReplies, setSavedReplies] = useState<LiveChatSavedReplyRow[]>([]);
+  const [savedRepliesOpen, setSavedRepliesOpen] = useState(false);
+  const [editingSavedReplyId, setEditingSavedReplyId] = useState<string | null>(null);
+  const [savedReplyLabel, setSavedReplyLabel] = useState("");
+  const [savedReplyBody, setSavedReplyBody] = useState("");
+  const [savingSavedReply, setSavingSavedReply] = useState(false);
   const [closing, setClosing] = useState(false);
   const [assistingId, setAssistingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -173,8 +196,10 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   const [search, setSearch] = useState("");
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [companyStaff, setCompanyStaff] = useState<ProfileRow[]>([]);
+  const [csrTeamMembers, setCsrTeamMembers] = useState<CsrTeamMemberRow[]>([]);
   const [transferMenuOpen, setTransferMenuOpen] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [pendingTransfer, setPendingTransfer] = useState<{ id: string; name: string } | null>(null);
   const [escalating, setEscalating] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
@@ -205,6 +230,17 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   const isWideVisibility = hasDashboardAccess(WIDE_VISIBILITY_ROLES, role, extraRoles);
   const isTeamLeader = myTeamMemberIds !== null;
 
+  // Normally only the assigned agent can reply — everyone else is read-only
+  // (see the "assisting this chat" message below). Escalation carves out one
+  // exception: once a chat is escalated, whoever has wide (manager-tier)
+  // visibility, or is the assigned agent's own team leader, can step in and
+  // reply too — without taking the chat over (no Transfer needed).
+  const canReplyToActive =
+    !!active &&
+    (!active.assigned_to ||
+      active.assigned_to === myProfileId ||
+      (active.escalated && (isWideVisibility || (myTeamMemberIds?.includes(active.assigned_to) ?? false))));
+
   // "Queue" is the shared pool waiting to be picked up. "My Chats" is only
   // what's actually assigned to me — no longer conflated with the queue, so
   // "how much active work do I have" and "what's waiting" read as two
@@ -217,6 +253,10 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       ? sessions.filter((s) => s.assigned_to === myProfileId)
       : viewTab === "team"
       ? sessions.filter((s) => s.assigned_to && s.assigned_to !== myProfileId && myTeamMemberIds?.includes(s.assigned_to))
+      : viewTab === "escalated"
+      ? sessions.filter((s) => s.escalated)
+      : viewTab === "transferred"
+      ? sessions.filter((s) => !!s.transferred_from)
       : sessions.filter((s) => !!s.assigned_to);
   const readFilteredSessions =
     readFilter === "unread"
@@ -260,6 +300,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     getCsrTeamComposition()
       .then(({ members }) => {
         if (cancelled) return;
+        setCsrTeamMembers(members);
         const myTeamId = members.find((m) => m.profileId === myProfileId && m.isLeader)?.teamId;
         setMyTeamMemberIds(myTeamId ? members.filter((m) => m.teamId === myTeamId).map((m) => m.profileId) : null);
       })
@@ -274,6 +315,17 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       .then((users) => { if (!cancelled) setCompanyStaff(users); })
       .catch((err) => console.error("Failed to load company staff for transfer:", err));
     return () => { cancelled = true; };
+  }, []);
+
+  const loadSavedReplies = () => {
+    getSavedReplies()
+      .then(setSavedReplies)
+      .catch((err) => console.error("Failed to load saved replies:", err));
+  };
+
+  // Company-wide canned replies — loaded once, any CSR can use/edit/delete any of them.
+  useEffect(() => {
+    loadSavedReplies();
   }, []);
 
   const loadSessions = () => {
@@ -372,32 +424,86 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     setNewMessageCount(0);
   };
 
-  const handleSend = async () => {
-    if (!draft.trim() || !activeId || !myProfileId || sending) return;
-    if (active?.assigned_to && active.assigned_to !== myProfileId) return; // someone else already has this one
+  // Shared by the composer (handleSend) and one-click saved replies — both
+  // need the exact same auto-claim-on-first-reply behavior.
+  const sendReply = async (body: string): Promise<boolean> => {
+    if (!body.trim() || !activeId || !myProfileId || sending) return false;
+    if (!canReplyToActive) return false; // someone else already has this one (and it's not an escalation you can step into)
     setSending(true);
     setError(null);
     try {
       // First reply on an unclaimed chat auto-claims it — race-safe against
       // another staff member doing the same thing at the same moment (see
       // assistLiveChatSession). No separate "click Assist first" step to forget.
+      // Stepping into someone else's escalated chat does NOT auto-claim it —
+      // only a genuinely unassigned chat does.
       if (!active?.assigned_to) {
         const { claimed } = await assistLiveChatSession(activeId, myProfileId, currentUserName);
         if (!claimed) {
           loadSessions();
           setError("Someone else just picked this chat up.");
-          return;
+          return false;
         }
       }
-      await sendLiveChatStaffReply(activeId, currentUserName, draft.trim());
-      setDraft("");
+      await sendLiveChatStaffReply(activeId, currentUserName, body.trim());
       const rows = await getLiveChatMessages(activeId);
       setMessages(rows);
       loadSessions();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send reply.");
+      return false;
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (await sendReply(draft)) setDraft("");
+  };
+
+  const handleSendSavedReply = async (body: string) => {
+    if (await sendReply(body)) setSavedRepliesOpen(false);
+  };
+
+  const resetSavedReplyForm = () => {
+    setEditingSavedReplyId(null);
+    setSavedReplyLabel("");
+    setSavedReplyBody("");
+  };
+
+  const handleEditSavedReply = (reply: LiveChatSavedReplyRow) => {
+    setEditingSavedReplyId(reply.id);
+    setSavedReplyLabel(reply.label);
+    setSavedReplyBody(reply.body);
+  };
+
+  const handleSaveSavedReply = async () => {
+    if (!savedReplyLabel.trim() || !savedReplyBody.trim() || savingSavedReply) return;
+    setSavingSavedReply(true);
+    try {
+      if (editingSavedReplyId) {
+        await updateSavedReply(editingSavedReplyId, savedReplyLabel.trim(), savedReplyBody.trim());
+      } else {
+        await createSavedReply(savedReplyLabel.trim(), savedReplyBody.trim());
+      }
+      resetSavedReplyForm();
+      loadSavedReplies();
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingSavedReply(false);
+    }
+  };
+
+  const handleDeleteSavedReply = async (id: string) => {
+    if (!confirm("Delete this saved reply?")) return;
+    try {
+      await deleteSavedReply(id);
+      if (editingSavedReplyId === id) resetSavedReplyForm();
+      loadSavedReplies();
+    } catch (err) {
+      alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
 
@@ -439,12 +545,51 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     }
   };
 
+  // Notifies the escalating agent's OWN team leader AND manager — both, not
+  // whichever resolves first (unlike resolveTeamLeadOrManager's either/or
+  // fallback used elsewhere, e.g. Attendance Monitoring's "Notify Team
+  // Lead"). Best-effort: a failed notification should never block the
+  // escalation itself from having been recorded.
+  const notifyEscalation = async (session: LiveChatSessionRow) => {
+    if (!myProfileId) return;
+    const me = companyStaff.find((p) => p.id === myProfileId);
+    const recipientIds = new Set<string>();
+
+    const myTeamId = csrTeamMembers.find((m) => m.profileId === myProfileId)?.teamId;
+    if (myTeamId) {
+      const leader = csrTeamMembers.find((m) => m.teamId === myTeamId && m.isLeader);
+      if (leader && leader.profileId !== myProfileId) recipientIds.add(leader.profileId);
+    }
+
+    const managerName = (me?.manager_name || "").trim().toLowerCase();
+    if (managerName) {
+      const manager = companyStaff.find((p) => (p.display_name || "").trim().toLowerCase() === managerName);
+      if (manager && manager.id !== myProfileId) recipientIds.add(manager.id);
+    }
+
+    if (recipientIds.size === 0) return;
+    const body = `🚨 ${currentUserName} escalated a Live Chat — ${session.visitor_name || "a visitor"} (${ticketNumber(session.id)})`;
+    await Promise.all(
+      Array.from(recipientIds).map((recipientId) =>
+        createNotification({
+          recipientId,
+          senderId: myProfileId,
+          senderName: currentUserName,
+          body,
+          linkTo: "/m/dashboard/live-chat-support",
+        }).catch((err) => console.error("Failed to notify escalation recipient:", err))
+      )
+    );
+  };
+
   const handleEscalateToggle = async () => {
     if (!activeId || !active || escalating) return;
     setEscalating(true);
     setError(null);
     try {
-      await setLiveChatEscalated(activeId, !active.escalated);
+      const nextEscalated = !active.escalated;
+      await setLiveChatEscalated(activeId, nextEscalated);
+      if (nextEscalated) void notifyEscalation(active);
       loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update escalation.");
@@ -513,7 +658,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       await respondToLiveChatRequest(m.id, m.request_data, "accepted");
       const confirmation =
         m.kind === "callback_request"
-          ? `Confirmed — we'll call you ${CALLBACK_PREFERENCE_LABELS[m.request_data?.preference] ?? "soon"}.`
+          ? `Confirmed — we'll call you ${callbackLabel(m.request_data?.preference, m.request_data?.customTime) || "soon"}.`
           : `Confirmed — we'll see you ${
               m.request_data?.day === "today" ? "today" : m.request_data?.day === "tomorrow" ? "tomorrow" : m.request_data?.date || "as requested"
             }${m.request_data?.window ? `, ${m.request_data.window}` : ""}.`;
@@ -599,7 +744,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
   };
 
   return (
-    <main className="max-w-[1400px] mx-auto px-4 py-6 lg:px-6">
+    <main className="w-full px-4 py-6 lg:px-8">
       <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
         <Link to="/home" className="inline-flex items-center hover:text-foreground" aria-label="Home" title="Home">
           <Home className="h-3.5 w-3.5" />
@@ -644,19 +789,38 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
         {[
           { key: "queue" as const, label: "Queue" },
           { key: "mine" as const, label: "My Chats" },
+          { key: "escalated" as const, label: "Escalated" },
+          { key: "transferred" as const, label: "Transferred" },
           ...(isWideVisibility ? [{ key: "all" as const, label: "All Teams" }] : isTeamLeader ? [{ key: "team" as const, label: "My Team" }] : []),
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setViewTab(tab.key)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-              viewTab === tab.key ? "bg-primary/20 text-primary border border-primary/40" : "border border-white/10 bg-white/5 hover:bg-white/10"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        ].map((tab) => {
+          const badgeCount =
+            tab.key === "escalated"
+              ? sessions.filter((s) => s.escalated).length
+              : tab.key === "transferred"
+              ? sessions.filter((s) => !!s.transferred_from).length
+              : 0;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setViewTab(tab.key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                viewTab === tab.key ? "bg-primary/20 text-primary border border-primary/40" : "border border-white/10 bg-white/5 hover:bg-white/10"
+              }`}
+            >
+              {tab.label}
+              {badgeCount > 0 && (
+                <span
+                  className={`grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold text-white ${
+                    tab.key === "escalated" ? "bg-red-500/80" : "bg-sky-500/80"
+                  }`}
+                >
+                  {badgeCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
         <span className="w-px h-5 bg-white/10 mx-1" />
         {(["all", "unread", "read"] as const).map((f) => (
           <button
@@ -676,9 +840,20 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
         <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">{error}</div>
       )}
 
-      <div className={`grid gap-4 ${active ? "lg:grid-cols-[320px_minmax(0,1fr)_280px]" : "lg:grid-cols-[320px_minmax(0,1fr)]"}`}>
+      {/* fr-based ranges (not fixed px) so every pane genuinely resizes as
+          the browser window does — list/details panes can breathe a little
+          wider on a big monitor and shrink toward their floor on a narrower
+          one, same as a Messenger-style layout, instead of only the center
+          column reacting. */}
+      <div
+        className={`grid gap-4 ${
+          active
+            ? "md:grid-cols-[minmax(260px,1fr)_minmax(0,2.4fr)] lg:grid-cols-[minmax(280px,1fr)_minmax(0,2.4fr)_minmax(260px,1fr)]"
+            : "md:grid-cols-[minmax(260px,1fr)_minmax(0,3fr)]"
+        }`}
+      >
         <aside className="rounded-2xl border border-white/15 bg-white/8 backdrop-blur-md overflow-hidden">
-          <div className="max-h-[70vh] overflow-y-auto divide-y divide-white/10">
+          <div className="h-[70vh] overflow-y-auto divide-y divide-white/10">
             {visibleSessions.length === 0 && (
               <p className="p-4 text-sm text-muted-foreground">
                 {searchTerm ? "No chats match your search." : branchFilter ? `No chats for ${branchFilter}.` : "No chats yet."}
@@ -726,6 +901,14 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                       <AlertTriangle className="h-3 w-3" /> Escalated
                     </span>
                   )}
+                  {s.transferred_from && (
+                    <span
+                      className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300"
+                      title={`Transferred by ${s.transferred_from_name}`}
+                    >
+                      <ArrowLeftRight className="h-3 w-3" /> Transferred
+                    </span>
+                  )}
                   <span className="text-[10px] text-muted-foreground/60">{ticketNumber(s.id)}</span>
                   {s.branch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">{s.branch}</span>}
                   {isUnread && (
@@ -769,7 +952,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
           </div>
         </aside>
 
-        <section className="rounded-2xl border border-white/15 bg-white/8 backdrop-blur-md flex flex-col min-h-[60vh]">
+        <section className="rounded-2xl border border-white/15 bg-white/8 backdrop-blur-md flex flex-col h-[70vh]">
           {!active ? (
             <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm gap-2">
               <MessageCircle className="h-4 w-4" /> Select a chat to view the conversation
@@ -791,6 +974,14 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                     {active.escalated && (
                       <span className="flex items-center gap-1 text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-300">
                         <AlertTriangle className="h-3 w-3" /> Escalated
+                      </span>
+                    )}
+                    {active.transferred_from && (
+                      <span
+                        className="flex items-center gap-1 text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300"
+                        title={`Transferred by ${active.transferred_from_name}`}
+                      >
+                        <ArrowLeftRight className="h-3 w-3" /> Transferred by {active.transferred_from_name}
                       </span>
                     )}
                   </p>
@@ -843,7 +1034,10 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                               key={u.id}
                               type="button"
                               disabled={transferring}
-                              onClick={() => handleTransfer(u.id, u.display_name || u.email)}
+                              onClick={() => {
+                                setTransferMenuOpen(false);
+                                setPendingTransfer({ id: u.id, name: u.display_name || u.email });
+                              }}
                               className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 transition disabled:opacity-50"
                             >
                               {u.display_name || u.email}
@@ -856,6 +1050,41 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                 )}
               </div>
 
+              {pendingTransfer && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                  <div className="w-72 rounded-xl border border-white/15 bg-slate-900 p-4 shadow-xl">
+                    <p className="text-sm font-semibold flex items-center gap-1.5">
+                      <ArrowLeftRight className="h-4 w-4" /> Transfer this chat?
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      This chat will be handed to <span className="font-medium text-foreground">{pendingTransfer.name}</span>.
+                    </p>
+                    <div className="flex items-center justify-end gap-2 mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setPendingTransfer(null)}
+                        disabled={transferring}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-white/15 hover:bg-white/10 transition disabled:opacity-50"
+                      >
+                        No
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!pendingTransfer) return;
+                          await handleTransfer(pendingTransfer.id, pendingTransfer.name);
+                          setPendingTransfer(null);
+                        }}
+                        disabled={transferring}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/80 hover:bg-primary transition disabled:opacity-50"
+                      >
+                        {transferring ? "Transferring…" : "Yes, transfer"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="relative flex-1 min-h-0">
               <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="h-full overflow-y-auto px-4 py-3 space-y-2">
                 {messages.map((m, msgIndex) => {
@@ -864,7 +1093,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                     const status: "pending" | "accepted" | "declined" = m.request_data?.status ?? "pending";
                     const supersededByNewer = status === "declined" && messages.slice(msgIndex + 1).some((other) => other.kind === m.kind);
                     const label = isCallback
-                      ? CALLBACK_PREFERENCE_LABELS[m.request_data?.preference] ?? m.request_data?.preference
+                      ? callbackLabel(m.request_data?.preference, m.request_data?.customTime)
                       : m.request_data?.day === "today"
                       ? "Today"
                       : m.request_data?.day === "tomorrow"
@@ -994,6 +1223,13 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                       </div>
                     );
                   }
+                  if (m.kind === "system") {
+                    return (
+                      <div key={m.id} className="flex justify-center py-1">
+                        <p className="text-[11px] text-muted-foreground">{m.body}</p>
+                      </div>
+                    );
+                  }
                   if (m.kind === "internal_note") {
                     return (
                       <div key={m.id} className="flex justify-center py-1">
@@ -1053,12 +1289,113 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
               {active.status === "closed" ? (
                 <p className="px-4 py-3 border-t border-white/10 text-xs text-muted-foreground text-center">This chat has ended.</p>
-              ) : active.assigned_to && active.assigned_to !== myProfileId ? (
+              ) : !canReplyToActive ? (
                 <p className="px-4 py-3 border-t border-white/10 text-xs text-muted-foreground text-center">
                   {active.assigned_to_name} is assisting this chat — you can view but not reply.
                 </p>
               ) : (
-                <div className="p-3 border-t border-white/10 flex items-center gap-2">
+                <>
+                {active.escalated && active.assigned_to && active.assigned_to !== myProfileId && (
+                  <p className="px-4 pt-2 text-[11px] text-amber-300/90 text-center">
+                    Escalated — {active.assigned_to_name} is assisting, but you can reply too.
+                  </p>
+                )}
+                <div className="relative p-3 border-t border-white/10 flex items-center gap-2">
+                  {savedRepliesOpen && (
+                    <div className="absolute bottom-full left-3 mb-2 w-80 max-w-[calc(100vw-3rem)] max-h-[28rem] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 shadow-2xl z-20 flex flex-col">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 bg-slate-900 rounded-t-2xl">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Saved Replies</p>
+                        <button
+                          type="button"
+                          onClick={() => { setSavedRepliesOpen(false); resetSavedReplyForm(); }}
+                          className="p-1 -m-1 rounded text-muted-foreground hover:text-foreground hover:bg-white/10"
+                          aria-label="Close saved replies"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {savedReplies.length === 0 ? (
+                        <p className="px-4 py-6 text-xs text-muted-foreground text-center">No saved replies yet — add one below.</p>
+                      ) : (
+                        <div className="p-2 space-y-1">
+                          {savedReplies.map((reply) => (
+                            <div key={reply.id} className="group flex items-center gap-1 rounded-lg hover:bg-white/5">
+                              <button
+                                type="button"
+                                onClick={() => handleSendSavedReply(reply.body)}
+                                disabled={sending}
+                                className="flex-1 min-w-0 text-left px-2.5 py-2 rounded-lg disabled:opacity-50"
+                              >
+                                <p className="text-xs font-semibold text-foreground truncate">{reply.label}</p>
+                                <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2 leading-snug">{reply.body}</p>
+                              </button>
+                              <div className="flex items-center gap-0.5 pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditSavedReply(reply)}
+                                  className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-white/10"
+                                  aria-label="Edit saved reply"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSavedReply(reply.id)}
+                                  className="p-1.5 rounded text-muted-foreground hover:text-red-300 hover:bg-red-500/10"
+                                  aria-label="Delete saved reply"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="p-3 border-t border-white/10 bg-black/20 rounded-b-2xl space-y-2">
+                        {editingSavedReplyId && (
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary/80">Editing saved reply</p>
+                        )}
+                        <input
+                          value={savedReplyLabel}
+                          onChange={(e) => setSavedReplyLabel(e.target.value)}
+                          placeholder="Label (e.g. Parts backorder)"
+                          className="glass-input w-full text-xs"
+                        />
+                        <textarea
+                          value={savedReplyBody}
+                          onChange={(e) => setSavedReplyBody(e.target.value)}
+                          placeholder="Reply text"
+                          rows={2}
+                          className="glass-input w-full text-xs resize-none"
+                        />
+                        <div className="flex items-center gap-2 pt-0.5">
+                          {editingSavedReplyId && (
+                            <button type="button" onClick={resetSavedReplyForm} className="btn text-xs flex-1 justify-center">
+                              Cancel
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleSaveSavedReply}
+                            disabled={!savedReplyLabel.trim() || !savedReplyBody.trim() || savingSavedReply}
+                            className="btn btn-primary text-xs flex-1 justify-center disabled:opacity-50"
+                          >
+                            {savingSavedReply ? "Saving…" : editingSavedReplyId ? "Save changes" : "+ Add saved reply"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSavedRepliesOpen((v) => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium transition shrink-0 ${savedRepliesOpen ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/10 hover:text-foreground"}`}
+                    aria-label="Saved replies"
+                    title="Saved replies"
+                  >
+                    <MessageSquareText className="h-4 w-4" />
+                    <span className="hidden sm:inline">Saved</span>
+                  </button>
                   <input
                     className="glass-input flex-1"
                     value={draft}
@@ -1076,6 +1413,7 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
                     <Send className="h-4 w-4" />
                   </button>
                 </div>
+                </>
               )}
             </>
           )}

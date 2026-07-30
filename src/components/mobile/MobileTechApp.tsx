@@ -42,7 +42,7 @@ import {
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
@@ -3249,6 +3249,8 @@ function MobileTimecardView({
 }) {
   const [requiredCheckIn, setRequiredCheckIn] = useState("");
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [workingHours, setWorkingHours] = useState<number | null>(null);
+  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -3270,6 +3272,8 @@ function MobileTimecardView({
         if (cancelled) return;
         setRequiredCheckIn(schedule.requiredCheckIn);
         setRequiredCheckOut(schedule.requiredCheckOut);
+        setWorkingHours(schedule.workingHours);
+        setMealMinutes(schedule.mealMinutes);
         if (!schedule.profileId) {
           setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
           return;
@@ -3326,13 +3330,20 @@ function MobileTimecardView({
       alert("Please log time in first.");
       return;
     }
-    if (!requiredCheckIn || !requiredCheckOut) {
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
+    if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
       alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
       return;
     }
-    const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
-    if (scheduledShift < 8) {
-      alert(`Lunch break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+    // Same rule as TimeClockMenu.tsx / routes/timecard.tsx: shifts of 6 hours
+    // or less have no meal break, and an explicit Working Hours override
+    // (migration 0091) takes priority over the Time In/Out subtraction.
+    const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+    if (scheduledShift <= 6) {
+      alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;
     }
     if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });

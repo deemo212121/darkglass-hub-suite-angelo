@@ -297,6 +297,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           department={profileDepartment(detailProfile)}
           requiredCheckIn={detailProfile.required_check_in || undefined}
           requiredCheckOut={detailProfile.required_check_out || undefined}
+          workingHours={detailProfile.working_hours}
+          mealMinutes={detailProfile.meal_minutes}
           offDays={detailProfile.off_days || undefined}
           onClose={() => setDetailProfile(null)}
           onRateChanged={load}

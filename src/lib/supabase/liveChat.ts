@@ -8,6 +8,7 @@
  * same pattern as src/lib/supabase/messaging.ts.
  */
 import { supabase } from "./client";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 
 export interface LiveChatSessionRow {
   id: string;
@@ -24,6 +25,8 @@ export interface LiveChatSessionRow {
   visitor_typing_at: string | null;
   visitor_last_seen_at: string | null;
   escalated: boolean;
+  transferred_from: string | null;
+  transferred_from_name: string | null;
   // Merged in from live_chat_inbox_previews() (migration 0083) — not real
   // columns on the table, just derived per-session summary data for the
   // conversation list.
@@ -32,7 +35,7 @@ export interface LiveChatSessionRow {
   lastMessageSender: "visitor" | "staff" | null;
 }
 
-export type LiveChatMessageKind = "chat" | "callback_request" | "appointment_request" | "internal_note";
+export type LiveChatMessageKind = "chat" | "callback_request" | "appointment_request" | "internal_note" | "system";
 
 export interface LiveChatMessageRow {
   id: string;
@@ -51,7 +54,7 @@ export interface LiveChatMessageRow {
 }
 
 const SESSION_COLUMNS =
-  "id, visitor_name, visitor_phone, branch, concern, appliance, status, created_at, last_message_at, assigned_to, assigned_to_name, visitor_typing_at, visitor_last_seen_at, escalated";
+  "id, visitor_name, visitor_phone, branch, concern, appliance, status, created_at, last_message_at, assigned_to, assigned_to_name, visitor_typing_at, visitor_last_seen_at, escalated, transferred_from, transferred_from_name";
 
 interface InboxPreviewRow {
   session_id: string;
@@ -170,7 +173,18 @@ export async function assistLiveChatSession(sessionId: string, staffProfileId: s
     .is("assigned_to", null)
     .select("id");
   if (error) throw new Error(error.message);
-  return { claimed: (data?.length ?? 0) > 0 };
+  const claimed = (data?.length ?? 0) > 0;
+  // Best-effort — a failed system-message insert shouldn't undo a successful
+  // claim. Generic wording (not the agent's name) — see kind="system", a
+  // small gray notice rendered on both the staff and customer side, distinct
+  // from a normal chat bubble or a staff-only internal_note.
+  if (claimed) {
+    void supabase
+      .from("live_chat_messages")
+      .insert({ session_id: sessionId, sender: "staff", kind: "system", body: "Agent joined the chat" })
+      .then(({ error: msgError }) => { if (msgError) console.error("Failed to post 'agent joined' system message:", msgError.message); });
+  }
+  return { claimed };
 }
 
 /** Only releases if the caller is the one currently assigned — a stale UI can't accidentally steal someone else's claim by "releasing" it out from under them. */
@@ -183,19 +197,41 @@ export async function releaseLiveChatSession(sessionId: string, staffProfileId: 
   if (error) throw new Error(error.message);
 }
 
-/** Hand a claimed chat to a specific person (not "first to click," unlike Assist) — unconditional, whoever's transferring it is trusted to know who should have it next. */
+/**
+ * Hand a claimed chat to a specific person (not "first to click," unlike
+ * Assist) — unconditional, whoever's transferring it is trusted to know
+ * who should have it next. Goes through liveChatStaffBridge.ts (service
+ * key) rather than a direct client update: Transfer's whole point is
+ * moving a chat OUTSIDE the caller's own tiered visibility (a different
+ * team, a specialist), which live_chat_sessions_update's RLS check
+ * blocks even after simplifying it back to a plain company-id check —
+ * see that bridge file's header comment.
+ */
 export async function transferLiveChatSession(sessionId: string, toProfileId: string, toName: string): Promise<void> {
-  const { error } = await supabase
-    .from("live_chat_sessions")
-    .update({ assigned_to: toProfileId, assigned_to_name: toName })
-    .eq("id", sessionId);
-  if (error) throw new Error(error.message);
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to transfer a chat.");
+  const res = await fetch("/api/live-chat-staff?action=transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, sessionId, toProfileId }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !body.ok) throw new Error(body.error || "Failed to transfer chat.");
 }
 
 /** A visual flag for the queue/header, not a workflow of its own. */
 export async function setLiveChatEscalated(sessionId: string, escalated: boolean): Promise<void> {
   const { error } = await supabase.from("live_chat_sessions").update({ escalated }).eq("id", sessionId);
   if (error) throw new Error(error.message);
+  // Best-effort, escalating only (not un-escalating) — a small gray notice
+  // (kind="system", visible to both sides, same as "Agent joined the chat")
+  // so the customer knows something changed instead of just seeing silence.
+  if (escalated) {
+    void supabase
+      .from("live_chat_messages")
+      .insert({ session_id: sessionId, sender: "staff", kind: "system", body: "Your concern has been escalated — please wait a moment." })
+      .then(({ error: msgError }) => { if (msgError) console.error("Failed to post escalation system message:", msgError.message); });
+  }
 }
 
 /** Staff-only — never returned to the visitor widget (see liveChatBridge.ts's GET handler, which excludes kind=internal_note). */
@@ -261,5 +297,44 @@ export async function respondToLiveChatRequest(messageId: string, requestData: R
     .from("live_chat_messages")
     .update({ request_data: { ...(requestData ?? {}), status } })
     .eq("id", messageId);
+  if (error) throw new Error(error.message);
+}
+
+export interface LiveChatSavedReplyRow {
+  id: string;
+  label: string;
+  body: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** Company-wide canned replies (see migration 0088) — any CSR can create, use, edit, or delete any of them; not personal to whoever made it. */
+export async function getSavedReplies(): Promise<LiveChatSavedReplyRow[]> {
+  const { data, error } = await supabase
+    .from("live_chat_saved_replies")
+    .select("id, label, body, created_by, created_at")
+    .order("label", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    label: r.label,
+    body: r.body,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function createSavedReply(label: string, body: string): Promise<void> {
+  const { error } = await supabase.from("live_chat_saved_replies").insert({ label, body });
+  if (error) throw new Error(error.message);
+}
+
+export async function updateSavedReply(id: string, label: string, body: string): Promise<void> {
+  const { error } = await supabase.from("live_chat_saved_replies").update({ label, body }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteSavedReply(id: string): Promise<void> {
+  const { error } = await supabase.from("live_chat_saved_replies").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
