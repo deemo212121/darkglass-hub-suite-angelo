@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Clock, History, X, User, Columns3, Map as MapIcon } from "lucide-react";
+import { ChevronLeft, Clock, History, X, User, Columns3, Map as MapIcon, Download, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import {
@@ -15,6 +16,8 @@ import {
   getCompanyTickets,
   backfillTicketLocations,
   getPartOrderStateByTicketIds,
+  getVisitsByTicketIds,
+  getPartsByTicketIds,
 } from "@/lib/supabase/tickets";
 import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
 import { canManageMisdiagnosed, canFilterDataClosedTickets } from "@/lib/roleLabels";
@@ -833,6 +836,77 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     return sortedItems.slice(start, start + pageSize);
   }, [sortedItems, safePage, pageSize]);
 
+  // Export current filtered/sorted list (not just the current page) to an
+  // .xlsx workbook with one sheet per table - Tickets, Visit Log, and
+  // Parts - so the export mirrors the real data model instead of trying
+  // to flatten one-to-many visits/parts onto a single Tickets row. Visit
+  // Log and Parts rows carry the ticket number so they can be cross-
+  // referenced back to the Tickets sheet.
+  //
+  // Visits/parts are bulk-fetched with getVisitsByTicketIds/
+  // getPartsByTicketIds (one query each for the whole export) rather than
+  // looping getTicketVisits/getTicketParts per ticket - that would be an
+  // N+1 query pattern that gets slower the more tickets are being
+  // exported.
+  const [exporting, setExporting] = useState(false);
+  const handleExportXlsx = async () => {
+    if (exporting || sortedItems.length === 0) return;
+    // Cheap to trigger by accident (it's a small button sitting right next
+    // to the page-size row) and not cheap to run (bulk-fetches every
+    // filtered ticket's full visit/parts history) — confirm first.
+    const count = sortedItems.length;
+    if (!window.confirm(`Export ${count} ticket${count === 1 ? "" : "s"} (with full Visit Log and Parts history) to Excel?`)) {
+      return;
+    }
+    setExporting(true);
+    try {
+      const ticketIds = sortedItems
+        .map((t) => String((t as any)._id || ""))
+        .filter(Boolean);
+      const [visitsByTicket, partsByTicket] = await Promise.all([
+        getVisitsByTicketIds(ticketIds),
+        getPartsByTicketIds(ticketIds),
+      ]);
+
+      const ticketRows = sortedItems.map((t) => {
+        const { visits, parts, alertMessages, ...rest } = t as any;
+        const { _id, _customerId, ...flat } = rest;
+        return flat;
+      });
+
+      const visitRows: Record<string, unknown>[] = [];
+      const partRows: Record<string, unknown>[] = [];
+      for (const t of sortedItems) {
+        const tid = String((t as any)._id || "");
+        for (const v of visitsByTicket.get(tid) ?? []) {
+          visitRows.push({ ticketNo: t.ticketNo, ...v });
+        }
+        for (const p of partsByTicket.get(tid) ?? []) {
+          partRows.push({ ticketNo: t.ticketNo, ...p });
+        }
+      }
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ticketRows), "Tickets");
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(visitRows.length > 0 ? visitRows : [{ ticketNo: "" }]),
+        "Visit Log",
+      );
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(partRows.length > 0 ? partRows : [{ ticketNo: "" }]),
+        "Parts",
+      );
+      XLSX.writeFile(workbook, `tickets-export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      console.error("Ticket export failed:", err);
+      alert(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Header builder: wraps the header label + filter funnel in a clickable
   // span. Clicking the label triggers the sort; the filter button stops
   // propagation so it never doubles as a sort click.
@@ -1018,6 +1092,16 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               Total Tickets: <span className="font-semibold text-foreground">{filteredItems.length}</span>
             </span>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => void handleExportXlsx()}
+                disabled={exporting || sortedItems.length === 0}
+                className="px-2 py-1 rounded border border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground transition-colors inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Export the currently filtered tickets, with their full Visit Log and Parts history, to an Excel workbook"
+              >
+                {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                {exporting ? "Exporting…" : `Export (${sortedItems.length})`}
+              </button>
               <span>Show:</span>
               {PAGE_SIZE_OPTIONS.map((size) => (
                 <button

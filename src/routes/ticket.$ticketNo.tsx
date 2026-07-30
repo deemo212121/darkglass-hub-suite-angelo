@@ -5,7 +5,7 @@ import { Footer } from "@/components/Footer";
 import { ALL_TECHNICIANS, normalizeLocationForRegionMatch } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
@@ -54,7 +54,10 @@ import {
   deleteTicketPart as sbDeleteTicketPart,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
+import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
+import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { canManageMisdiagnosed } from "@/lib/roleLabels";
 
 // Product category options for the ticket Product Information dropdown.
@@ -352,7 +355,9 @@ const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 const TICKET_AUDIT_KEY_PREFIX = "ahs:ticket-audit:";
 const TICKET_VISIT_LOG_KEY_PREFIX = "ahs:ticket-visit-log:";
 const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
-const TICKET_ALERT_KEY_PREFIX = "ahs:ticket-alert:";
+const TICKET_ACTIVE_TAB_KEY_PREFIX = "ahs:ticket-active-tab:";
+type TicketDetailsTab = "general" | "tracking" | "compensation" | "billing";
+const TICKET_DETAILS_TABS: TicketDetailsTab[] = ["general", "tracking", "compensation", "billing"];
 
 function formatAuditValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -388,10 +393,6 @@ function getVisitLogKey(ticketNo: string) {
 
 function getPartLogKey(ticketNo: string) {
   return `${TICKET_PART_LOG_KEY_PREFIX}${ticketNo}`;
-}
-
-function getAlertKey(ticketNo: string) {
-  return `${TICKET_ALERT_KEY_PREFIX}${ticketNo}`;
 }
 
 function createEmptyPartDraft(): PartTransactionDraft {
@@ -461,25 +462,6 @@ function loadPartRows(ticketNo: string) {
 function savePartRows(ticketNo: string, rows: PartTransactionRow[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(getPartLogKey(ticketNo), JSON.stringify(rows));
-}
-
-function loadAlertMessages(ticketNo: string) {
-  if (typeof window === "undefined") return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
-
-  const raw = window.localStorage.getItem(getAlertKey(ticketNo));
-  if (!raw) return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
-
-  try {
-    const parsed = JSON.parse(raw) as Array<{id: string, text: string, by: string, timestamp: string}>;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
-  }
-}
-
-function saveAlertMessages(ticketNo: string, messages: Array<{id: string, text: string, by: string, timestamp: string}>) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(getAlertKey(ticketNo), JSON.stringify(messages));
 }
 
 function normalizePartRow(row: Partial<PartTransactionRow> & { id: string }): PartTransactionRow {
@@ -695,7 +677,9 @@ const PART_STATUS_TEXT_COLOR: Record<string, string> = {
   "Back Order": "text-slate-400",
   "Defective": "text-slate-400",
   "Hold for Estimation": "text-slate-400",
+  "In Review": "text-slate-400",
   "Not Used & Stocked": "text-slate-400",
+  "PNN": "text-slate-400",
   "Tech Pickup": "text-slate-400",
   "Transfer to Another Ticket": "text-slate-400",
 
@@ -1198,7 +1182,7 @@ function TicketDetailsPage() {
   const navigate = useNavigate();
   const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, companyId: currentCompanyId, uid } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
-  // tech app) must fill Cause of Failure + Repair Notes before saving a
+  // tech app) must fill Cause of Failure + Service Performed before saving a
   // visit. On desktop / web for other roles these stay optional.
   const isPhone = useIsPhone();
   const isTechRole = useMemo(() => {
@@ -1206,7 +1190,14 @@ function TicketDetailsPage() {
     return r === "TECHNICIAN";
   }, [currentUserRole]);
   const requireTechVisitFields = isPhone || isTechRole;
-  const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
+  // Remembered per-ticket so a full page reload lands back on whichever
+  // tab (e.g. Service Tracking) the user had open, instead of resetting to
+  // General every time.
+  const [activeTab, setActiveTab] = usePersistedTab<TicketDetailsTab>(
+    `${TICKET_ACTIVE_TAB_KEY_PREFIX}${ticketNo}`,
+    TICKET_DETAILS_TABS,
+    "general",
+  );
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
@@ -1231,10 +1222,13 @@ function TicketDetailsPage() {
   const [newVisitSchedNotes, setNewVisitSchedNotes] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
   
-  // Alert message system
-  const [alertMessages, setAlertMessages] = useState<Array<{id: string, text: string, by: string, timestamp: string}>>([]);
+  // Alert message system — real Supabase-backed (ticket_alerts), not
+  // localStorage, so an alert flagged for mobile can actually reach a
+  // technician's phone.
+  const [alertMessages, setAlertMessages] = useState<TicketAlert[]>([]);
   const [newAlertMessage, setNewAlertMessage] = useState("");
-  const [alertsLoaded, setAlertsLoaded] = useState(false);
+  const [newAlertShowInternal, setNewAlertShowInternal] = useState(true);
+  const [newAlertMobilePopup, setNewAlertMobilePopup] = useState(false);
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
@@ -1523,8 +1517,7 @@ function TicketDetailsPage() {
     // Reset loaded flags when ticket changes
     setVisitsLoaded(false);
     setPartRowsLoaded(false);
-    setAlertsLoaded(false);
-    
+
     // Load visits from Supabase (falls back to empty if none)
     sbGetTicketVisits(ticketNo)
       .then((visits) => {
@@ -1593,10 +1586,6 @@ function TicketDetailsPage() {
       setPartAddressBook(book);
     });
     
-    // Load alert messages from localStorage
-    setAlertMessages(loadAlertMessages(ticketNo));
-    setAlertsLoaded(true);
-    
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
     setIsEditingCustomerInfo(false);
@@ -1622,12 +1611,6 @@ function TicketDetailsPage() {
     // This effect intentionally does nothing (kept to preserve hook order).
     if (!partRowsLoaded) return;
   }, [partRows, partRowsLoaded, ticketNo]);
-
-  useEffect(() => {
-    // Save alert messages to localStorage whenever they change
-    if (!alertsLoaded) return;
-    saveAlertMessages(ticketNo, alertMessages);
-  }, [alertMessages, ticketNo, alertsLoaded]);
 
   useEffect(() => {
     // Listen for ticket data changes from Work Planner or other sources
@@ -2025,6 +2008,19 @@ function TicketDetailsPage() {
     () => `${partRows.length} distinct record${partRows.length === 1 ? "" : "s"} found`,
     [partRows.length],
   );
+  // Live, read-only readout of parts currently marked "Used" - not a
+  // section of Service Performed (a tech doesn't type it in), attached
+  // only to the latest visit log entry (visitLogEntries[0]) wherever that
+  // visit is displayed. Parts don't reliably link to a specific visit
+  // (parts.visit_id is null on every real row in production), so this is
+  // ticket-wide rather than pretending to scope per visit.
+  const usedPartsText = useMemo(() => {
+    const used = partRows.filter((p) => p.status === "Used");
+    if (used.length === 0) return "";
+    return used
+      .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
+      .join("\n");
+  }, [partRows]);
 
   const handleTicketChange = (newTicketNo: string) => {
     if (newTicketNo.trim()) {
@@ -2187,6 +2183,17 @@ function TicketDetailsPage() {
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [ticketNo, authReady]);
+
+  // Real alert messages — fetched once ticketDbId resolves above (the FK
+  // needs the real Supabase ticket id, not just the human ticket_no).
+  useEffect(() => {
+    if (!ticketDbId) return;
+    let cancelled = false;
+    getTicketAlerts(ticketDbId)
+      .then((rows) => { if (!cancelled) setAlertMessages(rows); })
+      .catch((err) => console.error("getTicketAlerts error:", err));
+    return () => { cancelled = true; };
+  }, [ticketDbId]);
 
   const ticket = ticketData;
 
@@ -2880,10 +2887,10 @@ function TicketDetailsPage() {
         return;
       }
     }
-    // Cause of Failure (diagnosis) + Repair Notes (resolution) are required
-    // before a technician can submit / complete a visit. Office roles on the
-    // web aren't blocked — only technicians and anyone using the mobile tech
-    // app must fill them in.
+    // Cause of Failure (diagnosis) + Service Performed (resolution) are
+    // required before a technician can submit / complete a visit. Office
+    // roles on the web aren't blocked — only technicians and anyone using
+    // the mobile tech app must fill them in.
     if (requireTechVisitFields) {
       if (!newVisitDiagnosis.trim()) {
         alert("Cause of Failure (Tech) is required before a visit can be completed.");
@@ -2894,8 +2901,8 @@ function TicketDetailsPage() {
         }
         return;
       }
-      if (!newVisitResolution.trim()) {
-        alert("Repair Notes (Tech) is required before a visit can be completed.");
+      if (!parseServicePerformed(newVisitResolution).notes.trim()) {
+        alert("Service Performed (Tech) is required before a visit can be completed.");
         const el = document.getElementById("visit-resolution-modal") as HTMLTextAreaElement | null;
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2906,6 +2913,9 @@ function TicketDetailsPage() {
     }
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
+    // Normalize away the Parts Used hint / any in-progress label damage
+    // regardless of whether the field was blurred before Save was clicked.
+    const composedResolution = composeServicePerformed(parseServicePerformed(newVisitResolution));
 
     const visitEntry: VisitLogEntry = {
       ...(existingVisit ?? createVisitLogEntry({
@@ -2925,7 +2935,7 @@ function TicketDetailsPage() {
         symptomCx: newVisitSymptomCx,
         diagnosis: newVisitDiagnosis,
         symptomTech: newVisitSymptomTech,
-        resolution: newVisitResolution,
+        resolution: composedResolution,
         nonCompletionReason: newVisitNonCompletionReason,
         triageNote: newVisitTriageNote,
         status: newVisitStatus,
@@ -2947,7 +2957,7 @@ function TicketDetailsPage() {
       symptomCx: newVisitSymptomCx,
       diagnosis: newVisitDiagnosis,
       symptomTech: newVisitSymptomTech,
-      resolution: newVisitResolution,
+      resolution: composedResolution,
       nonCompletionReason: newVisitNonCompletionReason,
       triageNote: newVisitTriageNote,
       status: newVisitStatus,
@@ -3073,7 +3083,7 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx("");
     setNewVisitDiagnosis("");
     setNewVisitSymptomTech("");
-    setNewVisitResolution("");
+    setNewVisitResolution(composeServicePerformed(emptyServicePerformed()));
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
     setNewVisitSchedNotes("");
@@ -3329,7 +3339,11 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx(entry.symptomCx || "");
     setNewVisitDiagnosis(entry.diagnosis || "");
     setNewVisitSymptomTech(entry.symptomTech || "");
-    setNewVisitResolution(entry.resolution || "");
+    setNewVisitResolution(
+      entry.resolution
+        ? composeServicePerformed(parseServicePerformed(entry.resolution))
+        : composeServicePerformed(emptyServicePerformed()),
+    );
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
     setNewVisitSchedNotes(entry.schedNotes || "");
@@ -4128,32 +4142,39 @@ function TicketDetailsPage() {
     }
   }, [ticketNo, isAssurantClaimedTicket, partRows, currentEditor]);
 
-  // Alert message system
-  const addAlertMessage = () => {
-    if (newAlertMessage.trim()) {
-      const alertEntry = {
-        id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
-        text: newAlertMessage.trim(),
-        by: currentEditor,
-        timestamp: new Date().toLocaleString(),
-      };
+  // Alert message system — real Supabase-backed (ticket_alerts).
+  const addAlertMessage = async () => {
+    const text = newAlertMessage.trim();
+    if (!text || !ticketDbId) return;
+    try {
+      const alertEntry = await addTicketAlert(ticketDbId, {
+        text,
+        showInternal: newAlertShowInternal,
+        mobilePopup: newAlertMobilePopup,
+        createdBy: myProfileId,
+      });
       setAlertMessages((messages) => [alertEntry, ...messages]);
       appendAuditEntry({
         by: currentEditor,
         action: "Added alert message",
         field: "Alert Messages",
         before: "—",
-        after: newAlertMessage.trim(),
+        after: text,
       });
       setNewAlertMessage("");
+      setNewAlertShowInternal(true);
+      setNewAlertMobilePopup(false);
+    } catch (err) {
+      console.error("addAlertMessage failed:", err);
+      alert(`Failed to save alert: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
-  const removeAlertMessage = (alertId: string) => {
+  const removeAlertMessage = async (alertId: string) => {
     const alertToRemove = alertMessages.find((msg) => msg.id === alertId);
-    if (alertToRemove && confirm("Remove this alert message?")) {
+    if (!alertToRemove || !confirm("Remove this alert message?")) return;
+    try {
+      await removeTicketAlert(alertId);
       setAlertMessages((messages) => messages.filter((msg) => msg.id !== alertId));
       appendAuditEntry({
         by: currentEditor,
@@ -4162,6 +4183,9 @@ function TicketDetailsPage() {
         before: alertToRemove.text,
         after: "Removed",
       });
+    } catch (err) {
+      console.error("removeAlertMessage failed:", err);
+      alert(`Failed to remove alert: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -5282,11 +5306,13 @@ function TicketDetailsPage() {
             <option>Defective</option>
             <option>Hold for Estimation</option>
             <option>Hold for next vist</option>
+            <option>In Review</option>
             <option>Lost</option>
             <option>Need PO</option>
             <option>Not Used &amp; Stocked</option>
             <option>PAID</option>
             <option>Part Ready</option>
+            <option>PNN</option>
             <option>PO Made</option>
             <option>RA - Defect</option>
             <option>RA- DMG</option>
@@ -5415,34 +5441,49 @@ function TicketDetailsPage() {
                 <Send className="h-4 w-4" />
               </button>
               
-              {/* Alert Messages Display - Inline beside controls */}
-              {alertMessages.length > 0 && (
-                <div className="flex items-center gap-2 flex-1">
-                  {alertMessages.slice(0, 1).map((alert) => (
-                    <div 
-                      key={alert.id} 
-                      className="bg-amber-500/30 border-2 border-amber-400/60 rounded px-4 py-2.5 flex items-center gap-3 flex-1 min-w-0 shadow-lg"
-                      title={`By ${alert.by} • ${alert.timestamp}`}
-                    >
-                      <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
-                      <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
-                      <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
-                        {alert.by.split('@')[0]} • {alert.timestamp.split(',')[0]}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeAlertMessage(alert.id)}
-                        className="text-amber-200 hover:text-white transition text-sm font-bold whitespace-nowrap ml-2 hover:scale-110"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                  {alertMessages.length > 1 && (
-                    <span className="text-amber-300 text-sm font-semibold whitespace-nowrap">+{alertMessages.length - 1} more</span>
-                  )}
-                </div>
-              )}
+              {/* Alert Messages Display - Inline beside controls. Only
+                  alerts flagged "Show internally" clutter this view — a
+                  mobile-popup-only alert stays out of the way here. */}
+              {(() => {
+                const internalAlerts = alertMessages.filter((a) => a.showInternal);
+                if (internalAlerts.length === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 flex-1">
+                    {internalAlerts.slice(0, 1).map((alert) => {
+                      const by = (alert.createdBy && profileNameById[alert.createdBy]) || alert.createdBy || "Unknown";
+                      const when = alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "";
+                      return (
+                        <div
+                          key={alert.id}
+                          className="bg-amber-500/30 border-2 border-amber-400/60 rounded px-4 py-2.5 flex items-center gap-3 flex-1 min-w-0 shadow-lg"
+                          title={`By ${by} • ${when}`}
+                        >
+                          <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
+                          <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
+                          <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
+                            {by.split('@')[0]} • {when.split(',')[0]}
+                          </span>
+                          {alert.mobilePopup && (
+                            <span className="hidden lg:inline shrink-0" title="Also pops up for technicians on mobile">
+                              <Smartphone className="h-3.5 w-3.5 text-amber-200/80" strokeWidth={2} />
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeAlertMessage(alert.id)}
+                            className="text-amber-200 hover:text-white transition text-sm font-bold whitespace-nowrap ml-2 hover:scale-110"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {internalAlerts.length > 1 && (
+                      <span className="text-amber-300 text-sm font-semibold whitespace-nowrap">+{internalAlerts.length - 1} more</span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <div className="flex flex-col gap-2">
@@ -7025,7 +7066,7 @@ function TicketDetailsPage() {
                           ) : null}
 
                           {/* Tech Notes - Only show if has content */}
-                          {(entry.diagnosis || entry.resolution || entry.repairType) ? (
+                          {(entry.diagnosis || entry.resolution || entry.repairType || (usedPartsText && entry.id === visitLogEntries[0]?.id)) ? (
                             <div className="mt-3 rounded-md border border-green-500/20 bg-green-500/5 p-3 space-y-2">
                               <div className="text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                               {entry.repairType ? (
@@ -7035,7 +7076,10 @@ function TicketDetailsPage() {
                                 <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Cause of Failure:</span> {entry.diagnosis}</p>
                               ) : null}
                               {entry.resolution ? (
-                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Repair Notes:</span> {entry.resolution}</p>
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Service Performed:</span> {entry.resolution}</p>
+                              ) : null}
+                              {usedPartsText && entry.id === visitLogEntries[0]?.id ? (
+                                <p className="text-sm text-slate-200 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</p>
                               ) : null}
                             </div>
                           ) : null}
@@ -7234,8 +7278,11 @@ function TicketDetailsPage() {
                           <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitDiagnosis.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
-                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitResolution.trim() ? "border-rose-500/50" : "border-white/15"}`} />
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Service Performed (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
+                          <textarea id="visit-resolution-modal" rows={10} value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} onBlur={() => setNewVisitResolution((v) => composeServicePerformed(parseServicePerformed(v)))} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !parseServicePerformed(newVisitResolution).notes.trim() ? "border-rose-500/50" : "border-white/15"}`} />
+                          {usedPartsText && (!editingVisitId || editingVisitId === visitLogEntries[0]?.id) ? (
+                            <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400"><span className="font-semibold">Parts Used (auto, from the Parts tab):</span> {"\n"}{usedPartsText}</p>
+                          ) : null}
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
@@ -7473,7 +7520,7 @@ function TicketDetailsPage() {
                   ) : null}
 
                   {/* Technician Information */}
-                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution) ? (
+                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution || (usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id)) ? (
                     <div className="mt-4">
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                       <div className="space-y-3 text-sm text-slate-200">
@@ -7484,7 +7531,10 @@ function TicketDetailsPage() {
                           <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Cause of Failure:</span> {viewingVisitEntry.diagnosis}</div>
                         ) : null}
                         {viewingVisitEntry.resolution ? (
-                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Repair Notes:</span> {viewingVisitEntry.resolution}</div>
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Service Performed:</span> {viewingVisitEntry.resolution}</div>
+                        ) : null}
+                        {usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</div>
                         ) : null}
                       </div>
                     </div>
@@ -7808,11 +7858,13 @@ function TicketDetailsPage() {
                                 <option>Defective</option>
                                 <option>Hold for Estimation</option>
                                 <option>Hold for next vist</option>
+                                <option>In Review</option>
                                 <option>Lost</option>
                                 <option>Need PO</option>
                                 <option>Not Used &amp; Stocked</option>
                                 <option>PAID</option>
                                 <option>Part Ready</option>
+                                <option>PNN</option>
                                 <option>PO Made</option>
                                 <option>RA - Defect</option>
                                 <option>RA- DMG</option>
@@ -8661,12 +8713,32 @@ function TicketDetailsPage() {
                   value={newAlertMessage}
                   onChange={(e) => setNewAlertMessage(e.target.value)}
                 />
-                <button 
+                <button
                   onClick={addAlertMessage}
                   className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded text-sm transition"
                 >
                   Add
                 </button>
+              </div>
+              <div className="flex items-center gap-5 mt-3">
+                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newAlertShowInternal}
+                    onChange={(e) => setNewAlertShowInternal(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                  Show internally (top of this ticket page)
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newAlertMobilePopup}
+                    onChange={(e) => setNewAlertMobilePopup(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                  Send as popup to technician on mobile
+                </label>
               </div>
             </div>
           </div>

@@ -1420,6 +1420,14 @@ const adminMod: ModuleDef = {
         };
       },
     },
+    {
+      slug: "data-migration",
+      title: "Data Migration",
+      description: "Manually resync ServicePower and NSA tickets into Supabase for a date range.",
+      custom: "data-migration" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 

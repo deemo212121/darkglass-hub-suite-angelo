@@ -4,7 +4,15 @@ import { ChevronDown, Check, Filter, Search } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, deleteCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
+import { usePersistedTab } from "@/lib/usePersistedTab";
+import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+
+/** Readable role text for display — e.g. "BIZOPS_MANAGER" -> "BizOps Manager". Falls back to the raw value for anything not in ROLE_LABELS (legacy free-text roles like "CSR Manager" already read fine as-is). */
+function roleDisplay(role: string | null | undefined): string {
+  if (!role) return "";
+  return ROLE_LABELS[normalizeRole(role)] || role;
+}
 
 type ViewMode = "list" | "hierarchy";
 
@@ -94,7 +102,11 @@ function colValue(record: { id: string; loginName: string; userName: string; typ
     case "id":            return String(record.id ?? "");
     case "loginName":     return String(record.loginName ?? "");
     case "userName":      return String(record.userName ?? "");
-    case "type":          return String(record.type ?? "");
+    // Readable label, not the raw role code/legacy free-text value - two
+    // rows stored differently (e.g. "PARTS_MANAGER" vs legacy "Parts
+    // Manager") must collapse into one funnel entry and filter together,
+    // not show up as two visually-identical checkboxes.
+    case "type":          return roleDisplay(record.type);
     case "email":         return String(record.email ?? "");
     case "manager":       return String(record.manager ?? "");
     case "technicianId":  return String(record.technicianId ?? "");
@@ -347,6 +359,7 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     technicianId: p.technician_id || "",
     office: p.assigned_branch || "",
     locations: p.branch_access || "",
+    isActive: p.is_active,
   }));
 }
 
@@ -398,7 +411,7 @@ function HierarchyTreeNode({
           <UserLink moduleSlug={moduleSlug} submoduleSlug={submoduleSlug} userId={record.loginName}>
             {record.userName}
           </UserLink>
-          <span className="text-xs text-slate-400 whitespace-nowrap">({record.type})</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">({roleDisplay(record.type)})</span>
         </div>
       </div>
       {hasChildren && (
@@ -536,7 +549,7 @@ function ColumnFilter({
 
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const auth = useAuth();
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = usePersistedTab<ViewMode>("ahs:admin-user-management-view-mode", ["list", "hierarchy"], "list");
   const [search, setSearch] = useState("");
   // Per-column funnel filters: { fieldName: Set<allowed values> }
   // Empty set or missing key = no filter on that column.
@@ -547,6 +560,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUserForm, setNewUserForm] = useState<NewUserFormData>({
@@ -589,7 +603,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return users.filter((record) => {
+    const matches = users.filter((record) => {
       // Free-text search across the visible fields.
       if (query) {
         const blob = [record.id, record.loginName, record.userName, record.type, record.email, record.manager, record.technicianId, record.office, record.locations]
@@ -606,7 +620,26 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
       return true;
     });
+    if (!query) return matches;
+    // The blob search above matches ANY field, including "Manager" - so
+    // searching a manager's own name previously surfaced every one of
+    // their direct reports (whose row also contains that name) ahead of
+    // the manager themselves, in whatever order the data happened to load.
+    // Sort (stably) so a match on the person's own login/username always
+    // outranks a match that only came from some other field.
+    const isDirectMatch = (r: UserRow) =>
+      r.loginName.toLowerCase().includes(query) || r.userName.toLowerCase().includes(query);
+    return [...matches].sort((a, b) => Number(isDirectMatch(b)) - Number(isDirectMatch(a)));
   }, [search, users, colFilters]);
+
+  // Manager cells store a free-text display name (profiles.manager_name),
+  // not a real foreign key - so linking to "the manager" needs this lookup
+  // to find the actual profile (and its real loginName) behind that name.
+  const loginNameByDisplayName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of users) if (u.userName) map.set(u.userName, u.loginName);
+    return map;
+  }, [users]);
 
   // Distinct values per column for the funnel dropdowns. Built from the
   // free-text-filtered set so column dropdowns shrink with the search.
@@ -668,17 +701,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }));
   };
 
-  const handleDeleteUser = async (row: UserRow) => {
-    if (!confirm(`Delete ${row.userName} (${row.email})? This removes their profile from the system.`)) {
-      return;
-    }
+  const handleToggleUserActive = async (row: UserRow) => {
+    const reactivating = row.isActive === false;
     try {
-      await deleteCompanyUser(row.profileId);
+      await updateCompanyUser(row.profileId, { isActive: reactivating });
       const profiles = await getCompanyUsers();
       setUsers(mapProfilesToRecords(profiles));
     } catch (error) {
-      console.error("Delete error:", error);
-      alert(`Error deleting user: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("Toggle active error:", error);
+      alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setDeactivateTarget(null);
     }
   };
 
@@ -863,59 +896,59 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
         {viewMode === "list" ? (
           <div className="mt-5 overflow-x-auto rounded-xl border border-white/15 bg-white/8 backdrop-blur-md">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs leading-tight">
               <thead>
                 <tr className="bg-slate-900/90 text-blue-200">
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">ID
                       <ColumnFilter field="id" label="ID" options={columnOptions["id"] || []}
                         selected={colFilters["id"] || new Set()} onChange={(n) => setColFilter("id", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Login Name
                       <ColumnFilter field="loginName" label="Login Name" options={columnOptions["loginName"] || []}
                         selected={colFilters["loginName"] || new Set()} onChange={(n) => setColFilter("loginName", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">User Name
                       <ColumnFilter field="userName" label="User Name" options={columnOptions["userName"] || []}
                         selected={colFilters["userName"] || new Set()} onChange={(n) => setColFilter("userName", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Type
                       <ColumnFilter field="type" label="Type" options={columnOptions["type"] || []}
                         selected={colFilters["type"] || new Set()} onChange={(n) => setColFilter("type", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Email
                       <ColumnFilter field="email" label="Email" options={columnOptions["email"] || []}
                         selected={colFilters["email"] || new Set()} onChange={(n) => setColFilter("email", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Manager
                       <ColumnFilter field="manager" label="Manager" options={columnOptions["manager"] || []}
                         selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Technician ID
                       <ColumnFilter field="technicianId" label="Technician ID" options={columnOptions["technicianId"] || []}
                         selected={colFilters["technicianId"] || new Set()} onChange={(n) => setColFilter("technicianId", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">
+                  <th className="px-2 py-1.5 text-left">
                     <span className="inline-flex items-center">Assigned Branch
                       <ColumnFilter field="office" label="Assigned Branch" options={columnOptions["office"] || []}
                         selected={colFilters["office"] || new Set()} onChange={(n) => setColFilter("office", n)} />
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left">Branch Access</th>
-                  <th className="px-4 py-3 text-left">Actions</th>
+                  <th className="px-2 py-1.5 text-left">Branch Access</th>
+                  <th className="px-2 py-1.5 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
@@ -934,16 +967,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 ) : (
                   filtered.map((record) => (
                     <tr key={`${record.id}-${record.loginName}`} className="hover:bg-white/5">
-                      <td className="px-4 py-3 whitespace-nowrap">{record.id}</td>
-                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
-                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
-                      <td className="px-4 py-3 whitespace-nowrap">{record.type}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
-                      <td className="px-4 py-3 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
-                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-slate-300">{record.office}</td>
-                      <td className="px-4 py-3 text-slate-300">{record.locations}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-2 py-1.5 whitespace-nowrap">{record.id}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.loginName}</UserLink></td>
+                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">{roleDisplay(record.type)}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.email || "—"}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.office}</td>
+                      <td className="px-2 py-1.5 text-slate-300">{record.locations}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -954,10 +987,14 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDeleteUser(record)}
-                            className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+                            onClick={() => setDeactivateTarget(record)}
+                            className={
+                              record.isActive === false
+                                ? "rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                                : "rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-500/20"
+                            }
                           >
-                            Delete
+                            {record.isActive === false ? "Reactivate" : "Deactivate"}
                           </button>
                         </div>
                       </td>
@@ -1187,6 +1224,33 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </button>
               <button type="button" onClick={handleConfirmResetPassword} className="btn btn-primary" disabled={resettingPassword}>
                 {resettingPassword ? "Applying…" : "Force Password Change"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deactivateTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="relative w-full max-w-sm rounded-xl border border-white/15 bg-slate-950/95 p-5 shadow-2xl shadow-black/60">
+            <h2 className="text-lg font-bold text-white">
+              {deactivateTarget.isActive === false ? "Reactivate user?" : "Deactivate user?"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              {deactivateTarget.isActive === false
+                ? `Reactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They'll be able to log in again.`
+                : `Deactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They won't be able to log in, but their records stay intact.`}
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => setDeactivateTarget(null)} className="btn hover:bg-slate-800">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleUserActive(deactivateTarget)}
+                className={deactivateTarget.isActive === false ? "btn btn-primary" : "btn btn-danger"}
+              >
+                {deactivateTarget.isActive === false ? "Reactivate" : "Deactivate"}
               </button>
             </div>
           </div>

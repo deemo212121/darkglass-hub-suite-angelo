@@ -1,4 +1,4 @@
-import { createFileRoute, notFound, Link } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
@@ -6,9 +6,10 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
-import { WORK_PLAN_DAYS, SLOT_OPTIONS, type WorkPlan } from "@/lib/workPlan";
+import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   ssr: false,
@@ -140,6 +141,7 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready } = useAuth();
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);
@@ -148,7 +150,11 @@ function UserDetailsPage() {
   const [profileId, setProfileId] = useState<string>("");
   const [seqId, setSeqId] = useState<string>("");
   const [managerCandidates, setManagerCandidates] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<(typeof USER_TABS)[number]>("General Information");
+  const [activeTab, setActiveTab] = usePersistedTab<(typeof USER_TABS)[number]>(
+    `ahs:user-details-active-tab:${userId}`,
+    USER_TABS,
+    "General Information",
+  );
   const [form, setForm] = useState({
     email: "",
     username: "",
@@ -166,6 +172,8 @@ function UserDetailsPage() {
     smsStatus: "Not available",
     offDays: [] as number[],
     isActive: true,
+    requiredCheckIn: "",
+    requiredCheckOut: "",
   });
   // Work plan grid state (per-location weekday/weekend + per-day slot).
   const [workPlan, setWorkPlan] = useState<WorkPlan>({});
@@ -220,6 +228,8 @@ function UserDetailsPage() {
           smsStatus: p.sms_status || "Not available",
           offDays: Array.isArray(p.off_days) ? p.off_days : [],
           isActive: p.is_active,
+          requiredCheckIn: p.required_check_in || "",
+          requiredCheckOut: p.required_check_out || "",
         });
         const { normalizeWorkPlan } = await import("@/lib/workPlan");
         setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
@@ -279,13 +289,26 @@ function UserDetailsPage() {
       // First role in the list is the primary; the rest land in extra_roles.
       const primaryRole = (form.roles[0] || form.role || "") as any;
       const extraRoles = form.roles.slice(1) as any;
+      // branch_access had no edit path anywhere in this page before - it
+      // could only ever be set once, at user creation, and then silently
+      // drifted out of sync with whatever the Work Plan tab actually said
+      // (that's how a profile can end up with branch_access holding a
+      // stray value that bears no relation to its real work plan). Deriving
+      // it fresh from the work plan on every save, the same way the
+      // location-restriction check itself does (see accessibleLocations,
+      // used by src/lib/auth.tsx), keeps the two permanently in sync
+      // instead of just fixing today's snapshot.
+      const branchAccess = (accessibleLocations(workPlan) ?? []).join("|");
+      const newUsername = form.username.trim();
       await updateCompanyUser(profileId, {
+        username: newUsername,
         displayName: form.displayName,
         role: primaryRole,
         extraRoles,
         phoneNumber: form.phoneNumber,
         managerName: form.managerName,
         assignedBranch: form.assignedBranch,
+        branchAccess,
         emailReportLocation: form.emailReportLocation,
         technicianId: form.technicianId,
         poInitials: form.poInitials,
@@ -293,6 +316,8 @@ function UserDetailsPage() {
         offDays: form.offDays,
         workPlan: workPlan,
         isActive: form.isActive,
+        requiredCheckIn: form.requiredCheckIn,
+        requiredCheckOut: form.requiredCheckOut,
       });
       // Persist Employee Information (powers Work Map house pins).
       try {
@@ -302,6 +327,16 @@ function UserDetailsPage() {
         console.warn("Employee info save skipped:", e);
       }
       setStatus("Saved.");
+      // The URL is keyed by username (userId route param) - if it just
+      // changed, the address bar is now stale (a refresh would 404 via
+      // getProfileByUsername). Move to the new URL so it keeps working.
+      if (newUsername && newUsername.toLowerCase() !== userId.toLowerCase()) {
+        void navigate({
+          to: "/m/$module/$submodule/$userId",
+          params: { module: module.slug, submodule: submodule.slug, userId: newUsername },
+          replace: true,
+        });
+      }
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : "Save failed"}`);
     } finally {
@@ -408,10 +443,7 @@ function UserDetailsPage() {
                           <option>Inactive</option>
                         </select>
                       </label>
-                      <label className="space-y-1.5 text-sm">
-                        <span className={labelCls}>Login ID</span>
-                        <input value={form.username} disabled className={readonlyCls} />
-                      </label>
+                      {textField("Login ID", "username", { note: "(used to log in — must stay unique)" })}
 
                       <label className="space-y-1.5 text-sm">
                         <span className={labelCls}>User Type <span className="normal-case text-[10px] text-slate-500">(tick all that apply — first ticked is primary)</span></span>
@@ -428,6 +460,7 @@ function UserDetailsPage() {
                       </label>
                       {textField("User Name", "displayName")}
                       {textField("PO # Initial", "poInitials", { note: "(used as part of PO #)" })}
+                      {textField("Technician ID", "technicianId")}
 
                       {textField("Work Phone #", "phoneNumber", { type: "tel" })}
                       <label className="space-y-1.5 text-sm">
@@ -463,6 +496,8 @@ function UserDetailsPage() {
                           {SMS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </label>
+                      {textField("Time In Required", "requiredCheckIn", { type: "time" })}
+                      {textField("Time Out Required", "requiredCheckOut", { type: "time" })}
                     </div>
 
                     {/* Time Off Schedule */}

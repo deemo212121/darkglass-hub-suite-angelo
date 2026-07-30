@@ -14,21 +14,43 @@
  *  - PENDING_BY_STATUS            — donut slices grouped by repair status
  *  - PENDING_BY_LOCATION          — donut slices grouped by office / branch
  *  - CSR_ACTIVITY                 — donut slices grouped by created-by user
- *  - TECH_RANKING                 — table rows ranked by 30-day completion %
- *  - LOCATION_RANKING             — table rows ranked by 30-day completion %
+ *  - TECH_RANKING                 — table rows ranked by 30-day completion rate
+ *                                    (completed / assigned, cancelled voided out)
  *  - ALL_LOCATIONS_FILTER         — flat list for the location dropdown
  */
 
 import { getCompanyTickets, getTicketAuditLog } from "./supabase/tickets";
 import { getCompanyUsers } from "./supabase/users";
-import { isPendingStatus, isClosedStatus, type Ticket } from "./ticketData";
+import { isPendingStatus, statusGroupOf, type Ticket } from "./ticketData";
+
+/** Minimal per-ticket info for the Completion Rate drill-down — enough to
+ *  list and link to a ticket without holding the full Ticket object. */
+export interface TicketRef {
+  ticketNo: string;
+  customer: string;
+  status: string;
+  created: string;
+}
 
 export interface RankingRow {
   rank: number;
   name: string;
   office: string;
-  thirtyDay: number | null;
-  tenDay: number | null;
+  /** All-time count of tickets ever assigned to this tech, any status. */
+  assigned: number;
+  /** Count with a "completed" status group. */
+  completed: number;
+  /** Count with a "cancelled" status group — voided out of completionRate entirely. */
+  cancelled: number;
+  /** Comma-joined tally of this tech's cancellation reasons, e.g. "Cancelled By Warranty (2), Duplicate (1)". Empty string when none recorded. */
+  cancellationReasons: string;
+  /** completed / (assigned - cancelled) * 100 — cancelled tickets counted toward neither side. Null when that denominator is 0. */
+  completionRate: number | null;
+  /** Drill-down ticket lists backing the three counts above, plus the reason on each cancelled ticket. */
+  completedTickets: TicketRef[];
+  cancelledTickets: (TicketRef & { reason: string })[];
+  /** Assigned tickets that are neither completed nor cancelled — still open/in progress. */
+  openTickets: TicketRef[];
 }
 
 /**
@@ -59,7 +81,6 @@ export interface OverallStatusData {
   pendingByLocation: DonutSlice[];
   csrActivity: DonutSlice[];
   techRanking: RankingRow[];
-  locationRanking: RankingRow[];
   allLocationsFilter: string[];
 }
 
@@ -166,14 +187,6 @@ function toDay(iso: string): string {
     return `${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`;
   }
   return "";
-}
-
-function isWithinDays(iso: string, days: number): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return false;
-  const ageMs = Date.now() - d.getTime();
-  return ageMs <= days * 24 * 60 * 60 * 1000;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -373,8 +386,14 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     .sort(([, a], [, b]) => b - a)
     .map(([name, value], i) => ({ name, value, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
 
-  // ── Tech ranking ────────────────────────────────────────────────────────
-  // Completion rate = closed-or-completed / assigned within the window.
+  // ── Tech ranking (Completion Rate) ──────────────────────────────────────
+  // All-time per-tech totals: Assigned (every ticket ever assigned to them,
+  // any status), Completed, Cancelled, and Completion Rate = Completed /
+  // (Assigned - Cancelled). A cancelled ticket is voided out of BOTH sides of
+  // that rate — it neither counts as an assignment nor a completion for KPI
+  // purposes, so a cancellation never helps or hurts a tech's rate — but it's
+  // still counted and shown in its own Cancelled column, and its reason (if
+  // recorded) is kept and shown rather than discarded.
   // Some tickets get stamped with a manager or office/admin account (e.g.
   // "Daven Hodge" — primary role Senior Branch Manager, "Memphis Admin" — no
   // profile at all) as a fallback when no field tech is assigned yet. Those
@@ -402,58 +421,77 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
   // showing once under "San Antonio" and again under "—" for a handful of
   // tickets with no recorded location. The displayed office is whichever
   // one shows up most often among that tech's tickets.
-  type TechAgg = { name: string; officeCounts: Map<string, number>; thirty: { done: number; total: number }; ten: { done: number; total: number } };
+  type TechAgg = {
+    name: string;
+    officeCounts: Map<string, number>;
+    assigned: number;
+    completed: number;
+    cancelled: number;
+    reasonCounts: Map<string, number>;
+    completedTickets: TicketRef[];
+    cancelledTickets: (TicketRef & { reason: string })[];
+    openTickets: TicketRef[];
+  };
   const techMap = new Map<string, TechAgg>();
   for (const t of ticketsAll) {
     const tech = (t.technician || "").trim();
     if (!tech || /unassigned/i.test(tech)) continue;
     if (isNonTechName(tech)) continue;
     const key = tech.toLowerCase();
-    if (!techMap.has(key)) techMap.set(key, { name: tech, officeCounts: new Map(), thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });
+    if (!techMap.has(key)) {
+      techMap.set(key, {
+        name: tech,
+        officeCounts: new Map(),
+        assigned: 0,
+        completed: 0,
+        cancelled: 0,
+        reasonCounts: new Map(),
+        completedTickets: [],
+        cancelledTickets: [],
+        openTickets: [],
+      });
+    }
     const agg = techMap.get(key)!;
     const office = (t.location || t.branch || "").trim();
     if (office) agg.officeCounts.set(office, (agg.officeCounts.get(office) ?? 0) + 1);
-    const done = isClosedStatus(t.status);
-    const stamp = t.statusChangedAt || t.created;
-    if (isWithinDays(stamp, 30)) { agg.thirty.total += 1; if (done) agg.thirty.done += 1; }
-    if (isWithinDays(stamp, 10)) { agg.ten.total += 1; if (done) agg.ten.done += 1; }
+    agg.assigned += 1;
+    const ref: TicketRef = { ticketNo: t.ticketNo, customer: t.customer || "", status: t.status, created: t.created || "" };
+    const group = statusGroupOf(t.status);
+    if (group === "completed") {
+      agg.completed += 1;
+      agg.completedTickets.push(ref);
+    } else if (group === "cancelled") {
+      agg.cancelled += 1;
+      const reason = (t.cancellationReason || "").trim();
+      if (reason) agg.reasonCounts.set(reason, (agg.reasonCounts.get(reason) ?? 0) + 1);
+      agg.cancelledTickets.push({ ...ref, reason: reason || "—" });
+    } else {
+      agg.openTickets.push(ref);
+    }
   }
   const techRows = Array.from(techMap.values())
-    .map((a) => ({
-      name: a.name,
-      office: Array.from(a.officeCounts.entries()).sort(([, x], [, y]) => y - x)[0]?.[0] ?? "—",
-      thirtyDay: a.thirty.total > 0 ? Math.round((a.thirty.done / a.thirty.total) * 10000) / 100 : null,
-      tenDay: a.ten.total > 0 ? Math.round((a.ten.done / a.ten.total) * 10000) / 100 : null,
-    }))
-    .filter((r) => r.thirtyDay !== null || r.tenDay !== null)
-    .sort((a, b) => (b.thirtyDay ?? -1) - (a.thirtyDay ?? -1));
+    .map((a) => {
+      const denom = a.assigned - a.cancelled;
+      return {
+        name: a.name,
+        office: Array.from(a.officeCounts.entries()).sort(([, x], [, y]) => y - x)[0]?.[0] ?? "—",
+        assigned: a.assigned,
+        completed: a.completed,
+        cancelled: a.cancelled,
+        cancellationReasons: Array.from(a.reasonCounts.entries())
+          .sort(([, x], [, y]) => y - x)
+          .map(([reason, count]) => `${reason} (${count})`)
+          .join(", "),
+        completionRate: denom > 0 ? Math.round((a.completed / denom) * 10000) / 100 : null,
+        completedTickets: a.completedTickets,
+        cancelledTickets: a.cancelledTickets,
+        openTickets: a.openTickets,
+      };
+    })
+    .sort((a, b) => (b.completionRate ?? -1) - (a.completionRate ?? -1));
   const techRanking: RankingRow[] = techRows.map((r, i) => ({ rank: i + 1, ...r }));
 
-  // ── Location ranking ────────────────────────────────────────────────────
-  type LocAgg = { office: string; thirty: { done: number; total: number }; ten: { done: number; total: number } };
-  const locMap = new Map<string, LocAgg>();
-  for (const t of ticketsAll) {
-    const office = (t.location || t.branch || "").trim();
-    if (!office) continue;
-    if (!locMap.has(office)) locMap.set(office, { office, thirty: { done: 0, total: 0 }, ten: { done: 0, total: 0 } });
-    const agg = locMap.get(office)!;
-    const done = isClosedStatus(t.status);
-    const stamp = t.statusChangedAt || t.created;
-    if (isWithinDays(stamp, 30)) { agg.thirty.total += 1; if (done) agg.thirty.done += 1; }
-    if (isWithinDays(stamp, 10)) { agg.ten.total += 1; if (done) agg.ten.done += 1; }
-  }
-  const locRows = Array.from(locMap.values())
-    .map((a) => ({
-      name: a.office,
-      office: a.office,
-      thirtyDay: a.thirty.total > 0 ? Math.round((a.thirty.done / a.thirty.total) * 10000) / 100 : null,
-      tenDay: a.ten.total > 0 ? Math.round((a.ten.done / a.ten.total) * 10000) / 100 : null,
-    }))
-    .filter((r) => r.thirtyDay !== null || r.tenDay !== null)
-    .sort((a, b) => (b.thirtyDay ?? -1) - (a.thirtyDay ?? -1));
-  const locationRanking: RankingRow[] = locRows.map((r, i) => ({ rank: i + 1, ...r }));
-
-  const allLocationsFilter = ["ALL", ...Array.from(new Set(locationRanking.map((r) => r.office))).sort()];
+  const allLocationsFilter = ["ALL", ...Array.from(new Set(ticketsAll.map((t) => (t.location || "").trim()).filter(Boolean))).sort()];
 
   return {
     monthlyStats,
@@ -463,7 +501,6 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     pendingByLocation,
     csrActivity,
     techRanking,
-    locationRanking,
     allLocationsFilter,
   };
 }
@@ -477,6 +514,5 @@ export const EMPTY_OVERALL_STATUS: OverallStatusData = {
   pendingByLocation: [],
   csrActivity: [],
   techRanking: [],
-  locationRanking: [],
   allLocationsFilter: ["ALL"],
 };

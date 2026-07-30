@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronLeft, ChevronRight, Save, Plus, Trash2 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -10,7 +11,11 @@ const BRANCHES = ["[All]","Asheville","Atlanta","Birmingham","Dallas"];
 const COLS = ["Default Amount","2 Man Job","Back Tub","Major Repair","Panel 60 Over","Panel 80 Over","Sealed System","Sealed System(R600)","Seal with Trainee","Sealed System Follow Up","Stacked Unit(Washer Only)","Wall Oven"];
 
 export function TechPayrollSetup({ mod, sub }: Props) {
-  const [tab, setTab] = useState<"amount"|"date"|"tier">("amount");
+  const [tab, setTab] = usePersistedTab<"amount" | "date" | "tier">(
+    "ahs:tech-payroll-setup-active-tab",
+    ["amount", "date", "tier"],
+    "amount",
+  );
   const [year, setYear] = useState(2026);
   const [amountRows] = useState<any[]>([]);
   const [dateRows] = useState<any[]>([]);

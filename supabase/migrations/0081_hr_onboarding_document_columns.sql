@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0064 — Custom columns for the Onboarding Documents checklist grid
+-- 0081 — Custom columns for the Onboarding Documents checklist grid
 --
 -- The Technician/Parts Manager/Philippines document lists are hardcoded
 -- in ReportHRDaily.tsx (TECHNICIAN_ONBOARDING_DOCS etc.). This table lets
@@ -12,7 +12,7 @@
 -- everything else uses, and the per-employee Documents page gets one more
 -- upload/link drop zone for it automatically.
 --
--- Run once in the Supabase SQL Editor, after 0072.
+-- Run once in the Supabase SQL Editor, after 0080.
 -- =====================================================================
 
 create table if not exists hr_onboarding_document_columns (

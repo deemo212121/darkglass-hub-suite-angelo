@@ -10,6 +10,8 @@ export interface UserManagementRecord {
   technicianId: string;
   office: string;
   locations: string;
+  /** Undefined for the legacy mock CORE_USERS rows below - only real Supabase profiles carry this. */
+  isActive?: boolean;
 }
 
 const ALL_LOCATIONS = LOCATIONS.join(",");

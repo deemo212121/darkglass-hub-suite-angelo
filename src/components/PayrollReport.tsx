@@ -3,6 +3,7 @@ import { ChevronLeft, Save } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, offsetStr, todayStr } from "@/components/shared";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const PAYROLL_PERIODS = ["(custom)","05/13/2026 ~ 05/26/2026","04/28/2026 ~ 05/12/2026","04/11/2026 ~ 04/27/2026",
@@ -24,7 +25,7 @@ const CPA_ROWS = Array.from({length:20},(_,i)=>({
 }));
 
 export function PayrollReport({ mod, sub }: Props) {
-  const [tab, setTab] = useState<"tech"|"cpa">("tech");
+  const [tab, setTab] = usePersistedTab<"tech" | "cpa">("ahs:payroll-report-active-tab", ["tech", "cpa"], "tech");
   const [location, setLocation] = useState("");
   const [locOpen, setLocOpen] = useState(false);
   const [payrollDate, setPayrollDate] = useState("(custom)");

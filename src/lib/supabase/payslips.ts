@@ -6,6 +6,20 @@
 
 import { supabase } from "./client";
 
+/** Real payroll_runs.status values (migration 0001) — draft runs never
+ * reach here since getMyPayslips only returns runs that already have a
+ * line item assigned, but the mapping stays total for safety. */
+export type PayslipStatusLabel = "Pending" | "Processing" | "Approved" | "Paid";
+export function payslipStatusLabel(status: string): PayslipStatusLabel {
+  switch (status) {
+    case "paid": return "Paid";
+    case "approved": return "Approved";
+    case "generated": return "Processing";
+    case "draft":
+    default: return "Pending";
+  }
+}
+
 export interface MyPayslipRow {
   runId: string;
   periodStart: string;

@@ -7,7 +7,7 @@
  * "File Submissions/{Form Title}/{Form Title} - {Submitter} - {date}/".
  *
  * The refresh token this produces is stored server-side only (see migration
- * 0063) — regular users only ever see connected/not-connected status via
+ * 0080_hr_google_drive_connections.sql) — regular users only ever see connected/not-connected status via
  * the get_google_drive_connection_status() RPC, never the token itself.
  *
  * One pathname (/api/google-drive) handles three things, distinguished by

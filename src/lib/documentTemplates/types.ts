@@ -1,6 +1,6 @@
 /**
  * "Turn submissions into documents" — an optional PDF template per custom
- * form (see supabase/migrations/0070_hr_custom_forms_document_template.sql).
+ * form (see supabase/migrations/0078_hr_custom_forms_document_template.sql).
  * A template is just an ordered list of blocks; see
  * DocumentTemplateEditor.tsx for the designer and generate.ts for turning
  * one (plus a real submission's responses) into an actual PDF.

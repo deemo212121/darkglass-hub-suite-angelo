@@ -4,8 +4,9 @@
  * (matched against real profiles by display name) for everyone else.
  */
 
-import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
+import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
@@ -38,4 +39,38 @@ export async function resolveTeamLeadOrManager(
   const managerName = (profile.manager_name || "").trim().toLowerCase();
   if (!managerName) return null;
   return allProfiles.find((p) => (p.display_name || "").trim().toLowerCase() === managerName) ?? null;
+}
+
+/**
+ * Attendance Monitoring's row-visibility scope: `null` means unrestricted
+ * (Admin/SuperAdmin/HR/Finance see the whole company). Otherwise the set of
+ * profile ids a manager-tier viewer (see isAttendanceManagerTierRole) may
+ * see — their own row, anyone whose manager_name resolves to them, and (for
+ * CSR Manager/Team Leader) anyone on a CSR team they lead.
+ */
+export function visibleAttendanceProfileIds(
+  viewer: ProfileRow,
+  allProfiles: ProfileRow[],
+  csrComposition: CsrTeamComposition | null
+): Set<string> | null {
+  if (!isAttendanceManagerTierRole(viewer.role)) return null;
+
+  const ids = new Set<string>([viewer.id]);
+  const viewerName = (viewer.display_name || "").trim().toLowerCase();
+  if (viewerName) {
+    allProfiles.forEach((p) => {
+      if ((p.manager_name || "").trim().toLowerCase() === viewerName) ids.add(p.id);
+    });
+  }
+  if (csrComposition && isCsrRole(viewer.role)) {
+    const myLeaderTeamIds = new Set(
+      csrComposition.members.filter((m) => m.profileId === viewer.id && m.isLeader).map((m) => m.teamId)
+    );
+    if (myLeaderTeamIds.size > 0) {
+      csrComposition.members
+        .filter((m) => myLeaderTeamIds.has(m.teamId))
+        .forEach((m) => ids.add(m.profileId));
+    }
+  }
+  return ids;
 }

@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, REPAIR_STATUSES, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -86,7 +87,11 @@ export function LtpProjectionReport({ mod, sub }: Props) {
   const [serviceTypes, setServiceTypes] = useState([...SERVICE_TYPES]);
   const [warrantyTypes, setWarrantyTypes] = useState([...WARRANTY_TYPES]);
   const [location, setLocation] = useState("");
-  const [activeTab, setActiveTab] = useState<"imported"|"scheduled">("imported");
+  const [activeTab, setActiveTab] = usePersistedTab<"imported" | "scheduled">(
+    "ahs:ltp-projection-active-tab",
+    ["imported", "scheduled"],
+    "imported",
+  );
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
 

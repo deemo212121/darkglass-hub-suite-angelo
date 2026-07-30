@@ -3,19 +3,23 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
-import { ROLE_LABELS, canSubmitConductNote } from "@/lib/roleLabels";
+import { ROLE_LABELS, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
   getCompanyTimecardEntries,
   getProfileIdByFirebaseUid,
   calcWorkedHours,
   hoursDiff,
+  saveEntry as saveTimecardEntry,
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
-import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
+import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
@@ -44,12 +48,15 @@ interface DailyRecord {
   location: string;
   department: string;
   manager: string;
+  role: string;
   checkIn: string;
   mealIn: string;
   mealOut: string;
   checkOut: string;
   alerts: string[];
   isOffDay: boolean;
+  /** Display name of whoever clocked this person in, if it wasn't themselves (a manager's proxy clock-in). */
+  clockedInBy: string | null;
 }
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
@@ -85,6 +92,16 @@ function fmtHoursMinutes(hours: number): string {
  * Off-day indices follow the same convention timecards.ts already uses
  * company-wide (getCompanyTimecardWarnings / getAttendanceForRange):
  * JS Date.getDay() — 0=Sunday..6=Saturday.
+ *
+ * `nowHHMM` is the current time in THIS employee's own branch timezone
+ * ("HH:MM" — see timezoneForBranch in attendanceGrace.ts: Philippines
+ * follows Central by policy, every US branch follows its own real local
+ * zone) when scoring today live, or `null` when scoring a day that's
+ * already over (e.g. past days in the monthly summary) — grace never
+ * applies then, since anything still missing at that point is definitively
+ * missing, not "not due yet." A 5-minute grace period applies uniformly to
+ * both clock-in and clock-out (and softens "Late Check In" — arriving a
+ * couple minutes late no longer gets flagged).
  */
 function computeAlerts(
   checkIn: string,
@@ -93,15 +110,26 @@ function computeAlerts(
   mealEnd: string,
   requiredCheckIn: string,
   requiredCheckOut: string,
-  isOffDay: boolean
+  isOffDay: boolean,
+  nowHHMM: string | null
 ): string[] {
+  if (isOffDay) return [];
+
+  const graceIn = requiredCheckIn ? addMinutesToHHMM(requiredCheckIn, ATTENDANCE_GRACE_MINUTES) : null;
+  const graceOut = requiredCheckOut ? addMinutesToHHMM(requiredCheckOut, ATTENDANCE_GRACE_MINUTES) : null;
+  const pastInGrace = !graceIn || nowHHMM === null || nowHHMM > graceIn;
+  const pastOutGrace = !graceOut || nowHHMM === null || nowHHMM > graceOut;
+
   if (!checkIn && !checkOut) {
-    return isOffDay ? [] : ["Absent", "No Clock In"];
+    return pastInGrace ? ["Absent", "No Clock In"] : [];
   }
   const alerts: string[] = [];
-  if (!checkIn) alerts.push("No Clock In");
-  else if (requiredCheckIn && checkIn > requiredCheckIn) alerts.push("Late Check In");
-  if (checkIn && !checkOut) alerts.push("No Clock Out");
+  if (!checkIn) {
+    if (pastInGrace) alerts.push("No Clock In");
+  } else if (graceIn && checkIn > graceIn) {
+    alerts.push("Late Check In");
+  }
+  if (checkIn && !checkOut && pastOutGrace) alerts.push("No Clock Out");
   if (checkIn && checkOut) {
     const worked = calcWorkedHours({ checkIn, checkOut, mealStart, mealEnd, notes: "" });
     const requiredHours = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
@@ -113,9 +141,14 @@ function computeAlerts(
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { uid, ready, allowedLocations, displayName, role } = useAuth();
-  // Attendance notes can only be created/edited by HR, Finance, or Admin —
-  // other roles that can view this page (e.g. BizOps Manager) can't.
-  const canManageNotes = ["ADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
+  // Attendance notes (the quick "Add Note" / Notify Individual / Notify Team
+  // Lead flow) are open to HR/Finance/Admin for the whole roster, and to
+  // manager-tier roles for their own direct reports — the row itself is
+  // already scoped to "my team" via visibleProfiles/visibleAttendanceProfileIds,
+  // so this flag just needs to admit manager-tier roles at all, not re-scope
+  // per row. normalizeRole() so legacy space-separated role values (e.g.
+  // "CSR Manager") still match, same fix as hasDashboardAccess.
+  const canManageNotes = ["ADMIN", "HR", "FINANCE"].includes(normalizeRole(role)) || isAttendanceManagerTierRole(role);
   // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
   // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
   // any manager-flavored role can submit one here for a tardy employee, but
@@ -126,12 +159,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"daily-attendance" | "pto-management" | "corrections" | "warnings">("daily-attendance");
+  const [activeTab, setActiveTab] = usePersistedTab<"daily-attendance" | "pto-management" | "corrections" | "warnings">(
+    "ahs:attendance-monitoring-active-tab",
+    ["daily-attendance", "pto-management", "corrections", "warnings"],
+    "daily-attendance",
+  );
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
@@ -157,7 +195,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [warnText, setWarnText] = useState("");
   const [warnSaving, setWarnSaving] = useState(false);
 
-  const todayISO = useMemo(() => toISODate(new Date()), []);
+  // "Today" is anchored to the default policy timezone (Central), not the
+  // viewer's own browser locale — otherwise an HR/Admin user physically in
+  // the Philippines (13-14 hours off Central) would see the wrong calendar
+  // day here for roughly half of every 24 hours.
+  const todayISO = useMemo(() => nowInTimezone(DEFAULT_ATTENDANCE_TIMEZONE).dateISO, []);
   const { rangeStart, rangeEnd } = useMemo(() => {
     const today = new Date();
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -173,9 +215,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
+        getCsrTeamComposition().catch(() => null),
         getCompanyTimecardEntries(rangeStart, rangeEnd),
         getAttendanceNotes(todayISO, todayISO),
         getCompanyPtoRequests(),
@@ -185,6 +228,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
+      setCsrComposition(csrCompositionResult);
       setEntries(entryRows);
       const noteMap: Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean }> = {};
       noteRows.forEach((n) => {
@@ -221,6 +265,29 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return () => { cancelled = true; };
   }, [ptoForm.profileId]);
 
+  // Live clock, one per distinct branch timezone actually in view, so a row
+  // visibly flips into "Missing Clock In/Out" as ITS OWN branch's 5-minute
+  // grace period elapses (Eastern-branch employees judged against Eastern
+  // time, Central against Central, Philippines against Central by policy),
+  // without a reload.
+  const distinctTimezones = useMemo(
+    () => Array.from(new Set(profiles.map((p) => timezoneForBranch(p.assigned_branch)))),
+    [profiles]
+  );
+  const computeNowByTimezone = useCallback(() => {
+    const map: Record<string, string> = {};
+    distinctTimezones.forEach((tz) => {
+      map[tz] = nowInTimezone(tz).hhmm;
+    });
+    return map;
+  }, [distinctTimezones]);
+  const [nowByTimezone, setNowByTimezone] = useState<Record<string, string>>(computeNowByTimezone);
+  useEffect(() => {
+    setNowByTimezone(computeNowByTimezone());
+    const interval = setInterval(() => setNowByTimezone(computeNowByTimezone()), 30_000);
+    return () => clearInterval(interval);
+  }, [computeNowByTimezone]);
+
   const allProfileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const profileName = (id: string | null) => {
     if (!id) return "—";
@@ -228,10 +295,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return p?.display_name || p?.email || "—";
   };
 
+  const myProfile = useMemo(
+    () => (myProfileId ? allProfileById.get(myProfileId) ?? null : null),
+    [myProfileId, allProfileById]
+  );
+
+  // Manager-tier roles (Technician Manager, CSR Manager, BizOps Manager, ...)
+  // only see their own direct reports here; Admin/HR/Finance/SuperAdmin see
+  // everyone (returns null = unrestricted).
+  const teamScopedIds = useMemo(
+    () => (myProfile ? visibleAttendanceProfileIds(myProfile, profiles, csrComposition) : null),
+    [myProfile, profiles, csrComposition]
+  );
+
   const visibleProfiles = useMemo(() => {
-    if (allowedLocations === null) return profiles;
-    return profiles.filter((p) => allowedLocations.includes(p.assigned_branch || ""));
-  }, [profiles, allowedLocations]);
+    let result = profiles;
+    if (allowedLocations !== null) result = result.filter((p) => allowedLocations.includes(p.assigned_branch || ""));
+    if (teamScopedIds !== null) result = result.filter((p) => teamScopedIds.has(p.id));
+    return result;
+  }, [profiles, allowedLocations, teamScopedIds]);
 
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
@@ -249,7 +331,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
       const mealOut = entry?.mealEnd || "";
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay);
+      const branchTz = timezoneForBranch(p.assigned_branch);
+      const rowNowHHMM = nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm;
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM);
+      const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
         name: p.display_name || p.email,
@@ -257,15 +342,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         location: p.assigned_branch || "",
         department: p.department || ROLE_LABELS[p.role] || p.role || "",
         manager: p.manager_name || "",
+        role: normalizeRole(p.role),
         checkIn: checkIn || "—",
         mealIn: mealIn || "—",
         mealOut: mealOut || "—",
         checkOut: checkOut || "—",
         alerts,
         isOffDay,
+        clockedInBy: clockedInByName,
       };
     });
-  }, [visibleProfiles, entriesByKey, todayISO]);
+  }, [visibleProfiles, entriesByKey, todayISO, nowByTimezone, allProfileById]);
 
   const totalEmployees = visibleProfiles.length;
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
@@ -353,7 +440,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkIn = entry?.checkIn || "";
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null);
         if (alerts.some((a) => a.includes("Late"))) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -472,6 +559,38 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (warnings.length) alert(warnings.join("\n"));
     } catch (error) {
       alert(`Failed to save note: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
+  // Manager proxy clock-in — only ever clocks IN a direct-report technician
+  // (never out; that stays the technician's own action). Stamps the
+  // technician's own branch-local time, not the manager's, and records
+  // clocked_in_by so the row visibly shows it wasn't a self-punch.
+  const [clockingInIds, setClockingInIds] = useState<Set<string>>(new Set());
+  const handleProxyClockIn = async (record: DailyRecord) => {
+    if (!myProfileId) return;
+    if (!window.confirm(`Clock in ${record.name} now?`)) return;
+    setClockingInIds((prev) => new Set(prev).add(record.profileId));
+    try {
+      const branchTz = timezoneForBranch(record.location);
+      const now = new Date();
+      const hhmm = nowInTimezone(branchTz).hhmm;
+      const seconds = String(now.getSeconds()).padStart(2, "0");
+      await saveTimecardEntry(
+        record.profileId,
+        todayISO,
+        { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
+        { clockedInBy: myProfileId }
+      );
+      await loadAll();
+    } catch (error) {
+      alert(`Failed to clock in: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setClockingInIds((prev) => {
+        const next = new Set(prev);
+        next.delete(record.profileId);
+        return next;
+      });
     }
   };
 
@@ -801,7 +920,24 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>
-                        <td className="px-3 py-3 text-slate-300">{record.checkIn}</td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {record.checkIn}
+                          {record.clockedInBy && (
+                            <span className="ml-1 text-xs text-amber-300/80" title="Clocked in by their manager, not themselves">
+                              (by {record.clockedInBy})
+                            </span>
+                          )}
+                          {record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
+                            <button
+                              type="button"
+                              disabled={clockingInIds.has(record.profileId)}
+                              onClick={() => handleProxyClockIn(record)}
+                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md bg-green-500/20 hover:bg-green-500/30 disabled:opacity-50 text-green-300 text-xs font-semibold transition"
+                            >
+                              {clockingInIds.has(record.profileId) ? "Clocking in…" : "Clock In"}
+                            </button>
+                          )}
+                        </td>
                         <td className="px-3 py-3 text-slate-300">{record.checkOut}</td>
                         <td className="px-3 py-3">
                           {record.alerts.length > 0 ? (

@@ -244,6 +244,29 @@ export async function handleMarconeRequest(
       };
 
       const upstream = await fetch(url.toString(), init);
+
+      // Some endpoints (e.g. /returns/reaQrCode) return raw binary
+      // (application/octet-stream) instead of JSON — .text() would corrupt
+      // that. Detect it up front and base64-encode instead of parsing.
+      const upstreamContentType = upstream.headers.get("content-type") || "";
+      const isBinary = !upstreamContentType.includes("json") && !upstreamContentType.includes("text");
+
+      if (isBinary) {
+        const buf = await upstream.arrayBuffer();
+        const base64 =
+          typeof Buffer !== "undefined"
+            ? Buffer.from(buf).toString("base64")
+            : btoa(String.fromCharCode(...new Uint8Array(buf)));
+        return json(
+          {
+            success: upstream.ok,
+            status: upstream.status,
+            data: { base64, contentType: upstreamContentType || "application/octet-stream" },
+          },
+          200,
+        );
+      }
+
       const text = await upstream.text();
       let payload: unknown = text;
       try {

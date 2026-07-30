@@ -10,6 +10,7 @@ import {
   MessageCircle,
   FileText,
   DollarSign,
+  ExternalLink,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -33,16 +34,32 @@ import {
   getOrCreateDmThread,
   sendMessage,
   subscribeToMessages,
+  listMyDmInbox,
+  markThreadRead,
   type MessageRow,
   type DmThreadRow,
+  type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { uploadTicketSignature } from "@/lib/firebase/storage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
+import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
+import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
+import {
+  parseServicePerformed,
+  composeServicePerformed,
+  emptyServicePerformed,
+} from "@/lib/servicePerformedNotes";
 import type { Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 
@@ -54,6 +71,8 @@ type View =
   | "chat"
   | "home"
   | "payroll"
+  | "timecard"
+  | "clockinteam"
   | "parts"
   | "sheets";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
@@ -159,6 +178,17 @@ export function MobileTechApp() {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const isSelfRole = role ? SELF_ROLES.has(role.toUpperCase()) : false;
+
+  // Resolved once for the whole app shell — needed by DetailView to know
+  // which technician is looking at a ticket, for the mobile alert-popup
+  // dismiss tracking (ticket_alert_dismissals is keyed per profile).
+  const [profileId, setProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyProfileId(uid).then((id) => { if (!cancelled) setProfileId(id); });
+    return () => { cancelled = true; };
+  }, [uid]);
 
   // Persist the mobile tech-app navigation state across page reloads.
   // The tech expects a refresh to keep them on the same view instead of
@@ -428,6 +458,9 @@ export function MobileTechApp() {
         userName={headerName}
         showBack={showTopBack}
         onBack={handleTopBack}
+        onOpenTimecard={() => setView("timecard")}
+        showClockInTeam={isAttendanceManagerTierRole(role)}
+        onOpenClockInTeam={() => setView("clockinteam")}
         onLogout={logout}
       />
 
@@ -494,6 +527,7 @@ export function MobileTechApp() {
             companyId={companyId}
             authorName={displayName || email || "User"}
             authorRole={role || ""}
+            profileId={profileId}
           />
         )}
 
@@ -512,7 +546,15 @@ export function MobileTechApp() {
         )}
 
         {view === "payroll" && (
-          <MobilePayrollView userName={headerName} />
+          <MobilePayrollView userName={headerName} profileId={profileId} />
+        )}
+
+        {view === "timecard" && (
+          <MobileTimecardView uid={uid} profileId={profileId} userName={headerName} />
+        )}
+
+        {view === "clockinteam" && (
+          <MobileClockInTeamView profileId={profileId} />
         )}
 
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
@@ -554,12 +596,18 @@ function AppHeaderMobile({
   userName,
   showBack,
   onBack,
+  onOpenTimecard,
+  showClockInTeam,
+  onOpenClockInTeam,
   onLogout,
 }: {
   logoSrc: string;
   userName: string;
   showBack: boolean;
   onBack: () => void;
+  onOpenTimecard: () => void;
+  showClockInTeam: boolean;
+  onOpenClockInTeam: () => void;
   onLogout: () => void;
 }) {
   const [menu, setMenu] = useState(false);
@@ -604,6 +652,22 @@ function AppHeaderMobile({
             <div className="mtech-app-profile-menu">
               <div className="mtech-app-profile-name">{userName}</div>
               <div className="mtech-app-profile-divider" />
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenTimecard(); }}
+              >
+                🕐 Timecard
+              </button>
+              {showClockInTeam && (
+                <button
+                  type="button"
+                  className="mtech-app-profile-timecard"
+                  onClick={() => { setMenu(false); onOpenClockInTeam(); }}
+                >
+                  👥 Clock In Team
+                </button>
+              )}
               <button
                 type="button"
                 className="mtech-app-profile-logout"
@@ -1241,6 +1305,7 @@ function DetailView({
   companyId,
   authorName,
   authorRole,
+  profileId,
 }: {
   ticket: Ticket;
   tab: DetailTab;
@@ -1248,9 +1313,39 @@ function DetailView({
   companyId: string | null;
   authorName: string;
   authorRole: string;
+  profileId: string | null;
 }) {
+  // Mobile popup alerts — fires once per ticket-open (this component mounts
+  // fresh whenever a different ticket is opened; it does NOT remount on tab
+  // switches, so this doesn't re-fire every time the tech taps a tab).
+  const ticketDbId = (ticket as any)._id as string | undefined;
+  const [popupAlerts, setPopupAlerts] = useState<TicketAlert[]>([]);
+  useEffect(() => {
+    setPopupAlerts([]);
+    if (!ticketDbId || !profileId) return;
+    let cancelled = false;
+    getUndismissedMobilePopupAlerts(ticketDbId, profileId)
+      .then((alerts) => { if (!cancelled) setPopupAlerts(alerts); })
+      .catch((err) => console.error("getUndismissedMobilePopupAlerts error:", err));
+    return () => { cancelled = true; };
+  }, [ticketDbId, profileId]);
+
+  const dismissPopupAlerts = async () => {
+    if (!profileId) { setPopupAlerts([]); return; }
+    const ids = popupAlerts.map((a) => a.id);
+    setPopupAlerts([]);
+    try {
+      await Promise.all(ids.map((id) => dismissTicketAlert(id, profileId)));
+    } catch (err) {
+      console.error("dismissTicketAlert error:", err);
+    }
+  };
+
   return (
     <div className="mtech-scroll">
+      {popupAlerts.length > 0 && (
+        <TicketAlertPopup alerts={popupAlerts} onDismiss={() => void dismissPopupAlerts()} />
+      )}
       {/* Always-on ticket info header */}
       <div className="mtech-detail-head">
         <div className="mtech-detail-headinfo">
@@ -1297,13 +1392,64 @@ function DetailView({
   );
 }
 
-function InfoRow({ label, value }: { label: string; value?: string }) {
+/** Centered, blocking popup for mobile-flagged ticket alerts. No exact
+    centered-dialog precedent existed in this file (the only prior overlay,
+    the profile menu, is a corner dropdown) — new class names below. */
+function TicketAlertPopup({ alerts, onDismiss }: { alerts: TicketAlert[]; onDismiss: () => void }) {
+  return (
+    <div className="mtech-alert-popup-scrim">
+      <div className="mtech-alert-popup-card">
+        <div className="mtech-alert-popup-title">⚠️ Alert{alerts.length > 1 ? "s" : ""}</div>
+        <div className="mtech-alert-popup-body">
+          {alerts.map((alert) => (
+            <p key={alert.id} className="mtech-alert-popup-text">{alert.text}</p>
+          ))}
+        </div>
+        <button type="button" className="mtech-btn mtech-btn-primary mtech-alert-popup-ok" onClick={onDismiss}>
+          OK, got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, type }: { label: string; value?: string; type?: "phone" }) {
+  const digits = type === "phone" ? String(value || "").replace(/[^\d+]/g, "") : "";
   return (
     <div className="mtech-inforow">
       <span className="mtech-info-label">{label}</span>
-      <span className="mtech-info-value">{value || "—"}</span>
+      {type === "phone" && digits ? (
+        <a href={`tel:${digits}`} className="mtech-info-value mtech-phone-link" title={`Call ${value}`}>
+          {value}
+        </a>
+      ) : (
+        <span className="mtech-info-value">{value || "—"}</span>
+      )}
     </div>
   );
+}
+
+/** Like InfoRow, but stacked (label above value) with real line breaks
+    preserved — needed for the Service Performed field, which is
+    multi-line free text. */
+function ServiceSection({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mtech-service-section">
+      <div className="mtech-info-label">{label}</div>
+      <div className="mtech-service-section-value">{value}</div>
+    </div>
+  );
+}
+
+/** Live, read-only list of parts currently marked "Used" on this ticket -
+    not something the tech types, so it's rendered separately from
+    Service Performed rather than as one of its sections. */
+function PartsUsedList({ parts }: { parts: UIPartRow[] }) {
+  if (parts.length === 0) return null;
+  const value = parts
+    .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
+    .join("\n");
+  return <ServiceSection label="Parts Used" value={value} />;
 }
 
 function DetailsTab({
@@ -1315,6 +1461,56 @@ function DetailsTab({
   authorName: string;
   authorRole: string;
 }) {
+  // Per-model reference links (Exploded View / Service Bulletin) — same
+  // model_resources data the desktop ticket page's Product Information
+  // section shows, just never wired up on mobile before. Shared across
+  // every ticket carrying this model number, so a tech adding one in the
+  // field also benefits everyone else on the same model.
+  const [modelResources, setModelResources] = useState<ModelResources>({
+    model: "", explodedViewUrl: "", serviceBulletinUrl: "",
+  });
+  const [editingResource, setEditingResource] = useState<"exploded" | "bulletin" | null>(null);
+  const [resourceDraft, setResourceDraft] = useState("");
+  const [savingResource, setSavingResource] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!ticket.model) {
+      setModelResources({ model: "", explodedViewUrl: "", serviceBulletinUrl: "" });
+      return;
+    }
+    getModelResources(ticket.model)
+      .then((res) => { if (!cancelled) setModelResources(res); })
+      .catch((err) => console.error("getModelResources error:", err));
+    return () => { cancelled = true; };
+  }, [ticket.model]);
+
+  const beginEditResource = (kind: "exploded" | "bulletin") => {
+    setEditingResource(kind);
+    setResourceDraft(kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl);
+  };
+  const cancelEditResource = () => {
+    setEditingResource(null);
+    setResourceDraft("");
+  };
+  const saveEditResource = async () => {
+    if (!editingResource || !ticket.model) return;
+    setSavingResource(true);
+    try {
+      const updated = await saveModelResources(ticket.model, {
+        explodedViewUrl: editingResource === "exploded" ? resourceDraft.trim() : modelResources.explodedViewUrl,
+        serviceBulletinUrl: editingResource === "bulletin" ? resourceDraft.trim() : modelResources.serviceBulletinUrl,
+      });
+      setModelResources(updated);
+      cancelEditResource();
+    } catch (err) {
+      console.error("saveModelResources error:", err);
+      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingResource(false);
+    }
+  };
+
   return (
     <div className="mtech-panel">
       <div className="mtech-actions">
@@ -1325,7 +1521,7 @@ function DetailsTab({
 
       <div className="mtech-section-title">Customer</div>
       <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
-      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} />
+      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} type="phone" />
       <InfoRow label="Location" value={resolveLocation(ticket)} />
       {/* Tier Code — derived from warranty + zip. Shows "N/A" for warranty
           companies outside the Assurant / GE / Miele set so techs can see
@@ -1339,11 +1535,69 @@ function DetailsTab({
       <InfoRow label="Address" value={ticket.address} />
       <InfoRow label="Address 2" value={ticket.address2} />
       <InfoRow label="State/Zip" value={[ticket.state, ticket.zip].filter(Boolean).join(" ")} />
-      <InfoRow label="Home Phone" value={ticket.phone} />
-      <InfoRow label="Cell Phone" value={ticket.secondPhone} />
+      <InfoRow label="Home Phone" value={ticket.phone} type="phone" />
+      <InfoRow label="Cell Phone" value={ticket.secondPhone} type="phone" />
       <InfoRow label="Email" value={ticket.email} />
 
       <div className="mtech-section-title">Product Information</div>
+      {ticket.model && (
+        <div className="mtech-visit-actions" style={{ flexWrap: "wrap" }}>
+          {(["exploded", "bulletin"] as const).map((kind) => {
+            const label = kind === "exploded" ? "Exploded View" : "Service Bulletin";
+            const url = kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl;
+            return url ? (
+              <a
+                key={kind}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mtech-btn mtech-btn-primary"
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}
+              >
+                <ExternalLink size={14} /> {label}
+              </a>
+            ) : (
+              <button
+                key={kind}
+                type="button"
+                className="mtech-btn"
+                onClick={() => beginEditResource(kind)}
+              >
+                + Add {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {editingResource && (
+        <div className="mtech-visit-edit">
+          <label className="mtech-visit-edit-label">
+            {editingResource === "exploded" ? "Exploded View" : "Service Bulletin"} link
+          </label>
+          <input
+            className="mtech-visit-edit-input"
+            type="url"
+            inputMode="url"
+            value={resourceDraft}
+            onChange={(e) => setResourceDraft(e.target.value)}
+            placeholder="https://…"
+            autoFocus
+          />
+          <div className="mtech-visit-edit-actions">
+            <button
+              type="button"
+              className="mtech-btn mtech-btn-primary"
+              disabled={savingResource}
+              onClick={() => void saveEditResource()}
+            >
+              {savingResource ? "Saving…" : "Save"}
+            </button>
+            <button type="button" className="mtech-btn" disabled={savingResource} onClick={cancelEditResource}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <InfoRow label="Brand" value={ticket.manufacturer} />
       <InfoRow label="Product Category" value={productLabel(ticket)} />
       <InfoRow label="Model Code" value={ticket.model} />
@@ -1367,28 +1621,55 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
   const [loading, setLoading] = useState(true);
   // Per-visit inline edit state. Techs can edit Repair Status, Cause
-  // of Failure, Repair Notes, and Non-Completion Reason from the
+  // of Failure, Service Performed, and Non-Completion Reason from the
   // mobile app — everything else stays read-only because it's owned
   // by dispatch / CSR on the desktop side.
   const [editVisitId, setEditVisitId] = useState<string | null>(null);
+  // `service` holds the raw textarea text as typed, not a parsed sections
+  // object - it's only normalized (labels/blank-lines snapped back into
+  // place, Parts Used hint refreshed) on blur and on save, never on every
+  // keystroke. Recomposing live on every onChange looks tempting but fights
+  // the browser's own cursor position the instant someone types on the
+  // blank line reserved under a label (the normal, common case) - the
+  // canonical text always differs from what was just typed by one blank
+  // line, so a controlled <textarea> would reset the DOM value - and hence
+  // the cursor - on nearly every keystroke.
   const [editDraft, setEditDraft] = useState<{
     repairStatus: string;
     diagnosis: string;
-    resolution: string;
+    service: string;
     nonCompletionReason: string;
-  }>({ repairStatus: "", diagnosis: "", resolution: "", nonCompletionReason: "" });
+  }>({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
   const [savingVisit, setSavingVisit] = useState(false);
+
+  // Parts Used isn't part of the free-text notes anymore - it's a live,
+  // read-only readout of whichever parts the Parts tab currently has
+  // marked "Used" on this ticket, attached only to the latest visit log
+  // entry (visits[0], since getTicketVisits orders newest-first). This tab
+  // unmounts/remounts on every switch (see the `{tab === "tracking" && ...}`
+  // gate above), so re-fetching here is enough to pick up a status change
+  // made moments ago on the Parts tab without any push/sync machinery.
+  const [usedParts, setUsedParts] = useState<UIPartRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        const rows = await getTicketVisits(ticket.ticketNo);
-        if (!cancelled) setVisits(rows as any);
+        const [rows, partRows] = await Promise.all([
+          getTicketVisits(ticket.ticketNo),
+          getTicketParts(ticket.ticketNo),
+        ]);
+        if (!cancelled) {
+          setVisits(rows as any);
+          setUsedParts(partRows.filter((p) => p.status === "Used"));
+        }
       } catch (e) {
         console.error("load visits failed", e);
-        if (!cancelled) setVisits([]);
+        if (!cancelled) {
+          setVisits([]);
+          setUsedParts([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1409,23 +1690,30 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     setEditDraft({
       repairStatus: String(v.repairStatus ?? ""),
       diagnosis: String(v.diagnosis ?? ""),
-      resolution: String(v.resolution ?? ""),
+      service: composeServicePerformed(parseServicePerformed(String(v.resolution ?? ""))),
       nonCompletionReason: String(v.nonCompletionReason ?? ""),
     });
   };
 
   const cancelEdit = () => {
     setEditVisitId(null);
-    setEditDraft({ repairStatus: "", diagnosis: "", resolution: "", nonCompletionReason: "" });
+    setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
   };
 
   const saveEdit = async (visitId: string) => {
     setSavingVisit(true);
     try {
+      const original = visits.find((row) => row.id === visitId);
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
+      // updateTicketVisit overwrites every column (?? null fallback), so the
+      // full existing row must be spread first or fields the tech never
+      // touched (schedule date, technician, time slot, locked, ...) get
+      // silently nulled out.
       await updateTicketVisit(visitId, {
+        ...original,
         repairStatus: editDraft.repairStatus,
         diagnosis: editDraft.diagnosis,
-        resolution: editDraft.resolution,
+        resolution,
         nonCompletionReason: editDraft.nonCompletionReason,
         updateReason: `Tech ${authorName || ""} updated visit`.trim(),
       } as any);
@@ -1437,7 +1725,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 ...row,
                 repairStatus: editDraft.repairStatus,
                 diagnosis: editDraft.diagnosis,
-                resolution: editDraft.resolution,
+                resolution,
                 nonCompletionReason: editDraft.nonCompletionReason,
               }
             : row,
@@ -1456,19 +1744,23 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
   // "Complete" flow — save the visit edits and flip the parent ticket's
   // repair status to "CL-Ready to Complete". Only available when the
-  // tech has filled BOTH Cause of Failure AND Repair Notes. If the tech
-  // put anything into Non-Completion Reason, we assume the job wasn't
-  // finished and hide the button entirely; they save with Save instead.
+  // tech has filled BOTH Cause of Failure AND the Notes section of
+  // Service Performed. If the tech put anything into Non-Completion
+  // Reason, we assume the job wasn't finished and hide the button
+  // entirely; they save with Save instead.
   const completeVisit = async (visitId: string) => {
     setSavingVisit(true);
     try {
       // Force the visit's repair status to Ready to Complete so the visit
       // log and the ticket status stay aligned.
       const readyStatus = "CL-Ready to Complete";
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
+      const original = visits.find((row) => row.id === visitId);
       await updateTicketVisit(visitId, {
+        ...original,
         repairStatus: readyStatus,
         diagnosis: editDraft.diagnosis,
-        resolution: editDraft.resolution,
+        resolution,
         nonCompletionReason: editDraft.nonCompletionReason,
         updateReason: `Tech ${authorName || ""} marked visit complete`.trim(),
       } as any);
@@ -1487,7 +1779,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 ...row,
                 repairStatus: readyStatus,
                 diagnosis: editDraft.diagnosis,
-                resolution: editDraft.resolution,
+                resolution,
                 nonCompletionReason: editDraft.nonCompletionReason,
               }
             : row,
@@ -1507,7 +1799,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
   const canComplete =
     editDraft.diagnosis.trim().length > 0 &&
-    editDraft.resolution.trim().length > 0 &&
+    parseServicePerformed(editDraft.service).notes.trim().length > 0 &&
     editDraft.nonCompletionReason.trim().length === 0;
 
   return (
@@ -1517,8 +1809,9 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
       {!loading && visits.length === 0 && <div className="mtech-muted">No visits recorded yet.</div>}
 
       <div className="mtech-visit-list">
-        {visits.map((v) => {
+        {visits.map((v, idx) => {
           const isEditing = editVisitId === v.id;
+          const isLatestVisit = idx === 0;
           return (
             <div key={v.id} className="mtech-visit">
               <div className="mtech-visit-head">
@@ -1537,8 +1830,9 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
               )}
               {!isEditing && v.resolution && (
-                <InfoRow label="Repair Notes (Tech)" value={v.resolution} />
+                <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
               )}
+              {isLatestVisit && <PartsUsedList parts={usedParts} />}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
@@ -1566,13 +1860,18 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     placeholder="What failed and why"
                     rows={2}
                   />
-                  <label className="mtech-visit-edit-label">Repair Notes (Tech)</label>
+                  <label className="mtech-visit-edit-label">Service Performed (Tech)</label>
                   <textarea
                     className="mtech-visit-edit-input"
-                    value={editDraft.resolution}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, resolution: e.target.value }))}
-                    placeholder="What you did to fix it"
-                    rows={3}
+                    value={editDraft.service}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: e.target.value }))}
+                    onBlur={() =>
+                      setEditDraft((d) => ({
+                        ...d,
+                        service: composeServicePerformed(parseServicePerformed(d.service)),
+                      }))
+                    }
+                    rows={10}
                   />
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea
@@ -1990,6 +2289,20 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
   const [sending, setSending] = useState(false);
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [searchName, setSearchName] = useState("");
+  // Last message + unread count per teammate, keyed by their profile id -
+  // what turns the plain contact directory into a real messenger-style
+  // inbox (last message preview, timestamp, unread badge, most-recent-
+  // first ordering) without changing how contacts themselves are loaded.
+  const [inboxByContact, setInboxByContact] = useState<Map<string, DmInboxEntry>>(new Map());
+
+  const refreshInbox = async (pid: string) => {
+    try {
+      const entries = await listMyDmInbox(pid);
+      setInboxByContact(new Map(entries.map((e) => [e.otherProfileId, e])));
+    } catch (e) {
+      console.error("chat: load inbox failed", e);
+    }
+  };
 
   // 1. Resolve my Supabase profile id from my Firebase uid.
   useEffect(() => {
@@ -2006,6 +2319,13 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
     })();
     return () => { cancelled = true; };
   }, [firebaseUid]);
+
+  // 1b. Once we know who I am, load my inbox (last message + unread per
+  // teammate) for the contact list.
+  useEffect(() => {
+    if (!profileId) return;
+    void refreshInbox(profileId);
+  }, [profileId]);
 
   // 2. Load company users, filter to allowed chat roles.
   useEffect(() => {
@@ -2056,6 +2376,19 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
         setThread(t);
         const rows = await getDmMessages(t.id);
         if (!cancelled) setMessages(rows);
+        // Opening the thread reads it - clear its unread badge on the
+        // contact list right away rather than waiting for the next
+        // inbox refresh.
+        await markThreadRead({ profileId, dmThreadId: t.id });
+        if (!cancelled) {
+          setInboxByContact((prev) => {
+            const existing = prev.get(selected.id);
+            if (!existing || existing.unreadCount === 0) return prev;
+            const next = new Map(prev);
+            next.set(selected.id, { ...existing, unreadCount: 0 });
+            return next;
+          });
+        }
       } catch (e) {
         console.error("chat: open thread failed", e);
       } finally {
@@ -2141,12 +2474,39 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
 
   const visibleContacts = useMemo(() => {
     const q = searchName.trim().toLowerCase();
-    return contacts.filter((c) => {
+    const filtered = contacts.filter((c) => {
       if (roleFilter && c.roleLabel !== roleFilter) return false;
       if (q && !c.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [contacts, roleFilter, searchName]);
+    // Messenger-style ordering: teammates with an existing conversation
+    // float to the top, most recently active first (contacts is already
+    // alphabetical, so everyone without a thread yet just keeps that
+    // order beneath them).
+    return [...filtered].sort((a, b) => {
+      const ea = inboxByContact.get(a.id);
+      const eb = inboxByContact.get(b.id);
+      if (ea && !eb) return -1;
+      if (!ea && eb) return 1;
+      if (ea && eb) return eb.lastMessageAt.localeCompare(ea.lastMessageAt);
+      return 0;
+    });
+  }, [contacts, roleFilter, searchName, inboxByContact]);
+
+  // Compact "messenger" timestamp for the inbox row: clock time for
+  // today, weekday for the last week, short date beyond that - same
+  // convention most chat apps use so recent activity stays scannable.
+  const fmtInboxTime = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (diffDays < 7) return d.toLocaleDateString("en-US", { weekday: "short" });
+    return d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+  };
 
   const fmtTime = (iso: string) => {
     if (!iso) return "";
@@ -2174,6 +2534,9 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
               setSelected(null);
               setThread(null);
               setMessages([]);
+              // Refresh so the contact list's last-message preview picks
+              // up anything just sent in this thread.
+              if (profileId) void refreshInbox(profileId);
             }}
           >
             <ArrowLeft className="h-5 w-5" />
@@ -2303,23 +2666,46 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
       )}
 
       <div className="mtech-chat-contact-list">
-        {visibleContacts.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className="mtech-chat-contact-row"
-            onClick={() => setSelected(c)}
-          >
-            <div className="mtech-chat-contact-avatar">
-              {c.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="mtech-chat-contact-info">
-              <span className="mtech-chat-contact-name">{c.name}</span>
-              <span className="mtech-chat-contact-role-label">{c.roleLabel}</span>
-            </div>
-            <ChevronRight className="mtech-chat-contact-chev h-4 w-4" />
-          </button>
-        ))}
+        {visibleContacts.map((c) => {
+          const entry = inboxByContact.get(c.id);
+          const preview = entry?.lastMessageBody
+            ? `${entry.lastMessageSenderId === profileId ? "You: " : ""}${entry.lastMessageBody}`
+            : "";
+          const hasUnread = (entry?.unreadCount ?? 0) > 0;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              className="mtech-chat-contact-row"
+              onClick={() => setSelected(c)}
+            >
+              <div className="mtech-chat-contact-avatar">
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="mtech-chat-contact-info">
+                <span className={`mtech-chat-contact-name${hasUnread ? " unread" : ""}`}>
+                  {c.name}
+                </span>
+                {/* Last message preview once a conversation exists; falls
+                    back to the role label for teammates never messaged
+                    yet, same as before. */}
+                <span className={`mtech-chat-contact-preview${hasUnread ? " unread" : ""}`}>
+                  {preview || c.roleLabel}
+                </span>
+              </div>
+              <div className="mtech-chat-contact-meta">
+                {entry?.lastMessageAt && (
+                  <span className="mtech-chat-contact-time">{fmtInboxTime(entry.lastMessageAt)}</span>
+                )}
+                {hasUnread ? (
+                  <span className="mtech-chat-contact-unread-badge">{entry!.unreadCount}</span>
+                ) : (
+                  <ChevronRight className="mtech-chat-contact-chev h-4 w-4" />
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -2709,37 +3095,61 @@ function MobileHomeView({
   );
 }
 
-// Payroll tab: table matches the /timecard MobilePayrollPage exactly
-// so users get the same experience from either entry point.
+// Payroll tab: same real payslip data (getMyPayslips) and status mapping
+// as the /timecard MobilePayrollPage, so users get the same numbers from
+// either entry point.
 interface MobilePayRowInline {
   id: string;
   periodLabel: string;
   periodEnd: string;
   amount: number;
-  status: "Paid" | "Pending" | "Processing" | "On Hold";
+  status: ReturnType<typeof payslipStatusLabel>;
+  payslip: MyPayslipRow;
 }
 
-function MobilePayrollView({ userName }: { userName: string }) {
-  const rows = useMemo<MobilePayRowInline[]>(() => {
-    const out: MobilePayRowInline[] = [];
-    const endDate = new Date();
-    for (let i = 0; i < 12; i += 1) {
-      const start = new Date(endDate);
-      start.setDate(endDate.getDate() - 13);
-      const label =
-        start.toLocaleDateString("en-US") + " – " + endDate.toLocaleDateString("en-US");
-      const iso = endDate.toISOString().slice(0, 10);
-      const amount = 850 + ((i * 137) % 620);
-      let status: MobilePayRowInline["status"];
-      if (i === 0) status = "Processing";
-      else if (i === 1) status = "Pending";
-      else if (i === 4) status = "On Hold";
-      else status = "Paid";
-      out.push({ id: "TP-" + iso, periodLabel: label, periodEnd: iso, amount, status });
-      endDate.setDate(endDate.getDate() - 14);
+function MobilePayrollView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!profileId) {
+      setPayslips([]);
+      setLoading(false);
+      return;
     }
-    return out;
-  }, []);
+    (async () => {
+      setLoading(true);
+      try {
+        const rows = await getMyPayslips(profileId);
+        if (!cancelled) setPayslips(rows);
+      } catch (e) {
+        console.error("payroll: load payslips failed", e);
+        if (!cancelled) setPayslips([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
+  };
+
+  const rows = useMemo<MobilePayRowInline[]>(
+    () =>
+      payslips.map((p) => ({
+        id: p.runId,
+        periodLabel: `${fmtDate(p.periodStart)} – ${fmtDate(p.periodEnd)}`,
+        periodEnd: p.periodEnd,
+        amount: p.netPay,
+        status: payslipStatusLabel(p.status),
+        payslip: p,
+      })),
+    [payslips],
+  );
 
   const totalPaid = rows.filter((r) => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
   const totalPending = rows.filter((r) => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
@@ -2748,12 +3158,14 @@ function MobilePayrollView({ userName }: { userName: string }) {
     <div className="mtech-scroll mtech-payroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">{userName}</div>
-        <div className="mtech-payroll-sub">Last 12 pay periods</div>
+        <div className="mtech-payroll-sub">
+          {rows.length > 0 ? `${rows.length} pay period${rows.length === 1 ? "" : "s"}` : "Pay history"}
+        </div>
       </div>
 
       <div className="mtech-payroll-summary">
         <div className="mtech-payroll-card">
-          <div className="mtech-payroll-card-label">YTD Paid</div>
+          <div className="mtech-payroll-card-label">Paid</div>
           <div className="mtech-payroll-card-value paid">${totalPaid.toFixed(2)}</div>
         </div>
         <div className="mtech-payroll-card">
@@ -2761,6 +3173,11 @@ function MobilePayrollView({ userName }: { userName: string }) {
           <div className="mtech-payroll-card-value pending">${totalPending.toFixed(2)}</div>
         </div>
       </div>
+
+      {loading && <div className="mtech-muted">Loading payroll…</div>}
+      {!loading && rows.length === 0 && (
+        <div className="mtech-muted">No payroll runs yet.</div>
+      )}
 
       <div className="mtech-payroll-list">
         {rows.map((row) => (
@@ -2777,11 +3194,15 @@ function MobilePayrollView({ userName }: { userName: string }) {
                 <button
                   type="button"
                   className="mtech-payroll-action"
-                  onClick={() =>
+                  onClick={() => {
+                    const p = row.payslip;
                     alert(
-                      `Pay period ${row.periodLabel}\nAmount: $${row.amount.toFixed(2)}\nStatus: ${row.status}`,
-                    )
-                  }
+                      `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
+                        `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
+                        `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
+                        `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                    );
+                  }}
                 >
                   View
                 </button>
@@ -2806,6 +3227,314 @@ function MobilePayrollView({ userName }: { userName: string }) {
       <p className="mtech-payroll-note">
         Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
       </p>
+    </div>
+  );
+}
+
+// Timecard tab: real punch clock (Time In/Out, Meal In/Out), reached from
+// the profile menu. Unlike desktop's FullTimecardPage this only ever shows
+// TODAY — no calendar to browse, since desktop already locks editing to
+// today's date anyway (timecard.tsx) — so there's no "locked past day" state
+// to handle here at all. Business rules (meal break requires an 8+ hour
+// scheduled shift, checked-in first) are copied verbatim from
+// FullTimecardPage's handleMealToggle so mobile and desktop never disagree.
+function MobileTimecardView({
+  uid,
+  profileId,
+  userName,
+}: {
+  uid: string | null;
+  profileId: string | null;
+  userName: string;
+}) {
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayLabel = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+  useEffect(() => {
+    if (!uid) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const schedule = await getMyProfileSchedule(uid);
+        if (cancelled) return;
+        setRequiredCheckIn(schedule.requiredCheckIn);
+        setRequiredCheckOut(schedule.requiredCheckOut);
+        if (!schedule.profileId) {
+          setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+          return;
+        }
+        const monthEntries = await getMonthEntries(schedule.profileId, now.getFullYear(), now.getMonth());
+        if (cancelled) return;
+        setEntry(monthEntries[todayKey] || { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+      } catch (e) {
+        console.error("MobileTimecardView: load failed", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const getNowTime = (): string => {
+    const t = new Date();
+    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+  };
+
+  const timeDiff = (t1: string, t2: string): number => {
+    if (!t1 || !t2) return 0;
+    const [h1, m1, s1 = 0] = t1.split(":").map(Number);
+    const [h2, m2, s2 = 0] = t2.split(":").map(Number);
+    return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
+  };
+
+  const persist = async (next: UITimeEntry) => {
+    setEntry(next);
+    if (!profileId) {
+      alert("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveTimecardEntry(profileId, todayKey, next);
+    } catch (e) {
+      console.error("MobileTimecardView: save failed", e);
+      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTimeToggle = () => {
+    if (!entry.checkIn) persist({ ...entry, checkIn: getNowTime() });
+    else if (!entry.checkOut) persist({ ...entry, checkOut: getNowTime() });
+  };
+
+  const handleMealToggle = () => {
+    if (!entry.checkIn) {
+      alert("Please log time in first.");
+      return;
+    }
+    if (!requiredCheckIn || !requiredCheckOut) {
+      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
+      return;
+    }
+    const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
+    if (scheduledShift < 8) {
+      alert(`Lunch break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+      return;
+    }
+    if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });
+    else if (!entry.mealEnd) persist({ ...entry, mealEnd: getNowTime() });
+  };
+
+  const hoursToday = entry.checkIn && entry.checkOut
+    ? Math.max(0, timeDiff(entry.checkIn, entry.checkOut) - (entry.mealStart && entry.mealEnd ? timeDiff(entry.mealStart, entry.mealEnd) : 0))
+    : null;
+
+  return (
+    <div className="mtech-scroll mtech-timecard">
+      <div className="mtech-timecard-heading">
+        <div className="mtech-timecard-name">{userName}</div>
+        <div className="mtech-timecard-sub">{todayLabel}</div>
+      </div>
+
+      {loading ? (
+        <div className="mtech-muted">Loading timecard…</div>
+      ) : (
+        <>
+          <div className="mtech-timecard-summary">
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check In</div>
+              <div className="mtech-timecard-card-value in">{entry.checkIn ? entry.checkIn.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check Out</div>
+              <div className="mtech-timecard-card-value out">{entry.checkOut ? entry.checkOut.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal Start</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealStart ? entry.mealStart.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal End</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealEnd ? entry.mealEnd.slice(0, 5) : "—"}</div>
+            </div>
+          </div>
+
+          {hoursToday !== null && <div className="mtech-timecard-hours">{hoursToday.toFixed(1)}h worked today</div>}
+
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-time"
+            disabled={!!entry.checkOut || saving}
+            onClick={handleTimeToggle}
+          >
+            {!entry.checkIn ? "🕐 Time In" : !entry.checkOut ? "🛑 Time Out" : "✓ Shift Complete"}
+          </button>
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-meal"
+            disabled={!!entry.mealEnd || saving}
+            onClick={handleMealToggle}
+          >
+            {!entry.mealStart ? "🍽 Meal In" : !entry.mealEnd ? "✓ Meal Out" : "Meal Done"}
+          </button>
+
+          {requiredCheckIn && requiredCheckOut && (
+            <p className="mtech-timecard-note">Scheduled shift: {requiredCheckIn}–{requiredCheckOut}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Clock In Team: a manager-tier viewer's direct-report technicians, each
+// with a Clock In button — reachable from the profile menu. Deliberately
+// Clock-In-only; there is no Clock Out or Meal action here at all, since
+// only the technician themselves ends their own shift. Reuses the exact
+// same manager -> direct-reports scoping already built for Attendance
+// Monitoring (visibleAttendanceProfileIds), so "my team" here always
+// matches what that dashboard already shows for this same viewer.
+interface ClockInTechRow {
+  id: string;
+  name: string;
+  branch: string | null;
+  checkIn: string;
+  clockedInByName: string | null;
+}
+
+function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
+  const [rows, setRows] = useState<ClockInTechRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [clockingIn, setClockingIn] = useState<Set<string>>(new Set());
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const load = async () => {
+    if (!profileId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+        getCompanyUsers(),
+        getCsrTeamComposition().catch(() => null),
+        getCompanyTimecardEntries(todayKey, todayKey),
+      ]);
+      const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
+      if (!myProfile) {
+        setRows([]);
+        return;
+      }
+      const nameById = new Map(allProfiles.map((p) => [p.id, p.display_name || p.email]));
+      const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
+      const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
+      const myTechnicians = allProfiles.filter(
+        (p) => (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+      );
+      setRows(
+        myTechnicians
+          .map((p) => {
+            const entry = entryByProfile.get(p.id);
+            return {
+              id: p.id,
+              name: p.display_name || p.email,
+              branch: p.assigned_branch,
+              checkIn: entry?.checkIn || "",
+              clockedInByName: entry?.clockedInBy ? nameById.get(entry.clockedInBy) || null : null,
+            };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (e) {
+      console.error("MobileClockInTeamView: load failed", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const handleClockIn = async (tech: ClockInTechRow) => {
+    if (!profileId) return;
+    if (!window.confirm(`Clock in ${tech.name} now?`)) return;
+    setClockingIn((prev) => new Set(prev).add(tech.id));
+    try {
+      const branchTz = timezoneForBranch(tech.branch);
+      const hhmm = nowInTimezone(branchTz).hhmm;
+      const seconds = String(new Date().getSeconds()).padStart(2, "0");
+      await saveTimecardEntry(
+        tech.id,
+        todayKey,
+        { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
+        { clockedInBy: profileId }
+      );
+      await load();
+    } catch (e) {
+      alert(`Failed to clock in: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setClockingIn((prev) => {
+        const next = new Set(prev);
+        next.delete(tech.id);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Clock In Team</div>
+        <div className="mtech-clockin-sub">Your direct-report technicians, today</div>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading your team…</div>}
+      {!loading && rows.length === 0 && <div className="mtech-muted">No technicians report to you.</div>}
+
+      <div className="mtech-clockin-list">
+        {rows.map((tech) => (
+          <div key={tech.id} className="mtech-clockin-row">
+            <div className="mtech-clockin-row-info">
+              <div className="mtech-clockin-row-name">{tech.name}</div>
+              <div className="mtech-clockin-row-status">
+                {tech.checkIn
+                  ? `Clocked in ${tech.checkIn.slice(0, 5)}${tech.clockedInByName ? ` (by ${tech.clockedInByName})` : ""}`
+                  : "Not clocked in yet"}
+              </div>
+            </div>
+            {!tech.checkIn && (
+              <button
+                type="button"
+                className="mtech-clockin-btn"
+                disabled={clockingIn.has(tech.id)}
+                onClick={() => handleClockIn(tech)}
+              >
+                {clockingIn.has(tech.id) ? "…" : "Clock In"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

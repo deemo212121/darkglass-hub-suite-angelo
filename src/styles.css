@@ -164,10 +164,14 @@
     inset: 0;
   }
 
+  /* Dark by default — this app has no light/dark split for .data-table's own
+     colors like the rest of the UI does (see [data-theme="light"] override
+     below); it was hardcoded to light-mode colors unconditionally, so it
+     stayed a white table even on the app's default dark theme. */
   .data-table {
     width: 100%; border-collapse: collapse;
-    background: #fff; color: #1f2937;
-    font-size: 0.875rem;
+    background: rgba(255,255,255,0.03); color: #e2e8f0;
+    font-size: 0.8rem;
     table-layout: auto;
   }
   .data-table tbody tr {
@@ -175,33 +179,55 @@
     height: auto;
   }
   .data-table th {
-    background: #f3f4f6; text-align: left;
-    padding: 0.75rem 0.6rem; font-weight: 700;
-    border-bottom: 2px solid #d1d5db; white-space: nowrap;
-    font-size: 0.75rem;
+    background: rgba(255,255,255,0.06); text-align: left;
+    padding: 0.5rem 0.5rem; font-weight: 700;
+    border-bottom: 2px solid rgba(255,255,255,0.12); white-space: nowrap;
+    font-size: 0.7rem;
     letter-spacing: 0.5px;
     text-transform: uppercase;
+    color: #93c5fd;
   }
   .data-table th:first-child { min-width: 100px; }
   .data-table {
     border-radius: 8px; overflow: hidden;
   }
   .data-table tbody {
-    background: #fff;
+    background: transparent;
   }
   .data-table td {
-    padding: 0.6rem 0.6rem; border-bottom: 1px solid #e5e7eb;
+    padding: 0.4rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06);
     word-break: break-word;
     white-space: normal;
   }
   .data-table tr:last-child td { border-bottom: none; }
-  .data-table tbody tr:hover td { background: #f9fafb; }
+  .data-table tbody tr:hover td { background: rgba(255,255,255,0.05); }
   .data-table .editable-cell {
-    width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;
-    font-size: 0.875rem; background: #fff; color: #1f2937; font-family: inherit;
+    width: 100%; padding: 0.3rem 0.4rem; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+    font-size: 0.8rem; background: rgba(255,255,255,0.05); color: #e2e8f0; font-family: inherit;
   }
   .data-table .editable-cell:focus {
-    outline: none; border-color: #3b82f6; background: #f0f9ff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    outline: none; border-color: #3b82f6; background: rgba(59,130,246,0.1); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+  /* Light-mode override — restores the original light table when the user
+     explicitly switches to light theme. */
+  :root[data-theme="light"] .data-table {
+    background: #fff; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table th {
+    background: #f3f4f6; border-bottom: 2px solid #d1d5db; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table tbody {
+    background: #fff;
+  }
+  :root[data-theme="light"] .data-table td {
+    border-bottom: 1px solid #e5e7eb;
+  }
+  :root[data-theme="light"] .data-table tbody tr:hover td { background: #f9fafb; }
+  :root[data-theme="light"] .data-table .editable-cell {
+    border: 1px solid #d1d5db; background: #fff; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table .editable-cell:focus {
+    background: #f0f9ff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
   }
 
   .filter-grid {
@@ -726,179 +752,6 @@
     color: #bfdbfe;
     font-weight: 600;
     min-height: 1.5rem;
-  }
-
-  .todo-panel {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    padding: 1.25rem;
-    color: #fff;
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
-  }
-
-  .todo-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    color: #cbd5e1;
-    font-size: 0.88rem;
-    align-items: center;
-  }
-
-  .todo-meta-item {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-  }
-
-  .todo-meta-label {
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #93c5fd;
-  }
-
-  .todo-branch-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.65rem;
-    min-width: 220px;
-    padding: 0.62rem 0.8rem;
-    border-radius: 8px;
-    border: 1px solid rgba(96, 165, 250, 0.25);
-    background: rgba(15, 23, 42, 0.9);
-    color: #fff;
-    cursor: pointer;
-  }
-
-  .todo-branch-menu {
-    position: absolute;
-    top: calc(100% + 0.4rem);
-    left: 0;
-    z-index: 40;
-    min-width: 220px;
-    max-height: 18rem;
-    overflow-y: auto;
-    border-radius: 8px;
-    border: 1px solid rgba(96, 165, 250, 0.25);
-    background: rgba(15, 23, 42, 0.98);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-  }
-
-  .todo-branch-option {
-    width: 100%;
-    text-align: left;
-    padding: 0.62rem 0.8rem;
-    border: 0;
-    background: transparent;
-    color: #e5e7eb;
-    cursor: pointer;
-  }
-
-  .todo-branch-option:hover,
-  .todo-branch-option.is-active {
-    background: rgba(59, 130, 246, 0.18);
-    color: #fff;
-  }
-
-  /* To-Do List — Branch dropdown hardcodes a dark navy button/menu, which
-     stays dark even in light mode since it never followed the theme. */
-  :root[data-theme="light"] .todo-panel {
-    background: var(--lt-surface) !important;
-    border-color: var(--lt-border) !important;
-    color: var(--lt-text) !important;
-  }
-  :root[data-theme="light"] .todo-meta {
-    color: var(--lt-text-2) !important;
-  }
-  :root[data-theme="light"] .todo-branch-button {
-    background: #ffffff !important;
-    border-color: var(--lt-border) !important;
-    color: var(--lt-text) !important;
-  }
-  :root[data-theme="light"] .todo-branch-menu {
-    background: #ffffff !important;
-    border-color: var(--lt-border) !important;
-    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.15) !important;
-  }
-  :root[data-theme="light"] .todo-branch-option {
-    color: var(--lt-text) !important;
-  }
-  :root[data-theme="light"] .todo-branch-option:hover,
-  :root[data-theme="light"] .todo-branch-option.is-active {
-    background: rgba(59, 130, 246, 0.12) !important;
-    color: var(--lt-text) !important;
-  }
-  :root[data-theme="light"] .todo-meta-count {
-    color: var(--lt-text-2) !important;
-  }
-
-  .todo-meta-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.25rem 0.65rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    background: #dbeafe;
-    color: #1d4ed8;
-  }
-
-  .todo-meta-count {
-    color: #bfdbfe;
-    font-weight: 600;
-  }
-
-  table.todo-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: #fff;
-    color: #1f2937;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .todo-table th,
-  .todo-table td {
-    border: 1px solid #d1d5db;
-    padding: 0.75rem;
-    font-size: 0.85rem;
-    white-space: nowrap;
-  }
-
-  .todo-table th {
-    background: #f3f4f6;
-    font-weight: 700;
-    text-align: center;
-  }
-
-  .todo-table td {
-    text-align: center;
-  }
-
-  .todo-left,
-  .todo-ticket-no {
-    text-align: left;
-  }
-
-  .todo-ticket-no {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-weight: 700;
-    color: #2563eb;
-  }
-
-  .todo-empty {
-    text-align: center;
-    color: #64748b;
-    font-style: italic;
-    padding: 1.5rem 1rem;
   }
 
   .work-planner-container {
@@ -1828,6 +1681,22 @@
   background: #f1f5f9;
   margin: 0 0.75rem;
 }
+.mtech-app-profile-timecard {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  background: none;
+  color: var(--mt-blue-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-app-profile-timecard:hover {
+  background: #eef2ff;
+}
 .mtech-app-profile-logout {
   display: block;
   width: 100%;
@@ -1974,6 +1843,39 @@
   flex-shrink: 0;
 }
 .mtech-menu-overlay { position: fixed; inset: 0; z-index: 30; }
+.mtech-alert-popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+.mtech-alert-popup-card {
+  width: 100%;
+  max-width: 22rem;
+  background: #fff;
+  border-radius: 14px;
+  border: 2px solid #f59e0b;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  padding: 1.2rem;
+}
+.mtech-alert-popup-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #92400e;
+  margin-bottom: 0.7rem;
+}
+.mtech-alert-popup-body { max-height: 40vh; overflow-y: auto; margin-bottom: 1rem; }
+.mtech-alert-popup-text {
+  font-size: 0.92rem;
+  color: #1f2937;
+  line-height: 1.4;
+  margin: 0 0 0.6rem;
+}
+.mtech-alert-popup-ok { width: 100%; }
 .mtech-user-menu {
   position: absolute;
   right: 0.8rem;
@@ -2262,24 +2164,40 @@
 /* Expand / collapse pill floating over the map */
 .mtech-map-expand {
   position: absolute;
-  top: 0.55rem;
+  top: 0.6rem;
   right: 0.6rem;
-  z-index: 5;
-  padding: 0.35rem 0.7rem;
+  z-index: 20;
+  padding: 0.5rem 0.9rem;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  background: rgba(15, 23, 42, 0.85);
+  border: 1.5px solid rgba(226, 232, 240, 0.8);
+  background: rgba(15, 23, 42, 0.95);
   color: #f8fafc;
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.5);
 }
 .mtech-map-expand:hover { background: rgba(30, 41, 59, 0.9); }
+/* env()'s fallback only kicks in when the browser doesn't support the
+   variable at all - on virtually every non-notched device (i.e. almost
+   all of them) safe-area-inset-top is a defined 0px, so the fallback
+   never actually applied here and this sat flush at the true top of the
+   screen, behind the fixed header - the exact same bug the zoom control
+   had. Add the header height explicitly instead of relying on the
+   fallback to provide it. */
 .mtech-map-wrap.expanded .mtech-map-expand {
-  top: env(safe-area-inset-top, 0.55rem);
-  right: env(safe-area-inset-right, 0.6rem);
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
+  right: calc(0.6rem + env(safe-area-inset-right, 0px));
+}
+/* When expanded, the map goes position:fixed/inset:0 (true top of the
+   viewport), but the app header stays fixed on top of it at the same
+   corner - it was covering Leaflet's top-left zoom control (the "+"
+   button, being on top of the "-" button, was hidden entirely behind the
+   header). Push the whole control below the header, same offset pattern
+   as the expand pill above. */
+.mtech-map-wrap.expanded .leaflet-top.leaflet-left {
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
 }
 
 .mtech-nav-btn {
@@ -2441,6 +2359,16 @@
 }
 .mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
 .mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
+.mtech-service-section-value {
+  color: #0f172a;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
+a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }
 .mtech-muted { color: #64748b; font-size: 0.8rem; padding: 0.5rem 0; }
 
@@ -5137,6 +5065,10 @@
   background: #dbeafe;
   color: #1d4ed8;
 }
+.mtech-payroll-status-approved {
+  background: #ede9fe;
+  color: #6d28d9;
+}
 .mtech-payroll-status-on-hold {
   background: #fee2e2;
   color: #b91c1c;
@@ -5197,6 +5129,166 @@
   color: rgba(255, 255, 255, 0.65);
   text-align: center;
   padding: 0 0.5rem;
+}
+
+/* ── Timecard view (real punch clock, today only) ─────────────────────── */
+.mtech-timecard {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.mtech-timecard-heading {
+  padding: 0.85rem 1.05rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-timecard-name {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-timecard-sub {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+.mtech-timecard-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+.mtech-timecard-card {
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-timecard-card-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: #64748b;
+}
+.mtech-timecard-card-value {
+  margin-top: 0.25rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #1f2937;
+}
+.mtech-timecard-card-value.in { color: #16a34a; }
+.mtech-timecard-card-value.out { color: #dc2626; }
+.mtech-timecard-card-value.meal { color: #d97706; }
+.mtech-timecard-hours {
+  text-align: center;
+  padding: 0.6rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--mt-blue-dark);
+}
+.mtech-timecard-btn {
+  appearance: none;
+  width: 100%;
+  padding: 1rem;
+  border: none;
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transition: filter 0.12s ease;
+}
+.mtech-timecard-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.mtech-timecard-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mtech-timecard-btn-time { background: #16a34a; }
+.mtech-timecard-btn-meal { background: #d97706; }
+.mtech-timecard-note {
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.65);
+  text-align: center;
+  padding: 0 0.5rem;
+}
+
+/* ── Clock In Team (manager proxy clock-in) ───────────────────────────── */
+.mtech-clockin {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.mtech-clockin-heading {
+  padding: 0.85rem 1.05rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-clockin-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-clockin-sub {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+.mtech-clockin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mtech-clockin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.mtech-clockin-row-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+.mtech-clockin-row-status {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+.mtech-clockin-btn {
+  appearance: none;
+  flex-shrink: 0;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 10px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-clockin-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.mtech-clockin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ── Stub view ─────────────────────────────────────────────────────────── */
@@ -5271,8 +5363,13 @@
 }
 
 /* ── Inbox (contact list) ─────────────────────────────────────────────── */
+/* No overflow-y here: .mtech-content (the app shell's own scroll region,
+   used by every other view) already scrolls the whole viewport. Giving
+   this a second independent overflow-y:auto nested inside it made the
+   sticky header below stick to the WRONG scroll container — it would
+   drift out of view as .mtech-content scrolled, leaving a sliver of it
+   peeking out from under the fixed top header. */
 .mtech-chat-inbox {
-  overflow-y: auto;
 }
 
 .mtech-chat-inbox-header {
@@ -5441,9 +5538,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-role-label {
-  font-size: 0.75rem;
+.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+/* Last-message preview (falls back to the role label when no
+   conversation exists yet) - single-line truncated like a real chat
+   list, not the plain role subtitle it replaced. */
+.mtech-chat-contact-preview {
+  font-size: 0.8rem;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+
+.mtech-chat-contact-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.mtech-chat-contact-time {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.mtech-chat-contact-unread-badge {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  background: var(--mt-blue, #5b7eff);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mtech-chat-contact-chev {
@@ -5699,10 +5830,14 @@
     inset: 0;
   }
 
+  /* Dark by default — this app has no light/dark split for .data-table's own
+     colors like the rest of the UI does (see [data-theme="light"] override
+     below); it was hardcoded to light-mode colors unconditionally, so it
+     stayed a white table even on the app's default dark theme. */
   .data-table {
     width: 100%; border-collapse: collapse;
-    background: #fff; color: #1f2937;
-    font-size: 0.875rem;
+    background: rgba(255,255,255,0.03); color: #e2e8f0;
+    font-size: 0.8rem;
     table-layout: auto;
   }
   .data-table tbody tr {
@@ -5710,33 +5845,55 @@
     height: auto;
   }
   .data-table th {
-    background: #f3f4f6; text-align: left;
-    padding: 0.75rem 0.6rem; font-weight: 700;
-    border-bottom: 2px solid #d1d5db; white-space: nowrap;
-    font-size: 0.75rem;
+    background: rgba(255,255,255,0.06); text-align: left;
+    padding: 0.5rem 0.5rem; font-weight: 700;
+    border-bottom: 2px solid rgba(255,255,255,0.12); white-space: nowrap;
+    font-size: 0.7rem;
     letter-spacing: 0.5px;
     text-transform: uppercase;
+    color: #93c5fd;
   }
   .data-table th:first-child { min-width: 100px; }
   .data-table {
     border-radius: 8px; overflow: hidden;
   }
   .data-table tbody {
-    background: #fff;
+    background: transparent;
   }
   .data-table td {
-    padding: 0.6rem 0.6rem; border-bottom: 1px solid #e5e7eb;
+    padding: 0.4rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06);
     word-break: break-word;
     white-space: normal;
   }
   .data-table tr:last-child td { border-bottom: none; }
-  .data-table tbody tr:hover td { background: #f9fafb; }
+  .data-table tbody tr:hover td { background: rgba(255,255,255,0.05); }
   .data-table .editable-cell {
-    width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;
-    font-size: 0.875rem; background: #fff; color: #1f2937; font-family: inherit;
+    width: 100%; padding: 0.3rem 0.4rem; border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+    font-size: 0.8rem; background: rgba(255,255,255,0.05); color: #e2e8f0; font-family: inherit;
   }
   .data-table .editable-cell:focus {
-    outline: none; border-color: #3b82f6; background: #f0f9ff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    outline: none; border-color: #3b82f6; background: rgba(59,130,246,0.1); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+  /* Light-mode override — restores the original light table when the user
+     explicitly switches to light theme. */
+  :root[data-theme="light"] .data-table {
+    background: #fff; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table th {
+    background: #f3f4f6; border-bottom: 2px solid #d1d5db; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table tbody {
+    background: #fff;
+  }
+  :root[data-theme="light"] .data-table td {
+    border-bottom: 1px solid #e5e7eb;
+  }
+  :root[data-theme="light"] .data-table tbody tr:hover td { background: #f9fafb; }
+  :root[data-theme="light"] .data-table .editable-cell {
+    border: 1px solid #d1d5db; background: #fff; color: #1f2937;
+  }
+  :root[data-theme="light"] .data-table .editable-cell:focus {
+    background: #f0f9ff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
   }
 
   .filter-grid {
@@ -6259,147 +6416,6 @@
     color: #bfdbfe;
     font-weight: 600;
     min-height: 1.5rem;
-  }
-
-  .todo-panel {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    padding: 1.25rem;
-    color: #fff;
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
-  }
-
-  .todo-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    color: #cbd5e1;
-    font-size: 0.88rem;
-    align-items: center;
-  }
-
-  .todo-meta-item {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-  }
-
-  .todo-meta-label {
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #93c5fd;
-  }
-
-  .todo-branch-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.65rem;
-    min-width: 220px;
-    padding: 0.62rem 0.8rem;
-    border-radius: 8px;
-    border: 1px solid rgba(96, 165, 250, 0.25);
-    background: rgba(15, 23, 42, 0.9);
-    color: #fff;
-    cursor: pointer;
-  }
-
-  .todo-branch-menu {
-    position: absolute;
-    top: calc(100% + 0.4rem);
-    left: 0;
-    z-index: 40;
-    min-width: 220px;
-    max-height: 18rem;
-    overflow-y: auto;
-    border-radius: 8px;
-    border: 1px solid rgba(96, 165, 250, 0.25);
-    background: rgba(15, 23, 42, 0.98);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-  }
-
-  .todo-branch-option {
-    width: 100%;
-    text-align: left;
-    padding: 0.62rem 0.8rem;
-    border: 0;
-    background: transparent;
-    color: #e5e7eb;
-    cursor: pointer;
-  }
-
-  .todo-branch-option:hover,
-  .todo-branch-option.is-active {
-    background: rgba(59, 130, 246, 0.18);
-    color: #fff;
-  }
-
-  .todo-meta-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.25rem 0.65rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    background: #dbeafe;
-    color: #1d4ed8;
-  }
-
-  .todo-meta-count {
-    color: #bfdbfe;
-    font-weight: 600;
-  }
-
-  table.todo-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: #fff;
-    color: #1f2937;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .todo-table th,
-  .todo-table td {
-    border: 1px solid #d1d5db;
-    padding: 0.75rem;
-    font-size: 0.85rem;
-    white-space: nowrap;
-  }
-
-  .todo-table th {
-    background: #f3f4f6;
-    font-weight: 700;
-    text-align: center;
-  }
-
-  .todo-table td {
-    text-align: center;
-  }
-
-  .todo-left,
-  .todo-ticket-no {
-    text-align: left;
-  }
-
-  .todo-ticket-no {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-weight: 700;
-    color: #2563eb;
-  }
-
-  .todo-empty {
-    text-align: center;
-    color: #64748b;
-    font-style: italic;
-    padding: 1.5rem 1rem;
   }
 
   .work-planner-container {
@@ -7329,6 +7345,22 @@
   background: #f1f5f9;
   margin: 0 0.75rem;
 }
+.mtech-app-profile-timecard {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  background: none;
+  color: var(--mt-blue-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-app-profile-timecard:hover {
+  background: #eef2ff;
+}
 .mtech-app-profile-logout {
   display: block;
   width: 100%;
@@ -7475,6 +7507,39 @@
   flex-shrink: 0;
 }
 .mtech-menu-overlay { position: fixed; inset: 0; z-index: 30; }
+.mtech-alert-popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+.mtech-alert-popup-card {
+  width: 100%;
+  max-width: 22rem;
+  background: #fff;
+  border-radius: 14px;
+  border: 2px solid #f59e0b;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  padding: 1.2rem;
+}
+.mtech-alert-popup-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #92400e;
+  margin-bottom: 0.7rem;
+}
+.mtech-alert-popup-body { max-height: 40vh; overflow-y: auto; margin-bottom: 1rem; }
+.mtech-alert-popup-text {
+  font-size: 0.92rem;
+  color: #1f2937;
+  line-height: 1.4;
+  margin: 0 0 0.6rem;
+}
+.mtech-alert-popup-ok { width: 100%; }
 .mtech-user-menu {
   position: absolute;
   right: 0.8rem;
@@ -7763,24 +7828,40 @@
 /* Expand / collapse pill floating over the map */
 .mtech-map-expand {
   position: absolute;
-  top: 0.55rem;
+  top: 0.6rem;
   right: 0.6rem;
-  z-index: 5;
-  padding: 0.35rem 0.7rem;
+  z-index: 20;
+  padding: 0.5rem 0.9rem;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  background: rgba(15, 23, 42, 0.85);
+  border: 1.5px solid rgba(226, 232, 240, 0.8);
+  background: rgba(15, 23, 42, 0.95);
   color: #f8fafc;
-  font-size: 0.75rem;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.5);
 }
 .mtech-map-expand:hover { background: rgba(30, 41, 59, 0.9); }
+/* env()'s fallback only kicks in when the browser doesn't support the
+   variable at all - on virtually every non-notched device (i.e. almost
+   all of them) safe-area-inset-top is a defined 0px, so the fallback
+   never actually applied here and this sat flush at the true top of the
+   screen, behind the fixed header - the exact same bug the zoom control
+   had. Add the header height explicitly instead of relying on the
+   fallback to provide it. */
 .mtech-map-wrap.expanded .mtech-map-expand {
-  top: env(safe-area-inset-top, 0.55rem);
-  right: env(safe-area-inset-right, 0.6rem);
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
+  right: calc(0.6rem + env(safe-area-inset-right, 0px));
+}
+/* When expanded, the map goes position:fixed/inset:0 (true top of the
+   viewport), but the app header stays fixed on top of it at the same
+   corner - it was covering Leaflet's top-left zoom control (the "+"
+   button, being on top of the "-" button, was hidden entirely behind the
+   header). Push the whole control below the header, same offset pattern
+   as the expand pill above. */
+.mtech-map-wrap.expanded .leaflet-top.leaflet-left {
+  top: calc(var(--mt-header-h) + env(safe-area-inset-top, 0px) + 0.5rem);
 }
 
 .mtech-nav-btn {
@@ -7942,6 +8023,16 @@
 }
 .mtech-info-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
 .mtech-info-value { color: #0f172a; text-align: right; word-break: break-word; }
+.mtech-service-section { padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9; }
+.mtech-service-section .mtech-info-label { margin-bottom: 0.2rem; }
+.mtech-service-section-value {
+  color: #0f172a;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+a.mtech-phone-link { color: #4f46e5; font-weight: 700; text-decoration: none; }
+a.mtech-phone-link:active { opacity: 0.7; }
 .mtech-problem { font-size: 0.85rem; color: #1f2937; line-height: 1.5; }
 .mtech-muted { color: #64748b; font-size: 0.8rem; padding: 0.5rem 0; }
 
@@ -10636,6 +10727,10 @@
   background: #dbeafe;
   color: #1d4ed8;
 }
+.mtech-payroll-status-approved {
+  background: #ede9fe;
+  color: #6d28d9;
+}
 .mtech-payroll-status-on-hold {
   background: #fee2e2;
   color: #b91c1c;
@@ -10696,6 +10791,166 @@
   color: rgba(255, 255, 255, 0.65);
   text-align: center;
   padding: 0 0.5rem;
+}
+
+/* ── Timecard view (real punch clock, today only) ─────────────────────── */
+.mtech-timecard {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.mtech-timecard-heading {
+  padding: 0.85rem 1.05rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-timecard-name {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-timecard-sub {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+.mtech-timecard-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+.mtech-timecard-card {
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-timecard-card-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: #64748b;
+}
+.mtech-timecard-card-value {
+  margin-top: 0.25rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #1f2937;
+}
+.mtech-timecard-card-value.in { color: #16a34a; }
+.mtech-timecard-card-value.out { color: #dc2626; }
+.mtech-timecard-card-value.meal { color: #d97706; }
+.mtech-timecard-hours {
+  text-align: center;
+  padding: 0.6rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--mt-blue-dark);
+}
+.mtech-timecard-btn {
+  appearance: none;
+  width: 100%;
+  padding: 1rem;
+  border: none;
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transition: filter 0.12s ease;
+}
+.mtech-timecard-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.mtech-timecard-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mtech-timecard-btn-time { background: #16a34a; }
+.mtech-timecard-btn-meal { background: #d97706; }
+.mtech-timecard-note {
+  margin-top: 0.1rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.65);
+  text-align: center;
+  padding: 0 0.5rem;
+}
+
+/* ── Clock In Team (manager proxy clock-in) ───────────────────────────── */
+.mtech-clockin {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.mtech-clockin-heading {
+  padding: 0.85rem 1.05rem;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.mtech-clockin-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--mt-blue-dark);
+}
+.mtech-clockin-sub {
+  margin-top: 0.1rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+.mtech-clockin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mtech-clockin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.mtech-clockin-row-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+.mtech-clockin-row-status {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+.mtech-clockin-btn {
+  appearance: none;
+  flex-shrink: 0;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 10px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mtech-clockin-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.mtech-clockin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ── Stub view ─────────────────────────────────────────────────────────── */
@@ -10770,8 +11025,13 @@
 }
 
 /* ── Inbox (contact list) ─────────────────────────────────────────────── */
+/* No overflow-y here: .mtech-content (the app shell's own scroll region,
+   used by every other view) already scrolls the whole viewport. Giving
+   this a second independent overflow-y:auto nested inside it made the
+   sticky header below stick to the WRONG scroll container — it would
+   drift out of view as .mtech-content scrolled, leaving a sliver of it
+   peeking out from under the fixed top header. */
 .mtech-chat-inbox {
-  overflow-y: auto;
 }
 
 .mtech-chat-inbox-header {
@@ -10940,9 +11200,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mtech-chat-contact-role-label {
-  font-size: 0.75rem;
+.mtech-chat-contact-name.unread { color: #0f172a; font-weight: 800; }
+/* Last-message preview (falls back to the role label when no
+   conversation exists yet) - single-line truncated like a real chat
+   list, not the plain role subtitle it replaced. */
+.mtech-chat-contact-preview {
+  font-size: 0.8rem;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtech-chat-contact-preview.unread { color: #1e293b; font-weight: 600; }
+
+.mtech-chat-contact-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.mtech-chat-contact-time {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.mtech-chat-contact-unread-badge {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  background: var(--mt-blue, #5b7eff);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mtech-chat-contact-chev {

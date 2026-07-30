@@ -233,8 +233,8 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
         <div className="flex items-center gap-3 mb-6">
           <Link
-            to="/m/$module"
-            params={{ module: mod.slug }}
+            to="/m/$module/$submodule"
+            params={{ module: "dashboard", submodule: "csr-dashboard" }}
             className="btn hover:bg-white/15"
           >
             <ChevronLeft className="h-4 w-4" />

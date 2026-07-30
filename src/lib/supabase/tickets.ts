@@ -897,6 +897,63 @@ export async function getLatestVisitTechnicianByTicketIds(
   return out;
 }
 
+/**
+ * Bulk-fetch full visit rows (not a derived summary) for a set of tickets,
+ * keyed by ticket_id. Used by exports/reports that need the complete
+ * Visit Log detail for many tickets at once — a single `.in()` query
+ * instead of calling `getTicketVisits` once per ticket, which would be an
+ * N+1 query for every ticket in the export.
+ */
+export async function getVisitsByTicketIds(ticketIds: string[]): Promise<Map<string, UIVisit[]>> {
+  const out = new Map<string, UIVisit[]>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("visits")
+    .select("*")
+    .in("ticket_id", uniq)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("getVisitsByTicketIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const tid = (row as any).ticket_id as string | null;
+    if (!tid) continue;
+    const list = out.get(tid) ?? [];
+    list.push(rowToVisit(row));
+    out.set(tid, list);
+  }
+  return out;
+}
+
+/**
+ * Bulk-fetch full part rows for a set of tickets, keyed by ticket_id.
+ * Same rationale as `getVisitsByTicketIds` — one query for the whole
+ * export batch instead of one per ticket.
+ */
+export async function getPartsByTicketIds(ticketIds: string[]): Promise<Map<string, UIPartRow[]>> {
+  const out = new Map<string, UIPartRow[]>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("parts")
+    .select("*")
+    .in("ticket_id", uniq);
+  if (error) {
+    console.error("getPartsByTicketIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const tid = (row as any).ticket_id as string | null;
+    if (!tid) continue;
+    const list = out.get(tid) ?? [];
+    list.push(rowToPart(row));
+    out.set(tid, list);
+  }
+  return out;
+}
+
 /** Get all visits for a ticket (newest first). */
 export async function getTicketVisits(ticketNo: string): Promise<UIVisit[]> {
   const ticketId = await getTicketId(ticketNo);

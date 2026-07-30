@@ -4,6 +4,7 @@ import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import {
@@ -852,7 +853,11 @@ function resolveCoverageLocation(query: string, locationRows: LocationRow[], cov
 }
 
 export function LocationManagementPage({ sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [activeTab, setActiveTab] = useState<"locations" | "parts" | "coverage">("locations");
+  const [activeTab, setActiveTab] = usePersistedTab<"locations" | "parts" | "coverage">(
+    "ahs:location-management-active-tab",
+    ["locations", "parts", "coverage"],
+    "locations",
+  );
   
   // Helper function to deduplicate locations by name.
   // Prefers a real persisted DB row (uuid id) over a hardcoded default, and

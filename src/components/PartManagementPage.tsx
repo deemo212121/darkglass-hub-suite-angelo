@@ -11,82 +11,23 @@ import { Link } from "@tanstack/react-router";
 import { AlertTriangle, ChevronLeft, Download, Send, Trash2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
+import { REPAIR_STATUS_OPTIONS } from "@/lib/ticketData";
 import { exportToCSV } from "@/lib/csvExport";
+import {
+  getPartManagementRows,
+  updatePartManagementStatus,
+  deletePartManagementRow,
+  type PartManagementRow,
+} from "@/lib/supabase/partManagement";
 
-type ManagementRow = {
-  ticketNo: string;
-  repairStatus: string;
-  location: string;
-  schedule: string;
-  wty: string;
-  partId: string;
-  partDist: string;
-  partNo: string;
-  description: string;
-  poNo: string;
-  poDate: string;
-  orderNo: string;
-  invoiceNo: string;
-  partStatus: string;
-  note: string;
-  unit: number;
-  core: number;
-  qty: number;
-  lot: string;
-  symptom: string;
-  action: string;
-  receiveDate: string;
-};
-
-const STORAGE_KEY = "partManagementRows";
-
-const REQUIRED_REPAIR_STATUSES = [
-  "CL-Claimed",
-  "CL-Data-Closed",
-  "CL-Need Cancel",
-  "CL-Parts Back Ordered",
-  "CL-Ready to Complete",
-  "CSR-Acknowledged",
-  "CSR-Assigned to ASC",
-  "CSR-Left Message for Cx",
-  "CSR-Needs Scheduling",
-  "OP-Ready for Service",
-  "OP-Reschedule Follow up",
-  "OP-UPDATE HOLD",
-  "OP-Waiting for Part",
-  "3 PT-Need PreAuthorization",
-  "TR-Need PO",
-  "TR-Need Triage",
-];
-
-const REQUIRED_PART_STATUSES = [
-  "Back Order",
-  "Cancelled",
-  "Claimed",
-  "CX Home",
-  "CX Received",
-  "Defective",
-  "Hold for Estimation",
-  "Hold for next visit",
-  "Lost",
-  "Need PO",
-  "Not Used & Stocked",
-  "PAID",
-  "Part Ready",
-  "PO Made",
-  "RA - Defect",
-  "RA - DMG",
-  "RA - PNN",
-  "RA - Qty Discrepancy",
-  "SQT Received",
-  "Tech Pickup",
-  "Used",
-];
-
-const BASE_ROWS: ManagementRow[] = [
-  { ticketNo: "066098174139", repairStatus: "TR-Need Triage", location: "Asheville", schedule: "05/22", wty: "IW", partId: "P1", partDist: "", partNo: "5221DD1001E", description: "VALVE ASSEMBLY INLET", poNo: "066098174139", poDate: "", orderNo: "", invoiceNo: "", partStatus: "CX Home", note: "If used during repair requires return: No Shipping Provider: FedEx", unit: 0, core: 0, qty: 1, lot: "", symptom: "05/15 - Customer called in stating blinking 1E error code for 2 days.", action: "Part Order", receiveDate: "2026-05-15" },
-  { ticketNo: "1006772961-10", repairStatus: "OP-Waiting for Part", location: "Asheville", schedule: "04/22", wty: "IW", partId: "P10", partDist: "Marcone", partNo: "5304485759", description: "TAPE", poNo: "1006772961-10-AV", poDate: "2026-04-27", orderNo: "73538313", invoiceNo: "73586196-2", partStatus: "Part Ready", note: "", unit: 0.39, core: 0, qty: 4, lot: "", symptom: "Need to rediag the unit.", action: "Part Order", receiveDate: "2026-05-14" },
-  { ticketNo: "1007098724-10", repairStatus: "TR-Need PO", location: "Asheville", schedule: "", wty: "IW", partId: "P1", partDist: "Marcone", partNo: "5304532919", description: "CONTROL BOARD,ASSEMBLY,LED POW", poNo: "", poDate: "", orderNo: "", invoiceNo: "", partStatus: "Need PO", note: "", unit: 163.66, core: 0, qty: 1, lot: "", symptom: "", action: "Part Order", receiveDate: "2026-05-15" },
+// The canonical part-status vocabulary (matches the dropdown on the ticket
+// detail page's own Parts tab) - real distinct values currently in the data
+// are unioned in below in case something outside this list ever shows up.
+const PART_STATUS_OPTIONS = [
+  "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective",
+  "Hold for Estimation", "Hold for next vist", "In Review", "Lost", "Need PO", "Not Used & Stocked",
+  "PAID", "Part Ready", "PNN", "PO Made", "RA - Defect", "RA- DMG", "RA - PNN",
+  "RA - Qty Discrepancy", "SQT Received", "Tech Pickup", "Transfer to Another Ticket", "Used",
 ];
 
 function formatMoney(value: number) {
@@ -94,26 +35,9 @@ function formatMoney(value: number) {
   return Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
 }
 
-function loadRows() {
-  const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length) return parsed as ManagementRow[];
-    } catch {
-      // fall through to seeded rows
-    }
-  }
-  const rows: ManagementRow[] = [...BASE_ROWS];
-  if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-  }
-  return rows;
-}
-
-function defaultFilterOptions(rows: ManagementRow[]) {
-  const repairValues = [...new Set([...REQUIRED_REPAIR_STATUSES, ...rows.map((row) => row.repairStatus).filter(Boolean)])];
-  const partValues = [...new Set([...REQUIRED_PART_STATUSES, ...rows.map((row) => row.partStatus).filter(Boolean)])];
+function defaultFilterOptions(rows: PartManagementRow[]) {
+  const repairValues = [...new Set([...REPAIR_STATUS_OPTIONS, ...rows.map((row) => row.repairStatus).filter(Boolean)])];
+  const partValues = [...new Set([...PART_STATUS_OPTIONS, ...rows.map((row) => row.partStatus).filter(Boolean)])];
   return { repairValues, partValues };
 }
 
@@ -170,7 +94,10 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
 );
 
 export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [rows, setRows] = useState<ManagementRow[]>([]);
+  const [rows, setRows] = useState<PartManagementRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Location is multi-select. Empty = treated as no location selected, so
   // the table prompts the user to pick a branch (mirrors the v1 spec).
@@ -183,22 +110,25 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [partStatusFilter, setPartStatusFilter] = useState("");
   const [ticketFilter, setTicketFilter] = useState("");
-  const [fromDate, setFromDate] = useState("2026-05-14");
-  const [toDate, setToDate] = useState("2026-05-15");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [resultSearch, setResultSearch] = useState("");
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadRows = () => {
+    setLoading(true);
+    setLoadError(null);
+    getPartManagementRows()
+      .then(setRows)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    setRows(loadRows());
+    loadRows();
   }, []);
-
-  // Auto-save whenever rows change
-  useEffect(() => {
-    if (rows.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-    }
-  }, [rows]);
 
   // Close the location dropdown when clicking outside the trigger or list.
   useEffect(() => {
@@ -233,33 +163,26 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
   const hasLocation = locations.length > 0;
 
   const filteredRows = useMemo(() => {
-    if (!hasLocation) return [] as Array<{ row: ManagementRow; originalIndex: number }>;
+    if (!hasLocation) return [] as PartManagementRow[];
     const repair = repairStatusFilter.trim();
     const part = partStatusFilter.trim();
     const ticket = ticketFilter.trim().toLowerCase();
     const search = resultSearch.trim().toLowerCase();
 
-    return rows
-      .map((row, index) => ({ row, originalIndex: index }))
-      .filter(({ row }) => {
-        if (!locations.includes(row.location)) return false;
-        if (repair && row.repairStatus !== repair) return false;
-        if (part && row.partStatus !== part) return false;
-        if (ticket && !String(row.ticketNo || "").toLowerCase().includes(ticket)) return false;
-        if (fromDate && row.receiveDate < fromDate) return false;
-        if (toDate && row.receiveDate > toDate) return false;
-        if (search) {
-          const blob = [row.ticketNo, row.repairStatus, row.location, row.partDist, row.partNo, row.description, row.poNo, row.partStatus, row.note].join(" ").toLowerCase();
-          if (!blob.includes(search)) return false;
-        }
-        return true;
-      });
+    return rows.filter((row) => {
+      if (!locations.includes(row.location)) return false;
+      if (repair && row.repairStatus !== repair) return false;
+      if (part && row.partStatus !== part) return false;
+      if (ticket && !String(row.ticketNo || "").toLowerCase().includes(ticket)) return false;
+      if (fromDate && (!row.receiveDate || row.receiveDate < fromDate)) return false;
+      if (toDate && (!row.receiveDate || row.receiveDate > toDate)) return false;
+      if (search) {
+        const blob = [row.ticketNo, row.repairStatus, row.location, row.partDist, row.partNo, row.description, row.poNo, row.partStatus, row.note].join(" ").toLowerCase();
+        if (!blob.includes(search)) return false;
+      }
+      return true;
+    });
   }, [hasLocation, locations, repairStatusFilter, partStatusFilter, ticketFilter, fromDate, toDate, resultSearch, rows]);
-
-  const handleSave = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-    alert(`Data saved successfully! (${rows.length} total records)`);
-  };
 
   const handleExport = () => {
     if (filteredRows.length === 0) return;
@@ -278,7 +201,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
         "Total",
         "Receive Date",
       ],
-      filteredRows.map(({ row: r }) => [
+      filteredRows.map((r) => [
         r.ticketNo,
         r.repairStatus,
         r.location,
@@ -294,65 +217,72 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
     );
   };
 
-  const toggleRowSelection = (originalIndex: number) => {
+  const toggleRowSelection = (id: string) => {
     const newSelected = new Set(selectedRows);
-    if (newSelected.has(originalIndex)) {
-      newSelected.delete(originalIndex);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
     } else {
-      newSelected.add(originalIndex);
+      newSelected.add(id);
     }
     setSelectedRows(newSelected);
   };
 
   // Select / deselect every Need-PO row currently visible.
-  const needPoRows = filteredRows.filter(({ row }) => row.partStatus === "Need PO");
+  const needPoRows = filteredRows.filter((row) => row.partStatus === "Need PO");
   const allNeedPoSelected =
-    needPoRows.length > 0 && needPoRows.every(({ originalIndex }) => selectedRows.has(originalIndex));
+    needPoRows.length > 0 && needPoRows.every((row) => selectedRows.has(row.id));
   const toggleAllSelection = () => {
     if (allNeedPoSelected) {
       const next = new Set(selectedRows);
-      needPoRows.forEach(({ originalIndex }) => next.delete(originalIndex));
+      needPoRows.forEach((row) => next.delete(row.id));
       setSelectedRows(next);
     } else {
       const next = new Set(selectedRows);
-      needPoRows.forEach(({ originalIndex }) => next.add(originalIndex));
+      needPoRows.forEach((row) => next.add(row.id));
       setSelectedRows(next);
     }
   };
 
-  const selectedData = Array.from(selectedRows)
-    .map((idx) => rows[idx])
-    .filter((row) => row && row.partStatus === "Need PO");
-
+  const selectedData = rows.filter((row) => selectedRows.has(row.id) && row.partStatus === "Need PO");
   const totalCost = selectedData.reduce((sum, row) => sum + row.unit * row.qty, 0);
 
-  const handleSubmitPO = () => {
+  const handleSubmitPO = async () => {
     if (selectedData.length === 0) {
-      alert("Please select parts with 'Need PO' status");
+      setActionError("Please select parts with 'Need PO' status");
       return;
     }
-
-    const updatedRows = rows.map((row, idx) =>
-      selectedRows.has(idx)
-        ? { ...row, partStatus: "PO Made", poDate: new Date().toISOString().split("T")[0] }
-        : row,
-    );
-
-    setRows(updatedRows);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedRows));
-
-    alert(`PO submitted for ${selectedData.length} part(s)!\nTotal Cost: $${totalCost.toFixed(2)}`);
-    setSelectedRows(new Set());
-    setShowSubmitConfirm(false);
+    setSubmitting(true);
+    setActionError(null);
+    const poDate = new Date().toISOString().split("T")[0];
+    try {
+      await Promise.all(selectedData.map((row) => updatePartManagementStatus(row.id, { status: "PO Made", poDate })));
+      setRows((current) => current.map((row) =>
+        selectedRows.has(row.id) && row.partStatus === "Need PO"
+          ? { ...row, partStatus: "PO Made" }
+          : row
+      ));
+      setSelectedRows(new Set());
+      setShowSubmitConfirm(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to submit PO");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const deleteRow = (index: number) => {
-    if (!confirm("Delete this part record?")) return;
-    const updatedRows = rows.filter((_, idx) => idx !== index);
-    setRows(updatedRows);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedRows));
-    selectedRows.delete(index);
-    setSelectedRows(new Set(selectedRows));
+  const deleteRow = async (id: string) => {
+    if (!confirm("Delete this part record? This removes it from the ticket entirely.")) return;
+    try {
+      await deletePartManagementRow(id);
+      setRows((current) => current.filter((row) => row.id !== id));
+      setSelectedRows((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to delete part");
+    }
   };
 
   return (
@@ -371,6 +301,12 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           <h1 className="text-4xl font-bold text-white mb-2">{sub.title}</h1>
           <p className="text-lg text-slate-400">{sub.description}</p>
         </div>
+
+        {actionError && (
+          <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
+            {actionError}
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 mb-6">
@@ -491,16 +427,18 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                 className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
               />
             </div>
-            <button
-              onClick={handleSave}
-              className="ml-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
-            >
-              Save
-            </button>
           </div>
         </div>
 
-        {!hasLocation ? (
+        {loadError ? (
+          <div className="bg-slate-900/50 border border-red-500/30 rounded-lg p-10 text-center text-sm text-red-300">
+            Failed to load parts: {loadError}
+          </div>
+        ) : loading ? (
+          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-10 text-center text-sm text-slate-400">
+            Loading…
+          </div>
+        ) : !hasLocation ? (
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-10 text-center text-sm text-slate-400">
             Select at least one location to load PO &amp; Management data.
           </div>
@@ -557,8 +495,8 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                     </p>
                   </div>
                   <div className="space-y-2 mb-6 max-h-48 overflow-y-auto">
-                    {selectedData.map((row, idx) => (
-                      <div key={idx} className="text-xs text-slate-400 border-l-2 border-blue-500/30 pl-3 py-1">
+                    {selectedData.map((row) => (
+                      <div key={row.id} className="text-xs text-slate-400 border-l-2 border-blue-500/30 pl-3 py-1">
                         <div><span className="text-blue-300">{row.partNo}</span> - {row.description}</div>
                         <div>Qty: {row.qty} × ${row.unit.toFixed(2)} = ${(row.qty * row.unit).toFixed(2)}</div>
                       </div>
@@ -567,15 +505,17 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                   <div className="flex gap-3">
                     <button
                       onClick={() => setShowSubmitConfirm(false)}
-                      className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition"
+                      disabled={submitting}
+                      className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSubmitPO}
-                      className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition"
+                      disabled={submitting}
+                      className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg font-semibold transition"
                     >
-                      Submit
+                      {submitting ? "Submitting…" : "Submit"}
                     </button>
                   </div>
                 </div>
@@ -614,19 +554,19 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                       </td>
                     </tr>
                   ) : (
-                    filteredRows.map(({ row, originalIndex }) => (
+                    filteredRows.map((row) => (
                       <tr
-                        key={originalIndex}
+                        key={row.id}
                         className={`border-b border-white/5 hover:bg-white/5 transition ${
-                          selectedRows.has(originalIndex) ? "bg-blue-500/10" : ""
+                          selectedRows.has(row.id) ? "bg-blue-500/10" : ""
                         } ${row.partStatus === "Need PO" ? "opacity-100" : "opacity-75"}`}
                       >
                         <td className="px-4 py-3">
                           {row.partStatus === "Need PO" && (
                             <input
                               type="checkbox"
-                              checked={selectedRows.has(originalIndex)}
-                              onChange={() => toggleRowSelection(originalIndex)}
+                              checked={selectedRows.has(row.id)}
+                              onChange={() => toggleRowSelection(row.id)}
                               className="w-4 h-4 cursor-pointer"
                             />
                           )}
@@ -666,7 +606,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <button
-                              onClick={() => deleteRow(originalIndex)}
+                              onClick={() => deleteRow(row.id)}
                               className="p-1.5 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition"
                               title="Delete"
                             >

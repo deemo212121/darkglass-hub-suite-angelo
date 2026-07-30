@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0060 — In-house Form Maker: custom form definitions + submissions
+-- 0077 — In-house Form Maker: custom form definitions + submissions
 --
 -- Lets HR/Admin build their own forms inside AHS (drag-and-drop field
 -- editor, see CustomFormBuilder.tsx) instead of depending on Jotform's
@@ -24,7 +24,7 @@
 -- open for a future client-only public renderer without widening anything
 -- else.
 --
--- Run once in the Supabase SQL Editor, after 0068.
+-- Run once in the Supabase SQL Editor, after 0076.
 -- =====================================================================
 
 create table if not exists hr_custom_forms (

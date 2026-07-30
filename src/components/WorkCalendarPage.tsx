@@ -6,6 +6,7 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
 import { ALL_TECHNICIANS } from "@/lib/locations";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -131,7 +132,7 @@ export function WorkCalendarPage({ mod, sub }: Props) {
   const [monthDraft, setMonthDraft] = useState(monthValue);
   const [showTicketNo, setShowTicketNo] = useState(true);
   const [showAddress, setShowAddress] = useState(true);
-  const [view, setView] = useState<"list" | "calendar">("list");
+  const [view, setView] = usePersistedTab<"list" | "calendar">("ahs:work-calendar-view", ["list", "calendar"], "list");
   const [search, setSearch] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);

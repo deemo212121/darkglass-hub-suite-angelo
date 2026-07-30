@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0063 — "Connect Google Drive": stores one Google OAuth refresh token
+-- 0080 — "Connect Google Drive": stores one Google OAuth refresh token
 -- per company, so every submission on a form with a Document Template can
 -- be auto-uploaded as a PDF into the company's own Drive (see
 -- src/lib/server/googleDriveBridge.ts).
@@ -15,7 +15,7 @@
 -- the two RPCs below, which expose just a connected/not-connected status,
 -- never the token itself.
 --
--- Run once in the Supabase SQL Editor, after 0071.
+-- Run once in the Supabase SQL Editor, after 0079.
 -- =====================================================================
 
 create table if not exists hr_google_drive_connections (

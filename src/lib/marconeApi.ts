@@ -514,3 +514,208 @@ export async function marconeOrderStatus(args: {
 
   return { success: true, status: result.status, data: flat };
 }
+
+// ─── Returns ────────────────────────────────────────────────────────────
+
+export interface MarconeReturnAuthorization {
+  transactionId?: string;
+  /** The real RMA number Marcone issues for this return. */
+  returnAuthorizationNumber?: number;
+  status?: string;
+}
+
+interface MarconeRequestReturnAuthorizationRawResponse {
+  transactionId?: string;
+  returnAuthorizationNumber?: number;
+  status?: string;
+  errorMessage?: string;
+}
+
+/**
+ * Request a real Return Merchandise Authorization from Marcone for one part
+ * line. POST /returns/requestreturnauthorization — confirmed directly
+ * against Marcone's own Swagger spec (api.msupply.com/swagger/v1/
+ * swagger.json): request takes custNo/make/partNumber/quantity/reason/
+ * poNumber/invoiceNumber/reference, response returns a real
+ * returnAuthorizationNumber (int32). One call per part line — the
+ * endpoint doesn't accept a batch of parts.
+ */
+export async function marconeRequestReturn(args: {
+  partNumber: string;
+  quantity: number;
+  reason?: string;
+  poNumber?: string;
+  invoiceNumber?: string;
+  reference?: string;
+  make?: string;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReturnAuthorization>> {
+  const partNumber = args.partNumber?.trim();
+  if (!partNumber) {
+    return { success: false, error: "partNumber is required" };
+  }
+
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const body: Record<string, unknown> = {
+    custNo,
+    partNumber,
+    quantity: args.quantity ?? 1,
+  };
+  if (args.make?.trim()) body.make = args.make.trim();
+  if (args.reason?.trim()) body.reason = args.reason.trim();
+  if (args.poNumber?.trim()) body.poNumber = args.poNumber.trim();
+  if (args.invoiceNumber?.trim()) body.invoiceNumber = args.invoiceNumber.trim();
+  if (args.reference?.trim()) body.reference = args.reference.trim();
+
+  const result = await marconeRequest<MarconeRequestReturnAuthorizationRawResponse>(
+    "/returns/requestreturnauthorization",
+    { method: "POST", body },
+  );
+  if (!result.success) {
+    const data = (result.data as MarconeRequestReturnAuthorizationRawResponse) || {};
+    return {
+      success: false,
+      status: result.status,
+      error: data.errorMessage || result.error || `HTTP ${result.status || "?"}`,
+    };
+  }
+  const raw = (result.data as MarconeRequestReturnAuthorizationRawResponse) || {};
+  if (!raw.returnAuthorizationNumber) {
+    return {
+      success: false,
+      status: result.status,
+      error: "Marcone accepted the request but returned no RA number.",
+    };
+  }
+  return {
+    success: true,
+    status: result.status,
+    data: {
+      transactionId: raw.transactionId,
+      returnAuthorizationNumber: raw.returnAuthorizationNumber,
+      status: raw.status,
+    },
+  };
+}
+
+export type MarconeReturnSearchBy = "Part" | "PO" | "InvoiceNumber";
+
+export interface MarconeReturnableItem {
+  invoiceNumber?: string;
+  poNumber?: string;
+  make?: string;
+  partNumber?: string;
+  /** How many units of this line Marcone's own records currently allow returning. */
+  returnQuantityAvailable: number;
+  unitPrice: number;
+}
+
+interface FindReturnableItemsRawResponse {
+  transactionId?: string;
+  returnableItemsList?: MarconeReturnableItem[] | null;
+  errorMessage?: string;
+}
+
+/**
+ * Pre-flight check before actually calling marconeRequestReturn: confirms a
+ * part/PO/invoice is real in Marcone's own records and still has returnable
+ * quantity, WITHOUT creating anything. POST /returns/findreturnableitems —
+ * confirmed directly against Marcone's Swagger spec (fetched the raw
+ * swagger.json, not the rendered UI, since components.schemas.
+ * FindReturnableItemsRequest is {custNo, searchBy: "Part"|"PO"|
+ * "InvoiceNumber", itemSearch: string} - NOT make/partNumber/poNumber/
+ * invoiceNumber as separate fields, which an earlier summarized read of
+ * this same spec had wrong). Doubles as an answer to "was this actually
+ * ordered from Marcone" - if Marcone's own system has no record of it,
+ * that's a strong signal our part_dist tagging is wrong, not that
+ * Marcone is out of sync.
+ */
+export async function marconeFindReturnableItems(args: {
+  searchBy: MarconeReturnSearchBy;
+  itemSearch: string;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReturnableItem[]>> {
+  const itemSearch = args.itemSearch?.trim();
+  if (!itemSearch) {
+    return { success: false, error: "itemSearch is required" };
+  }
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const result = await marconeRequest<FindReturnableItemsRawResponse>(
+    "/returns/findreturnableitems",
+    { method: "POST", body: { custNo, searchBy: args.searchBy, itemSearch } },
+  );
+  if (!result.success) {
+    const data = (result.data as FindReturnableItemsRawResponse) || {};
+    return { success: false, status: result.status, error: data.errorMessage || result.error };
+  }
+  const raw = (result.data as FindReturnableItemsRawResponse) || {};
+  return { success: true, status: result.status, data: raw.returnableItemsList || [] };
+}
+
+export interface MarconeReaQrCode {
+  /** Object URL (from a decoded blob) ready to drop straight into an <img src>. */
+  imageUrl: string;
+  contentType: string;
+}
+
+/**
+ * Fetch the real QR-code label image for an already-issued RA #. GET
+ * /returns/reaQrCode?returnAuthorizationNumber=...&custNo=... — confirmed
+ * against Marcone's Swagger spec to return raw binary
+ * (application/octet-stream). The server bridge base64-encodes it (see
+ * marconeBridge.ts's isBinary branch); this decodes that back into a blob
+ * URL. Read-only GET, safe to call directly (unlike marconeRequestReturn,
+ * this never creates anything on Marcone's side).
+ */
+export async function marconeGetReaQrCode(args: {
+  returnAuthorizationNumber: number;
+  custNo?: number;
+}): Promise<MarconeApiResult<MarconeReaQrCode>> {
+  const env = (import.meta as any).env || {};
+  const custNo =
+    args.custNo ||
+    Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0);
+  if (!custNo || Number.isNaN(custNo)) {
+    return {
+      success: false,
+      error: "Marcone customer number not configured (VITE_MARCONE_CUST_NO).",
+    };
+  }
+
+  const result = await marconeRequest<{ base64?: string; contentType?: string }>(
+    "/returns/reaQrCode",
+    { method: "GET", query: { returnAuthorizationNumber: args.returnAuthorizationNumber, custNo } },
+  );
+  if (!result.success || !result.data?.base64) {
+    return { success: false, status: result.status, error: result.error || "Marcone returned no QR image" };
+  }
+
+  const contentType = result.data.contentType || "image/png";
+  const binary = atob(result.data.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: contentType });
+  const imageUrl = URL.createObjectURL(blob);
+
+  return { success: true, status: result.status, data: { imageUrl, contentType } };
+}

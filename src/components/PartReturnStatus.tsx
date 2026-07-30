@@ -2,171 +2,45 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download } from "lucide-react";
 import * as XLSX from "xlsx";
+import { LOCATIONS } from "@/lib/locations";
+import {
+  getPartReturns,
+  updatePartReturnRow,
+  getDistinctDistributors,
+  type PartReturnRow,
+} from "@/lib/supabase/partReturnStatus";
+import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
 
-type ReturnRow = {
-  raNo: string;
-  poNo: string;
-  uniqueId: string;
-  partNo: string;
-  description: string;
-  returnType: string;
-  returnReason: string;
-  status: string;
-  returnDate: string;
-  returnedBy: string;
-  qty: number;
-  unitPrice: number;
-  coreValue: number;
-  returnLabel: string;
-  location: string;
-  vendor: string;
-  account: string;
-};
-
-type PartInfoRow = { leftLabel: string; leftValue: string; rightLabel: string; rightValue: string };
-type PartInfoAvailability = { id: string; name: string; qty: number };
-type PartInfoData = { rows: PartInfoRow[]; availability: PartInfoAvailability[] };
-
-const STORAGE_KEY = "partReturnStatusData";
 const TAB_KEY = "partReturnStatusTab";
-
-const REGULAR_DEFAULT: ReturnRow[] = [
-  { raNo: "1-66384", poNo: "3846784E1-ATL-1", uniqueId: "1-304196-0526-2", partNo: "WH01X24180", description: "DRIVE BELT", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-08", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 10.9, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SB" },
-  { raNo: "1-67075", poNo: "SA-3268869-ATL-1", uniqueId: "1-304225-0526-1", partNo: "WR60X10307", description: "MOTOR DC EVAP FAN ASM", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-08", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 105.95, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "Midea-104268" },
-  { raNo: "1-67076", poNo: "SA-3268869-ATL-1", uniqueId: "1-304225-0526-2", partNo: "WR60X30922", description: "EVAPORATOR FAN BLADE", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-08", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 50.25, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SB-Miele" },
-  { raNo: "1-74783", poNo: "SA-2998427-ATL", uniqueId: "1-219418-0426-1", partNo: "WD22X33499", description: "LOWER SPRAY ARM", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 12.28, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "M2-162468" },
-  { raNo: "1-74784", poNo: "SA-2998427-ATL", uniqueId: "1-219418-0426-2", partNo: "WD05X35098", description: "HEATING ELEMENT", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 19.82, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "MCN-162468" },
-  { raNo: "1-75075", poNo: "SA-3213002-ATL", uniqueId: "1-293399-0526-2", partNo: "WR55X46805", description: "MAIN CONTROL BOARD", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 179.99, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "LG" },
-  { raNo: "1-75076", poNo: "SA-3213002-ATL", uniqueId: "1-293399-0526-3", partNo: "WR02X13684", description: "FILTER MANIFOLD", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 30.65, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SS" },
-  { raNo: "1-75251", poNo: "4044292471BL-ATL", uniqueId: "1-279226-0526-1", partNo: "5304530853", description: "MULLION ASSEMBLY,FLIPPER,GRAY", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 57.89, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SP" },
-  { raNo: "1-75633", poNo: "SA-3064113-ATL", uniqueId: "27-070576-0526-1", partNo: "WB28X28781", description: "IGNITER GLOWBAR", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 54.07, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "NSA GSLEE" },
-  { raNo: "1-75643", poNo: "SA-3223622-ATL", uniqueId: "1-288579-0526-4", partNo: "WB26X25118", description: "MOTOR PSC CONV", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 86.42, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "NSA MEMPHIS" },
-  { raNo: "1-75738", poNo: "SA-3064113-ATL", uniqueId: "1-280669-0526-1", partNo: "WB13X25633", description: "OVEN IGNITOR", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 59.74, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SP1" },
-  { raNo: "1-75754", poNo: "SA-3223622-ATL", uniqueId: "1-288579-0526-3", partNo: "WB20T10024", description: "PROBE THERMISTOR", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 34.63, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "encompass" },
-  { raNo: "1-80720", poNo: "SA-3309888-ATL", uniqueId: "1-304594-0526-1", partNo: "WH08X37859", description: "LID LOCK & HARNESS", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 59.99, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "Encompass-Birmingham" },
-  { raNo: "1-80723", poNo: "SA-3309888-ATL", uniqueId: "1-304594-0526-2", partNo: "WH01X37858", description: "LID LOCK STRIKER", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 11.61, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SB-1276506820" },
-  { raNo: "1-80893", poNo: "SA-3323058-ATL-1", uniqueId: "1-316467-0526-1", partNo: "WR57X26303", description: "VALVE & GUARD ASM", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 71.51, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "MCN-162468bp" },
-  { raNo: "1-80896", poNo: "SA-3323058-ATL-1", uniqueId: "1-316467-0526-2", partNo: "WR57X25054", description: "WATER VALVE", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 94.58, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SS-6488757" },
-  { raNo: "1-80955", poNo: "SA-3178355-ATL", uniqueId: "1-297866-0526-1", partNo: "WH22X37840", description: "MAIN CONTROL BOARD", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 123.99, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SB" },
-  { raNo: "1-80979", poNo: "SA-2831637-ATL-3", uniqueId: "1-280670-0526-1", partNo: "WE04X25280", description: "TIMER", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-12", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 62.47, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "Midea-104268" },
-  { raNo: "1-99391", poNo: "26000304417DF-ATL-1", uniqueId: "1-918675-0326-1", partNo: "DC47-00015A", description: "THERMOSTAT", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-15", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 17.89, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "LG" },
-  { raNo: "1-99398", poNo: "26000304417DF-ATL-1", uniqueId: "1-918675-0326-2", partNo: "DC47-00016A", description: "THERMOSTAT", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-15", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 9.21, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SS" },
-  { raNo: "1-99410", poNo: "26000304417DF-ATL-1", uniqueId: "1-918675-0326-3", partNo: "DC32-00007A", description: "THERMISTOR", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-15", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 14.06, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SP" },
-  { raNo: "1-99417", poNo: "26000304417DF-ATL-1", uniqueId: "1-918675-0326-4", partNo: "6602-001655", description: "BELT-TIMING GEAR", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-15", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 27.22, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "encompass" },
-  { raNo: "25-04840", poNo: "SA-3064113-ATL", uniqueId: "25-163412-0526-1", partNo: "WB28X37607", description: "KIT LP CONVERSION ASM", returnType: "RETURN", returnReason: "", status: "NOT RECEIVED", returnDate: "2026-05-11", returnedBy: "Calvin Nguyen", qty: 1, unitPrice: 14.02, coreValue: 0, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "Encompass-Birmingham" },
-];
-
-const CORE_DEFAULT: ReturnRow[] = [
-  { raNo: "10-87898", poNo: "26000611691DF-ATL", uniqueId: "1-300469-0526-2", partNo: "W11629911", description: "ACU FINAL ASSEMBLY - KDTM404K*1 2021 DASH", returnType: "CORE RETURN", returnReason: "", status: "CORE RETURN", returnDate: "2026-05-11", returnedBy: "", qty: 1, unitPrice: 0, coreValue: 60, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "SB" },
-  { raNo: "10-88672", poNo: "26000631296DF-ATL-1", uniqueId: "1-327763-0526-1", partNo: "W11608056", description: "CONTROL BOARD WTW4950HW3 WTW4955HW3", returnType: "CORE RETURN", returnReason: "", status: "CORE RETURN", returnDate: "2026-05-14", returnedBy: "", qty: 1, unitPrice: 0, coreValue: 60, returnLabel: "", location: "Atlanta", vendor: "Encompass", account: "Midea-104268" },
-];
-
-const PART_INFO_BY_PART: Record<string, PartInfoData> = {
-  DEFAULT: {
-    rows: [
-      { leftLabel: "Make", leftValue: "GEH", rightLabel: "Part #", rightValue: "" },
-      { leftLabel: "Price", leftValue: "31.56", rightLabel: "Dealer Price", rightValue: "42.83" },
-      { leftLabel: "Retail Price", leftValue: "0", rightLabel: "List Price", rightValue: "66.84" },
-      { leftLabel: "Core Price", leftValue: "", rightLabel: "Core?", rightValue: "" },
-      { leftLabel: "Description", leftValue: "DOOR LOCK", rightLabel: "Discontinue?", rightValue: "false" },
-      { leftLabel: "Drop Shop only?", leftValue: "", rightLabel: "Hazmat?", rightValue: "" },
-      { leftLabel: "Refrigerant?", leftValue: "false", rightLabel: "Oversize?", rightValue: "false" },
-    ],
-    availability: [
-      { id: "301", name: "LOUISVILLE", qty: 100 },
-      { id: "1230", name: "CHARLOTTE", qty: 100 },
-      { id: "1260", name: "ALBANY", qty: 100 },
-      { id: "7200", name: "FRESNO", qty: 89 },
-      { id: "7910", name: "APPLIANCE DENVER", qty: 76 },
-      { id: "1010", name: "BYRON CENTER", qty: 73 },
-      { id: "601", name: "DENTON", qty: 51 },
-      { id: "5300", name: "JACKSONVILLE", qty: 41 },
-      { id: "7930", name: "VANCOUVER WA", qty: 39 },
-      { id: "401", name: "PEORIA", qty: 36 },
-      { id: "201", name: "APPLIANCE LENEXA", qty: 0 },
-      { id: "302", name: "LOUISVILLE 2", qty: 0 },
-      { id: "1280", name: "GLEN MILLS", qty: 0 },
-    ],
-  },
-  WE04X25194: {
-    rows: [
-      { leftLabel: "Make", leftValue: "GEH", rightLabel: "Part #", rightValue: "" },
-      { leftLabel: "Price", leftValue: "13.18", rightLabel: "Dealer Price", rightValue: "19.46" },
-      { leftLabel: "Retail Price", leftValue: "0", rightLabel: "List Price", rightValue: "31.86" },
-      { leftLabel: "Core Price", leftValue: "", rightLabel: "Core?", rightValue: "" },
-      { leftLabel: "Description", leftValue: "DRYER THERMOSTAT", rightLabel: "Discontinue?", rightValue: "false" },
-      { leftLabel: "Drop Shop only?", leftValue: "", rightLabel: "Hazmat?", rightValue: "" },
-      { leftLabel: "Refrigerant?", leftValue: "false", rightLabel: "Oversize?", rightValue: "false" },
-    ],
-    availability: [
-      { id: "1230", name: "CHARLOTTE", qty: 39 },
-      { id: "7930", name: "VANCOUVER WA", qty: 29 },
-      { id: "1010", name: "BYRON CENTER", qty: 20 },
-      { id: "1260", name: "ALBANY", qty: 11 },
-      { id: "201", name: "APPLIANCE LENEXA", qty: 9 },
-      { id: "301", name: "LOUISVILLE", qty: 9 },
-      { id: "7200", name: "FRESNO", qty: 9 },
-      { id: "7910", name: "APPLIANCE DENVER", qty: 6 },
-      { id: "401", name: "PEORIA", qty: 1 },
-      { id: "601", name: "DENTON", qty: 1 },
-      { id: "302", name: "LOUISVILLE 2", qty: 0 },
-      { id: "1280", name: "GLEN MILLS", qty: 0 },
-      { id: "5300", name: "JACKSONVILLE", qty: 0 },
-    ],
-  },
-};
 
 const REGULAR_STATUS_OPTIONS = ["NOT RECEIVED", "RECEIVED", "PROCESSED", "DISPUTED"];
 const CORE_STATUS_OPTIONS = ["NOT RECEIVED", "CORE RETURN", "RECEIVED", "PROCESSED", "DISPUTED"];
 
-const emptyPartInfo = PART_INFO_BY_PART.DEFAULT;
+function formatUsd(value: number | undefined): string {
+  return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
+}
 
 function formatMoney(value: number | string) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? num.toFixed(2) : "0.00";
 }
 
-function formatDate(value: string) {
-  return value || "";
-}
-
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) {
-    return { regular: REGULAR_DEFAULT, core: CORE_DEFAULT };
-  }
-  try {
-    const parsed = JSON.parse(saved);
-    return {
-      regular: Array.isArray(parsed?.regular) ? parsed.regular : REGULAR_DEFAULT,
-      core: Array.isArray(parsed?.core) ? parsed.core : CORE_DEFAULT,
-    };
-  } catch {
-    return { regular: REGULAR_DEFAULT, core: CORE_DEFAULT };
-  }
-}
-
-function saveState(regular: ReturnRow[], core: ReturnRow[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ regular, core }));
-}
-
 /** Export the rows currently on screen (whatever filters/search are active) as a real .xlsx workbook. */
-function exportReturnsToXlsx(rows: ReturnRow[], sheetName: string, filenamePrefix: string) {
+function exportReturnsToXlsx(rows: PartReturnRow[], sheetName: string, filenamePrefix: string) {
   const data = rows.map((row) => ({
     "RA No": row.raNo,
     "PO No": row.poNo,
-    "Unique ID": row.uniqueId,
+    "Unique ID": row.id,
     "Part No": row.partNo,
     "Description": row.description,
     "Return Type": row.returnType,
     "Return Reason": row.returnReason,
-    "Status": row.status,
-    "Return Date": row.returnDate,
+    "Status": row.returnStatus,
+    "Return Date": row.raDate,
     "Returned By": row.returnedBy,
     "Qty": row.qty,
-    "Unit Price": Number(row.unitPrice || 0),
-    "Core Value": Number(row.coreValue || 0),
-    "Return Label": row.returnLabel,
+    "Unit Price": row.unitPrice,
+    "Core Value": row.coreValue,
   }));
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
@@ -175,25 +49,63 @@ function exportReturnsToXlsx(rows: ReturnRow[], sheetName: string, filenamePrefi
 }
 
 export function PartReturnStatusPage() {
-  const initial = loadState();
   const [activeView, setActiveView] = useState<"regular" | "core">(() => {
     const saved = localStorage.getItem(TAB_KEY);
     return saved === "core" ? "core" : "regular";
   });
-  const [regularReturnData, setRegularReturnData] = useState<ReturnRow[]>(initial.regular);
-  const [coreReturnData, setCoreReturnData] = useState<ReturnRow[]>(initial.core);
+  const [allRows, setAllRows] = useState<PartReturnRow[]>([]);
+  const [distributors, setDistributors] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const [locationFilter, setLocationFilter] = useState("");
-  const [vendorFilter, setVendorFilter] = useState("");
-  const [accountFilter, setAccountFilter] = useState("");
-  const [shipToFilter, setShipToFilter] = useState("");
-  const [fromDate, setFromDate] = useState("2026-05-08");
-  const [toDate, setToDate] = useState("2026-05-15");
+  const [distributorFilter, setDistributorFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [raFilter, setRaFilter] = useState("");
   const [uniqueIdFilter, setUniqueIdFilter] = useState("");
   const [resultSearch, setResultSearch] = useState("");
   const [coreResultSearch, setCoreResultSearch] = useState("");
   const [modalPartNo, setModalPartNo] = useState("");
   const [modalTab, setModalTab] = useState<"encompass" | "marcone">("marcone");
+  const [marconeInfo, setMarconeInfo] = useState<MarconePartInfo | null>(null);
+  const [marconeLoading, setMarconeLoading] = useState(false);
+  const [marconeNotFound, setMarconeNotFound] = useState(false);
+  const [marconeError, setMarconeError] = useState<string | null>(null);
+
+  // Real Marcone part lookup (make/pricing/per-warehouse availability) —
+  // no equivalent Encompass part-info API is wired into this app yet, so
+  // that tab stays a plain "not available" message rather than fake data.
+  useEffect(() => {
+    if (!modalPartNo) {
+      setMarconeInfo(null);
+      setMarconeError(null);
+      setMarconeNotFound(false);
+      return;
+    }
+    let cancelled = false;
+    setMarconeLoading(true);
+    setMarconeError(null);
+    setMarconeNotFound(false);
+    marconeLookupPart({ partNumber: modalPartNo })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.notFound) {
+          setMarconeNotFound(true);
+          setMarconeInfo(null);
+          return;
+        }
+        if (!result.success) {
+          setMarconeError(result.error || "Marcone lookup failed");
+          return;
+        }
+        setMarconeInfo(result.data || null);
+      })
+      .catch((err) => { if (!cancelled) setMarconeError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (!cancelled) setMarconeLoading(false); });
+    return () => { cancelled = true; };
+  }, [modalPartNo]);
 
   const regularTableWrapRef = useRef<HTMLDivElement | null>(null);
   const coreTableWrapRef = useRef<HTMLDivElement | null>(null);
@@ -202,55 +114,48 @@ export function PartReturnStatusPage() {
   const regularFloatingInnerRef = useRef<HTMLDivElement | null>(null);
   const coreFloatingInnerRef = useRef<HTMLDivElement | null>(null);
 
+  const loadRows = () => {
+    setLoading(true);
+    setLoadError(null);
+    getPartReturns()
+      .then(setAllRows)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => {
-    saveState(regularReturnData, coreReturnData);
-  }, [coreReturnData, regularReturnData]);
+    loadRows();
+    getDistinctDistributors().then(setDistributors).catch((err) => console.error("Failed to load distributors:", err));
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(TAB_KEY, activeView);
   }, [activeView]);
 
-  const filteredRegular = useMemo(() => {
-    return regularReturnData.filter((row) => {
-      if (locationFilter && row.location !== locationFilter) return false;
-      if (vendorFilter && row.vendor !== vendorFilter) return false;
-      if (accountFilter && (row.account || "") !== accountFilter) return false;
-      if (shipToFilter && (row.poNo || "").toLowerCase().includes(shipToFilter.toLowerCase()) === false) return false;
-      if (raFilter && (row.raNo || "").toLowerCase().includes(raFilter.toLowerCase()) === false) return false;
-      if (uniqueIdFilter && (row.uniqueId || "").toLowerCase().includes(uniqueIdFilter.toLowerCase()) === false) return false;
-      if (fromDate || toDate) {
-        const rowDate = new Date(row.returnDate);
-        if (fromDate && rowDate < new Date(fromDate)) return false;
-        if (toDate && rowDate > new Date(toDate)) return false;
-      }
-      if (resultSearch) {
-        const blob = [row.raNo, row.poNo, row.uniqueId, row.partNo, row.description, row.status, row.returnReason].join(" ").toLowerCase();
-        if (!blob.includes(resultSearch.toLowerCase())) return false;
-      }
-      return true;
-    });
-  }, [accountFilter, fromDate, locationFilter, raFilter, resultSearch, regularReturnData, shipToFilter, toDate, uniqueIdFilter, vendorFilter]);
+  const regularRows = useMemo(() => allRows.filter((r) => r.returnType === "RETURN"), [allRows]);
+  const coreRows = useMemo(() => allRows.filter((r) => r.returnType === "CORE RETURN"), [allRows]);
 
-  const filteredCore = useMemo(() => {
-    return coreReturnData.filter((row) => {
+  const applyCommonFilters = (rows: PartReturnRow[], search: string) =>
+    rows.filter((row) => {
       if (locationFilter && row.location !== locationFilter) return false;
-      if (vendorFilter && row.vendor !== vendorFilter) return false;
-      if (accountFilter && (row.account || "") !== accountFilter) return false;
-      if (shipToFilter && (row.poNo || "").toLowerCase().includes(shipToFilter.toLowerCase()) === false) return false;
-      if (raFilter && (row.raNo || "").toLowerCase().includes(raFilter.toLowerCase()) === false) return false;
-      if (uniqueIdFilter && (row.uniqueId || "").toLowerCase().includes(uniqueIdFilter.toLowerCase()) === false) return false;
+      if (distributorFilter && row.distributor !== distributorFilter) return false;
+      if (raFilter && !(row.raNo || "").toLowerCase().includes(raFilter.toLowerCase())) return false;
+      if (uniqueIdFilter && !row.id.toLowerCase().includes(uniqueIdFilter.toLowerCase())) return false;
       if (fromDate || toDate) {
-        const rowDate = new Date(row.returnDate);
+        if (!row.raDate) return false;
+        const rowDate = new Date(row.raDate);
         if (fromDate && rowDate < new Date(fromDate)) return false;
         if (toDate && rowDate > new Date(toDate)) return false;
       }
-      if (coreResultSearch) {
-        const blob = [row.raNo, row.poNo, row.uniqueId, row.partNo, row.description, row.status, row.returnReason].join(" ").toLowerCase();
-        if (!blob.includes(coreResultSearch.toLowerCase())) return false;
+      if (search) {
+        const blob = [row.raNo, row.poNo, row.id, row.partNo, row.description, row.returnStatus, row.returnReason].join(" ").toLowerCase();
+        if (!blob.includes(search.toLowerCase())) return false;
       }
       return true;
     });
-  }, [accountFilter, coreReturnData, coreResultSearch, fromDate, locationFilter, raFilter, shipToFilter, toDate, uniqueIdFilter, vendorFilter]);
+
+  const filteredRegular = useMemo(() => applyCommonFilters(regularRows, resultSearch), [regularRows, locationFilter, distributorFilter, raFilter, uniqueIdFilter, fromDate, toDate, resultSearch]);
+  const filteredCore = useMemo(() => applyCommonFilters(coreRows, coreResultSearch), [coreRows, locationFilter, distributorFilter, raFilter, uniqueIdFilter, fromDate, toDate, coreResultSearch]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -260,27 +165,20 @@ export function PartReturnStatusPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const updateRegular = (rowIndex: number, field: keyof ReturnRow, value: string) => {
-    setRegularReturnData((current) => current.map((row, index) => (index === rowIndex ? { ...row, [field]: field === "qty" || field === "unitPrice" || field === "coreValue" ? Number(value) : value } as ReturnRow : row)));
+  // Local edits apply immediately for responsive typing; persisted to
+  // Supabase either right away (status select - a discrete action) or on
+  // blur (text/date fields - avoids a network call per keystroke).
+  const setLocalField = (id: string, field: "raNo" | "raDate" | "returnStatus" | "returnedBy", value: string) => {
+    setAllRows((current) => current.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
   };
-
-  const updateCore = (rowIndex: number, field: keyof ReturnRow, value: string) => {
-    setCoreReturnData((current) => current.map((row, index) => (index === rowIndex ? { ...row, [field]: field === "qty" || field === "unitPrice" || field === "coreValue" ? Number(value) : value } as ReturnRow : row)));
+  const persistField = async (id: string, field: "raNo" | "raDate" | "returnStatus" | "returnedBy", value: string) => {
+    try {
+      await updatePartReturnRow(id, { [field]: value });
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save change");
+    }
   };
-
-  const renderPartInfoFields = (partNo: string, tab: "encompass" | "marcone") => {
-    const data = PART_INFO_BY_PART[partNo] || emptyPartInfo;
-    return data.rows.map((row) => (
-      <tr key={`${tab}-${row.leftLabel}-${row.rightLabel}`}>
-        <td>{row.leftLabel}</td>
-        <td>{row.leftValue}</td>
-        <td>{row.rightLabel}</td>
-        <td>{row.rightValue}</td>
-      </tr>
-    ));
-  };
-
-  const activePartInfo = PART_INFO_BY_PART[modalPartNo] || emptyPartInfo;
 
   useEffect(() => {
     const sync = (tableWrap: HTMLDivElement | null, floatingBar: HTMLDivElement | null, floatingInner: HTMLDivElement | null) => {
@@ -378,6 +276,39 @@ export function PartReturnStatusPage() {
     }, 0);
   }, [activeView, filteredCore.length, filteredRegular.length]);
 
+  const renderRows = (rows: PartReturnRow[], statusOptions: string[]) => (
+    <>
+      {rows.map((row) => (
+        <tr key={row.id}>
+          <td><input type="text" className="table-input" title="Edit RA #" placeholder="RA #" value={row.raNo} onChange={(e) => setLocalField(row.id, "raNo", e.target.value)} onBlur={(e) => persistField(row.id, "raNo", e.target.value)} /></td>
+          <td>{row.poNo}</td>
+          <td className="text-[10px]" title={row.id}>{row.id.slice(0, 8)}</td>
+          <td><span className="clickable-part-no" onClick={() => { setModalPartNo(row.partNo); setModalTab("marcone"); }}>{row.partNo}</span></td>
+          <td>{row.description}</td>
+          <td>{row.returnType}</td>
+          <td>{row.returnReason}</td>
+          <td>
+            <select className="table-select" title="Edit status" value={row.returnStatus} onChange={(e) => { setLocalField(row.id, "returnStatus", e.target.value); persistField(row.id, "returnStatus", e.target.value); }}>
+              {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </td>
+          <td><input type="date" className="table-input" title="Edit return date" value={row.raDate} onChange={(e) => setLocalField(row.id, "raDate", e.target.value)} onBlur={(e) => persistField(row.id, "raDate", e.target.value)} /></td>
+          <td><input type="text" className="table-input" title="Edit returned by" placeholder="Returned by" value={row.returnedBy} onChange={(e) => setLocalField(row.id, "returnedBy", e.target.value)} onBlur={(e) => persistField(row.id, "returnedBy", e.target.value)} /></td>
+          <td className="qty">{row.qty}</td>
+          <td className="money">${formatMoney(row.unitPrice)}</td>
+          <td className="money">${formatMoney(row.coreValue)}</td>
+          <td>-</td>
+        </tr>
+      ))}
+      <tr className="totals-row">
+        <td colSpan={11}></td>
+        <td className="money">${formatMoney(rows.reduce((sum, row) => sum + Number(row.unitPrice || 0), 0))}</td>
+        <td className="money">${formatMoney(rows.reduce((sum, row) => sum + Number(row.coreValue || 0), 0))}</td>
+        <td></td>
+      </tr>
+    </>
+  );
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
@@ -394,8 +325,6 @@ export function PartReturnStatusPage() {
           .field { display: flex; flex-direction: column; gap: 0.3rem; }
           .field label { font-size: 0.78rem; font-weight: 700; color: #e5e7eb; }
           .field input, .field select { height: 34px; padding: 0.35rem 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; font-size: 0.8rem; color: #fff; background: rgba(17, 24, 39, 0.95); }
-          .controls-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
-          .left-controls, .right-controls { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; }
           .date-range { display: flex; align-items: center; gap: 0.45rem; }
           .date-range input { flex: 1; height: 34px; padding: 0.35rem 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; font-size: 0.8rem; color: #fff; background: rgba(17, 24, 39, 0.95); }
           .date-range span { color: #e5e7eb; }
@@ -461,6 +390,7 @@ export function PartReturnStatusPage() {
           </div>
           <h1 className="text-2xl font-semibold leading-tight">Part Return Status</h1>
           <p className="text-sm text-muted-foreground">Track regular and core part returns separately.</p>
+          {saveError && <p className="text-sm text-red-400 mt-1">{saveError}</p>}
         </div>
 
         <div className="panel">
@@ -469,45 +399,15 @@ export function PartReturnStatusPage() {
               <label htmlFor="locationFilter">Location</label>
               <select id="locationFilter" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}>
                 <option value="">All</option>
-                <option value="Atlanta">Atlanta</option>
-                <option value="Asheville">Asheville</option>
-                <option value="Birmingham">Birmingham</option>
+                {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
             <div className="field">
-              <label htmlFor="vendorFilter">Vendor*</label>
-              <select id="vendorFilter" value={vendorFilter} onChange={(event) => setVendorFilter(event.target.value)}>
+              <label htmlFor="distributorFilter">Distributor</label>
+              <select id="distributorFilter" value={distributorFilter} onChange={(event) => setDistributorFilter(event.target.value)}>
                 <option value="">All</option>
-                <option value="Encompass">Encompass</option>
-                <option value="Marcone">Marcone</option>
-                <option value="OW">OW</option>
+                {distributors.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
-            </div>
-            <div className="field">
-              <label htmlFor="accountFilter">Account</label>
-              <select id="accountFilter" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
-                <option value="">All</option>
-                <option value="SB">SB</option>
-                <option value="Midea-104268">Midea-104268</option>
-                <option value="SB-Miele">SB-Miele</option>
-                <option value="SB-1276506820">SB-1276506820</option>
-                <option value="M2-162468">M2-162468</option>
-                <option value="MCN-162468">MCN-162468</option>
-                <option value="MCN-162468bp">MCN-162468bp</option>
-                <option value="encompass">encompass</option>
-                <option value="Encompass-Birmingham">Encompass-Birmingham</option>
-                <option value="LG">LG</option>
-                <option value="SS">SS</option>
-                <option value="SS-6488757">SS-6488757</option>
-                <option value="SP">SP</option>
-                <option value="NSA GSLEE">NSA GSLEE</option>
-                <option value="NSA MEMPHIS">NSA MEMPHIS</option>
-                <option value="SP1">SP1</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="shipToFilter">Ship To (SS)</label>
-              <input id="shipToFilter" type="text" placeholder="Ship To" value={shipToFilter} onChange={(event) => setShipToFilter(event.target.value)} />
             </div>
             <div className="field">
               <label htmlFor="fromDate">Return Date</label>
@@ -533,6 +433,12 @@ export function PartReturnStatusPage() {
           <button type="button" className={`tab-btn ${activeView === "core" ? "active" : ""}`} onClick={() => setActiveView("core")}>Core Part Return</button>
         </div>
 
+        {loadError ? (
+          <p className="text-sm text-red-400 px-2 py-6">Failed to load part returns: {loadError}</p>
+        ) : loading ? (
+          <p className="text-sm text-muted-foreground px-2 py-6">Loading…</p>
+        ) : (
+        <>
         <div id="regularTab" className={`tab-content ${activeView === "regular" ? "active" : ""}`}>
           <div className="panel">
             <div className="meta-row">
@@ -568,38 +474,7 @@ export function PartReturnStatusPage() {
                 <tbody>
                   {filteredRegular.length === 0 ? (
                     <tr className="no-data"><td colSpan={14}>No records found</td></tr>
-                  ) : (
-                    <>
-                      {filteredRegular.map((row, rowIndex) => (
-                        <tr key={`${row.raNo}-${row.uniqueId}-${row.partNo}`}>
-                          <td>{row.raNo}</td>
-                          <td>{row.poNo}</td>
-                          <td>{row.uniqueId}</td>
-                          <td><span className="clickable-part-no" onClick={() => { setModalPartNo(row.partNo); setModalTab("marcone"); }}>{row.partNo}</span></td>
-                          <td>{row.description}</td>
-                          <td>{row.returnType}</td>
-                          <td><input type="text" className="table-input" title="Edit return reason" placeholder="Return reason" value={row.returnReason} onChange={(event) => updateRegular(rowIndex, "returnReason", event.target.value)} /></td>
-                          <td>
-                            <select className="table-select" title="Edit status" value={row.status} onChange={(event) => updateRegular(rowIndex, "status", event.target.value)}>
-                              {REGULAR_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                            </select>
-                          </td>
-                          <td>{row.returnDate}</td>
-                          <td><input type="text" className="table-input" title="Edit returned by" placeholder="Returned by" value={row.returnedBy} onChange={(event) => updateRegular(rowIndex, "returnedBy", event.target.value)} /></td>
-                          <td className="qty">{row.qty}</td>
-                          <td className="money">${formatMoney(row.unitPrice)}</td>
-                          <td className="money">${formatMoney(row.coreValue)}</td>
-                          <td>{row.returnLabel || "-"}</td>
-                        </tr>
-                      ))}
-                      <tr className="totals-row">
-                        <td colSpan={11}></td>
-                        <td className="money">${formatMoney(filteredRegular.reduce((sum, row) => sum + Number(row.unitPrice || 0), 0))}</td>
-                        <td className="money">${formatMoney(filteredRegular.reduce((sum, row) => sum + Number(row.coreValue || 0), 0))}</td>
-                        <td></td>
-                      </tr>
-                    </>
-                  )}
+                  ) : renderRows(filteredRegular, REGULAR_STATUS_OPTIONS)}
                 </tbody>
               </table>
             </div>
@@ -645,38 +520,7 @@ export function PartReturnStatusPage() {
                 <tbody>
                   {filteredCore.length === 0 ? (
                     <tr className="no-data"><td colSpan={14}>No records found</td></tr>
-                  ) : (
-                    <>
-                      {filteredCore.map((row, rowIndex) => (
-                        <tr key={`${row.raNo}-${row.uniqueId}-${row.partNo}`}>
-                          <td>{row.raNo}</td>
-                          <td>{row.poNo}</td>
-                          <td>{row.uniqueId}</td>
-                          <td><span className="clickable-part-no" onClick={() => { setModalPartNo(row.partNo); setModalTab("marcone"); }}>{row.partNo}</span></td>
-                          <td>{row.description}</td>
-                          <td>{row.returnType}</td>
-                          <td><input type="text" className="table-input" title="Edit return reason" placeholder="Return reason" value={row.returnReason} onChange={(event) => updateCore(rowIndex, "returnReason", event.target.value)} /></td>
-                          <td>
-                            <select className="table-select" title="Edit status" value={row.status} onChange={(event) => updateCore(rowIndex, "status", event.target.value)}>
-                              {CORE_STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                            </select>
-                          </td>
-                          <td>{row.returnDate}</td>
-                          <td><input type="text" className="table-input" title="Edit returned by" placeholder="Returned by" value={row.returnedBy} onChange={(event) => updateCore(rowIndex, "returnedBy", event.target.value)} /></td>
-                          <td className="qty">{row.qty}</td>
-                          <td className="money">${formatMoney(row.unitPrice)}</td>
-                          <td className="money">${formatMoney(row.coreValue)}</td>
-                          <td>{row.returnLabel || "-"}</td>
-                        </tr>
-                      ))}
-                      <tr className="totals-row">
-                        <td colSpan={11}></td>
-                        <td className="money">${formatMoney(filteredCore.reduce((sum, row) => sum + Number(row.unitPrice || 0), 0))}</td>
-                        <td className="money">${formatMoney(filteredCore.reduce((sum, row) => sum + Number(row.coreValue || 0), 0))}</td>
-                        <td></td>
-                      </tr>
-                    </>
-                  )}
+                  ) : renderRows(filteredCore, CORE_STATUS_OPTIONS)}
                 </tbody>
               </table>
             </div>
@@ -686,12 +530,9 @@ export function PartReturnStatusPage() {
             </div>
           </div>
         </div>
+        </>
+        )}
       </main>
-
-      <footer id="contact" className="status-footer">
-        <p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
-        <p className="status-footer-note">© 2026 Admin Hub Solutions. All rights reserved.</p>
-      </footer>
 
       <div id="partInfoModalOverlay" className={`part-info-modal-overlay ${modalPartNo ? "is-open" : ""}`} onClick={(event) => { if (event.target === event.currentTarget) setModalPartNo(""); }}>
         <div className="part-info-modal" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
@@ -707,33 +548,49 @@ export function PartReturnStatusPage() {
 
           <div className="part-info-body">
             <div className={`part-info-pane ${modalTab === "encompass" ? "active" : ""}`} data-part-pane="encompass">
-              <table className="part-info-matrix">
-                <thead>
-                  <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
-                </thead>
-                <tbody>{renderPartInfoFields(modalPartNo, "encompass")}</tbody>
-              </table>
-              <div className="part-info-section-title">Availability (Encompass)</div>
-              <div className="part-info-empty">No availability records found.</div>
+              <div className="part-info-empty">No Encompass part-lookup API is wired into this app yet.</div>
             </div>
 
             <div className={`part-info-pane ${modalTab === "marcone" ? "active" : ""}`} data-part-pane="marcone">
-              <table className="part-info-matrix">
-                <thead>
-                  <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
-                </thead>
-                <tbody>{renderPartInfoFields(modalPartNo, "marcone")}</tbody>
-              </table>
-              <div className="part-info-section-title">Availability (Marcone)</div>
-              <div id="partInfoAvailabilityCount" className="part-info-section-subtitle">{(activePartInfo.availability || []).length} records found</div>
-              <table className="part-info-matrix">
-                <thead><tr><th>ID</th><th>W/H Name</th><th>Available Qty</th></tr></thead>
-                <tbody>
-                  {(activePartInfo.availability || []).map((row) => (
-                    <tr key={`${row.id}-${row.name}`}><td>{row.id}</td><td>{row.name}</td><td>{row.qty}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              {marconeLoading ? (
+                <div className="part-info-empty">Looking up {modalPartNo} on Marcone…</div>
+              ) : marconeError ? (
+                <div className="part-info-empty">Marcone lookup failed: {marconeError}</div>
+              ) : marconeNotFound ? (
+                <div className="part-info-empty">Marcone has no record of part {modalPartNo}.</div>
+              ) : marconeInfo ? (
+                <>
+                  <table className="part-info-matrix">
+                    <thead>
+                      <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>Make</td><td>{marconeInfo.make || "—"}</td><td>Part #</td><td>{marconeInfo.partNumber || modalPartNo}</td></tr>
+                      <tr><td>Net Price</td><td>{formatUsd(marconeInfo.netPrice)}</td><td>List Price</td><td>{formatUsd(marconeInfo.listPrice)}</td></tr>
+                      <tr><td>Core Value</td><td>{formatUsd(marconeInfo.coreValue)}</td><td>Discontinued?</td><td>{marconeInfo.isDiscontinued ? "Yes" : "No"}</td></tr>
+                      <tr><td>Description</td><td colSpan={3}>{marconeInfo.description || "—"}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="part-info-section-title">Availability (Marcone)</div>
+                  <div id="partInfoAvailabilityCount" className="part-info-section-subtitle">
+                    {marconeInfo.totalAvailable ?? 0} available across {(marconeInfo.inventory || []).length} warehouse(s)
+                  </div>
+                  {(marconeInfo.inventory || []).length === 0 ? (
+                    <div className="part-info-empty">No stock currently available.</div>
+                  ) : (
+                    <table className="part-info-matrix">
+                      <thead><tr><th>Warehouse</th><th>Available Qty</th></tr></thead>
+                      <tbody>
+                        {marconeInfo.inventory!.map((inv, i) => (
+                          <tr key={i}><td>{inv.warehouseName || "—"}</td><td>{inv.quantityAvailable ?? 0}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              ) : (
+                <div className="part-info-empty">No lookup performed yet.</div>
+              )}
             </div>
           </div>
         </div>

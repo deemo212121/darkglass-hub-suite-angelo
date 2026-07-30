@@ -10,6 +10,7 @@ import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicia
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 
@@ -106,7 +107,11 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   const [selectedLocation, setSelectedLocation] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<TicketRecord | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>("status");
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("tickets");
+  const [sidebarTab, setSidebarTab] = usePersistedTab<SidebarTab>(
+    "ahs:work-map-sidebar-tab",
+    ["tickets", "status"],
+    "tickets",
+  );
   const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
   const [mapDate, setMapDate] = useState(() => new Date().toISOString().slice(0, 10));
   // Work Map can either bucket per single day (mapDate === ticketDate) or
@@ -868,14 +873,14 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
-              <ChevronLeft className="h-4 w-4" /> {mod.label}
-            </Link>
+        <div className="flex items-center gap-3 mb-8">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <ChevronLeft className="h-4 w-4" /> {mod.label}
+          </Link>
+          <div>
+            <h1 className="text-4xl font-display font-bold tracking-tight">{sub.title}</h1>
+            <p className="text-lg text-muted-foreground">{sub.description}</p>
           </div>
-          <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
-          <p className="text-lg text-muted-foreground">{sub.description}</p>
         </div>
 
         {!ready ? (

@@ -5,6 +5,7 @@ import { ChevronLeft, Truck, AlertTriangle, X } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { collection, addDoc, getDocs, serverTimestamp, query, orderBy } from "firebase/firestore";
 import { db, isFirebaseReady } from "@/lib/firebase/config";
@@ -42,7 +43,11 @@ function usePortal(open: boolean) {
 export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { companyId, email, role, uid } = useAuth();
   const routeSearch = (useSearch({ strict: false }) as { tab?: string; requestId?: string }) ?? {};
-  const [activeTab, setActiveTab] = useState<"inventory" | "truck-stock" | "truck-stock-requests">("inventory");
+  const [activeTab, setActiveTab] = usePersistedTab<"inventory" | "truck-stock" | "truck-stock-requests">(
+    "ahs:part-inventory-active-tab",
+    ["inventory", "truck-stock", "truck-stock-requests"],
+    "inventory",
+  );
   // canApproveTruckStockPulls needs extra_roles too, which useAuth() doesn't
   // carry (it only exposes the primary role) — same pattern as HR's
   // hasHrSubRole check on the Jotform Submissions tab.

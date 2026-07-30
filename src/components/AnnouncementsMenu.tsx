@@ -21,6 +21,7 @@ import {
   type MessageRow,
   getAnnouncementsChannel,
   getChannelMessages,
+  getUnreadCounts,
   subscribeToMessages,
   markThreadRead,
 } from "@/lib/supabase/messaging";
@@ -57,7 +58,22 @@ export function AnnouncementsMenu() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channel, setChannel] = useState<ChannelRow | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [lastReadAt, setLastReadAt] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Real, server-side unread count (same message_reads-backed query
+  // MessagesMenu.tsx already uses correctly) — NOT a localStorage guess.
+  // The previous version cached a "last seen" timestamp in localStorage,
+  // which the Announcements page's "Mark all read" never wrote to, so the
+  // badge silently reverted to a stale count on the next page load/remount
+  // even though Supabase's real last_read_at pointer had been updated.
+  const refreshUnread = async (pid: string, channelId: string) => {
+    try {
+      const counts = await getUnreadCounts(pid);
+      setUnreadCount(counts.perChannel[channelId] ?? 0);
+    } catch {
+      // Silently ignore — the badge just keeps its last known value.
+    }
+  };
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -71,13 +87,10 @@ export function AnnouncementsMenu() {
         if (cancelled) return;
         setProfileId(pid);
         setChannel(ch);
-        const rows = await getChannelMessages(ch.id, 25);
+        const rows = await getChannelMessages(ch.id, 50);
         if (cancelled) return;
         setMessages(rows);
-        // Cheap unread baseline: use whatever's in localStorage; the user's
-        // accurate read pointer lives in Supabase via the Announcements page.
-        const cached = localStorage.getItem(`ahs:ann-last-seen:${pid}`);
-        setLastReadAt(cached);
+        if (pid) await refreshUnread(pid, ch.id);
       } catch {
         // Silently ignore — the badge just shows 0 if Supabase isn't reachable.
       }
@@ -91,44 +104,44 @@ export function AnnouncementsMenu() {
       channelId: channel.id,
       onMessage: (row) => {
         setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        if (profileId) refreshUnread(profileId, channel.id);
       },
     });
     return unsub;
-  }, [channel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [channel?.id, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listen for the announcements page broadcasting that the user marked-all-read.
+  // Listen for the announcements page (or another tab/instance of this menu)
+  // broadcasting that the user marked-all-read — re-pull the real count
+  // rather than guessing "now" locally.
   useEffect(() => {
-    const onChanged = () => setLastReadAt(new Date().toISOString());
+    const onChanged = () => { if (profileId && channel) refreshUnread(profileId, channel.id); };
     window.addEventListener("ahs:unread-changed", onChanged);
     return () => window.removeEventListener("ahs:unread-changed", onChanged);
-  }, []);
-
-  const unreadCount = useMemo(() => {
-    if (!profileId) return 0;
-    return messages.filter((m) => {
-      if (m.kind !== "user") return false;
-      if (m.sender_id === profileId) return false;
-      if (!lastReadAt) return true;
-      return m.created_at > lastReadAt;
-    }).length;
-  }, [messages, profileId, lastReadAt]);
+  }, [profileId, channel?.id]);
 
   const recentAnnouncements = useMemo(() => {
     return messages
       .filter((m) => m.kind === "user")
       .slice()
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
-      .slice(0, 5);
+      // DropdownMenuContent already has max-h-[available-height] +
+      // overflow-y-auto (same shared component MessagesMenu.tsx uses), so a
+      // longer list here just scrolls within the dropdown instead of pushing
+      // it off-screen - was previously capped at 5 for no functional reason,
+      // which meant there was never enough content to actually need to
+      // scroll.
+      .slice(0, 20);
   }, [messages]);
 
   const canPost = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
 
-  const markOneRead = async (createdAt: string) => {
+  // markThreadRead always marks the whole channel read up to now (there's no
+  // per-message read pointer), so opening any one announcement clears the
+  // badge entirely - matches "Mark all read" on the full page.
+  const markOneRead = async () => {
     if (!profileId || !channel) return;
-    const next = createdAt > (lastReadAt ?? "") ? createdAt : (lastReadAt ?? createdAt);
-    setLastReadAt(next);
-    localStorage.setItem(`ahs:ann-last-seen:${profileId}`, next);
     await markThreadRead({ profileId, channelId: channel.id });
+    await refreshUnread(profileId, channel.id);
     window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
   };
 
@@ -173,7 +186,7 @@ export function AnnouncementsMenu() {
             <DropdownMenuItem
               key={m.id}
               onSelect={async () => {
-                await markOneRead(m.created_at);
+                await markOneRead();
                 navigate({ to: "/announcements" });
               }}
               className="group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3"

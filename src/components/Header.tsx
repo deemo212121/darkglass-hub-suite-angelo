@@ -89,7 +89,11 @@ function loadEmployeePhoto(email: string | null) {
 }
 
 export function AppHeader() {
-  const { email, companyId, logout, ready } = useAuth();
+  const { email, companyId, companyLoginAlias, logout, ready } = useAuth();
+  // Prefer the short login alias (e.g. "USAPP") over the raw legacy_code
+  // ("COMP001") when one's set for this company; falls back to companyId
+  // for the companies that don't have an alias configured yet.
+  const companyDisplay = companyLoginAlias || companyId;
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [photoDataUrl, setPhotoDataUrl] = useState("");
@@ -141,7 +145,7 @@ export function AppHeader() {
                   </span>
                   <span className="hidden sm:flex flex-col items-start leading-tight">
                     <span className="text-foreground text-sm truncate max-w-[180px]">{email}</span>
-                    <span className="text-muted-foreground text-[11px]">Company {companyId}</span>
+                    <span className="text-muted-foreground text-[11px]">Company {companyDisplay}</span>
                   </span>
                   <ChevronDown className="h-4 w-4 text-muted-foreground group-data-[state=open]:rotate-180 transition-transform" />
                 </button>
@@ -162,7 +166,7 @@ export function AppHeader() {
                     </span>
                     <div className="leading-tight min-w-0">
                       <div className="text-sm font-medium truncate">{email}</div>
-                      <div className="text-[11px] text-muted-foreground font-normal">Company {companyId}</div>
+                      <div className="text-[11px] text-muted-foreground font-normal">Company {companyDisplay}</div>
                     </div>
                   </div>
                 </DropdownMenuLabel>
