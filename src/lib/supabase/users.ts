@@ -234,7 +234,7 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, email, display_name, phone_number, department, assigned_branch, po_initials, role, required_check_in, required_check_out, working_hours, meal_minutes")
+    .select("id, email, display_name, phone_number, department, assigned_branch, po_initials, role, required_check_in, required_check_out")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
   if (error) {
@@ -242,6 +242,28 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
     return null;
   }
   if (!data) return null;
+
+  // Fetched separately, best-effort — if migration 0091 hasn't been applied
+  // yet (or any future optional column has an issue), that must never take
+  // down the rest of this profile (name/phone/department/etc), which is
+  // exactly what happened when this was one combined select: a single
+  // column-not-found error nulled out the ENTIRE profile, breaking Save
+  // ("Could not resolve your profile") for fields that have nothing to do
+  // with Working Hours/Meal Time.
+  let workingHours: number | null = null;
+  let mealMinutes: number | null = null;
+  const { data: extra, error: extraError } = await supabase
+    .from("profiles")
+    .select("working_hours, meal_minutes")
+    .eq("id", data.id)
+    .maybeSingle();
+  if (extraError) {
+    console.error("getMyFullProfile (working_hours/meal_minutes) error:", extraError.message);
+  } else {
+    workingHours = extra?.working_hours ?? null;
+    mealMinutes = extra?.meal_minutes ?? null;
+  }
+
   return {
     profileId: data.id,
     email: data.email,
@@ -253,15 +275,15 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
     role: data.role,
     requiredCheckIn: data.required_check_in ?? "",
     requiredCheckOut: data.required_check_out ?? "",
-    workingHours: data.working_hours ?? null,
-    mealMinutes: data.meal_minutes ?? null,
+    workingHours,
+    mealMinutes,
   };
 }
 
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, working_hours, meal_minutes, is_active, must_change_password, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 
@@ -269,7 +291,30 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
     console.error("getCompanyUsers error:", error.message);
     throw new Error(error.message);
   }
-  return (data ?? []) as ProfileRow[];
+  const rows = (data ?? []) as ProfileRow[];
+
+  // Fetched separately, best-effort — see getMyFullProfile's comment on why
+  // working_hours/meal_minutes (migration 0091) must never be combined into
+  // the main select: this function is used across many pages (User
+  // Management, Payroll, etc), so a missing/future column here must not be
+  // able to break all of them at once.
+  if (rows.length > 0) {
+    const { data: extraRows, error: extraError } = await supabase
+      .from("profiles")
+      .select("id, working_hours, meal_minutes")
+      .in("id", rows.map((r) => r.id));
+    if (extraError) {
+      console.error("getCompanyUsers (working_hours/meal_minutes) error:", extraError.message);
+    } else {
+      const extraById = new Map((extraRows ?? []).map((r: any) => [r.id, r]));
+      for (const row of rows) {
+        const extra = extraById.get(row.id);
+        row.working_hours = extra?.working_hours ?? null;
+        row.meal_minutes = extra?.meal_minutes ?? null;
+      }
+    }
+  }
+  return rows;
 }
 
 export interface EmployeeInfo {
@@ -573,14 +618,31 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, required_check_in, required_check_out, working_hours, meal_minutes, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
     .ilike("username", username)
     .maybeSingle();
   if (error) {
     console.error("getProfileByUsername error:", error.message);
     return null;
   }
-  return (data as ProfileRow) ?? null;
+  if (!data) return null;
+
+  // Fetched separately, best-effort — see getMyFullProfile's comment on why
+  // working_hours/meal_minutes (migration 0091) must never be combined into
+  // the main select: a missing/future column there shouldn't be able to null
+  // out this entire profile (breaking the whole employee detail page).
+  const { data: extra, error: extraError } = await supabase
+    .from("profiles")
+    .select("working_hours, meal_minutes")
+    .eq("id", data.id)
+    .maybeSingle();
+  if (extraError) console.error("getProfileByUsername (working_hours/meal_minutes) error:", extraError.message);
+
+  return {
+    ...(data as ProfileRow),
+    working_hours: extra?.working_hours ?? null,
+    meal_minutes: extra?.meal_minutes ?? null,
+  };
 }
 
 /**
