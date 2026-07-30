@@ -2,13 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { getEmployeeFromEmail } from "@/lib/userDataSync";
-import { Save, Clock, Calendar, Lock } from "lucide-react";
-import { DUMMY_EMPLOYEES } from "@/lib/dummyData";
-import {
-  getMyProfileSchedule,
-} from "@/lib/supabase/timecards";
-import { updateCompanyUser } from "@/lib/supabase/users";
+import { Save, Lock } from "lucide-react";
+import { LOCATIONS } from "@/lib/locations";
+import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
@@ -35,23 +32,11 @@ export const Route = createFileRoute("/profile")({
 type Profile = {
   firstName: string;
   lastName: string;
-  email: string;
   phone: string;
   department: string;
-  title: string;
   officeLocation: string;
   poInitials: string;
 };
-
-interface TimecardRecord {
-  date: string;
-  checkIn: string;
-  mealStart: string;
-  mealEnd: string;
-  checkOut: string;
-  working: string;
-  rate: number;
-}
 
 interface WeekDay {
   dayNum: number;
@@ -62,298 +47,142 @@ interface WeekDay {
 interface RequiredSchedule {
   requiredCheckIn: string;
   requiredCheckOut: string;
+  workingHours: string;
+  mealMinutes: string;
 }
 
-const KEY = "ahs:profile";
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const LOCATION_STORAGE_KEY = "ahs:location-management:locations";
-
-// Default locations matching LocationManagementPage defaults
-const DEFAULT_LOCATIONS = [
-  "Memphis",
-  "Nashville",
-  "Jacksonville",
-  "Tallahassee",
-  "Birmingham",
-  "Huntsville",
-  "Jonesboro",
-  "Atlanta",
-  "Knoxville",
-  "Wilmington",
-  "Mobile",
-  "Savannah",
-  "Montgomery",
-  "Chattanooga",
-  "Columbus",
-  "Jackson,MS",
-  "Raleigh",
-  "New Orleans",
-  "Louisville",
-  "St. Louis",
-  "Richmond",
-  "Jackson,TN",
-  "Asheville",
-  "Norfolk",
-  "Little Rock",
-  "Cape Girardeau",
-  "Destin",
-  "San Antonio",
-  "Lake Charles",
-  "Dallas",
-  "Philippines",
-];
 
 function ProfilePage() {
-  const { email, uid, role } = useAuth();
-  const employee = getEmployeeFromEmail(email);
+  const { email, uid, role, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
   const [profileId, setProfileId] = useState<string | null>(null);
-  
+
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
     lastName: "",
-    email: email ?? "",
     phone: "",
-    department: "Service",
-    title: "Technician",
-    officeLocation: "US",
+    department: "",
+    officeLocation: "",
     poInitials: "",
   });
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [saved, setSaved] = useState<string>("");
-  const [timecardData, setTimecardData] = useState<TimecardRecord[]>([]);
+  const [saving, setSaving] = useState(false);
   const [currentWeekDays, setCurrentWeekDays] = useState<WeekDay[]>([]);
   const [selectedOffDays, setSelectedOffDays] = useState<number[]>([]);
   const [requiredSchedule, setRequiredSchedule] = useState<RequiredSchedule>({
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
+    workingHours: "",
+    mealMinutes: "",
   });
-  const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS);
+  // Working Hours / Meal Time is a one-time self-service edit for regular
+  // employees (canEditSchedule roles can always change it) — once either
+  // value has ever been set (by the employee themselves or by an admin),
+  // it locks and further changes have to go through IT/Admin/HR.
+  const [scheduleFieldsAlreadySet, setScheduleFieldsAlreadySet] = useState(false);
+  const canEditWorkingHoursMeal = canEditSchedule || !scheduleFieldsAlreadySet;
 
-  // Timecard database mapping
-  const timecardDatabase: { [key: string]: TimecardRecord[] } = {
-    "006": [ // Maria Santos
-      { date: "06/01/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/02/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/03/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/04/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-      { date: "06/05/2026", checkIn: "06:00", mealStart: "10:00", mealEnd: "11:00", checkOut: "15:00", working: "8:00:00", rate: 850 },
-    ],
-    "008": [ // Anna Reyes
-      { date: "06/01/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/02/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/03/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/04/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "16:30", working: "8:00:00", rate: 550 },
-      { date: "06/05/2026", checkIn: "07:30", mealStart: "11:30", mealEnd: "12:30", checkOut: "20:30", working: "12:00:00", rate: 550 },
-    ],
-    "007": [ // Juan Dela Cruz
-      { date: "06/01/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/02/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/03/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/04/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-      { date: "06/05/2026", checkIn: "10:00", mealStart: "13:00", mealEnd: "14:00", checkOut: "19:00", working: "8:00:00", rate: 650 },
-    ],
-  };
-
-  // Generate current week
-  const generateCurrentWeek = () => {
+  useEffect(() => {
     const week: WeekDay[] = [];
     for (let i = 0; i < 7; i++) {
-      week.push({
-        dayNum: i,
-        dayName: DAYS_OF_WEEK[i],
-        isOffDay: selectedOffDays.includes(i),
-      });
+      week.push({ dayNum: i, dayName: DAYS_OF_WEEK[i], isOffDay: selectedOffDays.includes(i) });
     }
     setCurrentWeekDays(week);
-  };
+  }, [selectedOffDays]);
 
   const toggleOffDay = (dayNum: number) => {
     if (!canEditSchedule) return;
-    setSelectedOffDays(prev => {
-      const newOffDays = prev.includes(dayNum)
-        ? prev.filter(d => d !== dayNum)
-        : [...prev, dayNum];
-      
-      if (employee) {
-        const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
-        if (dummyEmployee) {
-          const timecardKey = dummyEmployee.id.split("-").pop() || "unknown";
-          localStorage.setItem(`offDays_${timecardKey}`, JSON.stringify(newOffDays));
-        }
-      }
-      return newOffDays;
-    });
+    setSelectedOffDays((prev) => (prev.includes(dayNum) ? prev.filter((d) => d !== dayNum) : [...prev, dayNum]));
   };
 
-  useEffect(() => {
-    generateCurrentWeek();
-    
-    // Load locations from localStorage (synced with LocationManagementPage)
-    const loadLocations = () => {
-      try {
-        const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed.rows) && parsed.rows.length > 0) {
-            // Extract location names from storage
-            const locationNames = parsed.rows.map((row: any) => row.location).filter(Boolean);
-            
-            // Filter to only include locations that are in DEFAULT_LOCATIONS (removes duplicates/custom entries)
-            const validLocations = locationNames.filter((name: string) => 
-              DEFAULT_LOCATIONS.includes(name)
-            );
-            
-            if (validLocations.length > 0) {
-              // Sort to match DEFAULT_LOCATIONS order
-              const sorted = validLocations.sort((a: string, b: string) => 
-                DEFAULT_LOCATIONS.indexOf(a) - DEFAULT_LOCATIONS.indexOf(b)
-              );
-              setLocations(sorted);
-              return;
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load locations from storage:', error);
-      }
-      // Fall back to default locations (which includes Asheville)
-      setLocations(DEFAULT_LOCATIONS);
-    };
-    
-    loadLocations();
-    
-    if (employee) {
-      const parts = employee.name.split(" ");
-      // Determine default office location based on country and available locations
-      let defaultLocation = "Atlanta"; // Default to Atlanta for US
-      if (employee.country === "PH") {
-        defaultLocation = "Philippines"; // Default to Philippines for PH employees
-      }
-      
-      const employeeProfile: Profile = {
-        firstName: parts[0] || "",
-        lastName: parts.slice(1).join(" ") || "",
-        email: employee.email,
-        phone: "",
-        department: employee.department,
-        title: employee.role,
-        officeLocation: defaultLocation,
-        poInitials: "",
-      };
-      setProfile(employeeProfile);
-      
-      const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
-      if (dummyEmployee) {
-        const timecardKey = dummyEmployee.id.split("-").pop() === "001" ? "001" : 
-                           dummyEmployee.id.split("-").pop() === "002" ? "002" :
-                           dummyEmployee.id.split("-").pop() === "003" ? "003" :
-                           dummyEmployee.id.split("-").pop() === "004" ? "004" :
-                           dummyEmployee.id.split("-").pop() === "005" ? "005" :
-                           dummyEmployee.id.split("-").pop() === "006" ? "006" :
-                           dummyEmployee.id.split("-").pop() === "007" ? "007" :
-                           dummyEmployee.id.split("-").pop() === "008" ? "008" :
-                           dummyEmployee.id.split("-").pop() === "009" ? "009" : "010";
-        
-        setTimecardData(timecardDatabase[timecardKey] || []);
-        
-        const savedOffDays = localStorage.getItem(`offDays_${timecardKey}`);
-        if (savedOffDays) {
-          setSelectedOffDays(JSON.parse(savedOffDays));
-        } else {
-          const defaultOffDays = timecardKey === "008" ? [4, 5] : [];
-          setSelectedOffDays(defaultOffDays);
-        }
-        
-        const savedSchedule = localStorage.getItem(`requiredSchedule_${timecardKey}`);
-        if (savedSchedule) {
-          setRequiredSchedule(JSON.parse(savedSchedule));
-        }
-        
-        const savedPOInitials = localStorage.getItem(`poInitials_${timecardKey}`);
-        if (savedPOInitials) {
-          setProfile(prev => ({ ...prev, poInitials: savedPOInitials }));
-        }
-      }
-      localStorage.removeItem(KEY);
-    }
-  }, [employee, email]);
-
-  useEffect(() => {
-    generateCurrentWeek();
-  }, [selectedOffDays]);
-
-  // Load the authoritative Required Schedule + days off from Supabase. This
-  // is what the timecard page also reads, so changes here keep both views in
-  // sync. Falls back to whatever localStorage had if Supabase is unreachable.
+  // Load the caller's real Supabase profile — account fields, schedule, and
+  // role all come from the same row, so this is the single source of truth
+  // for everything on this page (see getMyFullProfile in lib/supabase/users.ts).
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
     (async () => {
       try {
-        const sched = await getMyProfileSchedule(uid);
-        if (cancelled) return;
-        if (sched.profileId) {
-          setProfileId(sched.profileId);
-          if (sched.requiredCheckIn || sched.requiredCheckOut) {
-            setRequiredSchedule({
-              requiredCheckIn: sched.requiredCheckIn || "08:00",
-              requiredCheckOut: sched.requiredCheckOut || "17:00",
-            });
-          }
-        }
-        // Pull off_days separately — getMyProfileSchedule doesn't return it.
-        const { data } = await supabase
-          .from("profiles")
-          .select("off_days")
-          .eq("firebase_uid", uid)
-          .maybeSingle();
+        const p = await getMyFullProfile(uid);
+        if (cancelled || !p) return;
+        setProfileId(p.profileId);
+        const [firstName, ...rest] = p.displayName.trim().split(/\s+/);
+        setProfile({
+          firstName: p.displayName ? firstName : "",
+          lastName: rest.join(" "),
+          phone: p.phoneNumber,
+          department: p.department,
+          officeLocation: p.assignedBranch,
+          poInitials: p.poInitials,
+        });
+        setRequiredSchedule({
+          requiredCheckIn: p.requiredCheckIn || "08:00",
+          requiredCheckOut: p.requiredCheckOut || "17:00",
+          workingHours: p.workingHours != null ? String(p.workingHours) : "",
+          mealMinutes: p.mealMinutes != null ? String(p.mealMinutes) : "",
+        });
+        setScheduleFieldsAlreadySet(p.workingHours != null || p.mealMinutes != null);
+        // Pull off_days separately — getMyFullProfile doesn't return it.
+        const { data } = await supabase.from("profiles").select("off_days").eq("firebase_uid", uid).maybeSingle();
         if (!cancelled && Array.isArray((data as any)?.off_days)) {
           setSelectedOffDays((data as any).off_days as number[]);
         }
       } catch (err) {
-        console.warn("Profile load (Supabase) skipped:", err);
+        console.error("Failed to load profile:", err);
       }
     })();
-    return () => { cancelled = true; };
-    // void unused import to satisfy linter when getProfileIdByFirebaseUid is
-    // reserved for future use.
+    return () => {
+      cancelled = true;
+    };
   }, [uid]);
 
   const save = async () => {
-    localStorage.setItem(KEY, JSON.stringify(profile));
-
-    // Also save required schedule and PO initials locally so other parts of
-    // the legacy UI that still read from localStorage stay current.
-    if (employee) {
-      const dummyEmployee = DUMMY_EMPLOYEES.find(e => e.email === employee.email);
-      if (dummyEmployee) {
-        const timecardKey = dummyEmployee.id.split("-").pop() || "unknown";
-        localStorage.setItem(`requiredSchedule_${timecardKey}`, JSON.stringify(requiredSchedule));
-        if (profile.poInitials) {
-          localStorage.setItem(`poInitials_${timecardKey}`, profile.poInitials);
-        }
-      }
+    if (!profileId) {
+      setSaved("Could not resolve your profile. Please re-login.");
+      return;
     }
-
-    // Persist the schedule + off-days to Supabase so the timecard and
-    // attendance dashboards pick them up too. Only do this if the user has
-    // permission (RLS will also reject otherwise).
-    if (profileId && canEditSchedule) {
-      try {
-        await updateCompanyUser(profileId, {
-          requiredCheckIn: requiredSchedule.requiredCheckIn,
-          requiredCheckOut: requiredSchedule.requiredCheckOut,
-          offDays: selectedOffDays,
-          poInitials: profile.poInitials || "",
-        });
-      } catch (err) {
-        console.warn("Schedule save (Supabase) failed:", err);
-      }
+    // Regular employees only get ONE shot at setting Working Hours / Meal
+    // Time themselves (see canEditWorkingHoursMeal) — make sure they know
+    // that before it locks, since there's no undo from this page after.
+    if (!canEditSchedule && canEditWorkingHoursMeal && (requiredSchedule.workingHours.trim() || requiredSchedule.mealMinutes.trim())) {
+      const proceed = confirm(
+        "You can only set Working Hours / Meal Time once. After saving, you'll need to request any changes through HR, IT, or Admin. Continue?"
+      );
+      if (!proceed) return;
     }
-
-    setSaved("Profile saved.");
-    setTimeout(() => setSaved(""), 2000);
+    setSaving(true);
+    try {
+      await updateCompanyUser(profileId, {
+        displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim(),
+        phoneNumber: profile.phone,
+        department: profile.department,
+        assignedBranch: profile.officeLocation,
+        poInitials: profile.poInitials,
+        ...(canEditSchedule
+          ? {
+              requiredCheckIn: requiredSchedule.requiredCheckIn,
+              requiredCheckOut: requiredSchedule.requiredCheckOut,
+              offDays: selectedOffDays,
+            }
+          : {}),
+        ...(canEditWorkingHoursMeal
+          ? {
+              workingHours: requiredSchedule.workingHours.trim() ? Number(requiredSchedule.workingHours) : null,
+              mealMinutes: requiredSchedule.mealMinutes.trim() ? Number(requiredSchedule.mealMinutes) : null,
+            }
+          : {}),
+      });
+      // A regular employee just used their one-time edit — lock it from here on.
+      if (!canEditSchedule && canEditWorkingHoursMeal) setScheduleFieldsAlreadySet(true);
+      setSaved("Profile saved.");
+    } catch (err) {
+      setSaved(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaved(""), 2500);
+    }
   };
 
   const changePassword = async () => {
@@ -390,6 +219,13 @@ function ProfilePage() {
       setPassword({ current: "", next: "", confirm: "" });
       setSaved("Password updated.");
       setTimeout(() => setSaved(""), 3000);
+      // Clear an admin-triggered "must change password" flag, if set (see
+      // migration 0103) — both server-side and in-memory, so the /profile
+      // redirect gate in __root.tsx stops immediately.
+      if (uid) {
+        clearMustChangePasswordFlag();
+        clearMyMustChangePassword(uid).catch((err) => console.error("Failed to clear must_change_password flag:", err));
+      }
     } catch (err: any) {
       const code = String(err?.code || "");
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
@@ -416,43 +252,46 @@ function ProfilePage() {
     </label>
   );
 
-  const locationField = () => (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs text-muted-foreground">Office Location</span>
-      <select
-        value={profile.officeLocation}
-        onChange={(e) => setProfile({ ...profile, officeLocation: e.target.value })}
-        className="glass-input"
-      >
-        <option value="">Select a location</option>
-        {locations.map((location) => (
-          <option key={location} value={location}>
-            {location}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-
   return (
     <AccountPageShell title="My Profile" description="Manage your account details and password.">
+      {mustChangePassword && (
+        <div className="panel border-amber-500/40 bg-amber-500/10">
+          <p className="text-sm font-semibold text-amber-200">🔒 You need to change your password to continue.</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            An admin reset your account for security. You can keep using your current password to log in, but you must set a new one below before you can reach the rest of the dashboards.
+          </p>
+        </div>
+      )}
       <section className="panel">
         <h2 className="text-lg font-semibold mb-4">Account details</h2>
-        {employee && (
-          <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-            <p className="text-xs text-blue-200">
-              📋 Your profile is synced with employee data for {employee.name}. Department and role reflect your current assignment.
-            </p>
-          </div>
-        )}
         <div className="grid sm:grid-cols-2 gap-4 mb-6">
           {field("First name", "firstName")}
           {field("Last name", "lastName")}
-          {field("Email", "email", "email")}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Email</span>
+            <input className="glass-input opacity-70" type="email" value={email ?? ""} disabled title="Contact an admin to change your login email" />
+          </label>
           {field("Phone", "phone", "tel")}
           {field("Department", "department")}
-          {field("Title", "title")}
-          {locationField()}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Role</span>
+            <input className="glass-input opacity-70" type="text" value={ROLE_LABELS[normalizeRole(role)] || role || ""} disabled />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Office Location</span>
+            <select
+              value={profile.officeLocation}
+              onChange={(e) => setProfile({ ...profile, officeLocation: e.target.value })}
+              className="glass-input"
+            >
+              <option value="">Select a location</option>
+              {LOCATIONS.map((location) => (
+                <option key={location} value={location}>
+                  {location}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">PO # Initial</span>
             <input
@@ -473,7 +312,7 @@ function ProfilePage() {
             {!canEditSchedule && (
               <span className="inline-flex items-center gap-1 text-[11px] text-amber-300/90">
                 <Lock className="h-3 w-3" />
-                Only HR, admins, and managers can change this
+                Check-In/Out Time: only HR, admins, and managers can change this
               </span>
             )}
           </div>
@@ -495,6 +334,40 @@ function ProfilePage() {
                 value={requiredSchedule.requiredCheckOut}
                 onChange={(e) => setRequiredSchedule({ ...requiredSchedule, requiredCheckOut: e.target.value })}
                 disabled={!canEditSchedule}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </label>
+            {!canEditSchedule && (
+              <p className="sm:col-span-2 -mt-2 inline-flex items-center gap-1 text-[11px] text-amber-300/90">
+                <Lock className="h-3 w-3 shrink-0" />
+                {canEditWorkingHoursMeal
+                  ? "Working Hours / Meal Time can be set once yourself — after saving, only IT, admins, or HR can change it."
+                  : "Working Hours / Meal Time already set — contact IT, admins, or HR to change it."}
+              </p>
+            )}
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-slate-400">Working Hours</span>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                placeholder="e.g. 8"
+                value={requiredSchedule.workingHours}
+                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, workingHours: e.target.value })}
+                disabled={!canEditWorkingHoursMeal}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-slate-400">Meal Time (minutes)</span>
+              <input
+                type="number"
+                min={0}
+                step={5}
+                placeholder="e.g. 30"
+                value={requiredSchedule.mealMinutes}
+                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, mealMinutes: e.target.value })}
+                disabled={!canEditWorkingHoursMeal}
                 className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
             </label>
@@ -530,52 +403,18 @@ function ProfilePage() {
             ))}
           </div>
           {selectedOffDays.length > 0 && (
-            <p className="text-xs text-blue-300">Selected: {selectedOffDays.map(d => DAYS_OF_WEEK[d]).join(", ")}</p>
+            <p className="text-xs text-blue-300">Selected: {selectedOffDays.map((d) => DAYS_OF_WEEK[d]).join(", ")}</p>
           )}
         </div>
 
         <div className="flex items-center gap-2 mt-6 flex-wrap">
-          <button className="btn btn-primary" onClick={save}><Save className="h-4 w-4" />Save changes</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            <Save className="h-4 w-4" />
+            {saving ? "Saving…" : "Save changes"}
+          </button>
           {saved && <span className="text-xs text-muted-foreground">{saved}</span>}
         </div>
       </section>
-
-      {/* Time In/Out Details */}
-      {timecardData.length > 0 && (
-        <section className="panel mt-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-blue-400" />
-            Time In/Out Details
-          </h2>
-          <p className="text-xs text-slate-400 mb-4">Your recent daily clock in/out records.</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-800/50 border-b border-white/10">
-                  <th className="px-3 py-2 text-left font-semibold text-slate-300">Date</th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-300">Check In</th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-300">Meal Start</th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-300">Meal End</th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-300">Check Out</th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-300">Hours Worked</th>
-                </tr>
-              </thead>
-              <tbody>
-                {timecardData.map((record, idx) => (
-                  <tr key={idx} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-3 py-2 text-slate-300 font-medium">{record.date}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{record.checkIn}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{record.mealStart}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{record.mealEnd}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{record.checkOut}</td>
-                    <td className="px-3 py-2 text-center text-green-300 font-semibold">{record.working}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
 
       {/* Change Password - At Bottom */}
       <section className="panel mt-6">

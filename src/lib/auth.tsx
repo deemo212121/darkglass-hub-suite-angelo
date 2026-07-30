@@ -21,6 +21,11 @@ type AuthState = {
   // Locations this user may access (from Work Plan). null = no restriction
   // (unrestricted role or no plan set). Empty array = restricted to nothing.
   allowedLocations: string[] | null;
+  // Set by an admin's Reset Password / Reset All Passwords action (see
+  // migration 0103) — __root.tsx redirects to /profile until this clears.
+  mustChangePassword: boolean;
+  /** Flips the in-memory flag off immediately after a successful self-service password change, so the /profile redirect gate stops right away instead of waiting for a re-login. */
+  clearMustChangePasswordFlag: () => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   ready: boolean;
@@ -100,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
   const [allowedLocations, setAllowedLocations] = useState<string[] | null>(null);
+  const [mustChangePassword, setMustChangePasswordState] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   // Set by login() right before signing in, consumed by the very next
@@ -196,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setRole(sbProfile.role);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
+                  setMustChangePasswordState(sbProfile.mustChangePassword);
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
                   //   1. branch_access = "*" (admin set "All Locations") →
@@ -282,6 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setDisplayName(null);
             setIsActive(false);
             setAllowedLocations(null);
+            setMustChangePasswordState(false);
           }
           
           setReady(true);
@@ -378,10 +386,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       displayName,
       isActive,
       allowedLocations,
-      login, 
-      logout, 
+      mustChangePassword,
+      clearMustChangePasswordFlag: () => setMustChangePasswordState(false),
+      login,
+      logout,
       ready,
-      loading 
+      loading
     }}>
       {children}
     </AuthContext.Provider>

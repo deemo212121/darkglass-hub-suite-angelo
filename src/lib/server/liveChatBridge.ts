@@ -81,6 +81,7 @@ const MAX_BRANCH_LEN = 60;
 const MAX_PHONE_LEN = 30;
 const PHONE_DIGITS = 10;
 const MAX_MESSAGE_LEN = 4000;
+const MAX_CUSTOM_TIME_LEN = 100;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 // A "staff is typing" timestamp older than this is treated as stale — no
 // separate "stopped typing" event, it just times out between polls.
@@ -93,6 +94,12 @@ const AUTO_GREETING_MESSAGE =
   "Thanks for reaching out! An agent will be with you shortly — feel free to share more details in the meantime so we can help you faster once we connect.";
 
 const CALLBACK_PREFERENCE_LABELS: Record<string, string> = { now: "Now", "30min": "In 30 minutes", tomorrow: "Tomorrow" };
+// "custom" has no fixed label — the visitor types their own preferred time
+// (request_data.customTime) instead, so this falls back to that.
+function callbackLabel(preference: string, customTime: string | undefined): string {
+  if (preference === "custom") return customTime || "a custom time";
+  return CALLBACK_PREFERENCE_LABELS[preference] ?? preference;
+}
 // A single default arrival window rather than a full time picker — keeps
 // the customer-side form to just "which day" (see LiveChatWidget.tsx).
 const DEFAULT_APPOINTMENT_WINDOW = "9:00 AM - 12:00 PM";
@@ -415,7 +422,10 @@ export async function handleLiveChatRequest(request: Request, env?: Record<strin
       const sessionId = url.searchParams.get("sessionId") ?? "";
       if (!UUID_RE.test(sessionId)) return json({ error: "Missing or invalid sessionId" }, 400);
       const preference = typeof payload.preference === "string" ? payload.preference : "";
-      if (!CALLBACK_PREFERENCE_LABELS[preference]) return json({ error: "Invalid callback preference." }, 400);
+      const isCustom = preference === "custom";
+      if (!isCustom && !CALLBACK_PREFERENCE_LABELS[preference]) return json({ error: "Invalid callback preference." }, 400);
+      const customTime = isCustom && typeof payload.customTime === "string" ? payload.customTime.trim().slice(0, MAX_CUSTOM_TIME_LEN) : undefined;
+      if (isCustom && !customTime) return json({ error: "Please enter your preferred callback time." }, 400);
 
       const session = await fetchSession(envBag, sessionId);
       if (!session) return json({ error: "Chat session not found." }, 404);
@@ -429,8 +439,8 @@ export async function handleLiveChatRequest(request: Request, env?: Record<strin
           sender: "visitor",
           sender_name: session.visitor_name,
           kind: "callback_request",
-          request_data: { preference, status: "pending" },
-          body: `Requested a callback: ${CALLBACK_PREFERENCE_LABELS[preference]}`,
+          request_data: { preference, customTime: customTime ?? null, status: "pending" },
+          body: `Requested a callback: ${callbackLabel(preference, customTime)}`,
         }),
       });
       if (!msgRes.ok) throw new Error(`callback request insert failed (${msgRes.status}): ${await msgRes.text()}`);

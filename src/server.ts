@@ -12,8 +12,8 @@ import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
 import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
 import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
-import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
+import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -152,9 +152,9 @@ export default {
       const merged = await resolveServerEnv(env);
       return await handleLiveChatRequest(request, merged);
     }
-    if (url.pathname === "/api/admin-reset-password") {
+    if (url.pathname === "/api/live-chat-staff") {
       const merged = await resolveServerEnv(env);
-      return await handleAdminPasswordRequest(request, merged);
+      return await handleLiveChatStaffRequest(request, merged);
     }
     if (url.pathname === "/api/admin-update-email") {
       const merged = await resolveServerEnv(env);
@@ -172,8 +172,9 @@ export default {
   },
 
   // Cron Trigger (see wrangler.jsonc "triggers.crons") — dispatches on which
-  // schedule fired: hourly runs the NSA parts pull, every 5 minutes runs the
-  // attendance grace-period check.
+  // schedule fired: hourly runs the NSA parts pull (and, once a week, the
+  // password reset check below), every 5 minutes runs the attendance
+  // grace-period check.
   async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
 
@@ -195,6 +196,19 @@ export default {
       ).then(
         (result) => console.log("nsaPartsSync:", JSON.stringify(result)),
         (error) => console.error("nsaPartsSync failed:", error),
+      ),
+    );
+
+    // No separate cron entry for this — the hourly tick above lands on an
+    // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
+    // header comment), so this just checks "is it Monday 00:00 Chicago time
+    // right now" every time the hourly cron fires anyway.
+    ctx.waitUntil(
+      import("./lib/server/passwordResetSchedule").then(({ isWeeklyPasswordResetTick, runWeeklyPasswordReset }) =>
+        isWeeklyPasswordResetTick() ? runWeeklyPasswordReset(merged) : null,
+      ).then(
+        (result) => { if (result) console.log("weeklyPasswordReset:", JSON.stringify(result)); },
+        (error) => console.error("weeklyPasswordReset failed:", error),
       ),
     );
   },

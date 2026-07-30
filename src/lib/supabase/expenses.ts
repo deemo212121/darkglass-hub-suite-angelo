@@ -19,6 +19,10 @@ export interface ExpenseRow {
   createdBy: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  /** Firebase Storage download URL for an attached receipt, if any — see migration 0104. */
+  receiptUrl: string | null;
+  /** Full Firebase Storage path for the receipt (needed to delete it if replaced/removed). */
+  receiptPath: string | null;
   createdAt: string;
 }
 
@@ -34,6 +38,8 @@ function mapRow(row: any): ExpenseRow {
     createdBy: row.created_by ?? null,
     reviewedBy: row.reviewed_by ?? null,
     reviewedAt: row.reviewed_at ?? null,
+    receiptUrl: row.receipt_url ?? null,
+    receiptPath: row.receipt_path ?? null,
     createdAt: row.created_at,
   };
 }
@@ -42,7 +48,7 @@ function mapRow(row: any): ExpenseRow {
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
   const { data, error } = await supabase
     .from("expenses")
-    .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, created_at")
+    .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, created_at")
     .not("profile_id", "is", null)
     .order("expense_date", { ascending: false });
   if (error) {
@@ -60,6 +66,8 @@ export async function createExpense(input: {
   amount: number;
   description: string;
   createdBy: string | null;
+  receiptUrl?: string | null;
+  receiptPath?: string | null;
 }): Promise<void> {
   const { error } = await supabase.from("expenses").insert({
     profile_id: input.profileId,
@@ -69,6 +77,8 @@ export async function createExpense(input: {
     description: input.description || null,
     status: "Pending",
     created_by: input.createdBy,
+    receipt_url: input.receiptUrl ?? null,
+    receipt_path: input.receiptPath ?? null,
   });
   if (error) {
     console.error("createExpense error:", error.message);
@@ -79,7 +89,14 @@ export async function createExpense(input: {
 /** Edit an expense's fields (only sensible while still Pending). */
 export async function updateExpense(
   id: string,
-  fields: { category: ExpenseCategory; expenseDate: string; amount: number; description: string }
+  fields: {
+    category: ExpenseCategory;
+    expenseDate: string;
+    amount: number;
+    description: string;
+    receiptUrl?: string | null;
+    receiptPath?: string | null;
+  }
 ): Promise<void> {
   const { error } = await supabase
     .from("expenses")
@@ -88,6 +105,8 @@ export async function updateExpense(
       expense_date: fields.expenseDate,
       amount: fields.amount,
       description: fields.description || null,
+      receipt_url: fields.receiptUrl ?? null,
+      receipt_path: fields.receiptPath ?? null,
     })
     .eq("id", id);
   if (error) {

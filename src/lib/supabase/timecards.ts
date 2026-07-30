@@ -38,21 +38,48 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   profileId: string | null;
   requiredCheckIn: string;
   requiredCheckOut: string;
+  workingHours: number | null;
+  mealMinutes: number | null;
 }> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, required_check_in, required_check_out")
+    .select("id, required_check_in, required_check_out, working_hours, meal_minutes")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
   if (error) {
     console.error("getMyProfileSchedule error:", error.message);
-    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "" };
+    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null };
   }
   return {
     profileId: data?.id ?? null,
     requiredCheckIn: data?.required_check_in ?? "",
     requiredCheckOut: data?.required_check_out ?? "",
+    workingHours: data?.working_hours ?? null,
+    mealMinutes: data?.meal_minutes ?? null,
   };
+}
+
+/**
+ * Scheduled shift length for meal-eligibility purposes — prefers the
+ * profile's explicit working_hours override (migration 0109) when set,
+ * since a plain Time In/Out subtraction doesn't always match someone's
+ * real scheduled hours. Falls back to the Time In/Out diff otherwise.
+ *
+ * working_hours is NET productive time — it excludes the meal — so the
+ * GROSS scheduled shift (what "more than 6 hours" actually means, same as
+ * the old Check-In-to-Check-Out span) adds meal_minutes back on top, e.g.
+ * 7.5 working hours + 30 meal minutes = an 8-hour shift.
+ */
+export function resolveScheduledShiftHours(
+  requiredCheckIn: string,
+  requiredCheckOut: string,
+  workingHours: number | null | undefined,
+  mealMinutes?: number | null | undefined
+): number {
+  if (typeof workingHours === "number" && workingHours > 0) {
+    return workingHours + (typeof mealMinutes === "number" && mealMinutes > 0 ? mealMinutes / 60 : 0);
+  }
+  return requiredCheckIn && requiredCheckOut ? hoursBetween(requiredCheckIn, requiredCheckOut) : 0;
 }
 
 /**
@@ -211,7 +238,8 @@ export interface AttendanceRow {
   mealStart: string;     // "HH:MM" or ""
   mealEnd: string;       // "HH:MM" or ""
   hoursWorked: number;
-  status: "present" | "absent" | "missing-in" | "missing-out";
+  /** "missing-meal": clocked a full in/out day, was meal-eligible (scheduled shift > 6h), but never completed Meal In + Meal Out. Not blocked at punch time — just recorded here so HR/managers can see it. */
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal";
 }
 
 /**
@@ -223,7 +251,7 @@ export async function getAttendanceForRange(
   profileId: string,
   startDate: string,
   endDate: string,
-  scheduled: { requiredCheckIn?: string; requiredCheckOut?: string; daysOff?: number[] } = {}
+  scheduled: { requiredCheckIn?: string; requiredCheckOut?: string; workingHours?: number | null; mealMinutes?: number | null; daysOff?: number[] } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
     .from("timecard_entries")
@@ -242,6 +270,11 @@ export async function getAttendanceForRange(
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   const daysOff = new Set((scheduled.daysOff ?? []).map((n) => n));
+  // Same rule as the timecard punch flows (TimeClockMenu.tsx / routes/timecard.tsx):
+  // a scheduled shift over 6 hours is meal-eligible. Punching no longer BLOCKS
+  // timing out without a meal — this is just where that gets recorded instead.
+  const mealEligible =
+    resolveScheduledShiftHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes) > 6;
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -277,6 +310,7 @@ export async function getAttendanceForRange(
     let status: AttendanceRow["status"] = "present";
     if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
+    else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
     rows.push({
       date: key,
       clockIn: entry.checkIn,
@@ -287,10 +321,6 @@ export async function getAttendanceForRange(
       status,
     });
   }
-  // Tag scheduled lookup unused-var to make linters happy without dropping
-  // it from the public API. The arg is reserved for future late/early checks.
-  void scheduled.requiredCheckIn;
-  void scheduled.requiredCheckOut;
   return rows;
 }
 

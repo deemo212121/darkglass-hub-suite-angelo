@@ -58,6 +58,8 @@ interface SupabaseEmployee {
   offDays?: number[];
   requiredCheckIn?: string;
   requiredCheckOut?: string;
+  workingHours?: number | null;
+  mealMinutes?: number | null;
 }
 
 interface SalaryEntry {
@@ -242,7 +244,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,working_hours,meal_minutes").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
@@ -278,6 +280,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
+        workingHours: p.working_hours ?? null,
+        mealMinutes: p.meal_minutes ?? null,
       })) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
       setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
@@ -1147,6 +1151,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           department={detailEmployee.department ?? undefined}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
+          workingHours={detailEmployee.workingHours}
+          mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}

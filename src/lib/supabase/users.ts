@@ -58,8 +58,14 @@ export interface ProfileRow {
   off_days: number[] | null;
   required_check_in: string | null;
   required_check_out: string | null;
+  /** Explicit override for the Time In/Out-derived scheduled shift length — see migration 0109. */
+  working_hours: number | null;
+  /** How many minutes this person's meal break should be. Not enforced anywhere yet, just stored/shown. */
+  meal_minutes: number | null;
   work_plan: Record<string, any> | null;
   is_active: boolean;
+  /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
+  must_change_password: boolean;
   created_at: string;
 }
 
@@ -92,10 +98,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   isActive: boolean;
   workPlan: Record<string, any> | null;
   branchAccess: string | null;
+  mustChangePassword: boolean;
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, display_name, is_active, work_plan, branch_access, must_change_password, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -118,7 +125,26 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     isActive: data.is_active,
     workPlan: (data as any).work_plan ?? null,
     branchAccess: (data as any).branch_access ?? null,
+    mustChangePassword: (data as any).must_change_password ?? false,
   };
+}
+
+/**
+ * Force (or clear) "must change password on next login" for one or more
+ * profiles — see migration 0103. Used by AdminUserManagementPage.tsx's
+ * Reset Password / Reset All Passwords actions (value=true), and by
+ * profile.tsx after a successful self-service password change (value=false).
+ */
+export async function setMustChangePassword(profileIds: string[], value: boolean): Promise<void> {
+  if (profileIds.length === 0) return;
+  const { error } = await supabase.from("profiles").update({ must_change_password: value }).in("id", profileIds);
+  if (error) throw new Error(error.message);
+}
+
+/** Clears the caller's own must_change_password flag by Firebase uid — used right after a successful self-service password change. */
+export async function clearMyMustChangePassword(firebaseUid: string): Promise<void> {
+  const { error } = await supabase.from("profiles").update({ must_change_password: false }).eq("firebase_uid", firebaseUid);
+  if (error) throw new Error(error.message);
 }
 
 /** Update a profile's last login timestamp (best-effort). */
@@ -213,10 +239,55 @@ export async function getMyRoles(firebaseUid: string): Promise<{ role: string | 
   return { role: (data?.role as string | undefined) ?? null, extraRoles: (data?.extra_roles as string[] | null) ?? [] };
 }
 
+/**
+ * The caller's own editable account fields — used by the self-service
+ * /profile page. Distinct from getProfileForLogin (login-time only, no
+ * phone/department/branch) and getMyProfileSchedule (schedule fields only).
+ */
+export async function getMyFullProfile(firebaseUid: string): Promise<{
+  profileId: string;
+  email: string;
+  displayName: string;
+  phoneNumber: string;
+  department: string;
+  assignedBranch: string;
+  poInitials: string;
+  role: string;
+  requiredCheckIn: string;
+  requiredCheckOut: string;
+  workingHours: number | null;
+  mealMinutes: number | null;
+} | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, email, display_name, phone_number, department, assigned_branch, po_initials, role, required_check_in, required_check_out, working_hours, meal_minutes")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+  if (error) {
+    console.error("getMyFullProfile error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  return {
+    profileId: data.id,
+    email: data.email,
+    displayName: data.display_name ?? "",
+    phoneNumber: data.phone_number ?? "",
+    department: data.department ?? "",
+    assignedBranch: data.assigned_branch ?? "",
+    poInitials: data.po_initials ?? "",
+    role: data.role,
+    requiredCheckIn: data.required_check_in ?? "",
+    requiredCheckOut: data.required_check_out ?? "",
+    workingHours: data.working_hours ?? null,
+    mealMinutes: data.meal_minutes ?? null,
+  };
+}
+
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, working_hours, meal_minutes, is_active, must_change_password, created_at")
     // Only the platform-level SUPERSUPERADMIN is excluded here — the new
     // per-company SUPERADMIN role is a real company employee and should
     // show up in the roster like any ADMIN.
@@ -371,6 +442,8 @@ export async function createCompanyUser(input: {
   poInitials?: string;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
+  workingHours?: number;
+  mealMinutes?: number;
 }): Promise<string> {
   // --- 1. Create the Firebase Auth credential on a SECONDARY app ---
   const primaryApp = getApps()[0];
@@ -427,6 +500,8 @@ export async function createCompanyUser(input: {
     po_initials: input.poInitials ?? "",
     required_check_in: input.requiredCheckIn ?? "",
     required_check_out: input.requiredCheckOut ?? "",
+    working_hours: input.workingHours ?? null,
+    meal_minutes: input.mealMinutes ?? null,
     is_active: true,
   });
 
@@ -536,7 +611,7 @@ export async function deleteCompanyUser(profileId: string): Promise<void> {
 export async function getProfileByUsername(username: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, email_report_location, sms_status, off_days, work_plan, required_check_in, required_check_out, working_hours, meal_minutes, is_active, created_at")
     .ilike("username", username)
     .maybeSingle();
   if (error) {
@@ -570,6 +645,8 @@ export async function updateCompanyUser(
     poInitials: string;
     requiredCheckIn: string;
     requiredCheckOut: string;
+    workingHours: number | null;
+    mealMinutes: number | null;
     emailReportLocation: string;
     smsStatus: string;
     offDays: number[];
@@ -598,6 +675,8 @@ export async function updateCompanyUser(
   if (fields.poInitials !== undefined) payload.po_initials = fields.poInitials;
   if (fields.requiredCheckIn !== undefined) payload.required_check_in = fields.requiredCheckIn;
   if (fields.requiredCheckOut !== undefined) payload.required_check_out = fields.requiredCheckOut;
+  if (fields.workingHours !== undefined) payload.working_hours = fields.workingHours;
+  if (fields.mealMinutes !== undefined) payload.meal_minutes = fields.mealMinutes;
   if (fields.emailReportLocation !== undefined) payload.email_report_location = fields.emailReportLocation;
   if (fields.smsStatus !== undefined) payload.sms_status = fields.smsStatus;
   if (fields.offDays !== undefined) payload.off_days = fields.offDays;

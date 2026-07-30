@@ -6,12 +6,16 @@
  * today's row instead of opening the full calendar day modal — same
  * underlying timecard_entries row, so it stays in sync with My Timecard.
  *
- * Each step gates the next: Meal In needs Time In, Meal Out needs Meal In,
- * and — for anyone whose scheduled shift requires a meal break — Time Out
- * needs Meal Out too, so nobody can clock out mid-break. Employees whose
- * scheduled shift is under 8 hours (or has no schedule set at all) aren't
- * eligible for a meal break at all (same rule as the full timecard page),
- * so they only ever see Time In / Time Out.
+ * Each step gates the next: Meal In needs Time In, Meal Out needs Meal In.
+ * Time Out is NOT blocked by an unfinished meal — an eligible employee who
+ * times out without completing Meal In + Meal Out is simply recorded as
+ * "missing-meal" in getAttendanceForRange (see timecards.ts) for HR/managers
+ * to see, rather than being stopped from clocking out. Time Out still locks
+ * Meal In/Out once it's punched, so a meal break can't start or resume after
+ * the day is already closed out. Employees whose scheduled shift is 6 hours
+ * or less (or has no schedule set at all) aren't eligible for a meal break
+ * at all (same rule as the full timecard page), so they only ever see Time
+ * In / Time Out.
  *
  * Once a step is punched, its recorded time is stamped permanently
  * underneath that button (read straight from the saved entry, not a
@@ -19,7 +23,7 @@
  */
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileSchedule, getEntryForDate, saveEntry, hoursDiff, type UITimeEntry } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getEntryForDate, saveEntry, resolveScheduledShiftHours, type UITimeEntry } from "@/lib/supabase/timecards";
 
 const EMPTY_ENTRY: UITimeEntry = { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" };
 
@@ -46,6 +50,8 @@ export function TimeClockButtons() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [requiredCheckIn, setRequiredCheckIn] = useState("");
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [workingHours, setWorkingHours] = useState<number | null>(null);
+  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [entry, setEntry] = useState<UITimeEntry>(EMPTY_ENTRY);
   const [saving, setSaving] = useState(false);
 
@@ -57,6 +63,8 @@ export function TimeClockButtons() {
       setProfileId(s.profileId);
       setRequiredCheckIn(s.requiredCheckIn);
       setRequiredCheckOut(s.requiredCheckOut);
+      setWorkingHours(s.workingHours);
+      setMealMinutes(s.mealMinutes);
     });
     return () => { cancelled = true; };
   }, [ready, uid]);
@@ -71,9 +79,10 @@ export function TimeClockButtons() {
   }, [profileId]);
 
   // Same rule as the full timecard page's handleMealToggle: eligibility is
-  // based on the SCHEDULED shift length, not actual hours worked.
-  const scheduledShift = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 0;
-  const mealEligible = scheduledShift >= 8;
+  // based on the SCHEDULED shift length, not actual hours worked. Shifts of
+  // 6 hours or less have no meal break at all.
+  const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+  const mealEligible = scheduledShift > 6;
 
   const persist = async (next: UITimeEntry) => {
     if (!profileId) return;
@@ -96,10 +105,6 @@ export function TimeClockButtons() {
 
   const handleTimeOut = () => {
     if (!entry.checkIn || entry.checkOut) return;
-    if (mealEligible && !entry.mealEnd) {
-      alert("Please finish your meal break (Meal In / Meal Out) before timing out.");
-      return;
-    }
     void persist({ ...entry, checkOut: nowTime() });
   };
 
@@ -108,11 +113,15 @@ export function TimeClockButtons() {
       alert("Please time in first.");
       return;
     }
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
     if (entry.mealStart) return;
     if (!mealEligible) {
       alert(
-        requiredCheckIn && requiredCheckOut
-          ? `Meal break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`
+        (requiredCheckIn && requiredCheckOut) || workingHours
+          ? `Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`
           : "No scheduled shift is set for your account. Contact your admin to set your required schedule."
       );
       return;
@@ -121,6 +130,10 @@ export function TimeClockButtons() {
   };
 
   const handleMealOut = () => {
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
     if (!entry.mealStart || entry.mealEnd) return;
     void persist({ ...entry, mealEnd: nowTime() });
   };
@@ -153,7 +166,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealIn}
-            disabled={saving || !entry.checkIn || !!entry.mealStart}
+            disabled={saving || !entry.checkIn || !!entry.checkOut || !!entry.mealStart}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal In
@@ -166,7 +179,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealOut}
-            disabled={saving || !entry.mealStart || !!entry.mealEnd}
+            disabled={saving || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal Out
@@ -178,7 +191,7 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeOut}
-          disabled={saving || !entry.checkIn || !!entry.checkOut || (mealEligible && !entry.mealEnd)}
+          disabled={saving || !entry.checkIn || !!entry.checkOut}
           className={`${btnClass} text-red-300 hover:bg-red-500/15`}
         >
           Time Out

@@ -410,6 +410,40 @@ function liveChatDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/live-chat-staff locally — same shape as
+// liveChatDevPlugin above, plain JSON only (no multipart action here).
+function liveChatStaffDevPlugin() {
+  return {
+    name: "live-chat-staff-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/live-chat-staff", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleLiveChatStaffRequest } = await server.ssrLoadModule("/src/lib/server/liveChatStaffBridge.ts");
+          const webReq = new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleLiveChatStaffRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Live chat staff request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Dev-only middleware: serve /api/image-proxy locally — same bridge as
 // production. Unlike the other dev plugins above, the response body is
 // binary image bytes, not text/JSON, so it's streamed back as a Buffer
@@ -493,43 +527,9 @@ function googleDriveDevPlugin() {
   };
 }
 
-// Dev-only middleware: serve /api/admin-reset-password locally — same
-// bridge as production. Plain JSON POST, same shape as liveChatDevPlugin
-// minus the multipart-upload branch (this route never carries a file).
-function adminPasswordDevPlugin() {
-  return {
-    name: "admin-reset-password-dev",
-    configureServer(server: any) {
-      server.middlewares.use("/api/admin-reset-password", async (req: any, res: any) => {
-        try {
-          const chunks: Buffer[] = [];
-          for await (const c of req) chunks.push(c);
-          const body = Buffer.concat(chunks);
-
-          const { handleAdminPasswordRequest } = await server.ssrLoadModule("/src/lib/server/adminPasswordBridge.ts");
-          const webReq = new Request(`http://localhost${req.url}`, {
-            method: req.method,
-            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
-            body: req.method === "POST" ? body : undefined,
-          });
-          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
-          const webRes: Response = await handleAdminPasswordRequest(webReq, mergedEnv);
-
-          res.statusCode = webRes.status;
-          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
-          res.end(await webRes.text());
-        } catch (err) {
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Password reset request failed" }));
-        }
-      });
-    },
-  };
-}
-
 // Dev-only middleware: serve /api/admin-update-email locally — same bridge
-// as production. Plain JSON POST, same shape as adminPasswordDevPlugin.
+// as production. Plain JSON POST, same shape as liveChatDevPlugin minus the
+// multipart-upload branch (this route never carries a file).
 function adminUpdateEmailDevPlugin() {
   return {
     name: "admin-update-email-dev",
@@ -583,7 +583,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), adminPasswordDevPlugin(), adminUpdateEmailDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up

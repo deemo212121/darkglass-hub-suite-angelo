@@ -16,6 +16,8 @@ interface Props {
   department?: string;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
+  workingHours?: number | null;
+  mealMinutes?: number | null;
   offDays?: number[];
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
@@ -35,12 +37,14 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   absent: "Absent",
   "missing-in": "Missing Clock In",
   "missing-out": "Missing Clock Out",
+  "missing-meal": "Meal Not Taken",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
   absent: "text-red-300",
   "missing-in": "text-yellow-300",
   "missing-out": "text-yellow-300",
+  "missing-meal": "text-orange-300",
 };
 
 export function EmployeePayrollDetailModal({
@@ -49,6 +53,8 @@ export function EmployeePayrollDetailModal({
   department,
   requiredCheckIn,
   requiredCheckOut,
+  workingHours,
+  mealMinutes,
   offDays,
   onClose,
   onRateChanged,
@@ -76,7 +82,7 @@ export function EmployeePayrollDetailModal({
     try {
       const { start, end } = monthBounds(month);
       const [attRows, hist] = await Promise.all([
-        getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, daysOff: offDays }),
+        getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays }),
         getSalaryHistory(profileId),
       ]);
       setAttendance(attRows);

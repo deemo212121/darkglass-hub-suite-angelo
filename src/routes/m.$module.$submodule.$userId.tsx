@@ -189,6 +189,8 @@ function UserDetailsPage() {
     isActive: true,
     requiredCheckIn: "",
     requiredCheckOut: "",
+    workingHours: "",
+    mealMinutes: "",
   });
   // Work plan grid state (per-location weekday/weekend + per-day slot).
   const [workPlan, setWorkPlan] = useState<WorkPlan>({});
@@ -246,6 +248,8 @@ function UserDetailsPage() {
           isActive: p.is_active,
           requiredCheckIn: p.required_check_in || "",
           requiredCheckOut: p.required_check_out || "",
+          workingHours: p.working_hours != null ? String(p.working_hours) : "",
+          mealMinutes: p.meal_minutes != null ? String(p.meal_minutes) : "",
         });
         const { normalizeWorkPlan } = await import("@/lib/workPlan");
         setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
@@ -353,6 +357,8 @@ function UserDetailsPage() {
         isActive: form.isActive,
         requiredCheckIn: form.requiredCheckIn,
         requiredCheckOut: form.requiredCheckOut,
+        workingHours: form.workingHours.trim() ? Number(form.workingHours) : null,
+        mealMinutes: form.mealMinutes.trim() ? Number(form.mealMinutes) : null,
       });
       if (emailChanged) setOriginalEmail(form.email.trim());
       // Persist Employee Information (powers Work Map house pins).
@@ -548,6 +554,8 @@ function UserDetailsPage() {
                       </label>
                       {textField("Time In Required", "requiredCheckIn", { type: "time" })}
                       {textField("Time Out Required", "requiredCheckOut", { type: "time" })}
+                      {textField("Working Hours", "workingHours", { type: "number", note: "overrides Time In/Out for meal eligibility" })}
+                      {textField("Meal Time (minutes)", "mealMinutes", { type: "number" })}
                     </div>
 
                     {/* Time Off Schedule */}
