@@ -33,7 +33,18 @@ export async function getProfileIdByFirebaseUid(firebaseUid: string): Promise<st
   return getMyProfileId(firebaseUid);
 }
 
-/** Get the caller's profile id + required scheduled shift times. */
+/**
+ * Get the caller's profile id + required scheduled shift times.
+ *
+ * working_hours/meal_minutes (migration 0109) are fetched in a SEPARATE,
+ * best-effort query rather than folded into the main select — if that
+ * migration hasn't been applied yet (or any future optional column has an
+ * issue), it must never take down profileId/requiredCheckIn/requiredCheckOut
+ * too, since those gate loading the rest of the timecard page (calendar
+ * entries, today's punch state, etc). Learned this the hard way: a single
+ * combined select silently nulled out profileId on a column-not-found
+ * error, which made the whole Timecard page look empty.
+ */
 export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   profileId: string | null;
   requiredCheckIn: string;
@@ -43,19 +54,36 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
 }> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, required_check_in, required_check_out, working_hours, meal_minutes")
+    .select("id, required_check_in, required_check_out")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
   if (error) {
     console.error("getMyProfileSchedule error:", error.message);
     return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null };
   }
+
+  let workingHours: number | null = null;
+  let mealMinutes: number | null = null;
+  if (data?.id) {
+    const { data: extra, error: extraError } = await supabase
+      .from("profiles")
+      .select("working_hours, meal_minutes")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (extraError) {
+      console.error("getMyProfileSchedule (working_hours/meal_minutes) error:", extraError.message);
+    } else {
+      workingHours = extra?.working_hours ?? null;
+      mealMinutes = extra?.meal_minutes ?? null;
+    }
+  }
+
   return {
     profileId: data?.id ?? null,
     requiredCheckIn: data?.required_check_in ?? "",
     requiredCheckOut: data?.required_check_out ?? "",
-    workingHours: data?.working_hours ?? null,
-    mealMinutes: data?.meal_minutes ?? null,
+    workingHours,
+    mealMinutes,
   };
 }
 

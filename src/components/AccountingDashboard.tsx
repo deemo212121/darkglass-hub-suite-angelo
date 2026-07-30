@@ -244,7 +244,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,working_hours,meal_minutes").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
@@ -266,6 +266,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         .lte("work_date", end);
       if (tcRes.error) throw new Error(tcRes.error.message);
 
+      // Fetched separately, best-effort — working_hours/meal_minutes
+      // (migration 0109) must never be able to break the rest of this
+      // dashboard if that migration hasn't been applied yet.
+      const empIds = ((empRes.data ?? []) as any[]).map((p) => p.id);
+      const workScheduleById = new Map<string, { working_hours: number | null; meal_minutes: number | null }>();
+      if (empIds.length > 0) {
+        const { data: extraRows, error: extraError } = await supabase
+          .from("profiles")
+          .select("id,working_hours,meal_minutes")
+          .in("id", empIds);
+        if (extraError) {
+          console.error("Failed to load working_hours/meal_minutes:", extraError.message);
+        } else {
+          for (const r of extraRows ?? []) workScheduleById.set((r as any).id, r as any);
+        }
+      }
+
       setEmployees(((empRes.data ?? []) as any[]).map((p) => ({
         id: p.id,
         full_name: p.display_name || p.username || p.id,
@@ -280,8 +297,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
-        workingHours: p.working_hours ?? null,
-        mealMinutes: p.meal_minutes ?? null,
+        workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
+        mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
       })) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
       setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
