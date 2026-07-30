@@ -326,7 +326,9 @@ export async function getCompanyTimecardWarnings(
   const { data: profiles, error: pErr } = await supabase
     .from("profiles")
     .select("id, display_name, email, off_days")
-    .neq("role", "SUPERADMIN")
+    // Only the platform-level SUPERSUPERADMIN is excluded — the per-company
+    // SUPERADMIN role is a real employee and should get normal attendance tracking.
+    .neq("role", "SUPERSUPERADMIN")
     .eq("is_active", true);
   if (pErr) {
     console.error("getCompanyTimecardWarnings profiles error:", pErr.message);

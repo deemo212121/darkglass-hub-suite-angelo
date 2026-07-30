@@ -48,6 +48,123 @@ export async function createSupabaseCompany(input: {
   return data.id as string;
 }
 
+export interface CompanyDetails {
+  companyName: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  phoneNumber: string | null;
+  email: string | null;
+  subscriptionPlan: "basic" | "professional" | "enterprise" | null;
+  loginAlias: string | null;
+}
+
+/**
+ * Read a company's own editable record by its canonical legacy_code. Used
+ * by the self-service Company Settings page (role = SUPERADMIN/
+ * SUPERSUPERADMIN) — companies_select already permits any user to read
+ * their own company row, so this needs no special RLS beyond what exists.
+ */
+export async function getCompanyByLegacyCode(legacyCode: string): Promise<CompanyDetails | null> {
+  const { data, error } = await supabase
+    .from("companies")
+    .select("company_name, address, city, state, zip_code, phone_number, email, subscription_plan, login_alias")
+    .eq("legacy_code", legacyCode)
+    .maybeSingle();
+  if (error) {
+    console.error("getCompanyByLegacyCode error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  return {
+    companyName: data.company_name,
+    address: data.address,
+    city: data.city,
+    state: data.state,
+    zipCode: data.zip_code,
+    phoneNumber: data.phone_number,
+    email: data.email,
+    subscriptionPlan: data.subscription_plan,
+    loginAlias: data.login_alias,
+  };
+}
+
+/**
+ * Update a company's own editable fields by its canonical legacy_code —
+ * the write side of the new companies_update RLS clause that lets the
+ * per-company SUPERADMIN role edit only its own company row.
+ */
+export async function updateCompanyDetails(
+  legacyCode: string,
+  fields: Partial<{
+    companyName: string;
+    address: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    phoneNumber: string;
+    email: string;
+    subscriptionPlan: "basic" | "professional" | "enterprise";
+    loginAlias: string | null;
+  }>
+): Promise<void> {
+  const payload: Record<string, unknown> = {};
+  if (fields.companyName !== undefined) payload.company_name = fields.companyName;
+  if (fields.address !== undefined) payload.address = fields.address;
+  if (fields.city !== undefined) payload.city = fields.city;
+  if (fields.state !== undefined) payload.state = fields.state;
+  if (fields.zipCode !== undefined) payload.zip_code = fields.zipCode;
+  if (fields.phoneNumber !== undefined) payload.phone_number = fields.phoneNumber;
+  if (fields.email !== undefined) payload.email = fields.email;
+  if (fields.subscriptionPlan !== undefined) payload.subscription_plan = fields.subscriptionPlan;
+  if (fields.loginAlias !== undefined) payload.login_alias = fields.loginAlias;
+
+  // RLS silently drops updates to rows the caller isn't allowed to touch —
+  // PostgREST returns 200 with an empty array, NOT an error — so an
+  // explicit empty-result check is required to catch it (same pattern as
+  // updateSupabaseCompanyLoginAlias below).
+  const { data, error } = await supabase
+    .from("companies")
+    .update(payload)
+    .eq("legacy_code", legacyCode)
+    .select("id");
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error(
+      "Update was rejected (no matching company, or your account isn't recognized as this company's SuperAdmin)."
+    );
+  }
+}
+
+/**
+ * Freeze/unfreeze a company by its canonical legacy_code — sets
+ * companies.is_active, which auth.tsx checks at login (via
+ * getProfileForLogin's companyIsActive) to sign out and block every user of
+ * a frozen company. Only the platform SUPERSUPERADMIN can call this
+ * (companies_update is is_superadmin()-only besides the per-company
+ * SUPERADMIN's own-row exception — see 0099/0100).
+ */
+export async function setCompanyActiveStatus(legacyCode: string, isActive: boolean): Promise<void> {
+  // RLS silently drops updates to rows the caller isn't allowed to touch —
+  // PostgREST returns 200 with an empty array, NOT an error — so an
+  // explicit empty-result check is required to catch it (same pattern as
+  // updateSupabaseCompanyLoginAlias below).
+  const { data, error } = await supabase
+    .from("companies")
+    .update({ is_active: isActive })
+    .eq("legacy_code", legacyCode)
+    .select("id");
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error("Update was rejected (no matching company, or your session isn't recognized as SuperSuperAdmin).");
+  }
+}
+
 /** Read a company's current login alias (or null) by its canonical legacy_code. */
 export async function getSupabaseCompanyLoginAlias(legacyCode: string): Promise<string | null> {
   const { data, error } = await supabase

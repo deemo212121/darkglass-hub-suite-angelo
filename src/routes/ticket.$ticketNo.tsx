@@ -1994,7 +1994,7 @@ function TicketDetailsPage() {
   useEffect(() => {
     const r = String(currentUserRole || "").toUpperCase();
     const canSeeChecklist = [
-      "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+      "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
       "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
     ].includes(r);
     if (!canSeeChecklist || !authReady) return;
@@ -4057,8 +4057,11 @@ function TicketDetailsPage() {
       "CLAIMS_MANAGER",
       "PARTS",
       "PARTS_MANAGER",
+      "PARTS_TEAM_LEADER",
       "MANAGER",
+      "SENIOR_MANAGER",
       "ADMIN",
+      "SUPERADMIN",
       "BRANCH_MANAGER",
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
@@ -4186,6 +4189,7 @@ function TicketDetailsPage() {
       "CLAIMS",
       "CLAIMS_MANAGER",
       "MANAGER",
+      "SENIOR_MANAGER",
       "ADMIN",
       "SUPERADMIN",
       "BRANCH_MANAGER",
@@ -6451,7 +6455,7 @@ function TicketDetailsPage() {
               {(() => {
                 const r = String(currentUserRole || "").toUpperCase();
                 const canSeeChecklist = [
-                  "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+                  "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
                   "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
                 ].includes(r);
                 if (!canSeeChecklist || !ticket) return null;

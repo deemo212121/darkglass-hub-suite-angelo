@@ -7,9 +7,11 @@
  * label — uses the values from this map instead of the raw code.
  */
 export const ROLE_LABELS: Record<string, string> = {
+  SUPERSUPERADMIN: "Super Super Admin",
   SUPERADMIN: "Super Admin",
   ADMIN: "Admin",
   MANAGER: "Manager",
+  SENIOR_MANAGER: "Senior Manager",
   CSR: "CSR",
   TECHNICIAN: "Technician",
   TECHNICIAN_MANAGER: "Tech Manager",
@@ -27,6 +29,7 @@ export const ROLE_LABELS: Record<string, string> = {
   CLAIMS_MANAGER: "Claims Manager",
   CLAIMS_TEAM_LEADER: "Claims Team Leader",
   PARTS_MANAGER: "Parts Manager",
+  PARTS_TEAM_LEADER: "Parts Team Leader",
   BIZOPS_MANAGER: "BizOps Manager",
   BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
   TRIAGE_USER: "Technical Support",
@@ -96,6 +99,7 @@ const MISDIAGNOSED_ROLES = new Set([
   "ADMIN",
   "SUPERADMIN",
   "MANAGER",
+  "SENIOR_MANAGER",
   "BRANCH_MANAGER",
   "SENIOR_BRANCH_MANAGER",
   "BIZOPS_MANAGER",
@@ -109,6 +113,21 @@ export function canManageMisdiagnosed(role: string | null | undefined): boolean 
 }
 
 /**
+ * Is this the per-company SUPERADMIN role (primary or extra)? Mirrors the
+ * SQL is_company_superadmin() helper (0099_role_hierarchy_split.sql) —
+ * SUPERSUPERADMIN (the platform-level role) also passes, since it can
+ * reach the same content as a superset, though it rarely needs to.
+ */
+export function isCompanySuperAdminRole(
+  role: string | null | undefined,
+  extraRoles?: string[] | null
+): boolean {
+  const primary = normalizeRole(role);
+  if (primary === "SUPERADMIN" || primary === "SUPERSUPERADMIN") return true;
+  return (extraRoles ?? []).some((r) => normalizeRole(r) === "SUPERADMIN");
+}
+
+/**
  * Roles that may submit a warning/mistake conduct note about an employee
  * (employee_conduct_notes — see csrAgentNotes.ts). Any manager-flavored
  * role, not just CSR management, since the same two-stage review workflow
@@ -116,9 +135,9 @@ export function canManageMisdiagnosed(role: string | null | undefined): boolean 
  * detail page) and the Attendance Monitoring page's Warnings tab.
  */
 const CONDUCT_NOTE_SUBMITTER_ROLES = new Set([
-  "CSR_TEAM_LEADER", "CSR_MANAGER", "MANAGER", "ADMIN", "SUPERADMIN", "HR",
+  "CSR_TEAM_LEADER", "CSR_MANAGER", "MANAGER", "SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "HR",
   "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICIAN_MANAGER",
-  "CLAIMS_MANAGER", "PARTS_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
+  "CLAIMS_MANAGER", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
 ]);
 
 export function canSubmitConductNote(role: string | null | undefined): boolean {
@@ -160,7 +179,7 @@ export function canFilterDataClosedTickets(role: string | null | undefined): boo
  * every other role saw a permanently empty tab regardless of how many
  * submissions came in.
  */
-const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 
 export function isJotformHrRole(role: string | null | undefined): boolean {
   return JOTFORM_HR_ROLES.has(normalizeRole(role));
@@ -174,12 +193,14 @@ export function isJotformHrRole(role: string | null | undefined): boolean {
  */
 const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "MANAGER",
+  "SENIOR_MANAGER",
   "TECHNICIAN_MANAGER",
   "CSR_MANAGER",
   "CSR_TEAM_LEADER",
   "BRANCH_MANAGER",
   "SENIOR_BRANCH_MANAGER",
   "PARTS_MANAGER",
+  "PARTS_TEAM_LEADER",
   "CLAIMS_MANAGER",
   "TRIAGE_MANAGER",
   "BIZOPS_MANAGER",

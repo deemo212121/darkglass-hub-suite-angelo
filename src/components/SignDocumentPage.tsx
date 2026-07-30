@@ -170,7 +170,9 @@ export function SignDocumentPage({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  const isSuperadmin = role === "SUPERADMIN";
+  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
+  // should NOT see every employee's private documents, just its own like ADMIN.
+  const isSuperadmin = role === "SUPERSUPERADMIN";
 
   return (
     <div className="min-h-screen bg-background">

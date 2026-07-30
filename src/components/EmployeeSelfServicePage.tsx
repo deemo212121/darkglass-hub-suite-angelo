@@ -29,9 +29,10 @@ import {
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
-  approveTimecardCorrection,
-  rejectTimecardCorrection,
+  reviewCorrectionStage,
+  canReviewCorrectionStage,
   type TimecardCorrectionRow,
+  type CorrectionStage,
 } from "@/lib/supabase/timecardCorrections";
 import {
   getCompanyEmployeeRequests,
@@ -366,7 +367,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
             <th>Meal In</th>
             <th>Meal Out</th>
             <th>Time Out</th>
-            <th style="text-align: right;">Duty Hours</th>
+            <th style="text-align: right;">Working Hours</th>
             <th style="text-align: right;">Rate</th>
             <th style="text-align: right;">Total</th>
           </tr>
@@ -614,12 +615,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       });
     }
     for (const r of myCorrections) {
+      const corrManagerLine = r.managerStatus !== "pending"
+        ? `Manager: ${r.managerStatus}${r.managerReviewedBy ? ` by ${profileName(r.managerReviewedBy)}` : ""}`
+        : "Manager: pending";
+      const corrHrLine = r.hrStatus !== "pending"
+        ? `HR: ${r.hrStatus}${r.hrReviewedBy ? ` by ${profileName(r.hrReviewedBy)}` : ""}`
+        : "HR: pending";
+      const corrAccountingLine = r.accountingStatus !== "pending"
+        ? `Accounting: ${r.accountingStatus}${r.accountingReviewedBy ? ` by ${profileName(r.accountingReviewedBy)}` : ""}`
+        : "Accounting: pending";
       items.push({
         id: `corr-${r.id}`,
         type: "Time Correction",
         status: r.status,
         submittedDate: r.createdAt.slice(0, 10),
-        details: `Date: ${r.workDate} - requested ${r.correctedCheckIn || "—"} to ${r.correctedCheckOut || "—"} (was ${r.originalCheckIn || "—"} to ${r.originalCheckOut || "—"})${(r.correctedMealStart || r.correctedMealEnd) ? `\nMeal: requested ${r.correctedMealStart || "—"} to ${r.correctedMealEnd || "—"} (was ${r.originalMealStart || "—"} to ${r.originalMealEnd || "—"})` : ""}${r.reason ? `. ${r.reason}` : ""}${r.reviewedBy ? `\nReviewed by ${profileName(r.reviewedBy)}` : ""}`,
+        details: `Date: ${r.workDate} - requested ${r.correctedCheckIn || "—"} to ${r.correctedCheckOut || "—"} (was ${r.originalCheckIn || "—"} to ${r.originalCheckOut || "—"})${(r.correctedMealStart || r.correctedMealEnd) ? `\nMeal: requested ${r.correctedMealStart || "—"} to ${r.correctedMealEnd || "—"} (was ${r.originalMealStart || "—"} to ${r.originalMealEnd || "—"})` : ""}${r.reason ? `. ${r.reason}` : ""}\n${corrManagerLine} | ${corrHrLine} | ${corrAccountingLine}${r.status === "approved" ? "\n✅ Your timecard has been updated with the corrected time." : ""}`,
       });
     }
     for (const r of myEmployeeRequests) {
@@ -639,7 +649,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     [myRequests, requestTypeFilter]
   );
 
-  const canManageRequests = ["ADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
+  const canManageRequests = ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
 
   // PTO eligibility: 1 year of tenure from hire date (falls back to account
   // creation date if HR hasn't set a hire date yet).
@@ -683,8 +693,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     const recipients = companyProfiles.filter((p) => {
       if (p.id === myProfileId) return false;
       const primary = (p.role || "").toUpperCase();
-      if (["ADMIN", "HR", "FINANCE"].includes(primary)) return true;
-      return (p.extra_roles || []).some((r) => ["ADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
+      if (["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(primary)) return true;
+      return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
     });
     await Promise.all(
       recipients.map((r) =>
@@ -712,9 +722,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }
   };
 
-  const handleCorrectionAction = async (correction: TimecardCorrectionRow, approve: boolean) => {
+  const handleCorrectionStageAction = async (correction: TimecardCorrectionRow, stage: CorrectionStage, decision: "approved" | "rejected") => {
     try {
-      if (approve) {
+      if (decision === "approved") {
         const effectiveCheckIn = correction.correctedCheckIn || correction.originalCheckIn || "";
         const effectiveCheckOut = correction.correctedCheckOut || correction.originalCheckOut || "";
         const effectiveMealStart = correction.correctedMealStart || correction.originalMealStart || "";
@@ -727,10 +737,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
           return;
         }
-        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, correction.correctedMealStart, correction.correctedMealEnd);
-      } else {
-        await rejectTimecardCorrection(correction, myProfileId);
       }
+      await reviewCorrectionStage(correction, stage, decision, myProfileId || "", displayName || "Reviewer");
       await refreshRequests();
     } catch (err) {
       alert(`Failed to update correction: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -834,7 +842,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             for (const p of companyProfiles) {
               if (p.id === myProfileId) continue;
               const primary = (p.role || "").toUpperCase();
-              if (primary === "HR" || (!managerProfile && primary === "ADMIN")) recipients.set(p.id, p);
+              if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
             }
             await Promise.all(
               Array.from(recipients.values()).map((r) =>
@@ -880,6 +888,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          const correctionRequesterProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+          const correctionManagerProfile = correctionRequesterProfile
+            ? await resolveTeamLeadOrManager(correctionRequesterProfile, companyProfiles)
+            : null;
           await createTimecardCorrection({
             profileId: myProfileId,
             workDate: formData.correctionDate,
@@ -893,12 +905,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             correctedMealEnd: formData.correctedMealEnd,
             reason: formData.details,
             requestedBy: myProfileId,
+            managerId: correctionManagerProfile?.id ?? null,
           });
-          // Time correction notifications are scoped to HR + Finance + the
-          // requester (here, the employee themselves) — not the broader
-          // ADMIN/HR/FINANCE set the other request types notify.
+          // The manager reviews first; HR/Finance only act once the manager
+          // has approved (see reviewCorrectionStage's "ping HR/Accounting"
+          // step), but — same precedent as the PTO submit flow above — HR
+          // and Finance get an early heads-up here too rather than only
+          // learning about it once it's already their turn.
           {
             const recipients = new Map<string, ProfileRow>();
+            if (correctionManagerProfile && correctionManagerProfile.id !== myProfileId) {
+              recipients.set(correctionManagerProfile.id, correctionManagerProfile);
+            }
             for (const p of companyProfiles) {
               const primary = (p.role || "").toUpperCase();
               if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
@@ -1612,6 +1630,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   {pendingPto.map((r) => {
                     const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, role);
                     const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, role);
+                    const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, role);
                     return (
                       <div key={r.id} className="border border-white/10 rounded-lg p-3">
                         <div className="flex items-start justify-between gap-3">
@@ -1636,6 +1655,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                                 HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
                                 {r.hrReviewedBy ? ` — ${profileName(r.hrReviewedBy)}` : ""}
                               </span>
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
+                                {r.accountingReviewedBy ? ` — ${profileName(r.accountingReviewedBy)}` : ""}
+                              </span>
                             </div>
                           </div>
                           <div className="flex flex-col gap-2 shrink-0">
@@ -1659,8 +1686,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                                 </button>
                               </div>
                             )}
-                            {!canManagerAct && !canHrAct && (
-                              <span className="text-xs text-slate-500">Awaiting other approver</span>
+                            {canAccountingAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (Acct)
+                                </button>
+                                <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {!canManagerAct && !canHrAct && !canAccountingAct && (
+                              <span className="text-xs text-slate-500">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                             )}
                           </div>
                         </div>
@@ -1680,38 +1717,87 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="text-sm text-slate-400">No pending time correction requests.</p>
               ) : (
                 <div className="space-y-3">
-                  {pendingCorrections.map((r) => (
-                    <div key={r.id} className="border border-white/10 rounded-lg p-3 flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {r.workDate}</p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {r.originalCheckIn || "—"} → {r.originalCheckOut || "—"} &nbsp;⟶&nbsp; requested {r.correctedCheckIn || "—"} → {r.correctedCheckOut || "—"}
-                        </p>
-                        {(r.correctedMealStart || r.correctedMealEnd) && (
-                          <p className="text-xs text-slate-400 mt-0.5">
-                            Meal: {r.originalMealStart || "—"} → {r.originalMealEnd || "—"} &nbsp;⟶&nbsp; requested {r.correctedMealStart || "—"} → {r.correctedMealEnd || "—"}
-                          </p>
-                        )}
-                        {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
+                  {pendingCorrections.map((r) => {
+                    const canManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, role);
+                    const canHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, role);
+                    const canAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, role);
+                    return (
+                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {r.workDate}</p>
+                            <p className="text-xs text-slate-400 mt-1">
+                              {r.originalCheckIn || "—"} → {r.originalCheckOut || "—"} &nbsp;⟶&nbsp; requested {r.correctedCheckIn || "—"} → {r.correctedCheckOut || "—"}
+                            </p>
+                            {(r.correctedMealStart || r.correctedMealEnd) && (
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                Meal: {r.originalMealStart || "—"} → {r.originalMealEnd || "—"} &nbsp;⟶&nbsp; requested {r.correctedMealStart || "—"} → {r.correctedMealEnd || "—"}
+                              </p>
+                            )}
+                            {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
+                              </span>
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
+                              </span>
+                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                                : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                              }`}>
+                                Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2 shrink-0">
+                            {canManagerAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (Mgr)
+                                </button>
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {canHrAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (HR)
+                                </button>
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {canAccountingAct && (
+                              <div className="flex gap-1">
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
+                                  Approve (Acct)
+                                </button>
+                                <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {!canManagerAct && !canHrAct && !canAccountingAct && (
+                              <span className="text-xs text-slate-500">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleCorrectionAction(r, true)}
-                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCorrectionAction(r, false)}
-                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

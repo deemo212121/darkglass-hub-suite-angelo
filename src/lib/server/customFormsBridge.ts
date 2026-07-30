@@ -154,7 +154,7 @@ async function insertSubmission(
   if (!res.ok) throw new Error(`hr_custom_form_submissions insert failed (${res.status}): ${await res.text()}`);
 }
 
-const CUSTOM_FORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+const CUSTOM_FORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 
 /** Same lookup as findHrFirebaseUids in jotformBridge.ts, duplicated locally rather than exported/imported across bridges — see that file's header comment on why this bridge stays self-contained for its Supabase/Firestore reads. */
 async function findHrFirebaseUids(env: EnvBag, companyId: string): Promise<string[]> {

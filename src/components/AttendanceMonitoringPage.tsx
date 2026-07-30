@@ -35,10 +35,11 @@ import {
   getCompanyTimecardCorrections,
   getCompanyTimecardCorrectionHistory,
   createTimecardCorrection,
-  approveTimecardCorrection,
-  rejectTimecardCorrection,
+  reviewCorrectionStage,
+  canReviewCorrectionStage,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
+  type CorrectionStage,
 } from "@/lib/supabase/timecardCorrections";
 
 interface DailyRecord {
@@ -148,7 +149,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // so this flag just needs to admit manager-tier roles at all, not re-scope
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
-  const canManageNotes = ["ADMIN", "HR", "FINANCE"].includes(normalizeRole(role)) || isAttendanceManagerTierRole(role);
+  const canManageNotes = ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(role)) || isAttendanceManagerTierRole(role);
   // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
   // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
   // any manager-flavored role can submit one here for a tardy employee, but
@@ -643,6 +644,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     const existing = entriesByKey.get(`${correctionForm.profileId}|${correctionForm.workDate}`);
     try {
+      const requester = profiles.find((p) => p.id === correctionForm.profileId) ?? null;
+      const manager = requester ? await resolveTeamLeadOrManager(requester, profiles) : null;
       await createTimecardCorrection({
         profileId: correctionForm.profileId,
         workDate: correctionForm.workDate,
@@ -656,6 +659,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         correctedMealEnd: correctionForm.correctedMealEnd,
         reason: correctionForm.reason,
         requestedBy: myProfileId,
+        managerId: manager?.id ?? null,
       });
       setCorrections(await getCompanyTimecardCorrections());
       setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
@@ -671,34 +675,29 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
-  const handleApproveCorrection = async () => {
+  const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
     try {
-      await approveTimecardCorrection(
+      await reviewCorrectionStage(
         selectedCorrection,
-        correctionTimecardData.checkIn,
-        correctionTimecardData.checkOut,
-        myProfileId,
-        correctionTimecardData.mealStart,
-        correctionTimecardData.mealEnd
+        stage,
+        decision,
+        myProfileId || "",
+        displayName || "Reviewer",
+        decision === "approved"
+          ? {
+              checkIn: correctionTimecardData.checkIn,
+              checkOut: correctionTimecardData.checkOut,
+              mealStart: correctionTimecardData.mealStart,
+              mealEnd: correctionTimecardData.mealEnd,
+            }
+          : undefined
       );
       await refreshCorrections();
       setEntries(await getCompanyTimecardEntries(rangeStart, rangeEnd));
-      alert(`Correction approved! ${profileName(selectedCorrection.profileId)}'s timecard updated.`);
       setSelectedCorrection(null);
     } catch (error) {
-      alert(`Failed to approve correction: ${error instanceof Error ? error.message : "Unknown error"}`);
-    }
-  };
-
-  const handleRejectCorrection = async () => {
-    if (!selectedCorrection) return;
-    try {
-      await rejectTimecardCorrection(selectedCorrection, myProfileId);
-      await refreshCorrections();
-      setSelectedCorrection(null);
-    } catch (error) {
-      alert(`Failed to reject correction: ${error instanceof Error ? error.message : "Unknown error"}`);
+      alert(`Failed to update correction: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
@@ -1140,6 +1139,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               HR: {request.hrStatus.charAt(0).toUpperCase() + request.hrStatus.slice(1)}
                               {request.hrReviewedBy ? ` — ${profileName(request.hrReviewedBy)}` : ""}
                             </span>
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                              request.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                              : request.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                            }`}>
+                              Accounting: {request.accountingStatus.charAt(0).toUpperCase() + request.accountingStatus.slice(1)}
+                              {request.accountingReviewedBy ? ` — ${profileName(request.accountingReviewedBy)}` : ""}
+                            </span>
                           </div>
                         </td>
                         <td className="px-3 py-3">
@@ -1166,9 +1173,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
+                            {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role) && (
+                              <div className="flex gap-1">
+                                <span className="text-[10px] text-slate-500 self-center">Acct:</span>
+                                <button type="button" title="Approve as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
+                                  <CheckCircle className="h-3 w-3" />
+                                </button>
+                                <button type="button" title="Reject as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
+                                  <XCircle className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
                             {!(request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role)) &&
-                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role)) && (
-                              <span className="text-xs text-slate-500">Awaiting other approver</span>
+                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role)) &&
+                             !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role)) && (
+                              <span className="text-xs text-slate-500">{request.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                             )}
                           </div>
                         </td>
@@ -1204,6 +1223,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </p>
                           <p className="text-xs text-slate-500">
                             HR: {request.hrStatus}{request.hrReviewedBy ? ` by ${profileName(request.hrReviewedBy)}` : ""}{request.hrReviewedAt ? ` on ${request.hrReviewedAt.slice(0, 10)}` : ""}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Accounting: {request.accountingStatus}{request.accountingReviewedBy ? ` by ${profileName(request.accountingReviewedBy)}` : ""}{request.accountingReviewedAt ? ` on ${request.accountingReviewedAt.slice(0, 10)}` : ""}
                           </p>
                         </div>
                       </div>
@@ -1251,9 +1273,29 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <td className="px-3 py-3 text-slate-300">{correction.originalCheckIn || "—"} → {correction.originalCheckOut || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
                         <td className="px-3 py-3">
-                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${correction.status === "pending" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : correction.status === "approved" ? "bg-green-500/20 text-green-300 border border-green-500/30" : "bg-red-500/20 text-red-300 border border-red-500/30"}`}>
-                            {correction.status.charAt(0).toUpperCase() + correction.status.slice(1)}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                              correction.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                              : correction.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                            }`}>
+                              Manager: {correction.managerStatus.charAt(0).toUpperCase() + correction.managerStatus.slice(1)}
+                            </span>
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                              correction.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                              : correction.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                            }`}>
+                              HR: {correction.hrStatus.charAt(0).toUpperCase() + correction.hrStatus.slice(1)}
+                            </span>
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                              correction.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                              : correction.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                            }`}>
+                              Accounting: {correction.accountingStatus.charAt(0).toUpperCase() + correction.accountingStatus.slice(1)}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           {correction.status === "pending" ? (
@@ -1679,20 +1721,67 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <div className="space-y-2">
                   <p className="text-sm text-slate-300"><span className="text-slate-400">Reason:</span> {selectedCorrection.reason || "—"}</p>
                   <p className="text-sm text-slate-300"><span className="text-slate-400">Requested:</span> {new Date(selectedCorrection.createdAt).toLocaleString()}</p>
-                  <p className="text-sm text-slate-300"><span className="text-slate-400">Status:</span> <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-yellow-500/20 text-yellow-300">{selectedCorrection.status}</span></p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
+                      Manager: {selectedCorrection.managerStatus}
+                    </span>
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
+                      HR: {selectedCorrection.hrStatus}
+                    </span>
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
+                      Accounting: {selectedCorrection.accountingStatus}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="grid gap-3 mb-6 md:grid-cols-2">
-                <button onClick={handleApproveCorrection} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                  <CheckCircle className="h-4 w-4" />
-                  Save & Approve
-                </button>
-                <button onClick={handleRejectCorrection} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                  <XCircle className="h-4 w-4" />
-                  Reject
-                </button>
+              {/* Action Buttons — the manager reviews first; HR/Accounting only
+                  unlock once the manager has approved, and either one alone
+                  is enough for final approval. */}
+              <div className="space-y-2 mb-6">
+                {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role) && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <button onClick={() => handleCorrectionStageAction("manager", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <CheckCircle className="h-4 w-4" />
+                      Approve as Manager
+                    </button>
+                    <button onClick={() => handleCorrectionStageAction("manager", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      Reject as Manager
+                    </button>
+                  </div>
+                )}
+                {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role) && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <button onClick={() => handleCorrectionStageAction("hr", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <CheckCircle className="h-4 w-4" />
+                      Approve as HR
+                    </button>
+                    <button onClick={() => handleCorrectionStageAction("hr", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      Reject as HR
+                    </button>
+                  </div>
+                )}
+                {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role) && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <button onClick={() => handleCorrectionStageAction("accounting", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <CheckCircle className="h-4 w-4" />
+                      Approve as Accounting
+                    </button>
+                    <button onClick={() => handleCorrectionStageAction("accounting", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      <XCircle className="h-4 w-4" />
+                      Reject as Accounting
+                    </button>
+                  </div>
+                )}
+                {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role)) &&
+                 !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role)) &&
+                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role)) && (
+                  <p className="text-xs text-slate-500">
+                    {selectedCorrection.managerStatus === "pending" ? "Awaiting manager review." : "Awaiting HR or Accounting review."}
+                  </p>
+                )}
               </div>
 
               {/* Correction History for this item */}

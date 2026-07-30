@@ -18,9 +18,11 @@ import { supabase } from "./client";
 import { getCompanyUsers as getFirestoreCompanyUsers } from "@/lib/firebase/users";
 
 export type UserRole =
-  | "SUPERADMIN"    // Access to all companies, can create/manage admins
+  | "SUPERSUPERADMIN" // Platform-level: access to all companies, creates/manages companies+admins
+  | "SUPERADMIN"    // Per-company: same as ADMIN, plus can edit its own company's record
   | "ADMIN"         // Company admin, full access to company data
   | "MANAGER"       // Can manage tickets, employees, reports
+  | "SENIOR_MANAGER" // Senior tier of MANAGER (generic, not branch/BizOps-specific)
   | "CSR"           // Customer Service Rep, ticket management
   | "TECHNICIAN"    // Field technician
   | "TECHNICIAN_MANAGER" // Field technician manager (supervises techs)
@@ -31,7 +33,7 @@ export type UserRole =
   | "FINANCE"       // Financial reports and billing
   | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
   | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
-  | "PARTS_MANAGER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
+  | "PARTS_MANAGER" | "PARTS_TEAM_LEADER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
   | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR";
 
 export interface ProfileRow {
@@ -81,6 +83,10 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   email: string;
   companyId: string;
   companyLoginAlias: string | null;
+  /** false only when this profile's company has been frozen (companies.is_active
+   *  = false) — true (never blocks) when there's no company at all, i.e. the
+   *  platform SUPERSUPERADMIN, who isn't subject to company freezes. */
+  companyIsActive: boolean;
   role: string;
   displayName: string;
   isActive: boolean;
@@ -89,7 +95,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code, login_alias)")
+    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -101,10 +107,12 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 
   const legacyCode = (data as any).companies?.legacy_code ?? "";
   const loginAlias = (data as any).companies?.login_alias ?? null;
+  const companyIsActive = (data as any).companies?.is_active ?? true;
   return {
     email: data.email,
     companyId: legacyCode,
     companyLoginAlias: loginAlias,
+    companyIsActive,
     role: data.role,
     displayName: data.display_name ?? data.email,
     isActive: data.is_active,
@@ -209,7 +217,10 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
     .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
-    .neq("role", "SUPERADMIN")
+    // Only the platform-level SUPERSUPERADMIN is excluded here — the new
+    // per-company SUPERADMIN role is a real company employee and should
+    // show up in the roster like any ADMIN.
+    .neq("role", "SUPERSUPERADMIN")
     .order("display_name", { ascending: true });
 
   if (error) {
@@ -444,23 +455,32 @@ export async function createSupabaseAdminProfile(input: {
   email: string;
   displayName: string;
   role: UserRole;
-  companyLegacyCode: string;
+  /** Omit only for SUPERSUPERADMIN — the platform-level role isn't tied to
+   *  any one company (see 0099_role_hierarchy_split.sql's set_company_id()).
+   *  Every other role must pass a real company. */
+  companyLegacyCode?: string;
   phoneNumber?: string;
 }): Promise<void> {
-  const { data: company, error: companyErr } = await supabase
-    .from("companies")
-    .select("id")
-    .eq("legacy_code", input.companyLegacyCode)
-    .maybeSingle();
-  if (companyErr) throw new Error(companyErr.message);
-  if (!company) {
-    throw new Error(`No Supabase company found for '${input.companyLegacyCode}'`);
+  let companyId: string | null = null;
+  if (input.companyLegacyCode) {
+    const { data: company, error: companyErr } = await supabase
+      .from("companies")
+      .select("id")
+      .eq("legacy_code", input.companyLegacyCode)
+      .maybeSingle();
+    if (companyErr) throw new Error(companyErr.message);
+    if (!company) {
+      throw new Error(`No Supabase company found for '${input.companyLegacyCode}'`);
+    }
+    companyId = company.id;
+  } else if (input.role !== "SUPERSUPERADMIN") {
+    throw new Error("A company is required for every role except Super Super Admin");
   }
 
   const username = generateUsername(input.displayName);
   const { error } = await supabase.from("profiles").insert({
     firebase_uid: input.firebaseUid,
-    company_id: company.id,
+    company_id: companyId,
     email: input.email,
     username,
     display_name: input.displayName,
@@ -534,6 +554,10 @@ export async function updateCompanyUser(
   fields: Partial<{
     username: string;
     displayName: string;
+    /** Only pass this after the caller has already updated the user's real
+     *  Firebase Auth email via /api/admin-update-email — see
+     *  adminUpdateEmailBridge.ts for why the two must never be set independently. */
+    email: string;
     role: UserRole;
     /** Additional roles beyond the primary (e.g. a manager who is also a TECHNICIAN). */
     extraRoles: UserRole[];
@@ -556,6 +580,7 @@ export async function updateCompanyUser(
   const payload: Record<string, unknown> = {};
   if (fields.username !== undefined) payload.username = fields.username;
   if (fields.displayName !== undefined) payload.display_name = fields.displayName;
+  if (fields.email !== undefined) payload.email = fields.email;
   if (fields.role !== undefined) payload.role = fields.role;
   if (fields.extraRoles !== undefined) {
     // Dedupe + remove the primary role from extras so it isn't double-stored.

@@ -8,6 +8,7 @@ import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
 import { getProfileForLogin, touchLastLogin } from "./supabase/users";
+import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 
 type AuthState = {
   email: string | null;
@@ -183,6 +184,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 if (!sbProfile.isActive) {
                   console.error("❌ Account is inactive");
                   await firebaseSignOut();
+                } else if (!sbProfile.companyIsActive) {
+                  console.error("❌ Company is frozen");
+                  await firebaseSignOut();
                 } else {
                   await touchLastLogin(firebaseUser.uid);
                   setUid(firebaseUser.uid);
@@ -231,10 +235,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     companyId: userProfile.companyId,
                   });
                   await updateLastLogin(firebaseUser.uid);
+                  // This account has no Supabase profile yet, but the
+                  // COMPANY itself may already have a login_alias set in
+                  // Supabase (companies is the real source of truth for
+                  // that, Firestore has no equivalent field). Resolve it
+                  // BEFORE setting any state below — landing.tsx's
+                  // company-ID validation effect re-checks whenever
+                  // companyId OR companyLoginAlias changes, but only while
+                  // it's still waiting; if companyId landed first and the
+                  // alias arrived in a later, separate update (as a
+                  // fire-and-forget .then() used to do here), the effect
+                  // would validate once against a still-null alias,
+                  // conclude "no alias, raw Company ID is fine", and stop
+                  // waiting — never re-checking once the real alias showed
+                  // up. Awaiting it here first means companyId and
+                  // companyLoginAlias always land together in one update.
+                  const loginAlias = await getSupabaseCompanyLoginAlias(userProfile.companyId).catch(() => null);
                   setUid(firebaseUser.uid);
                   setEmail(userProfile.email);
                   setCompanyId(userProfile.companyId);
-                  setCompanyLoginAlias(null);
+                  setCompanyLoginAlias(loginAlias);
                   setRole(userProfile.role);
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);

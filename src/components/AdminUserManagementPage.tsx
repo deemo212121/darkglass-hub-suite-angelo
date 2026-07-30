@@ -54,6 +54,7 @@ const LOCATIONS = [
 const USER_TYPES: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
+  { value: "SENIOR_MANAGER", label: "Senior Manager" },
   { value: "TECHNICIAN", label: "Technician" },
   { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
   { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
@@ -71,6 +72,7 @@ const USER_TYPES: { value: string; label: string }[] = [
   { value: "CLAIMS_MANAGER", label: "Claims Manager" },
   { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
   { value: "PARTS_MANAGER", label: "Parts Manager" },
+  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
   { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
   { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
   { value: "TRIAGE_USER", label: "Technical Support" },
@@ -763,7 +765,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // matched against real profiles by display name — see resolveTeamLeadOrManager
   // in src/lib/notifyRouting.ts), so the option value is the display name.
   const managerCandidates = useMemo(() => {
-    const eligible = users.filter((u) => (u.type || "").toUpperCase() === "ADMIN" || (u.type || "").toUpperCase().includes("MANAGER"));
+    const eligible = users.filter((u) => ["ADMIN", "SUPERADMIN"].includes((u.type || "").toUpperCase()) || (u.type || "").toUpperCase().includes("MANAGER"));
     return Array.from(new Set(eligible.map((u) => u.userName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [users]);
 

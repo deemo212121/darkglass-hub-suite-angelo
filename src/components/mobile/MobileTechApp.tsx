@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
+import { setDesktopOverride } from "@/lib/device";
 import {
   ArrowLeft,
   ChevronRight,
@@ -461,6 +462,10 @@ export function MobileTechApp() {
         onOpenTimecard={() => setView("timecard")}
         showClockInTeam={isAttendanceManagerTierRole(role)}
         onOpenClockInTeam={() => setView("clockinteam")}
+        onSwitchToDesktop={() => {
+          setDesktopOverride(true);
+          navigate({ to: "/home", replace: true });
+        }}
         onLogout={logout}
       />
 
@@ -599,6 +604,7 @@ function AppHeaderMobile({
   onOpenTimecard,
   showClockInTeam,
   onOpenClockInTeam,
+  onSwitchToDesktop,
   onLogout,
 }: {
   logoSrc: string;
@@ -608,6 +614,7 @@ function AppHeaderMobile({
   onOpenTimecard: () => void;
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
+  onSwitchToDesktop: () => void;
   onLogout: () => void;
 }) {
   const [menu, setMenu] = useState(false);
@@ -668,6 +675,13 @@ function AppHeaderMobile({
                   👥 Clock In Team
                 </button>
               )}
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onSwitchToDesktop(); }}
+              >
+                🖥️ Desktop Site
+              </button>
               <button
                 type="button"
                 className="mtech-app-profile-logout"
@@ -2225,6 +2239,7 @@ const MOBILE_CHAT_ROLE_ALLOW = new Set(
     "ADMIN",
     "SUPERADMIN",
     "MANAGER",
+    "SENIOR_MANAGER",
     "BRANCH_MANAGER",
     "SENIOR_BRANCH_MANAGER",
     "BIZOPS_MANAGER",
@@ -2235,6 +2250,7 @@ const MOBILE_CHAT_ROLE_ALLOW = new Set(
     "CSR_MANAGER",
     "PARTS",
     "PARTS_MANAGER",
+    "PARTS_TEAM_LEADER",
     "CLAIMS",
     "CLAIMS_MANAGER",
     "TRIAGE_USER",
@@ -2249,6 +2265,7 @@ function readableRoleLabel(role: string): string {
     ADMIN: "Admin",
     SUPERADMIN: "Super Admin",
     MANAGER: "Manager",
+    SENIOR_MANAGER: "Senior Manager",
     BRANCH_MANAGER: "Branch Manager",
     SENIOR_BRANCH_MANAGER: "Senior Branch Manager",
     BIZOPS_MANAGER: "BizOps Manager",
@@ -2259,6 +2276,7 @@ function readableRoleLabel(role: string): string {
     CSR_MANAGER: "CSR Manager",
     PARTS: "Parts",
     PARTS_MANAGER: "Parts Manager",
+    PARTS_TEAM_LEADER: "Parts Team Leader",
     CLAIMS: "Claims",
     CLAIMS_MANAGER: "Claims Manager",
     TRIAGE_USER: "Technical Support",

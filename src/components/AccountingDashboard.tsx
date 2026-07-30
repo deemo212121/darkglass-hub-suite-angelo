@@ -242,7 +242,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),

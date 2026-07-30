@@ -48,8 +48,9 @@ function Landing() {
         return;
       }
       
-      // SUPERADMIN goes to superadmin dashboard
-      if (role.toUpperCase() === "SUPERADMIN") {
+      // Only the platform-level SUPERSUPERADMIN goes to the superadmin
+      // console — the per-company SUPERADMIN role goes to /home like ADMIN.
+      if (role.toUpperCase() === "SUPERSUPERADMIN") {
         navigate({ to: "/superadmin", replace: true });
       } else {
         // All other roles go to home

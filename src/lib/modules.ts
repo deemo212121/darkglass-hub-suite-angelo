@@ -1436,6 +1436,14 @@ const adminMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    {
+      slug: "company-settings",
+      title: "Company Settings",
+      description: "Edit this company's own record — name, address, subscription plan, login alias. Only available to this company's SuperAdmin.",
+      custom: "company-settings" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 

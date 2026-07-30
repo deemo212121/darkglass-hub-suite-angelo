@@ -32,8 +32,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        // SUPERADMIN can see all companies
-        if (role?.toUpperCase() === "SUPERADMIN") {
+        // SUPERSUPERADMIN (the platform-level role) can see all companies —
+        // the per-company SUPERADMIN role must NOT get this bypass.
+        if (role?.toUpperCase() === "SUPERSUPERADMIN") {
           setCompanyId(null); // null = all companies
           setCompanyName("All Companies");
           setLoading(false);
@@ -61,7 +62,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     <CompanyContext.Provider
       value={{
         companyId,
-        isSuperAdmin: role?.toUpperCase() === "SUPERADMIN",
+        isSuperAdmin: role?.toUpperCase() === "SUPERSUPERADMIN",
         loading,
         companyName,
       }}

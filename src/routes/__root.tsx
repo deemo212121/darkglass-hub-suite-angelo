@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   Outlet,
   Link,
   createRootRouteWithContext,
   useRouter,
   useLocation,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { AuthProvider } from "@/lib/auth";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
@@ -83,6 +85,27 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// SUPERSUPERADMIN (the platform-level role) may only ever be on /superadmin
+// or its per-company detail page — home.tsx/landing.tsx already redirect it
+// there right after login, but nothing stopped direct navigation elsewhere
+// afterward. This is the backstop for every other route (rendered
+// unconditionally, not gated by hideChrome, so it still runs on /landing,
+// /mobile, etc).
+function SuperSuperAdminGuard() {
+  const { ready, role } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!ready) return;
+    if (role?.toUpperCase() !== "SUPERSUPERADMIN") return;
+    const allowed = location.pathname === "/superadmin" || location.pathname.startsWith("/superadmin/company/");
+    if (!allowed) navigate({ to: "/superadmin", replace: true });
+  }, [ready, role, location.pathname, navigate]);
+
+  return null;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const location = useLocation();
@@ -102,6 +125,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
+          <SuperSuperAdminGuard />
           <SystemDataInitializer />
           {!hideChrome && <AnnouncementBanner />}
           {!hideChrome && <PasswordChangeReminder />}

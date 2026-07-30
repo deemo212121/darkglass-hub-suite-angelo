@@ -42,7 +42,7 @@ const CSR_HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Clos
 // Stage 1 of the two-stage review chain (Team Leader submits -> CSR
 // Manager reviews first -> HR makes the final call). This panel only
 // handles stage 1 — items CSR Managers weigh in on before they go to HR.
-const STAGE1_REVIEWER_ROLES = new Set(["CSR_MANAGER", "MANAGER", "ADMIN", "SUPERADMIN"]);
+const STAGE1_REVIEWER_ROLES = new Set(["CSR_MANAGER", "MANAGER", "SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
 
 interface Agent {
   id: string;

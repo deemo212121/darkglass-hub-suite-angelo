@@ -86,7 +86,7 @@ export interface FirebaseClaims {
   [k: string]: unknown;
 }
 
-/** Verify a Firebase ID token (RS256) with Web Crypto. Throws if invalid. Exported so other bridges (e.g. googleDriveBridge.ts) can identify a caller from their existing Firebase login without a separate verification path. */
+/** Verify a Firebase ID token (RS256) with Web Crypto. Throws if invalid. Exported so other bridges (e.g. googleDriveBridge.ts, adminUpdateEmailBridge.ts) can identify a caller from their existing Firebase login without a separate verification path. */
 export async function verifyFirebaseToken(idToken: string, projectId: string): Promise<FirebaseClaims> {
   const parts = idToken.split(".");
   if (parts.length !== 3) throw new Error("Malformed token");
@@ -351,7 +351,7 @@ async function detectAndNotifyLoginFlags(
     const normalize = (r: string | null | undefined) => String(r ?? "").trim().toUpperCase().replace(/\s+/g, "_");
     const recipientIds = allProfiles
       .filter((p) => p.id !== profile.id)
-      .filter((p) => [p.role, ...(p.extra_roles ?? [])].map(normalize).some((r) => r === "HR" || r === "ADMIN"))
+      .filter((p) => [p.role, ...(p.extra_roles ?? [])].map(normalize).some((r) => r === "HR" || r === "ADMIN" || r === "SUPERADMIN"))
       .map((p) => p.id);
     if (recipientIds.length === 0) return;
 
@@ -379,6 +379,23 @@ async function detectAndNotifyLoginFlags(
   }
 }
 
+/** Does `profileId` already have a login_events row from today (UTC)? */
+async function hasLoginEventToday(
+  supabaseUrl: string,
+  sbHeaders: Record<string, string>,
+  profileId: string
+): Promise<boolean> {
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/login_events?profile_id=eq.${encodeURIComponent(profileId)}&created_at=gte.${encodeURIComponent(todayStart.toISOString())}&select=id&limit=1`,
+    { headers: sbHeaders }
+  );
+  if (!res.ok) return false; // fail open — better an extra event than silently missing the day's first IP
+  const rows: Array<{ id: string }> = await res.json();
+  return rows.length > 0;
+}
+
 /**
  * Best-effort — never throws. A failure here (missing env vars, network
  * blip, no matching profile yet) must not block the login itself, since
@@ -386,12 +403,21 @@ async function detectAndNotifyLoginFlags(
  * Updates profiles.last_login_ip (fast "most recent" lookup) AND appends a
  * row to login_events (the full history the Login Security page reads),
  * then checks the new login for anomalies and pings HR/Admin if flagged.
+ *
+ * `onlyIfFirstToday`: a user who logs in once and never logs out again
+ * still refreshes their session daily (page-load restore, tab-focus, the
+ * 45-min background refresh) without ever going through the real login()
+ * path — so without this, they'd get exactly one login_events row, ever.
+ * When set, this skips everything (no patch, no insert) if today already
+ * has a captured row for them; otherwise it records today's first one
+ * exactly like a real login would.
  */
 async function recordLoginEvent(
   firebaseUid: string,
   request: Request,
   supabaseUrl: string | undefined,
-  serviceKey: string | undefined
+  serviceKey: string | undefined,
+  opts: { onlyIfFirstToday?: boolean } = {}
 ): Promise<void> {
   const ip = clientIpFrom(request);
   if (!supabaseUrl || !serviceKey) return;
@@ -401,6 +427,18 @@ async function recordLoginEvent(
     "Content-Type": "application/json",
   };
   try {
+    if (opts.onlyIfFirstToday) {
+      const lookupRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?firebase_uid=eq.${encodeURIComponent(firebaseUid)}&select=id`,
+        { headers: sbHeaders }
+      );
+      if (!lookupRes.ok) return;
+      const lookupRows: Array<{ id: string }> = await lookupRes.json();
+      const profileId = lookupRows[0]?.id;
+      if (!profileId) return;
+      if (await hasLoginEventToday(supabaseUrl, sbHeaders, profileId)) return;
+    }
+
     // Update the fast-lookup column and get back the profile's id/company_id
     // in the same round trip (needed for the login_events insert below).
     const patchRes = await fetch(`${supabaseUrl}/rest/v1/profiles?firebase_uid=eq.${encodeURIComponent(firebaseUid)}`, {
@@ -498,12 +536,19 @@ export async function handleSupabaseTokenRequest(
       secret: jwtSecret,
     });
 
-    // Best-effort: only log to login_events for an actual interactive
-    // login (recordLogin, set by auth.tsx) — not the 45-min background
-    // refresh or every other silent token exchange, so the table doesn't
-    // grow on routine activity.
+    // Log to login_events for an actual interactive login (recordLogin, set
+    // by auth.tsx) unconditionally. Otherwise (the 45-min background
+    // refresh, tab-focus, or a persisted session just restoring on page
+    // load — someone who's stayed logged in since yesterday and never hits
+    // the real login() path) still record it, but only if today doesn't
+    // already have a captured IP for them, so a normal day's routine
+    // refreshes don't grow the table beyond that one first capture.
     if (recordLogin) {
       await recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"));
+    } else {
+      await recordLoginEvent(claims.sub, request, getEnv("VITE_SUPABASE_URL"), getEnv("SUPABASE_SERVICE_KEY"), {
+        onlyIfFirstToday: true,
+      });
     }
 
     return json({ token, expiresAt, uid: claims.sub });

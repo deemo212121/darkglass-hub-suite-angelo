@@ -13,6 +13,7 @@ import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
 import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
+import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -154,6 +155,10 @@ export default {
     if (url.pathname === "/api/admin-reset-password") {
       const merged = await resolveServerEnv(env);
       return await handleAdminPasswordRequest(request, merged);
+    }
+    if (url.pathname === "/api/admin-update-email") {
+      const merged = await resolveServerEnv(env);
+      return await handleAdminUpdateEmailRequest(request, merged);
     }
 
     try {
