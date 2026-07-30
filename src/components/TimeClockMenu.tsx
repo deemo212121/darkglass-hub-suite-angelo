@@ -8,10 +8,12 @@
  *
  * Each step gates the next: Meal In needs Time In, Meal Out needs Meal In,
  * and — for anyone whose scheduled shift requires a meal break — Time Out
- * needs Meal Out too, so nobody can clock out mid-break. Employees whose
- * scheduled shift is under 8 hours (or has no schedule set at all) aren't
- * eligible for a meal break at all (same rule as the full timecard page),
- * so they only ever see Time In / Time Out.
+ * needs Meal Out too, so nobody can clock out mid-break. Time Out itself
+ * also locks Meal In/Out once it's punched, so a meal break can never start
+ * or resume after the day is already closed out. Employees whose scheduled
+ * shift is 6 hours or less (or has no schedule set at all) aren't eligible
+ * for a meal break at all (same rule as the full timecard page), so they
+ * only ever see Time In / Time Out.
  *
  * Once a step is punched, its recorded time is stamped permanently
  * underneath that button (read straight from the saved entry, not a
@@ -71,9 +73,10 @@ export function TimeClockButtons() {
   }, [profileId]);
 
   // Same rule as the full timecard page's handleMealToggle: eligibility is
-  // based on the SCHEDULED shift length, not actual hours worked.
+  // based on the SCHEDULED shift length, not actual hours worked. Shifts of
+  // 6 hours or less have no meal break at all.
   const scheduledShift = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 0;
-  const mealEligible = scheduledShift >= 8;
+  const mealEligible = scheduledShift > 6;
 
   const persist = async (next: UITimeEntry) => {
     if (!profileId) return;
@@ -108,11 +111,15 @@ export function TimeClockButtons() {
       alert("Please time in first.");
       return;
     }
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
     if (entry.mealStart) return;
     if (!mealEligible) {
       alert(
         requiredCheckIn && requiredCheckOut
-          ? `Meal break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`
+          ? `Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`
           : "No scheduled shift is set for your account. Contact your admin to set your required schedule."
       );
       return;
@@ -121,6 +128,10 @@ export function TimeClockButtons() {
   };
 
   const handleMealOut = () => {
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
     if (!entry.mealStart || entry.mealEnd) return;
     void persist({ ...entry, mealEnd: nowTime() });
   };
@@ -153,7 +164,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealIn}
-            disabled={saving || !entry.checkIn || !!entry.mealStart}
+            disabled={saving || !entry.checkIn || !!entry.checkOut || !!entry.mealStart}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal In
@@ -166,7 +177,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealOut}
-            disabled={saving || !entry.mealStart || !!entry.mealEnd}
+            disabled={saving || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal Out

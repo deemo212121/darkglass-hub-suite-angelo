@@ -230,17 +230,21 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       alert("Please log time in first.");
       return;
     }
+    if (modalEntry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
 
     // Lunch eligibility is based on the SCHEDULED shift length (set at account
-    // creation), not actual hours worked. Lunch is allowed only if the scheduled
-    // shift is 8 hours or more.
+    // creation), not actual hours worked. Shifts of 6 hours or less have no
+    // meal break at all — Time In / Time Out only.
     const scheduledShift = timeDiff(requiredCheckIn, requiredCheckOut);
     if (!requiredCheckIn || !requiredCheckOut) {
       alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
       return;
     }
-    if (scheduledShift < 8) {
-      alert(`Lunch break is only available for scheduled shifts of 8 hours or more. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+    if (scheduledShift <= 6) {
+      alert(`Lunch break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
       return;
     }
 
@@ -567,7 +571,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                          disabled={!!modalEntry.mealEnd}
+                          disabled={!!modalEntry.mealEnd || !!modalEntry.checkOut}
                         >
                           {!modalEntry.mealStart
                             ? "🍽 Meal In"

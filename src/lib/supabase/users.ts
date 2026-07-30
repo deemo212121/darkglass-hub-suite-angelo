@@ -58,6 +58,8 @@ export interface ProfileRow {
   required_check_out: string | null;
   work_plan: Record<string, any> | null;
   is_active: boolean;
+  /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0085. Forces a redirect to /profile until they change it (__root.tsx). */
+  must_change_password: boolean;
   created_at: string;
 }
 
@@ -86,10 +88,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   isActive: boolean;
   workPlan: Record<string, any> | null;
   branchAccess: string | null;
+  mustChangePassword: boolean;
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, branch_access, companies:company_id (legacy_code, login_alias)")
+    .select("email, role, display_name, is_active, work_plan, branch_access, must_change_password, companies:company_id (legacy_code, login_alias)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -110,7 +113,26 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     isActive: data.is_active,
     workPlan: (data as any).work_plan ?? null,
     branchAccess: (data as any).branch_access ?? null,
+    mustChangePassword: (data as any).must_change_password ?? false,
   };
+}
+
+/**
+ * Force (or clear) "must change password on next login" for one or more
+ * profiles — see migration 0085. Used by AdminUserManagementPage.tsx's
+ * Reset Password / Reset All Passwords actions (value=true), and by
+ * profile.tsx after a successful self-service password change (value=false).
+ */
+export async function setMustChangePassword(profileIds: string[], value: boolean): Promise<void> {
+  if (profileIds.length === 0) return;
+  const { error } = await supabase.from("profiles").update({ must_change_password: value }).in("id", profileIds);
+  if (error) throw new Error(error.message);
+}
+
+/** Clears the caller's own must_change_password flag by Firebase uid — used right after a successful self-service password change. */
+export async function clearMyMustChangePassword(firebaseUid: string): Promise<void> {
+  const { error } = await supabase.from("profiles").update({ must_change_password: false }).eq("firebase_uid", firebaseUid);
+  if (error) throw new Error(error.message);
 }
 
 /** Update a profile's last login timestamp (best-effort). */
@@ -190,7 +212,7 @@ export async function getMyRoles(firebaseUid: string): Promise<{ role: string | 
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, created_at")
     .neq("role", "SUPERADMIN")
     .order("display_name", { ascending: true });
 

@@ -17,6 +17,47 @@ import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
 
+/**
+ * Live Central Time clock in the header — this app's operations run across
+ * many US timezones (see LOCATIONS in AdminUserManagementPage.tsx), so a
+ * shared reference clock avoids "whose timezone is this timestamp in?"
+ * confusion. Clock math uses America/Chicago (correct through DST changes);
+ * the label is always "CST" per requested wording, not a dynamic CST/CDT switch.
+ */
+function CentralClock() {
+  const [time, setTime] = useState<string | null>(null);
+
+  useEffect(() => {
+    const update = () => {
+      setTime(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/Chicago",
+          hour: "numeric",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        }).format(new Date())
+      );
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!time) return null;
+
+  return (
+    <div
+      className="hidden md:flex items-center gap-1.5 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-3 py-1.5 text-xs text-muted-foreground"
+      title="Central Time"
+    >
+      <Clock className="h-3.5 w-3.5" />
+      <span className="font-mono tabular-nums">{time}</span>
+      <span className="font-semibold">CST</span>
+    </div>
+  );
+}
+
 function getInitials(value: string | null) {
   if (!value) return "U";
   const localPart = value.split("@")[0] ?? value;
@@ -67,6 +108,7 @@ export function AppHeader() {
             <div className="text-xs text-muted-foreground">Operations console</div>
           </div>
         </Link>
+        <CentralClock />
         <div className="ml-auto flex items-center gap-2 text-sm">
           {ready && email && <TimeClockButtons />}
           {ready && email && (

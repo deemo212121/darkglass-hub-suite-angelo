@@ -4,8 +4,7 @@ import { ChevronDown, Check, Filter, Search } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, deleteCompanyUser, type ProfileRow } from "@/lib/supabase/users";
-import { auth as firebaseAuth } from "@/lib/firebase/config";
+import { createCompanyUser, getCompanyUsers, deleteCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
 
 type ViewMode = "list" | "hierarchy";
 
@@ -333,14 +332,12 @@ function RoleMultiSelect({
 
 // Map a Supabase profile row to the table's UserManagementRecord shape.
 // Row shape for the table: UserManagementRecord plus the Supabase profile id
-// (needed for the delete action) and the Firebase Auth uid (needed to target
-// a specific account for a password reset — see resetPasswords below).
-type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string };
+// (needed for the delete action and for forcing a password change).
+type UserRow = UserManagementRecord & { profileId: string };
 
 function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
   return profiles.map((p, index) => ({
     profileId: p.id,
-    firebaseUid: p.firebase_uid,
     id: String(index + 1), // sequential display id: 1, 2, 3...
     loginName: p.username || p.email.split("@")[0],
     userName: p.display_name || p.email,
@@ -351,24 +348,6 @@ function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
     office: p.assigned_branch || "",
     locations: p.branch_access || "",
   }));
-}
-
-/**
- * Force-sets a Firebase Auth password directly (no old password, no reset
- * email) via the admin-reset-password bridge — see
- * src/lib/server/adminPasswordBridge.ts. For testing/support use.
- */
-async function resetPasswords(targetUids: string[], newPassword: string): Promise<{ succeeded: number; failed: Array<{ uid: string; error: string }> }> {
-  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
-  if (!idToken) throw new Error("Not authenticated.");
-  const res = await fetch("/api/admin-reset-password", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken, newPassword, targetUids }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Password reset failed.");
-  return data as { succeeded: number; failed: Array<{ uid: string; error: string }> };
 }
 
 function UserLink({ moduleSlug, submoduleSlug, userId, children }: { moduleSlug: string; submoduleSlug: string; userId: string; children: React.ReactNode }) {
@@ -567,7 +546,6 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     setColFilters((prev) => ({ ...prev, [field]: next }));
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
-  const [resetPasswordValue, setResetPasswordValue] = useState("");
   const [resettingPassword, setResettingPassword] = useState(false);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -706,30 +684,24 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handleConfirmResetPassword = async () => {
     if (!resetModal) return;
-    if (resetPasswordValue.length < 6) {
-      alert("Password must be at least 6 characters.");
-      return;
-    }
     const targets = resetModal.mode === "single" ? [resetModal.row] : users;
     if (
       resetModal.mode === "all" &&
-      !confirm(`Reset the password for ALL ${targets.length} users in this company to the SAME password? This cannot be undone.`)
+      !confirm(`Force ALL ${targets.length} users in this company to change their password on next login? This cannot be undone.`)
     ) {
       return;
     }
     setResettingPassword(true);
     try {
-      const targetUids = targets.map((u) => u.firebaseUid).filter(Boolean);
-      const result = await resetPasswords(targetUids, resetPasswordValue);
-      if (result.failed.length > 0) {
-        alert(`Reset ${result.succeeded} of ${targetUids.length}. ${result.failed.length} failed:\n${result.failed.map((f) => f.uid).join(", ")}`);
-      } else {
-        alert(resetModal.mode === "single" ? `Password reset for ${resetModal.row.userName}.` : `Password reset for all ${result.succeeded} users.`);
-      }
+      await setMustChangePassword(targets.map((u) => u.profileId), true);
+      alert(
+        resetModal.mode === "single"
+          ? `${resetModal.row.userName} will be asked to change their password next time they log in.`
+          : `All ${targets.length} users will be asked to change their password next time they log in.`
+      );
       setResetModal(null);
-      setResetPasswordValue("");
     } catch (error) {
-      alert(`Error resetting password: ${error instanceof Error ? error.message : "Unknown error"}`);
+      alert(`Error: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setResettingPassword(false);
     }
@@ -848,7 +820,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
               <button
                 type="button"
-                onClick={() => { setResetModal({ mode: "all" }); setResetPasswordValue(""); }}
+                onClick={() => setResetModal({ mode: "all" })}
                 disabled={users.length === 0}
                 className="btn whitespace-nowrap border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40"
               >
@@ -975,7 +947,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => { setResetModal({ mode: "single", row: record }); setResetPasswordValue(""); }}
+                            onClick={() => setResetModal({ mode: "single", row: record })}
                             className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
                           >
                             Reset Password
@@ -1205,29 +1177,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </h2>
               <p className="mt-1 text-sm text-slate-300">
                 {resetModal.mode === "single"
-                  ? `Sets a new password for ${resetModal.row.email || resetModal.row.userName} directly — no old password needed. For testing/support use.`
-                  : `Sets the SAME new password for every one of the ${users.length} users currently loaded. For testing only — this cannot be undone.`}
+                  ? `${resetModal.row.userName} keeps logging in with their current password — but the next time they sign in, they'll be sent straight to My Profile and required to set a new password before they can reach any dashboard.`
+                  : `Every one of the ${users.length} users currently loaded keeps logging in with their current password — but the next time each signs in, they'll be sent straight to My Profile and required to set a new password before reaching any dashboard.`}
               </p>
-            </div>
-            <div className="p-5 space-y-3">
-              <label className="block space-y-2 text-sm text-slate-200">
-                <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">New Password</span>
-                <input
-                  type="text"
-                  className="glass-input w-full"
-                  placeholder="Enter new password"
-                  value={resetPasswordValue}
-                  onChange={(e) => setResetPasswordValue(e.target.value)}
-                  autoFocus
-                />
-              </label>
             </div>
             <div className="flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4">
               <button type="button" onClick={() => setResetModal(null)} className="btn hover:bg-slate-800" disabled={resettingPassword}>
                 Cancel
               </button>
               <button type="button" onClick={handleConfirmResetPassword} className="btn btn-primary" disabled={resettingPassword}>
-                {resettingPassword ? "Resetting…" : "Reset Password"}
+                {resettingPassword ? "Applying…" : "Force Password Change"}
               </button>
             </div>
           </div>

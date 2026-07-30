@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import {
   getCompanyExpenses,
   createExpense,
@@ -23,6 +24,8 @@ const emptyForm = {
   expenseDate: new Date().toISOString().slice(0, 10),
   amount: "",
   description: "",
+  receiptUrl: null as string | null,
+  receiptPath: null as string | null,
 };
 
 function statusColor(status: ExpenseStatus): string {
@@ -35,7 +38,7 @@ function statusColor(status: ExpenseStatus): string {
 }
 
 export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { uid, ready } = useAuth();
+  const { uid, ready, companyId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -49,6 +52,14 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  // Storage folder key for the receipt upload — a brand-new expense has no
+  // row id yet, so a client-generated key stands in until it's saved; an
+  // existing expense being edited just uses its own real id.
+  const [newExpenseKey, setNewExpenseKey] = useState("");
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  // The receipt path this expense had BEFORE this edit session, so a
+  // replace/remove can clean up the old Storage file once the save succeeds.
+  const [originalReceiptPath, setOriginalReceiptPath] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!ready || !uid) { setLoading(false); return; }
@@ -100,7 +111,13 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   const resetForm = () => { setForm(emptyForm); setEditingId(null); setShowForm(false); };
 
-  const openAdd = () => { setForm(emptyForm); setEditingId(null); setShowForm(true); };
+  const openAdd = () => {
+    setForm(emptyForm);
+    setEditingId(null);
+    setNewExpenseKey(crypto.randomUUID());
+    setOriginalReceiptPath(null);
+    setShowForm(true);
+  };
   const openEdit = (e: ExpenseRow) => {
     setForm({
       profileId: e.profileId,
@@ -108,9 +125,29 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       expenseDate: e.expenseDate,
       amount: String(e.amount),
       description: e.description,
+      receiptUrl: e.receiptUrl,
+      receiptPath: e.receiptPath,
     });
     setEditingId(e.id);
+    setOriginalReceiptPath(e.receiptPath);
     setShowForm(true);
+  };
+
+  const handleReceiptSelect = async (file: File) => {
+    setUploadingReceipt(true);
+    try {
+      const folderKey = editingId ?? newExpenseKey;
+      const { url, fullPath } = await uploadExpenseReceipt(companyId || "COMP001", folderKey, file);
+      setForm((f) => ({ ...f, receiptUrl: url, receiptPath: fullPath }));
+    } catch (error) {
+      alert(`Failed to upload receipt: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setUploadingReceipt(false);
+    }
+  };
+
+  const handleRemoveReceipt = () => {
+    setForm((f) => ({ ...f, receiptUrl: null, receiptPath: null }));
   };
 
   const handleSubmit = async () => {
@@ -126,6 +163,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           expenseDate: form.expenseDate,
           amount,
           description: form.description,
+          receiptUrl: form.receiptUrl,
+          receiptPath: form.receiptPath,
         });
       } else {
         await createExpense({
@@ -135,7 +174,14 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           amount,
           description: form.description,
           createdBy: myProfileId,
+          receiptUrl: form.receiptUrl,
+          receiptPath: form.receiptPath,
         });
+      }
+      // Best-effort: if a receipt was replaced or removed during this edit,
+      // clean up the old Storage file now that the save succeeded.
+      if (originalReceiptPath && originalReceiptPath !== form.receiptPath) {
+        deleteExpenseReceiptFile(originalReceiptPath).catch((err) => console.error("Failed to delete old receipt file:", err));
       }
       setExpenses(await getCompanyExpenses());
       resetForm();
@@ -153,10 +199,13 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (row: ExpenseRow) => {
     if (!confirm("Delete this expense record? This cannot be undone.")) return;
     try {
-      await deleteExpense(id);
+      await deleteExpense(row.id);
+      if (row.receiptPath) {
+        deleteExpenseReceiptFile(row.receiptPath).catch((err) => console.error("Failed to delete receipt file:", err));
+      }
       setExpenses(await getCompanyExpenses());
     } catch (error) {
       alert(`Failed to delete expense: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -323,10 +372,21 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <Wallet className="h-3 w-3" /> Mark Reimbursed
                           </button>
                         )}
+                        {e.receiptUrl && (
+                          <a
+                            href={e.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="View receipt"
+                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1"
+                          >
+                            <Paperclip className="h-3 w-3" />
+                          </a>
+                        )}
                         <button onClick={() => openEdit(e)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1">
                           <Pencil className="h-3 w-3" />
                         </button>
-                        <button onClick={() => handleDelete(e.id)} className="px-2 py-1 bg-slate-700 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
+                        <button onClick={() => handleDelete(e)} className="px-2 py-1 bg-slate-700 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </div>
@@ -380,9 +440,38 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <label className="block text-xs text-slate-400 uppercase mb-1">Description</label>
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
               </div>
+              <div>
+                <label className="block text-xs text-slate-400 uppercase mb-1">Receipt</label>
+                {form.receiptUrl ? (
+                  <div className="flex items-center justify-between gap-2 bg-slate-800/50 border border-white/10 rounded-lg p-2">
+                    <a href={form.receiptUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 truncate">
+                      <Paperclip className="h-4 w-4 shrink-0" /> View attached receipt
+                    </a>
+                    <button type="button" onClick={handleRemoveReceipt} className="text-slate-400 hover:text-white shrink-0" title="Remove receipt">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 bg-slate-800/50 border border-dashed border-white/20 rounded-lg p-3 text-sm text-slate-400 hover:border-blue-500 hover:text-slate-300 cursor-pointer transition">
+                    <Paperclip className="h-4 w-4" />
+                    {uploadingReceipt ? "Uploading…" : "Attach a receipt (image or PDF)"}
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      disabled={uploadingReceipt}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleReceiptSelect(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={handleSubmit} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm">{editingId ? "Save Changes" : "Submit"}</button>
+              <button onClick={handleSubmit} disabled={uploadingReceipt} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm">{editingId ? "Save Changes" : "Submit"}</button>
               <button onClick={resetForm} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
             </div>
           </div>

@@ -8,7 +8,7 @@ import { DUMMY_EMPLOYEES } from "@/lib/dummyData";
 import {
   getMyProfileSchedule,
 } from "@/lib/supabase/timecards";
-import { updateCompanyUser } from "@/lib/supabase/users";
+import { updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
@@ -103,7 +103,7 @@ const DEFAULT_LOCATIONS = [
 ];
 
 function ProfilePage() {
-  const { email, uid, role } = useAuth();
+  const { email, uid, role, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const employee = getEmployeeFromEmail(email);
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -389,6 +389,13 @@ function ProfilePage() {
       setPassword({ current: "", next: "", confirm: "" });
       setSaved("Password updated.");
       setTimeout(() => setSaved(""), 3000);
+      // Clear an admin-triggered "must change password" flag, if set (see
+      // migration 0085) — both server-side and in-memory, so the /profile
+      // redirect gate in __root.tsx stops immediately.
+      if (uid) {
+        clearMustChangePasswordFlag();
+        clearMyMustChangePassword(uid).catch((err) => console.error("Failed to clear must_change_password flag:", err));
+      }
     } catch (err: any) {
       const code = String(err?.code || "");
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
@@ -435,6 +442,14 @@ function ProfilePage() {
 
   return (
     <AccountPageShell title="My Profile" description="Manage your account details and password.">
+      {mustChangePassword && (
+        <div className="panel border-amber-500/40 bg-amber-500/10">
+          <p className="text-sm font-semibold text-amber-200">🔒 You need to change your password to continue.</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            An admin reset your account for security. You can keep using your current password to log in, but you must set a new one below before you can reach the rest of the dashboards.
+          </p>
+        </div>
+      )}
       <section className="panel">
         <h2 className="text-lg font-semibold mb-4">Account details</h2>
         {employee && (

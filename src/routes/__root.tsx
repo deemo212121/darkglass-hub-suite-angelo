@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   Outlet,
   Link,
   createRootRouteWithContext,
   useRouter,
   useLocation,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { AuthProvider } from "@/lib/auth";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
@@ -74,6 +76,30 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+/**
+ * Redirects to /profile (where the existing self-service password form
+ * lives) whenever an admin has flagged this account via Reset Password /
+ * Reset All Passwords (see migration 0085). The user already logged in
+ * with their existing password — this only blocks reaching the rest of
+ * the dashboards until they actually change it, which clears the flag
+ * (see profile.tsx's changePassword). Skipped on hideChrome pages (no
+ * authenticated chrome there anyway) and while already on /profile.
+ */
+function MustChangePasswordGate({ hideChrome }: { hideChrome: boolean }) {
+  const auth = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (hideChrome) return;
+    if (!auth.ready || !auth.mustChangePassword) return;
+    if (location.pathname === "/profile") return;
+    navigate({ to: "/profile", replace: true });
+  }, [hideChrome, auth.ready, auth.mustChangePassword, location.pathname, navigate]);
+
+  return null;
+}
+
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -103,6 +129,7 @@ function RootComponent() {
       <ThemeProvider>
         <AuthProvider>
           <SystemDataInitializer />
+          <MustChangePasswordGate hideChrome={hideChrome} />
           {!hideChrome && <AnnouncementBanner />}
           {!hideChrome && <PasswordChangeReminder />}
           <Outlet />
