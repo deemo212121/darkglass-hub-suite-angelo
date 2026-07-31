@@ -143,15 +143,6 @@ function ProfilePage() {
       setSaved("Could not resolve your profile. Please re-login.");
       return;
     }
-    // Regular employees only get ONE shot at setting Working Hours / Meal
-    // Time themselves (see canEditWorkingHoursMeal) — make sure they know
-    // that before it locks, since there's no undo from this page after.
-    if (!canEditSchedule && canEditWorkingHoursMeal && (requiredSchedule.workingHours.trim() || requiredSchedule.mealMinutes.trim())) {
-      const proceed = confirm(
-        "You can only set Working Hours / Meal Time once. After saving, you'll need to request any changes through HR, IT, or Admin. Continue?"
-      );
-      if (!proceed) return;
-    }
     setSaving(true);
     try {
       await updateCompanyUser(profileId, {
@@ -167,16 +158,43 @@ function ProfilePage() {
               offDays: selectedOffDays,
             }
           : {}),
-        ...(canEditWorkingHoursMeal
-          ? {
-              workingHours: requiredSchedule.workingHours.trim() ? Number(requiredSchedule.workingHours) : null,
-              mealMinutes: requiredSchedule.mealMinutes.trim() ? Number(requiredSchedule.mealMinutes) : null,
-            }
-          : {}),
+      });
+      setSaved("Profile saved.");
+    } catch (err) {
+      setSaved(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaved(""), 2500);
+    }
+  };
+
+  // Separate from save() and always reachable (even while mustChangePassword
+  // hides the rest of Account Details) — a brand-new employee whose password
+  // was just admin-reset is exactly who most needs to set this on day one,
+  // so it can't wait behind the password-change gate.
+  const saveWorkingHoursMeal = async () => {
+    if (!canEditWorkingHoursMeal) return;
+    if (!profileId) {
+      setSaved("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    // Regular employees only get ONE shot at setting this themselves — make
+    // sure they know that before it locks, since there's no undo after.
+    if (!canEditSchedule && (requiredSchedule.workingHours.trim() || requiredSchedule.mealMinutes.trim())) {
+      const proceed = confirm(
+        "You can only set Working Hours / Meal Time once. After saving, you'll need to request any changes through HR, IT, or Admin. Continue?"
+      );
+      if (!proceed) return;
+    }
+    setSaving(true);
+    try {
+      await updateCompanyUser(profileId, {
+        workingHours: requiredSchedule.workingHours.trim() ? Number(requiredSchedule.workingHours) : null,
+        mealMinutes: requiredSchedule.mealMinutes.trim() ? Number(requiredSchedule.mealMinutes) : null,
       });
       // A regular employee just used their one-time edit — lock it from here on.
-      if (!canEditSchedule && canEditWorkingHoursMeal) setScheduleFieldsAlreadySet(true);
-      setSaved("Profile saved.");
+      if (!canEditSchedule) setScheduleFieldsAlreadySet(true);
+      setSaved("Working Hours / Meal Time saved.");
     } catch (err) {
       setSaved(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -263,6 +281,56 @@ function ProfilePage() {
         </div>
       )}
       <section className="panel">
+        <h2 className="text-lg font-semibold mb-2">Working Hours &amp; Meal Time</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          If you haven't set your Working Hours and Meal Time yet, please set them now — you only get one chance to
+          set these yourself. Once set, any changes need to be raised with IT or HR.
+        </p>
+        {!canEditSchedule && scheduleFieldsAlreadySet && (
+          <p className="mb-4 inline-flex items-center gap-1 text-[11px] text-amber-300/90">
+            <Lock className="h-3 w-3 shrink-0" />
+            Already set — contact IT, admins, or HR to change it.
+          </p>
+        )}
+        <div className="grid sm:grid-cols-2 gap-4 mb-4">
+          <label className="flex flex-col gap-2">
+            <span className="text-xs text-slate-400">Working Hours</span>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              placeholder="e.g. 7.5"
+              value={requiredSchedule.workingHours}
+              onChange={(e) => setRequiredSchedule({ ...requiredSchedule, workingHours: e.target.value })}
+              disabled={!canEditWorkingHoursMeal}
+              className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </label>
+          <label className="flex flex-col gap-2">
+            <span className="text-xs text-slate-400">Meal Time (minutes)</span>
+            <input
+              type="number"
+              min={0}
+              step={5}
+              placeholder="e.g. 30"
+              value={requiredSchedule.mealMinutes}
+              onChange={(e) => setRequiredSchedule({ ...requiredSchedule, mealMinutes: e.target.value })}
+              disabled={!canEditWorkingHoursMeal}
+              className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </label>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button className="btn btn-primary" onClick={saveWorkingHoursMeal} disabled={saving || !canEditWorkingHoursMeal}>
+            <Save className="h-4 w-4" />
+            {saving ? "Saving…" : "Save"}
+          </button>
+          {saved && <span className="text-xs text-muted-foreground">{saved}</span>}
+        </div>
+      </section>
+
+      {!mustChangePassword && (
+      <section className="panel">
         <h2 className="text-lg font-semibold mb-4">Account details</h2>
         <div className="grid sm:grid-cols-2 gap-4 mb-6">
           {field("First name", "firstName")}
@@ -337,40 +405,6 @@ function ProfilePage() {
                 className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
             </label>
-            {!canEditSchedule && (
-              <p className="sm:col-span-2 -mt-2 inline-flex items-center gap-1 text-[11px] text-amber-300/90">
-                <Lock className="h-3 w-3 shrink-0" />
-                {canEditWorkingHoursMeal
-                  ? "Working Hours / Meal Time can be set once yourself — after saving, only IT, admins, or HR can change it."
-                  : "Working Hours / Meal Time already set — contact IT, admins, or HR to change it."}
-              </p>
-            )}
-            <label className="flex flex-col gap-2">
-              <span className="text-xs text-slate-400">Working Hours</span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                placeholder="e.g. 8"
-                value={requiredSchedule.workingHours}
-                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, workingHours: e.target.value })}
-                disabled={!canEditWorkingHoursMeal}
-                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
-              />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-xs text-slate-400">Meal Time (minutes)</span>
-              <input
-                type="number"
-                min={0}
-                step={5}
-                placeholder="e.g. 30"
-                value={requiredSchedule.mealMinutes}
-                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, mealMinutes: e.target.value })}
-                disabled={!canEditWorkingHoursMeal}
-                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
-              />
-            </label>
           </div>
         </div>
 
@@ -415,6 +449,7 @@ function ProfilePage() {
           {saved && <span className="text-xs text-muted-foreground">{saved}</span>}
         </div>
       </section>
+      )}
 
       {/* Change Password - At Bottom */}
       <section className="panel mt-6">

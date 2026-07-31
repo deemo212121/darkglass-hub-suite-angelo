@@ -9,7 +9,7 @@
 
 import { supabase } from "./client";
 
-export type SalaryChangeReason = "promotion" | "demotion" | "adjustment" | "initial";
+export type SalaryChangeReason = "promotion" | "demotion" | "adjustment" | "initial" | "training_rate";
 
 export interface SalaryEntryRow {
   id: string;

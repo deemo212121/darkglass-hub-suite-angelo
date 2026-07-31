@@ -29,7 +29,7 @@ import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule } from "@/lib/supabase/timecards";
 import { createNotification } from "@/lib/supabase/notifications";
 import { useAuth } from "@/lib/auth";
@@ -49,6 +49,7 @@ interface SupabaseEmployee {
   id: string;
   full_name: string;
   department: string | null;
+  roleLabel: string | null;
   country: string | null;  // derived: "PH" if assigned_branch===Philippines, else "US"
   hourly_rate: number | null;
   status: string | null;
@@ -339,10 +340,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         }
       }
 
-      setEmployees(((empRes.data ?? []) as any[]).map((p) => ({
+      setEmployees(((empRes.data ?? []) as any[]).map((p) => {
+        const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
+        return {
         id: p.id,
         full_name: p.display_name || p.username || p.id,
-        department: p.role ?? null,
+        department,
+        roleLabel,
         country: p.assigned_branch === "Philippines" ? "PH" : "US",
         hourly_rate: null,
         status: "Active",
@@ -355,7 +359,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         requiredCheckOut: p.required_check_out ?? undefined,
         workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
-      })) as SupabaseEmployee[]);
+        };
+      }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
       setPayrollRuns(runs);
       setPayrollLineItems((lineRes.data ?? []) as PayrollLineItem[]);
@@ -1025,7 +1030,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   >
                     <option value="all">All Departments</option>
                     {departmentOptions.map((d) => (
-                      <option key={d} value={d}>{ROLE_LABELS[d] ?? d}</option>
+                      <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
                 </div>
@@ -1045,6 +1050,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <tr className="border-b border-white/10 bg-white/5">
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Name</th>
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Department</th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Role</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Reg. Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Rate</th>
@@ -1054,7 +1060,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-slate-500 text-sm">
+                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
                         No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
                       </td>
                     </tr>
@@ -1072,7 +1078,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           </button>
                         </td>
                         <td className="px-4 py-3 text-slate-300">
-                          {row.employee.department ? (ROLE_LABELS[row.employee.department] ?? row.employee.department) : "—"}
+                          {row.employee.department || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">
+                          {row.employee.roleLabel || "—"}
                         </td>
                         <td className="px-4 py-3 text-center text-slate-300">
                           {row.hoursWorked.toFixed(1)}
