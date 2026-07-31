@@ -57,8 +57,10 @@ const USER_TYPES: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
   { value: "SENIOR_MANAGER", label: "Senior Manager" },
+  { value: "CSR", label: "CSR" },
   { value: "TECHNICIAN", label: "Technician" },
   { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
+  { value: "DISPATCHER", label: "Dispatcher" },
   { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
   { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
   { value: "CLAIMS", label: "Claims" },
@@ -304,14 +306,24 @@ function RoleMultiSelect({
   }, []);
   const labelByValue = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const o of options) m[o.value] = o.label;
+    for (const o of options) m[normalizeRole(o.value)] = o.label;
     return m;
   }, [options]);
+  // Compare normalized forms, not exact strings — a profile carrying a
+  // legacy free-text role (e.g. "CSR Manager" instead of "CSR_MANAGER")
+  // would otherwise match none of this list's option values, so its
+  // checkbox would never show checked and could never be toggled off,
+  // leaving the primary role stuck on that legacy value forever.
   const toggle = (val: string) => {
-    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+    const norm = normalizeRole(val);
+    onChange(
+      values.some((v) => normalizeRole(v) === norm)
+        ? values.filter((v) => normalizeRole(v) !== norm)
+        : [...values, val]
+    );
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -326,8 +338,8 @@ function RoleMultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
           {options.map((opt) => {
-            const checked = values.includes(opt.value);
-            const isPrimary = values[0] === opt.value;
+            const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
+            const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
               <button
                 key={opt.value}

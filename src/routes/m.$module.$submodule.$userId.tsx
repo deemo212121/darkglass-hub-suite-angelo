@@ -8,6 +8,7 @@ import { getModule, getSubModule } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
+import { normalizeRole } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -33,6 +34,7 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "SENIOR_MANAGER", label: "Senior Manager" },
   { value: "CSR", label: "CSR" },
   { value: "TECHNICIAN", label: "Technician" },
+  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
   { value: "DISPATCHER", label: "Dispatcher" },
   { value: "CLAIMS", label: "Claims" },
   { value: "HR", label: "HR" },
@@ -85,14 +87,26 @@ function RoleMultiSelect({
   }, []);
   const labelByValue = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const o of options) m[o.value] = o.label;
+    for (const o of options) m[normalizeRole(o.value)] = o.label;
     return m;
   }, [options]);
+  // Some profiles still carry a legacy free-text role (e.g. "CSR Manager"
+  // instead of the canonical "CSR_MANAGER") — compared by exact string, that
+  // value would match none of this list's option values, so its checkbox
+  // never showed checked and it could never be toggled off, leaving the
+  // primary role stuck on that legacy value forever. Comparing normalized
+  // forms instead means the matching canonical option shows checked (and
+  // can be unchecked) no matter which form is actually stored.
   const toggle = (val: string) => {
-    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+    const norm = normalizeRole(val);
+    onChange(
+      values.some((v) => normalizeRole(v) === norm)
+        ? values.filter((v) => normalizeRole(v) !== norm)
+        : [...values, val]
+    );
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -107,8 +121,8 @@ function RoleMultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
           {options.map((opt) => {
-            const checked = values.includes(opt.value);
-            const isPrimary = values[0] === opt.value;
+            const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
+            const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
               <button
                 key={opt.value}

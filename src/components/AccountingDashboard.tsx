@@ -136,8 +136,8 @@ function rollBackToWeekday(d: Date): Date {
 }
 
 // Regular/overtime hours per employee from a set of raw timecard rows —
-// shared by the live preview and by regeneratePayroll() (which recomputes
-// against a past run's own period rather than the current preview range).
+// shared by the live preview and by generatePayroll() when re-picked dates
+// exactly match an existing run (recomputing it in place).
 function computeHoursMap(entries: TimecardEntry[]): Map<string, { regular: number; overtime: number }> {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
   for (const tc of entries) {
@@ -158,11 +158,31 @@ function computeHoursMap(entries: TimecardEntry[]): Map<string, { regular: numbe
   return hoursMap;
 }
 
-// Ends yesterday (or the Friday before, if yesterday fell on a weekend) —
-// an employee still clocked in today wouldn't have a check-out yet, so
-// including today would understate their hours. Starts the day after the
-// previous payroll run's period_end so consecutive runs never gap or
-// overlap; with no prior run (first time ever), defaults to a 14-day window.
+// Attendance rows with a clock-in but no clock-out — payroll can't trust
+// what an unfinished shift's hours were, so generation/regeneration must be
+// blocked entirely rather than silently computing 0 hours for that day
+// (which is what computeHoursMap above does, by skipping the row). Returns
+// one "Employee Name (YYYY-MM-DD)" string per offending row, for the error
+// message shown to Finance.
+function findMissingTimeouts(entries: TimecardEntry[], employees: SupabaseEmployee[]): string[] {
+  const nameById = new Map(employees.map((e) => [e.id, e.full_name]));
+  return entries
+    .filter((tc) => tc.check_in && !tc.check_out)
+    .map((tc) => {
+      const key = tc.profile_id || tc.employee_id;
+      const name = (key && nameById.get(key)) || "Unknown employee";
+      return `${name} (${tc.work_date})`;
+    })
+    .sort();
+}
+
+// Default period suggested for genStart/genEnd (Finance can freely pick
+// something else — see the date inputs on the Payroll tab). Ends yesterday
+// (or the Friday before, if yesterday fell on a weekend) — an employee
+// still clocked in today wouldn't have a check-out yet, so including today
+// would understate their hours. Starts the day after the previous payroll
+// run's period_end so the suggested range never gaps or overlaps it; with
+// no prior run (first time ever), defaults to a 14-day window.
 function periodBounds(lastPeriodEnd: string | null): { start: string; end: string } {
   const endDate = rollBackToWeekday((() => {
     const d = new Date();
@@ -225,12 +245,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+
+  // Payroll generation period — Finance picks this via the date inputs on
+  // the Payroll tab. Seeded once (see fetchData) from the auto "day after
+  // the last run's end, through yesterday" default, same range this used
+  // to always use before it became editable.
+  const [genStart, setGenStart] = useState("");
+  const [genEnd, setGenEnd] = useState("");
 
   // ── Data fetching ───────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -256,15 +282,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
-      // runs is already ordered by generated_at desc, so runs[0] is the most
-      // recent run — the next period picks up the day after it ended.
-      const { start, end } = periodBounds(runs[0]?.period_end ?? null);
-      const tcRes = await supabase
-        .from("timecard_entries")
-        .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
-        .gte("work_date", start)
-        .lte("work_date", end);
-      if (tcRes.error) throw new Error(tcRes.error.message);
 
       // Fetched separately, best-effort — working_hours/meal_minutes
       // (migration 0109) must never be able to break the rest of this
@@ -301,10 +318,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
       })) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
-      setTimecardEntries((tcRes.data ?? []) as TimecardEntry[]);
       setPayrollRuns(runs);
       setPayrollLineItems((lineRes.data ?? []) as PayrollLineItem[]);
       setAuditLog((auditRes.data ?? []) as PayrollAuditLogRow[]);
+
+      // Seed the generation period once (first load only — don't clobber
+      // whatever Finance has already picked on a later refetch). runs is
+      // already ordered by generated_at desc, so runs[0] is the most recent
+      // run — the default next period picks up the day after it ended.
+      setGenStart((prev) => prev || periodBounds(runs[0]?.period_end ?? null).start);
+      setGenEnd((prev) => prev || periodBounds(runs[0]?.period_end ?? null).end);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -322,6 +345,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     });
     return () => { cancelled = true; };
   }, [uid]);
+
+  // Reload attendance whenever Finance changes the generation period —
+  // everything below (hoursMap, payrollRows, the Payroll tab's totals, and
+  // the Overview tab's "Current Period (Live)" preview) derives from this.
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setTimecardEntries([]);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("timecard_entries")
+      .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
+      .gte("work_date", genStart)
+      .lte("work_date", genEnd)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("Failed to load attendance for selected payroll period:", error.message);
+          setTimecardEntries([]);
+        } else {
+          setTimecardEntries((data ?? []) as TimecardEntry[]);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [genStart, genEnd]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee (salaryEntries is already ordered by
@@ -371,6 +420,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const avgPayPerEmployee =
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
 
+  // Whether the picked genStart/genEnd exactly match an already-generated
+  // run — if so, clicking Generate recomputes that run in place instead of
+  // creating a new one (see generatePayroll's existingRun check).
+  const matchesExistingRun = payrollRuns.some((r) => r.period_start === genStart && r.period_end === genEnd);
+
   // Overview KPI cards: either the live current-period preview (computed
   // above from payrollRows) or a specific historical run's actual recorded
   // payroll_line_items — selected via the dropdown on the Overview tab.
@@ -384,7 +438,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         usCount: usRows.length,
         phCount: phRows.length,
         avgPayPerEmployee,
-        periodLabel: "Last 14 days · USD",
+        periodLabel: genStart && genEnd ? `${genStart} – ${genEnd} · USD` : "USD",
         employeeCount: employees.length,
         employeeCountLabel: "Active",
       };
@@ -443,34 +497,63 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   })();
 
   // ── Generate Payroll ─────────────────────────────────────────────────────────
+  // Finance picks the period via genStart/genEnd (the date inputs on the
+  // Payroll tab) rather than an auto-computed range. If the picked dates
+  // exactly match an existing run, this recomputes and replaces that run's
+  // line items in place (what "Regenerate" used to do) instead of creating
+  // a duplicate — so a rate fix or corrected timecard can be re-applied to
+  // the same payslip just by re-picking its dates and generating again.
   const generatePayroll = async () => {
     if (payrollRows.length === 0) return;
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setError("Pick a valid start and end date before generating payroll.");
+      return;
+    }
     setGenerating(true);
     try {
-      // payrollRuns is ordered by generated_at desc, so [0] is the most
-      // recent run — the next period picks up the day after it ended.
-      const lastPeriodEnd = payrollRuns[0]?.period_end ?? null;
-      const { start, end } = periodBounds(lastPeriodEnd);
-      if (start > end) {
-        setError(`Payroll already covers through ${lastPeriodEnd}. Nothing new to generate yet — use "Regenerate Last Payroll" if you need to recompute it (e.g. a rate or timecard was fixed after the fact).`);
+      const missingTimeouts = findMissingTimeouts(timecardEntries, employees);
+      if (missingTimeouts.length > 0) {
+        const preview = missingTimeouts.slice(0, 5).join(", ");
+        const more = missingTimeouts.length > 5 ? `, and ${missingTimeouts.length - 5} more` : "";
+        setError(`Cannot generate payroll for ${genStart} – ${genEnd}: ${missingTimeouts.length} attendance record(s) are missing a clock-out — ${preview}${more}. Fix these timecards, then try again.`);
         setGenerating(false);
         return;
       }
 
-      // Insert payroll run
-      const { data: runData, error: runErr } = await supabase
-        .from("payroll_runs")
-        .insert({
-          period_start: start,
-          period_end: end,
-          status: "generated",
-          generated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-      if (runErr) throw new Error(runErr.message);
+      const existingRun = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
+      // Any OTHER run whose range intersects the picked one — allowed to
+      // overlap with existingRun itself (that's just re-picking its own
+      // dates), but not with any other run, since that would double-count
+      // those days' hours across two separate payslips.
+      const overlapping = payrollRuns.find(
+        (r) => r.id !== existingRun?.id && genStart <= r.period_end && r.period_start <= genEnd
+      );
+      if (overlapping) {
+        setError(`${genStart} – ${genEnd} overlaps an existing payroll run for ${overlapping.period_start} – ${overlapping.period_end}. Pick a non-overlapping range, or select those exact dates to recompute that run instead.`);
+        setGenerating(false);
+        return;
+      }
 
-      const runId = (runData as { id: string }).id;
+      let runId: string;
+      if (existingRun) {
+        runId = existingRun.id;
+        const { error: deleteErr } = await supabase.from("payroll_line_items").delete().eq("payroll_run_id", runId);
+        if (deleteErr) throw new Error(deleteErr.message);
+        await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
+      } else {
+        const { data: runData, error: runErr } = await supabase
+          .from("payroll_runs")
+          .insert({
+            period_start: genStart,
+            period_end: genEnd,
+            status: "generated",
+            generated_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+        if (runErr) throw new Error(runErr.message);
+        runId = (runData as { id: string }).id;
+      }
 
       // Build line items — always USD (hourlyRateUSD/grossPayUSD are
       // already exchange-rate-converted for PH rows), so every run this
@@ -493,9 +576,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       // Insert audit log entry
       await supabase.from("payroll_audit_log").insert({
-        action: "generate",
+        action: existingRun ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `Generated payroll run for ${start} – ${end}. ${payrollRows.length} employees. Total: $${totalPayrollUSD.toFixed(2)}`,
+        details: `${existingRun ? "Regenerated" : "Generated"} payroll run for ${genStart} – ${genEnd}. ${payrollRows.length} employees. Total: $${totalPayrollUSD.toFixed(2)}`,
         amount: Math.round(totalPayrollUSD * 100) / 100,
       });
 
@@ -509,7 +592,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               recipientId: r.employee.id,
               senderId: myProfileId,
               senderName: "Payroll",
-              body: "💰 Payslip is Ready — View Payslip",
+              body: existingRun ? "🔄 Payslip Updated — View Payslip" : "💰 Payslip is Ready — View Payslip",
               linkTo: "/m/dashboard/employee-self-service?tab=payroll",
             }).catch((err) => console.error("Failed to notify", r.employee.id, err))
           )
@@ -520,81 +603,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setError(err instanceof Error ? err.message : "Failed to generate payroll");
     } finally {
       setGenerating(false);
-    }
-  };
-
-  // ── Regenerate the most recent payroll run ───────────────────────────────────
-  // Recomputes and replaces that run's line items using current rates/
-  // attendance — for when a rate was missing or a timecard was corrected
-  // after the run was already generated. Same period_start/period_end, just
-  // fresh numbers and a bumped generated_at.
-  const regeneratePayroll = async () => {
-    const lastRun = payrollRuns[0];
-    if (!lastRun) return;
-    setRegenerating(true);
-    try {
-      const { data: entriesData, error: entriesErr } = await supabase
-        .from("timecard_entries")
-        .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
-        .gte("work_date", lastRun.period_start)
-        .lte("work_date", lastRun.period_end);
-      if (entriesErr) throw new Error(entriesErr.message);
-
-      const regenHoursMap = computeHoursMap((entriesData ?? []) as TimecardEntry[]);
-      const regenRows = employees.map((emp) => {
-        const hourlyRate = latestRateMap.get(emp.id) ?? emp.hourly_rate ?? 0;
-        const hours = regenHoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-        const grossPayUSD = hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
-        return { employee: emp, hoursWorked: hours.regular, overtimeHours: hours.overtime, hourlyRateUSD: hourlyRate, grossPayUSD };
-      });
-
-      const { error: deleteErr } = await supabase.from("payroll_line_items").delete().eq("payroll_run_id", lastRun.id);
-      if (deleteErr) throw new Error(deleteErr.message);
-
-      const lineItems = regenRows.map((r) => ({
-        payroll_run_id: lastRun.id,
-        profile_id: r.employee.id,
-        hours_worked: r.hoursWorked,
-        overtime_hours: r.overtimeHours,
-        hourly_rate: r.hourlyRateUSD,
-        regular_pay: r.hoursWorked * r.hourlyRateUSD,
-        overtime_pay: r.overtimeHours * r.hourlyRateUSD * 1.5,
-        gross_pay: r.grossPayUSD,
-        net_pay: r.grossPayUSD,
-        currency: "USD",
-      }));
-      const { error: insertErr } = await supabase.from("payroll_line_items").insert(lineItems);
-      if (insertErr) throw new Error(insertErr.message);
-
-      await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", lastRun.id);
-
-      const newTotal = regenRows.reduce((s, r) => s + r.grossPayUSD, 0);
-      await supabase.from("payroll_audit_log").insert({
-        action: "edit",
-        employee_name: "All Employees",
-        details: `Regenerated payroll run for ${lastRun.period_start} – ${lastRun.period_end}. ${regenRows.length} employees. Total: $${newTotal.toFixed(2)}.`,
-        amount: Math.round(newTotal * 100) / 100,
-      });
-
-      await Promise.all(
-        regenRows
-          .filter((r) => r.grossPayUSD > 0)
-          .map((r) =>
-            createNotification({
-              recipientId: r.employee.id,
-              senderId: myProfileId,
-              senderName: "Payroll",
-              body: "🔄 Payslip Updated — View Payslip",
-              linkTo: "/m/dashboard/employee-self-service?tab=payroll",
-            }).catch((err) => console.error("Failed to notify", r.employee.id, err))
-          )
-      );
-
-      await fetchData();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to regenerate payroll");
-    } finally {
-      setRegenerating(false);
     }
   };
 
@@ -807,27 +815,40 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           <div className="space-y-6">
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-slate-400 uppercase tracking-wide">Period</label>
+                <input
+                  type="date"
+                  value={genStart}
+                  max={genEnd || undefined}
+                  onChange={(e) => setGenStart(e.target.value)}
+                  className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                />
+                <span className="text-slate-500 text-sm">to</span>
+                <input
+                  type="date"
+                  value={genEnd}
+                  min={genStart || undefined}
+                  onChange={(e) => setGenEnd(e.target.value)}
+                  className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                />
+              </div>
               <button
                 type="button"
                 onClick={generatePayroll}
-                disabled={generating || payrollRows.length === 0}
+                disabled={generating || payrollRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
+                title={matchesExistingRun ? "A payroll run already exists for these dates — this will recompute and replace it" : undefined}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
               >
-                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />}
-                Generate Payroll
+                {generating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : matchesExistingRun ? (
+                  <RefreshCw className="h-4 w-4" />
+                ) : (
+                  <DollarSign className="h-4 w-4" />
+                )}
+                {matchesExistingRun ? "Regenerate Payroll" : "Generate Payroll"}
               </button>
-              {payrollRuns.length > 0 && (
-                <button
-                  type="button"
-                  onClick={regeneratePayroll}
-                  disabled={regenerating}
-                  title={`Recompute the last run (${payrollRuns[0].period_start} – ${payrollRuns[0].period_end}) using current rates/attendance`}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
-                >
-                  {regenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  Regenerate Last Payroll
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => setShowAuditLog(!showAuditLog)}
