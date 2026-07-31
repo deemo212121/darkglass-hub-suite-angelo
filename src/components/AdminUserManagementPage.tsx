@@ -1,12 +1,14 @@
 import { useMemo, useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, Check, Filter, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, Check, Filter, Search } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 
 /** Readable role text for display — e.g. "BIZOPS_MANAGER" -> "BizOps Manager". Falls back to the raw value for anything not in ROLE_LABELS (legacy free-text roles like "CSR Manager" already read fine as-is). */
 function roleDisplay(role: string | null | undefined): string {
@@ -54,8 +56,13 @@ const LOCATIONS = [
 const USER_TYPES: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
+  { value: "SENIOR_MANAGER", label: "Senior Manager" },
+  { value: "CSR", label: "CSR" },
   { value: "TECHNICIAN", label: "Technician" },
   { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
+  { value: "DISPATCHER", label: "Dispatcher" },
+  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
+  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
   { value: "CLAIMS", label: "Claims" },
   { value: "HR", label: "HR" },
   { value: "IT", label: "IT" },
@@ -67,12 +74,14 @@ const USER_TYPES: { value: string; label: string }[] = [
   { value: "BRANCH_MANAGER", label: "Branch Manager" },
   { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
   { value: "CLAIMS_MANAGER", label: "Claims Manager" },
+  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
   { value: "PARTS_MANAGER", label: "Parts Manager" },
+  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
   { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
   { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Triage User" },
-  { value: "TRIAGE_MANAGER", label: "Triage Manager" },
-];
+  { value: "TRIAGE_USER", label: "Technical Support" },
+  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
+].sort((a, b) => a.label.localeCompare(b.label));
 
 // Sentinel for the "All Locations" entry in Branch Access. Picking this clears
 // every individual selection — the user can see every branch. Stored as-is so
@@ -297,14 +306,24 @@ function RoleMultiSelect({
   }, []);
   const labelByValue = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const o of options) m[o.value] = o.label;
+    for (const o of options) m[normalizeRole(o.value)] = o.label;
     return m;
   }, [options]);
+  // Compare normalized forms, not exact strings — a profile carrying a
+  // legacy free-text role (e.g. "CSR Manager" instead of "CSR_MANAGER")
+  // would otherwise match none of this list's option values, so its
+  // checkbox would never show checked and could never be toggled off,
+  // leaving the primary role stuck on that legacy value forever.
   const toggle = (val: string) => {
-    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+    const norm = normalizeRole(val);
+    onChange(
+      values.some((v) => normalizeRole(v) === norm)
+        ? values.filter((v) => normalizeRole(v) !== norm)
+        : [...values, val]
+    );
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -319,8 +338,8 @@ function RoleMultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
           {options.map((opt) => {
-            const checked = values.includes(opt.value);
-            const isPrimary = values[0] === opt.value;
+            const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
+            const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
               <button
                 key={opt.value}
@@ -455,6 +474,18 @@ function ColumnFilter({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  // Portaled to <body> with `fixed` positioning computed from the trigger's
+  // getBoundingClientRect() — the table wraps in a div with `overflow-x-auto`,
+  // which per the CSS spec forces `overflow-y: auto` too (a non-"visible" X
+  // value can't pair with a "visible" Y value), so an `absolute`-positioned
+  // menu here would get clipped by that same overflow box instead of
+  // floating above the table. That clipping was ALSO why clicks on it did
+  // nothing — the clipped-away portion isn't just invisible, it's outside
+  // the scrollable region and never receives the click at all.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const visible = useMemo(
     () => options.filter((o) => !search || o.toLowerCase().includes(search.toLowerCase())),
     [options, search],
@@ -465,7 +496,16 @@ function ColumnFilter({
   const active = (selected.size > 0 && selected.size < options.length) || selected.has("__none__");
 
   const toggle = (opt: string) => {
-    const base = selected.size === 0 ? new Set(options) : new Set(selected);
+    // Coming from "__none__" (Select All was just unchecked), start a fresh
+    // selection with just this option rather than carrying the sentinel
+    // forward — leaving it in would make every subsequent pick still match
+    // `sel.has("__none__")` in the filter below and hide every row forever,
+    // no matter what got checked afterward.
+    const base = selected.has("__none__")
+      ? new Set<string>()
+      : selected.size === 0
+        ? new Set(options)
+        : new Set(selected);
     if (base.has(opt)) base.delete(opt);
     else base.add(opt);
     onChange(base.size === options.length ? new Set<string>() : base);
@@ -475,31 +515,55 @@ function ColumnFilter({
     else onChange(new Set<string>());
   };
 
+  const openMenu = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, left: rect.left });
+    setOpen(true);
+  };
+
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const el = document.getElementById(`umfilter-${field}`);
-      if (el && !el.contains(e.target as Node)) setOpen(false);
+    // `capture: true` so scrolling the page (which this fixed-position menu
+    // doesn't track) closes it — but that also catches scroll events from
+    // the menu's own internal checkbox list, so ignore those specifically
+    // (same fix as the Daily Activity Report's chart line filter).
+    const closeOnScroll = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open, field]);
+    window.addEventListener("scroll", closeOnScroll, { capture: true, passive: true });
+    const closeOnOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => {
+      window.removeEventListener("scroll", closeOnScroll, { capture: true });
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+    };
+  }, [open]);
 
   return (
-    <span id={`umfilter-${field}`} className="relative inline-flex items-center">
+    <span className="relative inline-flex items-center">
       <button
+        ref={btnRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((o) => !o);
+          open ? setOpen(false) : openMenu();
         }}
         className={`ml-1 inline-grid h-4 w-4 place-items-center rounded ${active ? "text-blue-100" : "text-blue-300/60"} hover:text-white`}
         title={`Filter by ${label}`}
       >
         <Filter className="h-3 w-3" fill={active ? "currentColor" : "none"} />
       </button>
-      {open && (
-        <div className="absolute left-0 top-6 z-50 w-60 rounded-lg border border-white/15 bg-slate-900 shadow-2xl p-2 text-left normal-case">
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          className="fixed z-50 w-60 rounded-lg border border-white/15 bg-slate-900 shadow-2xl p-2 text-left normal-case"
+          style={{ top: pos.top, left: pos.left }}
+        >
           <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
             Filter by {label}
           </div>
@@ -543,7 +607,8 @@ function ColumnFilter({
               <div className="px-1 py-2 text-xs text-slate-500">No matches</div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );
@@ -559,10 +624,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const setColFilter = (field: string, next: Set<string>) =>
     setColFilters((prev) => ({ ...prev, [field]: next }));
+  // Column filters AND together silently — narrowing one column and then a
+  // different one without clearing the first can leave zero rows matching
+  // both at once, which looks like the whole filter system broke when it's
+  // really just an old filter still active on another column. Surface how
+  // many columns are currently narrowed, plus a one-click way to clear them.
+  const activeFilterCount = Object.values(colFilters).filter((sel) => sel && sel.size > 0).length;
+  const clearAllFilters = () => setColFilters({});
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
-  const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUserForm, setNewUserForm] = useState<NewUserFormData>({
@@ -688,7 +760,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // matched against real profiles by display name — see resolveTeamLeadOrManager
   // in src/lib/notifyRouting.ts), so the option value is the display name.
   const managerCandidates = useMemo(() => {
-    const eligible = users.filter((u) => (u.type || "").toUpperCase() === "ADMIN" || (u.type || "").toUpperCase().includes("MANAGER"));
+    const eligible = users.filter((u) => ["ADMIN", "SUPERADMIN"].includes((u.type || "").toUpperCase()) || (u.type || "").toUpperCase().includes("MANAGER"));
     return Array.from(new Set(eligible.map((u) => u.userName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [users]);
 
@@ -828,23 +900,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   return (
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
-        {/* Back Button */}
-        <Link 
-          to="/m/$module" 
-          params={{ module: mod.slug }}
-          className="inline-flex items-center gap-2 text-slate-300 hover:text-white mb-4 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to {mod.label}
-        </Link>
-        
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
-              <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+                <ChevronLeft className="h-4 w-4" />
+                {mod.label}
+              </Link>
+              <div className="min-w-0">
+                <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
+                <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/80 p-1">
@@ -889,6 +955,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 )}
               </div>
             </div>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="flex items-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-blue-500/25"
+                title="Column filters narrow the table by ANDing every active column together — clear them all here."
+              >
+                {activeFilterCount} column filter{activeFilterCount === 1 ? "" : "s"} active — Clear all
+              </button>
+            )}
             <div className="ml-auto w-full max-w-md">
               <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
               <input

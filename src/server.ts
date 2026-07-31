@@ -12,6 +12,7 @@ import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
 import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
 import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
+import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 
 type ServerEntry = {
@@ -154,6 +155,10 @@ export default {
     if (url.pathname === "/api/live-chat-staff") {
       const merged = await resolveServerEnv(env);
       return await handleLiveChatStaffRequest(request, merged);
+    }
+    if (url.pathname === "/api/admin-update-email") {
+      const merged = await resolveServerEnv(env);
+      return await handleAdminUpdateEmailRequest(request, merged);
     }
 
     try {

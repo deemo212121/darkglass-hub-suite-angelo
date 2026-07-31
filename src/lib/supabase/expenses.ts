@@ -19,7 +19,7 @@ export interface ExpenseRow {
   createdBy: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
-  /** Firebase Storage download URL for an attached receipt, if any — see migration 0086. */
+  /** Firebase Storage download URL for an attached receipt, if any — see migration 0104. */
   receiptUrl: string | null;
   /** Full Firebase Storage path for the receipt (needed to delete it if replaced/removed). */
   receiptPath: string | null;

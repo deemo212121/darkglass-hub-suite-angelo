@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
@@ -8,6 +8,7 @@ import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
 import { getProfileForLogin, touchLastLogin } from "./supabase/users";
+import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 
 type AuthState = {
   email: string | null;
@@ -21,7 +22,7 @@ type AuthState = {
   // (unrestricted role or no plan set). Empty array = restricted to nothing.
   allowedLocations: string[] | null;
   // Set by an admin's Reset Password / Reset All Passwords action (see
-  // migration 0085) — __root.tsx redirects to /profile until this clears.
+  // migration 0103) — __root.tsx redirects to /profile until this clears.
   mustChangePassword: boolean;
   /** Flips the in-memory flag off immediately after a successful self-service password change, so the /profile redirect gate stops right away instead of waiting for a re-login. */
   clearMustChangePasswordFlag: () => void;
@@ -107,6 +108,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mustChangePassword, setMustChangePasswordState] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Set by login() right before signing in, consumed by the very next
+  // onAuthStateChanged firing — so only that one Supabase-token exchange
+  // (the actual login page submit) gets recorded to login_events, not the
+  // 45-min background refresh, the tab-focus refresh, or the initial
+  // onAuthStateChanged firing from an already-persisted Firebase session on
+  // page load (none of those are "at the login page").
+  const pendingInteractiveLoginRef = useRef(false);
 
   useEffect(() => {
     // Initialize database on app startup (client-side only)
@@ -158,10 +166,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
             console.log("✅ Firebase user authenticated:", firebaseUser.email);
-            
+
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            await refreshSupabaseSession(firebaseUser);
+            const isInteractiveLogin = pendingInteractiveLoginRef.current;
+            pendingInteractiveLoginRef.current = false;
+            await refreshSupabaseSession(firebaseUser, { recordLogin: isInteractiveLogin });
             startTokenRefresh();
             
             try {
@@ -179,6 +189,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
                 if (!sbProfile.isActive) {
                   console.error("❌ Account is inactive");
+                  await firebaseSignOut();
+                } else if (!sbProfile.companyIsActive) {
+                  console.error("❌ Company is frozen");
                   await firebaseSignOut();
                 } else {
                   await touchLastLogin(firebaseUser.uid);
@@ -229,10 +242,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     companyId: userProfile.companyId,
                   });
                   await updateLastLogin(firebaseUser.uid);
+                  // This account has no Supabase profile yet, but the
+                  // COMPANY itself may already have a login_alias set in
+                  // Supabase (companies is the real source of truth for
+                  // that, Firestore has no equivalent field). Resolve it
+                  // BEFORE setting any state below — landing.tsx's
+                  // company-ID validation effect re-checks whenever
+                  // companyId OR companyLoginAlias changes, but only while
+                  // it's still waiting; if companyId landed first and the
+                  // alias arrived in a later, separate update (as a
+                  // fire-and-forget .then() used to do here), the effect
+                  // would validate once against a still-null alias,
+                  // conclude "no alias, raw Company ID is fine", and stop
+                  // waiting — never re-checking once the real alias showed
+                  // up. Awaiting it here first means companyId and
+                  // companyLoginAlias always land together in one update.
+                  const loginAlias = await getSupabaseCompanyLoginAlias(userProfile.companyId).catch(() => null);
                   setUid(firebaseUser.uid);
                   setEmail(userProfile.email);
                   setCompanyId(userProfile.companyId);
-                  setCompanyLoginAlias(null);
+                  setCompanyLoginAlias(loginAlias);
                   setRole(userProfile.role);
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
@@ -287,6 +316,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
+    pendingInteractiveLoginRef.current = true;
     try {
       console.log("🔐 Attempting Firebase login for:", email);
       const authUser = await firebaseSignIn(email, password);
@@ -300,6 +330,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // State will be updated by onAuthStateChanged listener
     } catch (error: any) {
       console.error("❌ Login failed:", error.message);
+      // Sign-in never went through, so onAuthStateChanged won't fire to
+      // consume this — clear it now or it'd wrongly tag some later,
+      // unrelated auth event (e.g. a background token refresh) as an
+      // interactive login.
+      pendingInteractiveLoginRef.current = false;
       throw error;
     } finally {
       setLoading(false);

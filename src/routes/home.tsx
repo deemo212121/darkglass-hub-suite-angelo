@@ -26,8 +26,10 @@ function Home() {
       return;
     }
     
-    // Redirect SuperAdmin to their dashboard (case-insensitive check)
-    if (role && role.toUpperCase() === "SUPERADMIN") {
+    // Redirect the platform-level SuperSuperAdmin to their console
+    // (case-insensitive check) — the per-company SUPERADMIN role lands on
+    // the normal dashboard below like any other company role.
+    if (role && role.toUpperCase() === "SUPERSUPERADMIN") {
       navigate({ to: "/superadmin", replace: true });
       return;
     }
@@ -41,7 +43,7 @@ function Home() {
   
   if (!ready) return null;
   if (!email) return null;
-  if (role && role.toUpperCase() === "SUPERADMIN") return null;
+  if (role && role.toUpperCase() === "SUPERSUPERADMIN") return null;
   
   return (
     <>

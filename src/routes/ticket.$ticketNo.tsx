@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { ALL_TECHNICIANS, normalizeLocationForRegionMatch } from "@/lib/locations";
+import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone } from "lucide-react";
@@ -15,12 +15,10 @@ import { TruckStockBatchModal, type TruckStockBatchSelection } from "@/component
 import { TicketSidebar } from "@/components/TicketSidebar";
 import { TIME_FRAMES } from "@/lib/timeframes";
 import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns";
-import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
-import { getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import { loadGoogleMapsScript, makeGeocoder, routeGeoapify, metersToMiles } from "@/lib/mapEngine";
+import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
@@ -804,60 +802,6 @@ function computeTAT(created: string | undefined): string {
   const ms = Date.now() - createdDate.getTime();
   const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
   return `${days}d`;
-}
-
-// Haversine straight-line distance in miles between two lat/lng points.
-function milesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const R = 3958.8; // Earth radius in miles
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
-// Resolve the office coordinates for a location: prefer Location Management
-// coordinates, fall back to the static LOCATIONS_DATA lat/lng.
-function getOfficeCoordinates(location: string): { lat: number; lng: number } | null {
-  const fromMgmt = getLocationManagementCoordinates(location);
-  if (fromMgmt) return fromMgmt;
-  // LOCATIONS_DATA stores a few branches (Jackson,MS / Jackson,TN) without
-  // the space canonicalBranchLabel() puts in real ticket.location values —
-  // normalize both sides the same way locationRegion() already does, or
-  // those branches silently never resolve an office and mileage shows "—".
-  const normalized = normalizeLocationForRegionMatch(location).toLowerCase();
-  const match = LOCATIONS_DATA.find((l) => normalizeLocationForRegionMatch(l.location).toLowerCase() === normalized);
-  if (match && match.lat && match.lng) {
-    const lat = parseFloat(match.lat);
-    const lng = parseFloat(match.lng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
-  }
-  return null;
-}
-
-// Electrolux tickets logged under the "Huntsville" location actually
-// dispatch from one of two different real offices depending on which state
-// the customer is in — the branch name alone doesn't disambiguate this.
-// Overrides the normal location-based mileage starting point for just this
-// account + location + state combination; every other account's Huntsville
-// tickets keep using the location's own stored coordinates. Returns a plain
-// address string (not lat/lng) so the Distance Matrix API geocodes it the
-// same way it already does for destinations, instead of us hand-typing
-// coordinates for a calculation that affects mileage reimbursement.
-const ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN: Record<string, string> = {
-  AL: "631 Beacon Pkwy W #106, Birmingham, AL 35209, USA",
-  TN: "163 N Mt Juliet Rd, Mt. Juliet, TN 37122, USA",
-};
-function getElectroluxHuntsvilleMileageOrigin(ticket: { account?: string; location?: string; state?: string }): string | null {
-  const account = String(ticket.account || "").trim().toLowerCase();
-  const location = String(ticket.location || "").trim().toLowerCase();
-  const state = String(ticket.state || "").trim().toUpperCase();
-  if (!account.includes("electrolux") || location !== "huntsville") return null;
-  return ELECTROLUX_HUNTSVILLE_MILEAGE_ORIGIN[state] ?? null;
 }
 
 const DEFAULT_TICKET: TicketData = {
@@ -2050,7 +1994,7 @@ function TicketDetailsPage() {
   useEffect(() => {
     const r = String(currentUserRole || "").toUpperCase();
     const canSeeChecklist = [
-      "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+      "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
       "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
     ].includes(r);
     if (!canSeeChecklist || !authReady) return;
@@ -2341,125 +2285,15 @@ function TicketDetailsPage() {
   }, [partAddressBook, ticket?.location, currentUserEmail]);
 
 
-  // Compute DRIVING miles from the office to this ticket's address using the
-  // Google Distance Matrix API (matches what Google Maps shows). Falls back
-  // through progressively looser destination strings so a slightly-off address
-  // still resolves instead of showing "— mi".
+  // Compute DRIVING miles from the office to this ticket's address (shared
+  // with Need Claim List's bulk version — see computeOfficeDistanceMiles in
+  // mapEngine.ts for the full Google/Leaflet + Electrolux-override logic).
   useEffect(() => {
     if (!ticket || !mapProvider) { setOfficeDistanceMiles(null); return; }
-    const overrideOrigin = getElectroluxHuntsvilleMileageOrigin(ticket);
-    const office = overrideOrigin ? null : getOfficeCoordinates(ticket.location || ticket.city || "");
-    if (!overrideOrigin && !office) { setOfficeDistanceMiles(null); return; }
-
-    // Candidate destination strings, most specific first.
-    const destinationCandidates = [
-      [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
-      [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
-      [ticket.zip, "USA"].filter(Boolean).join(", "),
-      [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
-    ]
-      .map((s) => s.trim())
-      .filter((s) => s && s !== "USA");
-
-    if (destinationCandidates.length === 0) { setOfficeDistanceMiles(null); return; }
-
     let cancelled = false;
-
-    // Leaflet mode: geocode via Geoapify, then get real driving distance via
-    // Geoapify's Routing API (same key) — falls back to straight-line only
-    // if the routing call itself fails.
-    if (mapProvider === "leaflet") {
-      const geocode = makeGeocoder("leaflet");
-      (async () => {
-        let destCoords: { lat: number; lng: number } | null = null;
-        for (const candidate of destinationCandidates) {
-          if (cancelled) return;
-          destCoords = await geocode(candidate);
-          if (destCoords) break;
-        }
-        if (cancelled || !destCoords) { if (!cancelled) setOfficeDistanceMiles(null); return; }
-
-        const originCoords = overrideOrigin ? await geocode(overrideOrigin) : office!;
-        if (cancelled) return;
-        if (!originCoords) { setOfficeDistanceMiles(null); return; }
-
-        const route = await routeGeoapify([originCoords, destCoords], "drive");
-        if (cancelled) return;
-        setOfficeDistanceMiles(route ? metersToMiles(route.totalDistanceMeters) : milesBetween(originCoords, destCoords));
-      })();
-      return () => { cancelled = true; };
-    }
-
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
-
-    const computeDistance = () => {
-      const maps = (window as Window & { google?: any }).google?.maps;
-      if (!maps) return;
-      const service = new maps.DistanceMatrixService();
-      // The Distance Matrix API accepts a plain address string for origins
-      // too (it geocodes it the same way it does destinations), so the
-      // Electrolux/Huntsville override just passes its address straight
-      // through — no need to resolve it to lat/lng ourselves.
-      const origin = overrideOrigin ?? new maps.LatLng(office!.lat, office!.lng);
-
-      const tryCandidate = (idx: number) => {
-        if (cancelled) return;
-        if (idx >= destinationCandidates.length) {
-          // Last resort: straight-line distance via geocoding the best string.
-          const geocoder = new maps.Geocoder();
-          geocoder.geocode({ address: destinationCandidates[0] }, (results: any, status: string) => {
-            if (cancelled) return;
-            if (status !== "OK" || !results?.[0]) { setOfficeDistanceMiles(null); return; }
-            const pos = results[0].geometry.location;
-            const destCoords = { lat: pos.lat(), lng: pos.lng() };
-            if (!overrideOrigin) {
-              setOfficeDistanceMiles(milesBetween(office!, destCoords));
-              return;
-            }
-            // Origin is an address string here — geocode it too so the
-            // Haversine fallback has coordinates to work with.
-            geocoder.geocode({ address: overrideOrigin }, (originResults: any, originStatus: string) => {
-              if (cancelled) return;
-              if (originStatus === "OK" && originResults?.[0]) {
-                const originPos = originResults[0].geometry.location;
-                setOfficeDistanceMiles(milesBetween({ lat: originPos.lat(), lng: originPos.lng() }, destCoords));
-              } else {
-                setOfficeDistanceMiles(null);
-              }
-            });
-          });
-          return;
-        }
-
-        service.getDistanceMatrix(
-          {
-            origins: [origin],
-            destinations: [destinationCandidates[idx]],
-            travelMode: maps.TravelMode.DRIVING,
-            unitSystem: maps.UnitSystem.IMPERIAL,
-          },
-          (response: any, status: string) => {
-            if (cancelled) return;
-            const element = response?.rows?.[0]?.elements?.[0];
-            if (status === "OK" && element?.status === "OK" && element.distance?.value != null) {
-              // distance.value is in meters; convert to miles.
-              setOfficeDistanceMiles(element.distance.value / 1609.344);
-            } else {
-              tryCandidate(idx + 1);
-            }
-          },
-        );
-      };
-
-      tryCandidate(0);
-    };
-
-    if (apiKey) {
-      loadGoogleMapsScript()
-        .then(() => { if (!cancelled) computeDistance(); })
-        .catch(() => { if (!cancelled) setOfficeDistanceMiles(null); });
-    }
-
+    computeOfficeDistanceMiles(ticket, mapProvider).then((miles) => {
+      if (!cancelled) setOfficeDistanceMiles(miles);
+    });
     return () => { cancelled = true; };
   }, [ticket?.account, ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip, mapProvider]);
 
@@ -4223,8 +4057,11 @@ function TicketDetailsPage() {
       "CLAIMS_MANAGER",
       "PARTS",
       "PARTS_MANAGER",
+      "PARTS_TEAM_LEADER",
       "MANAGER",
+      "SENIOR_MANAGER",
       "ADMIN",
+      "SUPERADMIN",
       "BRANCH_MANAGER",
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
@@ -4352,6 +4189,7 @@ function TicketDetailsPage() {
       "CLAIMS",
       "CLAIMS_MANAGER",
       "MANAGER",
+      "SENIOR_MANAGER",
       "ADMIN",
       "SUPERADMIN",
       "BRANCH_MANAGER",
@@ -6617,7 +6455,7 @@ function TicketDetailsPage() {
               {(() => {
                 const r = String(currentUserRole || "").toUpperCase();
                 const canSeeChecklist = [
-                  "SUPERADMIN","ADMIN","MANAGER","CLAIMS","CLAIMS_MANAGER",
+                  "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
                   "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
                 ].includes(r);
                 if (!canSeeChecklist || !ticket) return null;

@@ -79,7 +79,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 /**
  * Redirects to /profile (where the existing self-service password form
  * lives) whenever an admin has flagged this account via Reset Password /
- * Reset All Passwords (see migration 0085). The user already logged in
+ * Reset All Passwords (see migration 0103). The user already logged in
  * with their existing password — this only blocks reaching the rest of
  * the dashboards until they actually change it, which clears the flag
  * (see profile.tsx's changePassword). Skipped on hideChrome pages (no
@@ -109,6 +109,27 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// SUPERSUPERADMIN (the platform-level role) may only ever be on /superadmin
+// or its per-company detail page — home.tsx/landing.tsx already redirect it
+// there right after login, but nothing stopped direct navigation elsewhere
+// afterward. This is the backstop for every other route (rendered
+// unconditionally, not gated by hideChrome, so it still runs on /landing,
+// /mobile, etc).
+function SuperSuperAdminGuard() {
+  const { ready, role } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!ready) return;
+    if (role?.toUpperCase() !== "SUPERSUPERADMIN") return;
+    const allowed = location.pathname === "/superadmin" || location.pathname.startsWith("/superadmin/company/");
+    if (!allowed) navigate({ to: "/superadmin", replace: true });
+  }, [ready, role, location.pathname, navigate]);
+
+  return null;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const location = useLocation();
@@ -128,6 +149,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
+          <SuperSuperAdminGuard />
           <SystemDataInitializer />
           <MustChangePasswordGate hideChrome={hideChrome} />
           {!hideChrome && <AnnouncementBanner />}

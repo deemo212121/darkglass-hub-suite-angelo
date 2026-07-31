@@ -645,7 +645,7 @@ async function mirrorSubmissionFiles(
 // deliberately dependency-free so it stays portable across whatever
 // runtime ends up building it (Cloudflare Worker today, previously a
 // Vercel nodejs20.x function).
-const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 
 /**
  * Look up HR-tier recipients from Supabase `profiles` — the app's actual

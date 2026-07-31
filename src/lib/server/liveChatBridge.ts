@@ -111,7 +111,7 @@ function scheduleDayLabel(day: string, date: string | undefined): string {
 }
 
 // Same roles that get "wide" or "queue" visibility into Live Chat (see
-// migration 0080's is_csr_wide_visibility() and DASHBOARD_ROLE_GATES in
+// migration 0093's is_csr_wide_visibility() and DASHBOARD_ROLE_GATES in
 // dashboardAccess.ts) — anyone who could pick this chat up gets pinged
 // that it exists.
 const LIVE_CHAT_NOTIFY_ROLES = new Set([
@@ -201,7 +201,7 @@ async function sbFetch(env: EnvBag, path: string, init: RequestInit = {}): Promi
  * The landing page is shared across every tenant, so a not-yet-logged-in
  * visitor has no company context at all — every chat is stamped with
  * whichever company row is oldest, the one stable "primary" company this
- * public site represents. See migration 0078's header comment.
+ * public site represents. See migration 0091's header comment.
  */
 async function resolvePrimaryCompanyId(env: EnvBag): Promise<string | null> {
   const res = await sbFetch(env, "companies?select=id&order=created_at.asc&limit=1");
@@ -262,7 +262,7 @@ export async function handleLiveChatRequest(request: Request, env?: Record<strin
 
       // kind=neq.internal_note — internal notes are staff-only and must
       // never reach the visitor widget, even though they're stored in the
-      // same table (see migration 0084).
+      // same table (see migration 0097).
       const messagesRes = await sbFetch(
         envBag,
         `live_chat_messages?select=id,sender,sender_name,body,kind,request_data,attachment_url,attachment_name,attachment_mime_type,delivered_at,read_at,created_at` +

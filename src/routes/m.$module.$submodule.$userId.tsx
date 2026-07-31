@@ -8,8 +8,10 @@ import { getModule, getSubModule } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
+import { normalizeRole } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 
 export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   ssr: false,
@@ -29,8 +31,10 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
 const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "MANAGER", label: "Manager" },
+  { value: "SENIOR_MANAGER", label: "Senior Manager" },
   { value: "CSR", label: "CSR" },
   { value: "TECHNICIAN", label: "Technician" },
+  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
   { value: "DISPATCHER", label: "Dispatcher" },
   { value: "CLAIMS", label: "Claims" },
   { value: "HR", label: "HR" },
@@ -43,12 +47,16 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "BRANCH_MANAGER", label: "Branch Manager" },
   { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
   { value: "CLAIMS_MANAGER", label: "Claims Manager" },
+  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
   { value: "PARTS_MANAGER", label: "Parts Manager" },
+  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
   { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
   { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Triage User" },
-  { value: "TRIAGE_MANAGER", label: "Triage Manager" },
-];
+  { value: "TRIAGE_USER", label: "Technical Support" },
+  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
+  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
+  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
+].sort((a, b) => a.label.localeCompare(b.label));
 
 /**
  * Multi-select dropdown for User Type. Mirrors the look + behavior of the
@@ -79,14 +87,26 @@ function RoleMultiSelect({
   }, []);
   const labelByValue = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const o of options) m[o.value] = o.label;
+    for (const o of options) m[normalizeRole(o.value)] = o.label;
     return m;
   }, [options]);
+  // Some profiles still carry a legacy free-text role (e.g. "CSR Manager"
+  // instead of the canonical "CSR_MANAGER") — compared by exact string, that
+  // value would match none of this list's option values, so its checkbox
+  // never showed checked and it could never be toggled off, leaving the
+  // primary role stuck on that legacy value forever. Comparing normalized
+  // forms instead means the matching canonical option shows checked (and
+  // can be unchecked) no matter which form is actually stored.
   const toggle = (val: string) => {
-    onChange(values.includes(val) ? values.filter((v) => v !== val) : [...values, val]);
+    const norm = normalizeRole(val);
+    onChange(
+      values.some((v) => normalizeRole(v) === norm)
+        ? values.filter((v) => normalizeRole(v) !== norm)
+        : [...values, val]
+    );
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[v] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -101,8 +121,8 @@ function RoleMultiSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
           {options.map((opt) => {
-            const checked = values.includes(opt.value);
-            const isPrimary = values[0] === opt.value;
+            const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
+            const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
               <button
                 key={opt.value}
@@ -140,14 +160,23 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
-  const { ready } = useAuth();
+  const { ready, role: viewerRole } = useAuth();
   const navigate = useNavigate();
+  // Only Admin/SuperAdmin may edit a user's email — it's the actual Firebase
+  // Auth login credential (landing.tsx's username-login path resolves a
+  // username to profiles.email before calling Firebase), not just contact
+  // info, so changing it has to go through /api/admin-update-email (see
+  // adminUpdateEmailBridge.ts) rather than a plain Supabase field edit.
+  const canEditEmail = viewerRole === "ADMIN" || viewerRole === "SUPERADMIN";
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
+  // The email as loaded from the server — compared against form.email in
+  // handleSave to know whether the Firebase Auth update call is needed at all.
+  const [originalEmail, setOriginalEmail] = useState<string>("");
   const [seqId, setSeqId] = useState<string>("");
   const [managerCandidates, setManagerCandidates] = useState<string[]>([]);
   const [activeTab, setActiveTab] = usePersistedTab<(typeof USER_TABS)[number]>(
@@ -197,6 +226,7 @@ function UserDetailsPage() {
           return;
         }
         setProfileId(p.id);
+        setOriginalEmail(p.email || "");
         try {
           const all = await getCompanyUsers();
           const idx = all.findIndex((u) => u.id === p.id);
@@ -205,7 +235,7 @@ function UserDetailsPage() {
           // admin role, not a hardcoded name list. Stored as free-text
           // (manager_name matched against real profiles by display name —
           // see resolveTeamLeadOrManager in src/lib/notifyRouting.ts).
-          const eligible = all.filter((u) => (u.role || "").toUpperCase() === "ADMIN" || (u.role || "").toUpperCase().includes("MANAGER"));
+          const eligible = all.filter((u) => ["ADMIN", "SUPERADMIN"].includes((u.role || "").toUpperCase()) || (u.role || "").toUpperCase().includes("MANAGER"));
           setManagerCandidates(
             Array.from(new Set(eligible.map((u) => u.display_name || u.email).filter(Boolean))).sort((a, b) => a.localeCompare(b))
           );
@@ -304,9 +334,28 @@ function UserDetailsPage() {
       // instead of just fixing today's snapshot.
       const branchAccess = (accessibleLocations(workPlan) ?? []).join("|");
       const newUsername = form.username.trim();
+
+      // Email changed — update the ACTUAL Firebase Auth credential first via
+      // the admin-only server endpoint. Only once that succeeds do we fold
+      // the new address into the Supabase update below, so profiles.email
+      // and Firebase Auth never end up desynced from a partial failure.
+      const emailChanged = canEditEmail && form.email.trim() !== originalEmail.trim();
+      if (emailChanged) {
+        const idToken = await firebaseAuth?.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+        const res = await fetch("/api/admin-update-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, targetProfileId: profileId, newEmail: form.email.trim() }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "Failed to update login email");
+      }
+
       await updateCompanyUser(profileId, {
         username: newUsername,
         displayName: form.displayName,
+        ...(emailChanged ? { email: form.email.trim() } : {}),
         role: primaryRole,
         extraRoles,
         phoneNumber: form.phoneNumber,
@@ -325,6 +374,7 @@ function UserDetailsPage() {
         workingHours: form.workingHours.trim() ? Number(form.workingHours) : null,
         mealMinutes: form.mealMinutes.trim() ? Number(form.mealMinutes) : null,
       });
+      if (emailChanged) setOriginalEmail(form.email.trim());
       // Persist Employee Information (powers Work Map house pins).
       try {
         const { saveProfileEmployeeInfo } = await import("@/lib/supabase/users");
@@ -478,8 +528,22 @@ function UserDetailsPage() {
                         </select>
                       </label>
                       <label className="space-y-1.5 text-sm">
-                        <span className={labelCls}>Email</span>
-                        <input value={form.email} disabled className={readonlyCls} />
+                        <span className={labelCls}>
+                          Email
+                          {canEditEmail && (
+                            <span className="normal-case text-[10px] text-slate-500"> (this is the login credential — changing it updates their sign-in email too)</span>
+                          )}
+                        </span>
+                        {canEditEmail ? (
+                          <input
+                            type="email"
+                            value={form.email}
+                            onChange={(e) => update("email", e.target.value)}
+                            className={inputCls}
+                          />
+                        ) : (
+                          <input value={form.email} disabled className={readonlyCls} />
+                        )}
                       </label>
 
                       <label className="space-y-1.5 text-sm">

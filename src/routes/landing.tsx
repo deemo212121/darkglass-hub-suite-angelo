@@ -48,8 +48,9 @@ function Landing() {
         return;
       }
       
-      // SUPERADMIN goes to superadmin dashboard
-      if (role.toUpperCase() === "SUPERADMIN") {
+      // Only the platform-level SUPERSUPERADMIN goes to the superadmin
+      // console — the per-company SUPERADMIN role goes to /home like ADMIN.
+      if (role.toUpperCase() === "SUPERSUPERADMIN") {
         navigate({ to: "/superadmin", replace: true });
       } else {
         // All other roles go to home
@@ -66,17 +67,28 @@ function Landing() {
     // Wait until the auth listener has loaded a profile (email + companyId set).
     if (!ready || !email) return;
     // companyId may be "" if the company join returned nothing — treat empty as
-    // "can't verify" and allow through (don't log a valid user out). The typed
-    // value can match either the canonical company ID or its login alias (see
-    // migration 0066) — both are accepted.
+    // "can't verify" and allow through (don't log a valid user out). Once a
+    // company has a login alias set (see migration 0066, 0085), that's the
+    // only value accepted here — the canonical company ID only still works
+    // for companies with no alias configured.
     const typed = pendingCompany.toUpperCase();
-    const matchesCanonical = companyId ? companyId.toUpperCase() === typed : false;
-    const matchesAlias = companyLoginAlias ? companyLoginAlias.toUpperCase() === typed : false;
-    if (companyId && !matchesCanonical && !matchesAlias) {
+    const matches = companyLoginAlias
+      ? companyLoginAlias.toUpperCase() === typed
+      : companyId
+        ? companyId.toUpperCase() === typed
+        : false;
+    if (companyId && !matches) {
       setErr("Invalid company ID for this account.");
-      setPendingCompany(null);
       setSubmitting(false);
-      void logout();
+      // Keep pendingCompany set until sign-out actually completes — the
+      // redirect effect below only bails out while pendingCompany is
+      // truthy, and Firebase's signOut + the auth listener clearing
+      // email/role happen asynchronously. Clearing it immediately (as
+      // this used to) let the redirect effect see the still-valid
+      // email/role from the old session for one render and navigate to
+      // /home before sign-out landed - i.e. rejecting a company ID
+      // silently still logged the user in.
+      logout().finally(() => setPendingCompany(null));
       return;
     }
     // Validated (or unverifiable) — let the redirect effect proceed.
@@ -108,15 +120,23 @@ function Landing() {
       
       if (!isEmail) {
         // It's a username - look up the email from Supabase first.
-        const { getUserByUsername } = await import("@/lib/supabase/users");
+        const { getUserByUsername, isValidCompanyCode } = await import("@/lib/supabase/users");
         const user = await getUserByUsername(form.emailOrUsername, form.company);
-        
+
         if (!user) {
-          setErr(`User "${form.emailOrUsername}" not found in company ${form.company}`);
+          // Distinguish "wrong company code" from "wrong username" instead
+          // of always blaming the username — a common case is typing a
+          // company's old legacy code after it's switched to alias-only.
+          const companyOk = await isValidCompanyCode(form.company);
+          setErr(
+            companyOk
+              ? `User "${form.emailOrUsername}" not found in company ${form.company}`
+              : `Company ID "${form.company}" is incorrect.`
+          );
           setSubmitting(false);
           return;
         }
-        
+
         userEmail = user.email;
       }
       

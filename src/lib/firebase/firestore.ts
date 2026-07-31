@@ -16,7 +16,7 @@ export interface UserProfile {
   uid: string;
   email: string;
   companyId: string;
-  role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR" | "TECHNICIAN" | "DISPATCHER" | "HR" | "IT" | "PARTS" | "FINANCE";
+  role: "SUPERSUPERADMIN" | "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR" | "TECHNICIAN" | "DISPATCHER" | "HR" | "IT" | "PARTS" | "FINANCE";
   displayName: string;
   supabaseUserId: string;
   isActive: boolean;
@@ -126,8 +126,10 @@ export async function hasCompanyAccess(
     return false;
   }
 
-  // SuperAdmin has access to all companies
-  if (profile.role === "SUPERADMIN") {
+  // Only the platform-level SuperSuperAdmin has access to all companies —
+  // the per-company SUPERADMIN role must fall through to the same-company
+  // check below like any other company role.
+  if (profile.role === "SUPERSUPERADMIN") {
     return true;
   }
 

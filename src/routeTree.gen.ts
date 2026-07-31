@@ -35,6 +35,7 @@ import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$emplo
 import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
 import { Route as ApplySlugRouteImport } from './routes/apply.$slug'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
+import { Route as SuperadminCompanyCompanyIdRouteImport } from './routes/superadmin.company.$companyId'
 import { Route as MModuleSubmoduleRouteImport } from './routes/m.$module.$submodule'
 import { Route as MModuleSubmoduleUserIdRouteImport } from './routes/m.$module.$submodule.$userId'
 
@@ -168,6 +169,12 @@ const AdminUsersRoute = AdminUsersRouteImport.update({
   path: '/admin/users',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SuperadminCompanyCompanyIdRoute =
+  SuperadminCompanyCompanyIdRouteImport.update({
+    id: '/company/$companyId',
+    path: '/company/$companyId',
+    getParentRoute: () => SuperadminRoute,
+  } as any)
 const MModuleSubmoduleRoute = MModuleSubmoduleRouteImport.update({
   id: '/$submodule',
   path: '/$submodule',
@@ -191,7 +198,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
-  '/superadmin': typeof SuperadminRoute
+  '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
@@ -207,6 +214,7 @@ export interface FileRoutesByFullPath {
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/superadmin/company/$companyId': typeof SuperadminCompanyCompanyIdRoute
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRoutesByTo {
@@ -221,7 +229,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
-  '/superadmin': typeof SuperadminRoute
+  '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
@@ -237,6 +245,7 @@ export interface FileRoutesByTo {
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/superadmin/company/$companyId': typeof SuperadminCompanyCompanyIdRoute
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRoutesById {
@@ -252,7 +261,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/servicepower-test': typeof ServicepowerTestRoute
   '/settings': typeof SettingsRoute
-  '/superadmin': typeof SuperadminRoute
+  '/superadmin': typeof SuperadminRouteWithChildren
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
@@ -268,6 +277,7 @@ export interface FileRoutesById {
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
+  '/superadmin/company/$companyId': typeof SuperadminCompanyCompanyIdRoute
   '/m/$module/$submodule/$userId': typeof MModuleSubmoduleUserIdRoute
 }
 export interface FileRouteTypes {
@@ -300,6 +310,7 @@ export interface FileRouteTypes {
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
+    | '/superadmin/company/$companyId'
     | '/m/$module/$submodule/$userId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -330,6 +341,7 @@ export interface FileRouteTypes {
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
+    | '/superadmin/company/$companyId'
     | '/m/$module/$submodule/$userId'
   id:
     | '__root__'
@@ -360,6 +372,7 @@ export interface FileRouteTypes {
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
+    | '/superadmin/company/$companyId'
     | '/m/$module/$submodule/$userId'
   fileRoutesById: FileRoutesById
 }
@@ -375,7 +388,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   ServicepowerTestRoute: typeof ServicepowerTestRoute
   SettingsRoute: typeof SettingsRoute
-  SuperadminRoute: typeof SuperadminRoute
+  SuperadminRoute: typeof SuperadminRouteWithChildren
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
   ApplySlugRoute: typeof ApplySlugRoute
@@ -576,6 +589,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/superadmin/company/$companyId': {
+      id: '/superadmin/company/$companyId'
+      path: '/company/$companyId'
+      fullPath: '/superadmin/company/$companyId'
+      preLoaderRoute: typeof SuperadminCompanyCompanyIdRouteImport
+      parentRoute: typeof SuperadminRoute
+    }
     '/m/$module/$submodule': {
       id: '/m/$module/$submodule'
       path: '/$submodule'
@@ -592,6 +612,18 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface SuperadminRouteChildren {
+  SuperadminCompanyCompanyIdRoute: typeof SuperadminCompanyCompanyIdRoute
+}
+
+const SuperadminRouteChildren: SuperadminRouteChildren = {
+  SuperadminCompanyCompanyIdRoute: SuperadminCompanyCompanyIdRoute,
+}
+
+const SuperadminRouteWithChildren = SuperadminRoute._addFileChildren(
+  SuperadminRouteChildren,
+)
 
 interface MModuleSubmoduleRouteChildren {
   MModuleSubmoduleUserIdRoute: typeof MModuleSubmoduleUserIdRoute
@@ -627,7 +659,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   ServicepowerTestRoute: ServicepowerTestRoute,
   SettingsRoute: SettingsRoute,
-  SuperadminRoute: SuperadminRoute,
+  SuperadminRoute: SuperadminRouteWithChildren,
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
   ApplySlugRoute: ApplySlugRoute,

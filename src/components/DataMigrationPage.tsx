@@ -189,16 +189,15 @@ export function DataMigrationPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
   return (
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1500px] mx-auto px-6">
-        <Link
-          to="/m/$module"
-          params={{ module: mod.slug }}
-          className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-white/70 hover:text-white transition-colors"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back to Admin
-        </Link>
-        <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md mb-6">
-          <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
-          <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
+        <div className="mb-6 flex items-center gap-3 text-white">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+            <ChevronLeft className="h-4 w-4" />
+            {mod.label}
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{sub.title}</h1>
+            <p className="mt-1 text-sm text-slate-300">{sub.description}</p>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ServicePowerMigrationCard />

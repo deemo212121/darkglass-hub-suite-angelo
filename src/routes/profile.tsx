@@ -14,6 +14,7 @@ const SCHEDULE_EDIT_ROLES = new Set([
   "ADMIN",
   "HR",
   "MANAGER",
+  "SENIOR_MANAGER",
   "BRANCH_MANAGER",
   "SENIOR_BRANCH_MANAGER",
   "CSR_MANAGER",
@@ -237,7 +238,7 @@ function ProfilePage() {
       setSaved("Password updated.");
       setTimeout(() => setSaved(""), 3000);
       // Clear an admin-triggered "must change password" flag, if set (see
-      // migration 0085) — both server-side and in-memory, so the /profile
+      // migration 0103) — both server-side and in-memory, so the /profile
       // redirect gate in __root.tsx stops immediately.
       if (uid) {
         clearMustChangePasswordFlag();

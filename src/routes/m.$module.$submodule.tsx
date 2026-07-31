@@ -52,6 +52,7 @@ import { PoStatusPage } from "@/components/PoStatusPage";
 import { ReturnPickupPage } from "@/components/ReturnPickupPage";
 import { RepairStatusesPage } from "@/components/RepairStatusesPage";
 import { DataMigrationPage } from "@/components/DataMigrationPage";
+import { LoginSecurityPage } from "@/components/LoginSecurityPage";
 // Richer parts components pulled from the upstream usapp repo. Where they
 // overlap with the existing *Page wrappers above we prefer the upstream
 // component because it has the full UI; the wrappers remain available as
@@ -70,7 +71,8 @@ import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
-import { isSubmoduleAllowed } from "@/lib/roleLabels";
+import { isSubmoduleAllowed, isCompanySuperAdminRole } from "@/lib/roleLabels";
+import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 
 // Roles allowed into the admin module overall, and into User Management
@@ -159,7 +161,10 @@ function SubModule() {
   const roleGrantsQuick = !dashboardAllowedRoles || hasDashboardAccess(dashboardAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
-  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick;
+  // company-settings is a RESTRICTION relative to the general admin-module
+  // gate (plain ADMIN must NOT get in, only the per-company SUPERADMIN role)
+  // so it always needs extraRoles resolved, not just when the quick check fails.
+  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || sub.custom === "company-settings";
   const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
   useEffect(() => {
     if (!needsExtraRoles || !ready || !uid) return;
@@ -252,6 +257,36 @@ function SubModule() {
               <h1 className="text-2xl font-bold">Access restricted</h1>
               <p className="mt-2 text-sm text-slate-300">
                 User management is only available to HR, Manager, Admin, and SuperAdmin users.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">
+                Current sign-in: {email}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Your role: {role || "No role assigned"}
+              </p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
+  // Company Settings is narrower than the general admin-module gate above —
+  // only the per-company SUPERADMIN role (or the platform SUPERSUPERADMIN,
+  // as a superset) gets in, NOT a plain ADMIN.
+  const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
+
+  if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-4xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold">Access restricted</h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Company Settings is only available to this company's SuperAdmin.
               </p>
               <p className="mt-2 text-sm text-slate-400">
                 Current sign-in: {email}
@@ -449,9 +484,13 @@ function SubModule() {
         : sub.custom === "return-pickup"
         ? <ReturnPickupPage />
         : sub.custom === "repair-statuses"
-        ? <RepairStatusesPage />
+        ? <RepairStatusesPage mod={mod} />
         : (sub as any).custom === "data-migration"
         ? <DataMigrationPage mod={mod} sub={sub} />
+        : (sub as any).custom === "login-security"
+        ? <LoginSecurityPage mod={mod} sub={sub} />
+        : (sub as any).custom === "company-settings"
+        ? <CompanySettingsPage mod={mod} sub={sub} />
         : (sub as any).custom === "parts-dashboard"
         ? <PartsDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "claims-dashboard"

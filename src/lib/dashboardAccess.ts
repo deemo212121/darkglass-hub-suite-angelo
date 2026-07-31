@@ -9,8 +9,8 @@ import { normalizeRole, ATTENDANCE_MANAGER_TIER_ROLES_ARRAY } from "./roleLabels
  * admin-module gate in m.$module.$submodule.tsx.
  */
 export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
-  "daily-activity": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_MANAGER", "HR", "MANAGER"],
-  "overall-status": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "MANAGER"],
+  "daily-activity": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_MANAGER", "HR", "MANAGER", "SENIOR_MANAGER"],
+  "overall-status": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "MANAGER", "SENIOR_MANAGER"],
   "accounting-dashboard": ["ADMIN", "FINANCE"],
   // Manager-tier roles (see ATTENDANCE_MANAGER_TIER_ROLES_ARRAY) are scoped to
   // their own direct reports here (AttendanceMonitoringPage.tsx's

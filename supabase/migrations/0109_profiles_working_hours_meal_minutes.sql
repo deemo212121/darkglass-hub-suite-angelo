@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0091 — Explicit Working Hours / Meal Time override on profiles
+-- 0109 — Explicit Working Hours / Meal Time override on profiles
 --
 -- Meal eligibility ("6 hours or less of scheduled shift has no meal
 -- break") has always been computed by subtracting Time In Required from
@@ -15,7 +15,7 @@
 -- (not currently enforced anywhere, just stored/shown — see
 -- AdminUserManagementPage.tsx's General Information tab).
 --
--- Run once in the Supabase SQL Editor, after 0090.
+-- Run once in the Supabase SQL Editor, after 0108.
 -- =====================================================================
 
 alter table profiles add column if not exists working_hours numeric;

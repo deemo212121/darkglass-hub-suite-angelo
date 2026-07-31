@@ -102,7 +102,7 @@ interface NotifyProfileRow {
  * called with useAuth()'s uid). Resolves the creator's real Firebase uid,
  * plus every other active user carrying the HR role — primary or
  * extra_roles, same definition used everywhere else in the app — for the
- * opt-in "notify HR" broadcast (see Notifications Settings, migration 0077),
+ * opt-in "notify HR" broadcast (see Notifications Settings, migration 0090),
  * in one query.
  */
 async function fetchHrRoleAndCreatorFirebaseUids(
@@ -241,7 +241,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
 
       if (creatorFirebaseUid) await writeSignableDocNotification(envBag, accessToken, creatorFirebaseUid, doc.id, notifyFields);
 
-      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       if (notifyHrEnabled && hrFirebaseUids.length > 0) {
         await Promise.all(
           hrFirebaseUids.map((uid) =>

@@ -75,7 +75,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         setLoading(true);
         setError(null);
         const [empRes, salRes, runsRes, lineRes] = await Promise.all([
-          supabase.from("profiles").select("id,display_name,username,role,assigned_branch").neq("role", "SUPERADMIN"),
+          supabase.from("profiles").select("id,display_name,username,role,assigned_branch").neq("role", "SUPERSUPERADMIN"),
           supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
           supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
           supabase.from("payroll_line_items").select("payroll_run_id,profile_id,gross_pay,currency"),

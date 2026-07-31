@@ -1,5 +1,5 @@
 /**
- * Staff side of the public "quick live chat" widget (see migration 0078
+ * Staff side of the public "quick live chat" widget (see migration 0091
  * and src/components/LiveChatWidget.tsx / LiveChatSupportPage.tsx).
  *
  * Unlike the visitor side (which has no Supabase session and goes through
@@ -27,7 +27,7 @@ export interface LiveChatSessionRow {
   escalated: boolean;
   transferred_from: string | null;
   transferred_from_name: string | null;
-  // Merged in from live_chat_inbox_previews() (migration 0083) — not real
+  // Merged in from live_chat_inbox_previews() (migration 0096) — not real
   // columns on the table, just derived per-session summary data for the
   // conversation list.
   unreadCount: number;
@@ -159,7 +159,7 @@ export async function closeLiveChatSession(sessionId: string): Promise<void> {
 
 /**
  * Claims a chat so the rest of the queue sees it's being handled — race-safe
- * by construction (see migration 0079): the update only matches a row that's
+ * by construction (see migration 0092): the update only matches a row that's
  * still unassigned, so if two staff click "Assist" on the same chat at
  * nearly the same moment, only the first actually claims it. `claimed:
  * false` means someone else beat the caller to it; the caller should refetch
@@ -308,7 +308,7 @@ export interface LiveChatSavedReplyRow {
   createdAt: string;
 }
 
-/** Company-wide canned replies (see migration 0088) — any CSR can create, use, edit, or delete any of them; not personal to whoever made it. */
+/** Company-wide canned replies (see migration 0106) — any CSR can create, use, edit, or delete any of them; not personal to whoever made it. */
 export async function getSavedReplies(): Promise<LiveChatSavedReplyRow[]> {
   const { data, error } = await supabase
     .from("live_chat_saved_replies")

@@ -14,6 +14,17 @@ import {
 } from "@/lib/supabase/timecards";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+
+/** Human label for each pto_type, matching the labels used in EmployeeSelfServicePage. */
+const PTO_TYPE_LABEL: Record<PtoRequestRow["ptoType"], string> = {
+  vacation: "Vacation",
+  sick: "Sick",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid",
+  bereavement: "Bereavement",
+};
 
 interface TimeEntry {
   checkIn: string;
@@ -58,6 +69,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [entries, setEntries] = useState<Entries>({});
+  const [myApprovedPto, setMyApprovedPto] = useState<PtoRequestRow[]>([]);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [requiredCheckIn, setRequiredCheckIn] = useState("");
   const [requiredCheckOut, setRequiredCheckOut] = useState("");
@@ -84,6 +96,24 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       .catch((err) => console.error("Failed to resolve profile:", err));
     return () => { cancelled = true; };
   }, [ready, uid]);
+
+  // Approved (Manager + HR) PTO requests for this profile — once loaded, any
+  // date falling inside one replaces that cell's check-in/out punches with a
+  // "PTO Approved" marker instead. Fetched once (not re-fetched per month,
+  // same as EmployeeSelfServicePage's myPtoRequests) since it's a small,
+  // company-scoped list and the calendar re-derives which requests are
+  // visible per month from the dates themselves.
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getCompanyPtoRequests()
+      .then((all) => {
+        if (cancelled) return;
+        setMyApprovedPto(all.filter((r) => r.profileId === profileId && r.status === "approved"));
+      })
+      .catch((err) => console.error("Failed to load PTO requests:", err));
+    return () => { cancelled = true; };
+  }, [profileId]);
 
   // Load the visible month's entries from Supabase.
   useEffect(() => {
@@ -128,6 +158,11 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       String(date.getDate()).padStart(2, "0")
     );
   };
+
+  // Approved PTO request (if any) covering this calendar date. Plain string
+  // comparison is safe since both sides are "YYYY-MM-DD".
+  const ptoForDate = (dateKey: string): PtoRequestRow | undefined =>
+    myApprovedPto.find((r) => dateKey >= r.startDate && dateKey <= r.endDate);
 
   // Includes seconds so payroll can compute hours (and therefore pay) to
   // sub-minute precision instead of rounding every punch to the minute.
@@ -423,6 +458,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
                         const dateKey = toKey(day);
                         const entry = entries[dateKey];
+                        const pto = ptoForDate(dateKey);
                         const isToday = day.toDateString() === today.toDateString();
                         const isOtherMonth = day.getMonth() !== currentMonth;
                         const hrs = entry ? calcHours(entry) : 0;
@@ -436,13 +472,27 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                                 ? "opacity-20 border-white/5"
                                 : isToday
                                   ? "border-blue-500 bg-blue-500/5"
-                                  : entry
-                                    ? "border-green-500/30 bg-green-500/5"
-                                    : "border-white/10 hover:bg-white/5"
+                                  : pto
+                                    ? "border-purple-500/30 bg-purple-500/5"
+                                    : entry
+                                      ? "border-green-500/30 bg-green-500/5"
+                                      : "border-white/10 hover:bg-white/5"
                             }`}
                           >
                             <div className="font-semibold text-white text-xs mb-0.5">{day.getDate()}</div>
-                            {entry && !isOtherMonth && (
+                            {pto && !isOtherMonth ? (
+                              // Approved (Manager + HR) PTO covers this date — show that
+                              // instead of check-in/out punches; there won't be any real
+                              // clock activity on a day the employee was excused from.
+                              <div className="text-xs space-y-0.5">
+                                <div className="bg-purple-500/40 text-purple-100 px-1 py-0.5 rounded text-xs font-semibold line-clamp-1">
+                                  PTO Approved
+                                </div>
+                                <div className="bg-purple-500/20 text-purple-200 px-1 py-0.5 rounded text-xs line-clamp-1">
+                                  {PTO_TYPE_LABEL[pto.ptoType]}
+                                </div>
+                              </div>
+                            ) : entry && !isOtherMonth && (
                               <div className="text-xs space-y-0.5">
                                 {entry.checkIn && (
                                   <div className="bg-green-500/40 text-green-100 px-1 py-0.5 rounded text-xs line-clamp-1">

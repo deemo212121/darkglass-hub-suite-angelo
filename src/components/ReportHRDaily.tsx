@@ -61,7 +61,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
-import { getCompanyTimecardCorrections, approveTimecardCorrection, rejectTimecardCorrection, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
 import { getAppUrl } from "@/lib/appUrl";
 import { getCompanyCoeBodyTemplate, setCompanyCoeBodyTemplate, getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -123,7 +123,7 @@ const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(
 // HR/Admin/Superadmin/Manager see every candidate and can finalize hires;
 // Branch Managers only see + decide on their own branch's applicants —
 // they run the final interview, HR finalizes the hire.
-const HR_ADMIN_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER"]);
+const HR_ADMIN_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
@@ -821,9 +821,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  const handleCorrectionAction = async (correction: TimecardCorrectionRow, approve: boolean) => {
+  const handleCorrectionStageAction = async (correction: TimecardCorrectionRow, stage: CorrectionStage, decision: "approved" | "rejected") => {
     try {
-      if (approve) {
+      if (decision === "approved") {
         const effectiveCheckIn = correction.correctedCheckIn || correction.originalCheckIn || "";
         const effectiveCheckOut = correction.correctedCheckOut || correction.originalCheckOut || "";
         const effectiveMealStart = correction.correctedMealStart || correction.originalMealStart || "";
@@ -836,10 +836,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
           return;
         }
-        await approveTimecardCorrection(correction, correction.correctedCheckIn, correction.correctedCheckOut, myProfileId, correction.correctedMealStart, correction.correctedMealEnd);
-      } else {
-        await rejectTimecardCorrection(correction, myProfileId);
       }
+      await reviewCorrectionStage(correction, stage, decision, myProfileId || "", displayName || "HR");
       await loadRequestManagerData();
     } catch (err) {
       alert(`Failed to update correction: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -1301,12 +1299,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // reference certificate has "Frederick Ian Cabilao" as the letter's
   // Authorized Representative and a different person, "Raul Bayuyos", in
   // the Office Use box), so each gets its own dropdown/state.
-  const COE_OFFICE_USE_ROLES = new Set(["ADMIN", "HR", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+  const COE_OFFICE_USE_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
   // Office Use box signer is any manager (Branch, CSR, Parts, BizOps, etc.
   // — anything with "MANAGER" in the role code) as well as Admin/HR/BizOps,
   // since a branch-level manager like the reference's "CSR Manager" isn't
   // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
-  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "HR" || role.includes("BIZOPS");
+  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || role.includes("BIZOPS");
   const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
   const filteredCoeOfficeUseNameOptions = (query: string) => {
     const q = query.trim().toLowerCase();
@@ -1534,7 +1532,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         .then(() => void loadCoeDocuments())
         .catch((err) => console.error("Failed to record COE sent-history row:", err));
 
-      // Opt-in broadcast — see Notifications Settings (migration 0077).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       // COE has no separate "submission" step, so the send itself is the event.
       getHrNotificationSettings()
         .then(({ coe }) => {
@@ -4653,6 +4651,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               {pendingPtoRequests.map((r) => {
                 const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole);
                 const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole);
+                const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, myRole);
                 return (
                   <div key={r.id} className="border border-white/10 rounded-lg p-3">
                     <div className="flex items-start justify-between gap-3">
@@ -4677,6 +4676,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
                             {r.hrReviewedBy ? ` — ${profileName(r.hrReviewedBy)}` : ""}
                           </span>
+                          <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                            r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                            : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                            : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                          }`}>
+                            Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
+                            {r.accountingReviewedBy ? ` — ${profileName(r.accountingReviewedBy)}` : ""}
+                          </span>
                         </div>
                       </div>
                       <div className="flex flex-col gap-2 shrink-0">
@@ -4692,7 +4699,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
                           </div>
                         )}
-                        {!canManagerAct && !canHrAct && <span className="text-xs text-muted-foreground">Awaiting other approver</span>}
+                        {canAccountingAct && (
+                          <div className="flex gap-1">
+                            <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Acct)</button>
+                            <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                          </div>
+                        )}
+                        {!canManagerAct && !canHrAct && !canAccountingAct && <span className="text-xs text-muted-foreground">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>}
                       </div>
                     </div>
                   </div>
@@ -4713,8 +4726,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-sm text-muted-foreground">No pending time correction requests.</p>
           ) : (
             <div className="space-y-3">
-              {pendingCorrections.map((r) => (
-                <div key={r.id} className="border border-white/10 rounded-lg p-3 flex items-start justify-between gap-3">
+              {pendingCorrections.map((r) => {
+                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole);
+                const canCorrHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole);
+                const canCorrAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, myRole);
+                return (
+                <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                  <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <p className="text-sm font-semibold">{profileName(r.profileId)} — {r.workDate}</p>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -4726,13 +4744,57 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </p>
                     )}
                     {r.reason && <p className="text-sm text-muted-foreground mt-2">{r.reason}</p>}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                        r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                        : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                        : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                      }`}>
+                        Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
+                      </span>
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                        r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                        : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                        : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                      }`}>
+                        HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
+                      </span>
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                        r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
+                        : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
+                        : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                      }`}>
+                        Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    <button type="button" onClick={() => handleCorrectionAction(r, true)} className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve</button>
-                    <button type="button" onClick={() => handleCorrectionAction(r, false)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                  <div className="flex flex-col gap-2 shrink-0">
+                    {canCorrManagerAct && (
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Mgr)</button>
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                      </div>
+                    )}
+                    {canCorrHrAct && (
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (HR)</button>
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                      </div>
+                    )}
+                    {canCorrAccountingAct && (
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">Approve (Acct)</button>
+                        <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">Reject</button>
+                      </div>
+                    )}
+                    {!canCorrManagerAct && !canCorrHrAct && !canCorrAccountingAct && (
+                      <span className="text-xs text-muted-foreground">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
+                    )}
+                  </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

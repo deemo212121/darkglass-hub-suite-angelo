@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0083 — Live Chat: inbox upgrades
+-- 0096 — Live Chat: inbox upgrades
 --
 -- - concern/appliance: promoted from being parsed out of the opening
 --   message's text (fragile, and unsearchable) into real columns, set
@@ -14,10 +14,10 @@
 --   body/sender/timestamp, for the conversation list's preview text and
 --   unread badge. Deliberately NOT security definer — it runs with the
 --   caller's own privileges, so live_chat_sessions/live_chat_messages'
---   existing RLS (0080/0081) already scopes which rows it can see, with
+--   existing RLS (0093/0094) already scopes which rows it can see, with
 --   no visibility logic duplicated here.
 --
--- Run once in the Supabase SQL Editor, after 0082.
+-- Run once in the Supabase SQL Editor, after 0095.
 -- =====================================================================
 
 alter table live_chat_sessions add column if not exists concern text;

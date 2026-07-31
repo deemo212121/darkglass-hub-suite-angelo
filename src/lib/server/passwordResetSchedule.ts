@@ -7,7 +7,7 @@
  * just run automatically instead of an admin clicking the button — the
  * user keeps logging in with their existing password, then __root.tsx's
  * MustChangePasswordGate sends them to /profile to set a new one before
- * they can reach any dashboard (see migration 0085).
+ * they can reach any dashboard (see migration 0103).
  *
  * Dispatched from the EXISTING hourly cron (see src/server.ts's
  * scheduled(), event.cron === "0 * * * *") rather than a separate cron

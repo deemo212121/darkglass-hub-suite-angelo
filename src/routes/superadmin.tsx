@@ -1,13 +1,10 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useLocation, Link, Outlet } from "@tanstack/react-router";
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import {
   createUserAccount,
   getAllUsers,
   getAllCompanies,
-  updateUserAccount,
-  deactivateUserAccount,
-  activateUserAccount,
   createCompany,
   updateCompany,
   type UserAccount,
@@ -19,6 +16,7 @@ import {
   createSupabaseCompany,
   getSupabaseCompanyLoginAlias,
   updateSupabaseCompanyLoginAlias,
+  setCompanyActiveStatus,
 } from "@/lib/supabase/companies";
 import { createSupabaseAdminProfile } from "@/lib/supabase/users";
 
@@ -28,14 +26,13 @@ export const Route = createFileRoute("/superadmin")({
 
 function SuperAdminDashboard() {
   const navigate = useNavigate();
-  const { email, role, logout } = useAuth();
+  const location = useLocation();
+  const { ready, email, role, logout } = useAuth();
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const [isAddingCompany, setIsAddingCompany] = useState(false);
-  const [editingAdmin, setEditingAdmin] = useState<UserAccount | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -97,16 +94,24 @@ function SuperAdminDashboard() {
   };
 
   useEffect(() => {
-    // Check if user is superadmin (case-insensitive)
+    // Wait for auth to actually resolve before deciding — on a fresh mount
+    // (hard refresh, or a new tab) `role` is still null until Firebase/
+    // Supabase finish resolving. Deciding too early (this used to run once
+    // on mount regardless of `ready`) could bounce a real SUPERSUPERADMIN
+    // out before their role ever loaded.
+    if (!ready) return;
+    // This console is exclusive to the platform-level SUPERSUPERADMIN role
+    // (case-insensitive) — the per-company SUPERADMIN role does NOT get in
+    // here, same as a regular ADMIN wouldn't.
     const userRole = role?.toUpperCase();
-    if (userRole !== "SUPERADMIN") {
-      console.log(`Access denied. User role: ${role}, required: SUPERADMIN`);
+    if (userRole !== "SUPERSUPERADMIN") {
+      console.log(`Access denied. User role: ${role}, required: SUPERSUPERADMIN`);
       navigate({ to: "/" });
       return;
     }
-    console.log("SuperAdmin access granted");
+    console.log("SuperSuperAdmin access granted");
     loadData();
-  }, []); // Empty dependency array - only run once on mount
+  }, [ready, role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadData = async () => {
     try {
@@ -132,25 +137,22 @@ function SuperAdminDashboard() {
     }
   };
 
-  // Filter to show all users except SUPERADMIN from the list
+  // Filter to show every admin EXCEPT the platform-level SUPERSUPERADMIN
+  // tier — the new per-company SUPERADMIN accounts are real company admins
+  // and should show up here like any other admin.
   const adminUsers = useMemo(() => {
-    return users.filter((user) => user.role !== "SUPERADMIN");
+    return users.filter((user) => user.role !== "SUPERSUPERADMIN");
   }, [users]);
 
-  // Apply search filter
-  const filteredAdmins = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    if (!query) return adminUsers;
-    
-    return adminUsers.filter((user) =>
-      user.email.toLowerCase().includes(query) ||
-      user.displayName.toLowerCase().includes(query) ||
-      user.companyId.toLowerCase().includes(query) ||
-      (user.phoneNumber && user.phoneNumber.toLowerCase().includes(query)) ||
-      user.uid.toLowerCase().includes(query) ||
-      getCompanyName(user.companyId).toLowerCase().includes(query)
-    );
-  }, [adminUsers, searchQuery]);
+  // /superadmin/company/$companyId is a CHILD route of /superadmin (see
+  // routeTree.gen.ts's parentRoute), so this component needs to explicitly
+  // defer to it via <Outlet /> — same pattern as m.$module.$submodule.tsx's
+  // hasNestedUserRoute. Placed after every hook above (Rules of Hooks) but
+  // before the loading/data-fetch-driven JSX below, so navigating to the
+  // company detail page doesn't first flash this page's own "Loading..." state.
+  if (location.pathname.startsWith("/superadmin/company/")) {
+    return <Outlet />;
+  }
 
   const getCompanyName = (companyId: string): string => {
     const company = companies.find((c) => c.companyId === companyId);
@@ -176,7 +178,7 @@ function SuperAdminDashboard() {
 
       // Login alias is optional, but if set must follow the same format rule.
       if (newCompanyForm.loginAlias && !/^[A-Z0-9]+$/.test(newCompanyForm.loginAlias)) {
-        setError("Login Alias must contain only letters and numbers (no spaces or special characters)");
+        setError("Login Company ID must contain only letters and numbers (no spaces or special characters)");
         return;
       }
 
@@ -252,7 +254,11 @@ function SuperAdminDashboard() {
     try {
       setError(null);
       
-      if (!newAdminForm.email || !newAdminForm.password || !newAdminForm.displayName || !newAdminForm.companyId) {
+      // Super Super Admin is the platform-level role — it isn't tied to any
+      // one company, so it's the only role that doesn't require picking one.
+      const isPlatformAdmin = newAdminForm.userType === "SUPERSUPERADMIN";
+
+      if (!newAdminForm.email || !newAdminForm.password || !newAdminForm.displayName || (!isPlatformAdmin && !newAdminForm.companyId)) {
         setError("Please fill in all required fields");
         return;
       }
@@ -262,9 +268,9 @@ function SuperAdminDashboard() {
         return;
       }
 
-      // Validate company exists
-      const company = companies.find((c) => c.companyId === newAdminForm.companyId);
-      if (!company) {
+      // Validate company exists (skipped for Super Super Admin — no company)
+      const company = isPlatformAdmin ? null : companies.find((c) => c.companyId === newAdminForm.companyId);
+      if (!isPlatformAdmin && !company) {
         setError("Selected company does not exist");
         return;
       }
@@ -285,7 +291,7 @@ function SuperAdminDashboard() {
           email: newAdminForm.email,
           password: newAdminForm.password,
           displayName: newAdminForm.displayName,
-          companyId: newAdminForm.companyId,
+          companyId: isPlatformAdmin ? "" : newAdminForm.companyId,
           role: newAdminForm.userType,
           phoneNumber: fullPhoneNumber,
         },
@@ -302,10 +308,14 @@ function SuperAdminDashboard() {
           email: newAdminForm.email,
           displayName: newAdminForm.displayName,
           role: newAdminForm.userType,
-          companyLegacyCode: newAdminForm.companyId,
+          companyLegacyCode: isPlatformAdmin ? undefined : newAdminForm.companyId,
           phoneNumber: fullPhoneNumber,
         });
-        setSuccess(`✅ Admin '${newAdminForm.displayName}' created successfully for ${company.companyName}!`);
+        setSuccess(
+          isPlatformAdmin
+            ? `✅ Super Super Admin '${newAdminForm.displayName}' created successfully!`
+            : `✅ Admin '${newAdminForm.displayName}' created successfully for ${company!.companyName}!`
+        );
         setTimeout(() => setSuccess(null), 5000);
       } catch (supabaseErr: any) {
         console.error("Error creating Supabase admin profile:", supabaseErr);
@@ -337,7 +347,7 @@ function SuperAdminDashboard() {
 
       // Login alias is optional, but if set must follow the same format rule.
       if (newCompanyForm.loginAlias && !/^[A-Z0-9]+$/.test(newCompanyForm.loginAlias)) {
-        setError("Login Alias must contain only letters and numbers (no spaces or special characters)");
+        setError("Login Company ID must contain only letters and numbers (no spaces or special characters)");
         return;
       }
 
@@ -371,62 +381,25 @@ function SuperAdminDashboard() {
     }
   };
 
-  const handleUpdateAdmin = async () => {
+  // Freeze/unfreeze a company — stops (or resumes) every one of its users
+  // from being able to log in (enforced in auth.tsx via companyIsActive).
+  // Dual-write, mirroring every other company field on this page: Firebase
+  // is what this page's own Status badge reads, Supabase's companies.is_active
+  // is what auth.tsx actually enforces at login.
+  const handleToggleCompanyStatus = async (company: Company) => {
+    const verb = company.isActive ? "freeze" : "unfreeze";
+    if (!confirm(`Are you sure you want to ${verb} ${company.companyName}? ${company.isActive ? "This will sign out and block every one of its users." : ""}`)) return;
     try {
       setError(null);
-      
-      if (!editingAdmin) return;
-
-      await updateUserAccount(editingAdmin.uid, {
-        displayName: newAdminForm.displayName,
-        phoneNumber: newAdminForm.phoneNumber,
-        role: newAdminForm.userType,
-        isActive: editingAdmin.isActive,
-      });
-
-      setSuccess(`✅ Admin updated successfully`);
-      setTimeout(() => setSuccess(null), 5000);
-      
-      resetAdminForm();
-      setEditingAdmin(null);
-      loadData();
-    } catch (err: any) {
-      console.error("Error updating admin:", err);
-      setError(err.message || "Failed to update admin");
-    }
-  };
-
-  const handleToggleStatus = async (user: UserAccount) => {
-    try {
-      setError(null);
-      
-      if (user.isActive) {
-        if (!confirm(`Are you sure you want to deactivate ${user.displayName}?`)) return;
-        await deactivateUserAccount(user.uid);
-        setSuccess(`✅ ${user.displayName} has been deactivated`);
-      } else {
-        await activateUserAccount(user.uid);
-        setSuccess(`✅ ${user.displayName} has been activated`);
-      }
-      
+      await updateCompany(company.companyId, { isActive: !company.isActive });
+      await setCompanyActiveStatus(company.companyId, !company.isActive);
+      setSuccess(`✅ ${company.companyName} has been ${company.isActive ? "frozen" : "unfrozen"}`);
       setTimeout(() => setSuccess(null), 5000);
       loadData();
     } catch (err: any) {
-      console.error("Error toggling user status:", err);
-      setError(err.message || "Failed to update user status");
+      console.error("Error toggling company status:", err);
+      setError(err.message || "Failed to update company status");
     }
-  };
-
-  const startEditAdmin = (user: UserAccount) => {
-    setEditingAdmin(user);
-    setNewAdminForm({
-      email: user.email,
-      password: "",
-      displayName: user.displayName,
-      phoneNumber: user.phoneNumber || "",
-      userType: user.role,
-      companyId: user.companyId,
-    });
   };
 
   const startEditCompany = (company: Company) => {
@@ -529,7 +502,6 @@ function SuperAdminDashboard() {
       companyId: "",
     });
     setIsAddingAdmin(false);
-    setEditingAdmin(null);
   };
 
   const resetCompanyForm = () => {
@@ -566,16 +538,16 @@ function SuperAdminDashboard() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-4xl font-display font-bold tracking-tight text-white mb-2">
-                SuperAdmin Dashboard
+                Super Super Admin Dashboard
               </h1>
-              <p className="text-lg text-slate-400">Manage company admin accounts and companies</p>
+              <p className="text-lg text-slate-400">Oversee companies and their accounts</p>
             </div>
             <div className="text-right">
               <div className="text-sm text-slate-400">Logged in as</div>
               <div className="text-white font-semibold">{email}</div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="inline-block px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 text-xs font-semibold border border-purple-500/30">
-                  SuperAdmin
+                  Super Super Admin
                 </div>
                 <button
                   onClick={handleLogout}
@@ -780,14 +752,14 @@ function SuperAdminDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-2">
-                  Login Alias (optional)
+                  Login Company ID (optional)
                 </label>
                 <input
                   type="text"
                   value={newCompanyForm.loginAlias}
                   onChange={(e) => setNewCompanyForm({ ...newCompanyForm, loginAlias: e.target.value.toUpperCase() })}
                   className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500 font-mono"
-                  placeholder="A shorter ID that also works at login"
+                  placeholder="Once set, this REPLACES Company ID above for login"
                   maxLength={20}
                 />
               </div>
@@ -893,7 +865,8 @@ function SuperAdminDashboard() {
                   onChange={(e) => setNewAdminForm({ ...newAdminForm, userType: e.target.value as UserRole })}
                   className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
                 >
-                  <option value="SUPERADMIN">SuperAdmin</option>
+                  <option value="SUPERSUPERADMIN">Super Super Admin (platform, all companies)</option>
+                  <option value="SUPERADMIN">SuperAdmin (this company only)</option>
                   <option value="ADMIN">Admin</option>
                   <option value="MANAGER">Manager</option>
                   <option value="CSR">CSR (Customer Service)</option>
@@ -905,23 +878,30 @@ function SuperAdminDashboard() {
                   <option value="FINANCE">Finance</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-300 mb-2">
-                  Company *
-                </label>
-                <select
-                  value={newAdminForm.companyId}
-                  onChange={(e) => setNewAdminForm({ ...newAdminForm, companyId: e.target.value })}
-                  className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">Select company</option>
-                  {companies.map((company) => (
-                    <option key={company.companyId} value={company.companyId}>
-                      {company.companyName} ({company.companyId})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {newAdminForm.userType !== "SUPERSUPERADMIN" && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">
+                    Company *
+                  </label>
+                  <select
+                    value={newAdminForm.companyId}
+                    onChange={(e) => setNewAdminForm({ ...newAdminForm, companyId: e.target.value })}
+                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">Select company</option>
+                    {companies.map((company, companyIdx) => (
+                      <option key={company.companyId || `company-${companyIdx}`} value={company.companyId}>
+                        {company.companyName} ({company.companyId})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {newAdminForm.userType === "SUPERSUPERADMIN" && (
+                <p className="text-xs text-slate-500">
+                  Super Super Admin is a platform-wide role — it isn't tied to any one company, so no company selection is needed.
+                </p>
+              )}
             </div>
             <div className="flex gap-3 mt-6">
               <button
@@ -940,220 +920,9 @@ function SuperAdminDashboard() {
           </div>
         )}
 
-        {/* Search Bar */}
-        <div className="mb-6">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by email, name, company ID, company name, phone, or UID..."
-            className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-white/10 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-          />
-        </div>
 
-        {/* Admins List */}
-        <div className="rounded-xl border border-white/15 bg-white/8 backdrop-blur-md overflow-hidden">
-          <div className="px-6 py-4 border-b border-white/10">
-            <h2 className="text-xl font-semibold text-white">
-              User Accounts ({filteredAdmins.length})
-            </h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-blue-900/30 border-b border-white/10">
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Email</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Username</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Role</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Contact</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Company ID</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Company Name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold text-blue-300">Created</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-300">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAdmins.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-slate-400">
-                      {searchQuery ? "No user accounts match your search." : "No user accounts created yet. Click \"Add New Admin\" to get started."}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAdmins.map((admin) => {
-                    // Generate username from displayName if username field doesn't exist
-                    const username = admin.username || (() => {
-                      const nameParts = admin.displayName.trim().split(/\s+/);
-                      if (nameParts.length === 1) return nameParts[0];
-                      return `${nameParts[0]}.${nameParts[nameParts.length - 1]}`;
-                    })();
-                    
-                    return (
-                    <tr key={admin.uid} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3 text-slate-300">{admin.email}</td>
-                      <td className="px-4 py-3 text-slate-300 font-mono">{username}</td>
-                      <td className="px-4 py-3 text-white font-semibold">{admin.displayName}</td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30">
-                          {admin.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{admin.phoneNumber || "—"}</td>
-                      <td className="px-4 py-3 text-slate-300 font-mono">{admin.companyId}</td>
-                      <td className="px-4 py-3 text-slate-300">{getCompanyName(admin.companyId)}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                            admin.isActive
-                              ? "bg-green-500/20 text-green-300 border border-green-500/30"
-                              : "bg-red-500/20 text-red-300 border border-red-500/30"
-                          }`}
-                        >
-                          {admin.isActive ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">
-                        {admin.createdAt ? 
-                          (admin.createdAt instanceof Date 
-                            ? admin.createdAt.toLocaleDateString()
-                            : (admin.createdAt as any).toDate 
-                              ? (admin.createdAt as any).toDate().toLocaleDateString()
-                              : "—"
-                          )
-                          : "—"
-                        }
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => startEditAdmin(admin)}
-                            className="px-3 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 text-xs font-semibold transition-colors"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleStatus(admin)}
-                            className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
-                              admin.isActive
-                                ? "bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
-                                : "bg-green-500/20 text-green-300 border border-green-500/30 hover:bg-green-500/30"
-                            }`}
-                          >
-                            {admin.isActive ? "Deactivate" : "Activate"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Edit Admin Account modal */}
-        {editingAdmin && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
-            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 text-white shadow-2xl">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
-                <h4 className="text-xl font-bold text-white">Edit Admin Account</h4>
-                <button
-                  type="button"
-                  onClick={resetAdminForm}
-                  className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-200/40"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">Email</label>
-                  <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
-                    {newAdminForm.email}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">Full Name *</label>
-                  <input
-                    type="text"
-                    value={newAdminForm.displayName}
-                    onChange={(e) => setNewAdminForm({ ...newAdminForm, displayName: e.target.value })}
-                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                    placeholder="John Doe"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">Phone Number</label>
-                  <div className="flex gap-2">
-                    <select
-                      value={newAdminForm.phoneCountry}
-                      onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneCountry: e.target.value })}
-                      className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                      style={{ minWidth: '80px' }}
-                    >
-                      {countryCodes.map((item, idx) => (
-                        <option key={`${item.code}-${idx}`} value={item.code}>
-                          {item.flag} {item.code}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="tel"
-                      value={newAdminForm.phoneNumber}
-                      onChange={(e) => setNewAdminForm({ ...newAdminForm, phoneNumber: e.target.value })}
-                      className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                      placeholder="123-456-7890"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">User Type *</label>
-                  <select
-                    value={newAdminForm.userType}
-                    onChange={(e) => setNewAdminForm({ ...newAdminForm, userType: e.target.value as UserRole })}
-                    className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="SUPERADMIN">SuperAdmin</option>
-                    <option value="ADMIN">Admin</option>
-                    <option value="MANAGER">Manager</option>
-                    <option value="CSR">CSR (Customer Service)</option>
-                    <option value="TECHNICIAN">Technician</option>
-                    <option value="DISPATCHER">Dispatcher</option>
-                    <option value="HR">HR (Human Resources)</option>
-                    <option value="IT">IT Support</option>
-                    <option value="PARTS">Parts Management</option>
-                    <option value="FINANCE">Finance</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">Company (read-only)</label>
-                  <div className="w-full px-4 py-2 rounded-lg bg-slate-900/50 border border-white/10 text-slate-400">
-                    {getCompanyName(newAdminForm.companyId)} ({newAdminForm.companyId})
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-5">
-                <button
-                  onClick={handleUpdateAdmin}
-                  className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
-                >
-                  Update Admin
-                </button>
-                <button
-                  onClick={resetAdminForm}
-                  className="px-6 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Companies List */}
+        {/* Companies List — company + how many users it has, click through
+            (new tab) for the full detail/roster/freeze page. */}
         <div className="mt-8 rounded-xl border border-white/15 bg-white/8 backdrop-blur-md overflow-hidden">
           <div className="px-6 py-4 border-b border-white/10">
             <h2 className="text-xl font-semibold text-white">
@@ -1164,12 +933,8 @@ function SuperAdminDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-green-900/30 border-b border-white/10">
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">Company ID</th>
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">Company Name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">Email</th>
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">Phone</th>
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">City</th>
-                  <th className="px-4 py-3 text-left font-semibold text-green-300">State</th>
+                  <th className="px-4 py-3 text-left font-semibold text-green-300">Company</th>
+                  <th className="px-4 py-3 text-center font-semibold text-green-300">Users</th>
                   <th className="px-4 py-3 text-left font-semibold text-green-300">Status</th>
                   <th className="px-4 py-3 text-left font-semibold text-green-300">Plan</th>
                   <th className="px-4 py-3 text-center font-semibold text-green-300">Actions</th>
@@ -1178,19 +943,27 @@ function SuperAdminDashboard() {
               <tbody>
                 {companies.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                       No companies created yet. Click "Add Company" to get started.
                     </td>
                   </tr>
                 ) : (
-                  companies.map((company) => (
-                    <tr key={company.companyId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3 text-slate-300 font-mono">{company.companyId}</td>
-                      <td className="px-4 py-3 text-white font-semibold">{company.companyName}</td>
-                      <td className="px-4 py-3 text-slate-300">{company.email}</td>
-                      <td className="px-4 py-3 text-slate-300">{company.phoneNumber}</td>
-                      <td className="px-4 py-3 text-slate-300">{company.city}</td>
-                      <td className="px-4 py-3 text-slate-300">{company.state}</td>
+                  companies.map((company, companyIdx) => {
+                    const userCount = adminUsers.filter((u) => u.companyId === company.companyId).length;
+                    return (
+                    <tr key={company.companyId || `company-${companyIdx}`} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                      <td className="px-4 py-3">
+                        <Link
+                          to="/superadmin/company/$companyId"
+                          params={{ companyId: company.companyId }}
+                          target="_blank"
+                          className="text-white font-semibold hover:text-blue-300 hover:underline"
+                        >
+                          {company.companyName}
+                        </Link>
+                        <div className="text-slate-400 font-mono text-xs">{company.companyId}</div>
+                      </td>
+                      <td className="px-4 py-3 text-center text-slate-200 font-semibold">{userCount}</td>
                       <td className="px-4 py-3">
                         <span
                           className={`px-3 py-1 rounded-full text-xs font-semibold ${
@@ -1199,7 +972,7 @@ function SuperAdminDashboard() {
                               : "bg-red-500/20 text-red-300 border border-red-500/30"
                           }`}
                         >
-                          {company.isActive ? "Active" : "Inactive"}
+                          {company.isActive ? "Active" : "Frozen"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-300 capitalize">{company.subscriptionPlan || "—"}</td>
@@ -1212,19 +985,20 @@ function SuperAdminDashboard() {
                             Edit
                           </button>
                           <button
-                            onClick={() => alert('Toggle status feature coming soon')}
+                            onClick={() => handleToggleCompanyStatus(company)}
                             className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
                               company.isActive
                                 ? "bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
                                 : "bg-green-500/20 text-green-300 border border-green-500/30 hover:bg-green-500/30"
                             }`}
                           >
-                            {company.isActive ? "Deactivate" : "Activate"}
+                            {company.isActive ? "Freeze" : "Unfreeze"}
                           </button>
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1349,13 +1123,13 @@ function SuperAdminDashboard() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-2">Login Alias (optional)</label>
+                  <label className="block text-sm font-semibold text-slate-300 mb-2">Login Company ID (optional)</label>
                   <input
                     type="text"
                     value={newCompanyForm.loginAlias}
                     onChange={(e) => setNewCompanyForm({ ...newCompanyForm, loginAlias: e.target.value.toUpperCase() })}
                     className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:border-blue-500 font-mono"
-                    placeholder="A shorter ID that also works at login"
+                    placeholder="Once set, this REPLACES Company ID above for login"
                     maxLength={20}
                   />
                 </div>

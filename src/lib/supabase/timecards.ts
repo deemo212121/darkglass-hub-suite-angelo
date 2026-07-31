@@ -36,7 +36,7 @@ export async function getProfileIdByFirebaseUid(firebaseUid: string): Promise<st
 /**
  * Get the caller's profile id + required scheduled shift times.
  *
- * working_hours/meal_minutes (migration 0091) are fetched in a SEPARATE,
+ * working_hours/meal_minutes (migration 0109) are fetched in a SEPARATE,
  * best-effort query rather than folded into the main select — if that
  * migration hasn't been applied yet (or any future optional column has an
  * issue), it must never take down profileId/requiredCheckIn/requiredCheckOut
@@ -89,7 +89,7 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
 
 /**
  * Scheduled shift length for meal-eligibility purposes — prefers the
- * profile's explicit working_hours override (migration 0091) when set,
+ * profile's explicit working_hours override (migration 0109) when set,
  * since a plain Time In/Out subtraction doesn't always match someone's
  * real scheduled hours. Falls back to the Time In/Out diff otherwise.
  *
@@ -384,7 +384,9 @@ export async function getCompanyTimecardWarnings(
   const { data: profiles, error: pErr } = await supabase
     .from("profiles")
     .select("id, display_name, email, off_days")
-    .neq("role", "SUPERADMIN")
+    // Only the platform-level SUPERSUPERADMIN is excluded — the per-company
+    // SUPERADMIN role is a real employee and should get normal attendance tracking.
+    .neq("role", "SUPERSUPERADMIN")
     .eq("is_active", true);
   if (pErr) {
     console.error("getCompanyTimecardWarnings profiles error:", pErr.message);

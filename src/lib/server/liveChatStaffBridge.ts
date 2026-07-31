@@ -2,7 +2,7 @@
  * Staff-authenticated Live Chat actions that need to bypass RLS.
  *
  * Why this exists: live_chat_sessions_update's WITH CHECK/USING combo
- * (migration 0080) ties assigned_to visibility to the tiered CSR
+ * (migration 0093) ties assigned_to visibility to the tiered CSR
  * visibility rule (self / unclaimed / your own led team / wide-visibility
  * roles) — correct for the SELECT policy, but it also ends up blocking
  * the one write that's SUPPOSED to cross that boundary: Transfer, whose
@@ -18,7 +18,7 @@
  * Flow:
  *  POST /api/live-chat-staff?action=transfer — body { idToken, sessionId,
  *  toProfileId } — reassigns the chat and stamps transferred_from/
- *  transferred_from_name (migration 0090) with the CALLER's own identity,
+ *  transferred_from_name (migration 0108) with the CALLER's own identity,
  *  then posts a kind="system" notice visible to both sides.
  */
 import { verifyFirebaseToken } from "./supabaseTokenBridge";

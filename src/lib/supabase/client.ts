@@ -51,8 +51,18 @@ export const supabase: SupabaseClient = createClient(
 /**
  * Exchange the current Firebase user's ID token for a Supabase JWT and store it.
  * Call this right after login and whenever the token is near expiry.
+ *
+ * `recordLogin` tells the server to log this exchange to login_events (IP,
+ * geolocation, browser/device) — only true for the one exchange that
+ * follows an actual interactive sign-in (see auth.tsx's
+ * pendingInteractiveLoginRef), not the 45-min background refresh, the
+ * tab-focus refresh, or a persisted-session restore on page load. Keeps
+ * the login-history table from growing on every routine token refresh.
  */
-export async function refreshSupabaseSession(firebaseUser: FirebaseUser | null): Promise<boolean> {
+export async function refreshSupabaseSession(
+  firebaseUser: FirebaseUser | null,
+  opts?: { recordLogin?: boolean }
+): Promise<boolean> {
   if (!isSupabaseConfigured()) {
     console.warn("⚠️ Supabase not configured (.env). Skipping token exchange.");
     return false;
@@ -67,7 +77,7 @@ export async function refreshSupabaseSession(firebaseUser: FirebaseUser | null):
     const res = await fetch("/api/supabase-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }),
+      body: JSON.stringify({ idToken, recordLogin: !!opts?.recordLogin }),
     });
 
     if (!res.ok) {

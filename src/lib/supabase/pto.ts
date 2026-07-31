@@ -3,10 +3,13 @@
  * and Employee Self-Service "Manage Requests" tab.
  * Rows are keyed by profile_id (see migration 0027), company-scoped by RLS.
  *
- * PTO requests need TWO approvals — manager and HR (see migration 0036).
- * manager_status/hr_status are tracked separately; the overall `status`
- * column is derived from them by a DB trigger (a rejection at either stage
- * immediately denies the whole request).
+ * PTO requests are staged: manager first (see migration 0036), then EITHER
+ * HR or Accounting (Finance) gives the final approval — an OR gate, added by
+ * migration 0057 (see canReviewPtoStage/reviewPtoStage below), mirroring
+ * timecard-correction's manager+(HR or Accounting) pattern.
+ * manager_status/hr_status/accounting_status are tracked separately; the
+ * overall `status` column is derived from them by a DB trigger (a rejection
+ * at any stage immediately denies the whole request).
  */
 
 import { supabase } from "./client";
@@ -16,7 +19,7 @@ import { getCompanyUsers } from "./users";
 export type PtoType = "vacation" | "sick" | "personal" | "holiday" | "unpaid" | "bereavement";
 export type PtoStatus = "pending" | "approved" | "denied" | "cancelled";
 export type PtoStageStatus = "pending" | "approved" | "rejected";
-export type PtoStage = "manager" | "hr";
+export type PtoStage = "manager" | "hr" | "accounting";
 
 /**
  * Employees need 1 year of tenure before they're eligible for PTO. Tenure is
@@ -144,6 +147,9 @@ export interface PtoRequestRow {
   hrStatus: PtoStageStatus;
   hrReviewedBy: string | null;
   hrReviewedAt: string | null;
+  accountingStatus: PtoStageStatus;
+  accountingReviewedBy: string | null;
+  accountingReviewedAt: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
@@ -151,7 +157,7 @@ export interface PtoRequestRow {
 }
 
 const SELECT_COLUMNS =
-  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, reviewed_by, reviewed_at, review_note, created_at";
+  "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at";
 
 function mapRow(row: any): PtoRequestRow {
   return {
@@ -171,6 +177,9 @@ function mapRow(row: any): PtoRequestRow {
     hrStatus: row.hr_status,
     hrReviewedBy: row.hr_reviewed_by ?? null,
     hrReviewedAt: row.hr_reviewed_at ?? null,
+    accountingStatus: row.accounting_status,
+    accountingReviewedBy: row.accounting_reviewed_by ?? null,
+    accountingReviewedAt: row.accounting_reviewed_at ?? null,
     reviewedBy: row.reviewed_by ?? null,
     reviewedAt: row.reviewed_at ?? null,
     reviewNote: row.review_note ?? null,
@@ -194,26 +203,37 @@ export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
 
 /**
  * Can `viewerProfileId` (with `viewerRole`) act on the given approval stage?
- * Each stage is gated to its own reviewer(s) only — the manager stage is for
- * the specific resolved manager (or anyone with the generic MANAGER role as
- * a stand-in if none was resolved), the HR stage is for HR only. Being an
- * ADMIN does NOT grant access to both stages — an admin who happens to be
- * someone's manager can still only act as manager, not also as HR. Only
- * SUPERADMIN (the platform-level role, not company ADMIN) bypasses this.
+ * The manager stage is for the specific resolved manager (or anyone with
+ * the generic MANAGER role as a stand-in if none was resolved) and is the
+ * ONLY stage open while the request is fresh — HR and Accounting can't act
+ * (or even see an actionable button) until the manager has approved first;
+ * a request the manager hasn't touched yet must not be approvable/rejectable
+ * by HR/Accounting just because they also happen to have access to this
+ * screen. Once the manager approves, HR and Accounting can each
+ * independently approve or reject (an OR gate — whichever acts first
+ * decides it, mirroring canReviewCorrectionStage's timecard-correction
+ * pattern). Being an ADMIN does NOT grant access to every stage — an admin
+ * who happens to be someone's manager can still only act as manager, not
+ * also as HR/Accounting. Both SUPERADMIN (a company's own top-tier admin)
+ * and SUPERSUPERADMIN (the platform-level role) bypass this entirely — a
+ * single approval from either is final, no separate manager+HR/Accounting
+ * sign-off needed.
  */
 export function canReviewPtoStage(
-  request: Pick<PtoRequestRow, "managerId">,
+  request: Pick<PtoRequestRow, "managerId" | "managerStatus">,
   stage: PtoStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined
 ): boolean {
   const role = (viewerRole || "").toUpperCase();
-  if (role === "SUPERADMIN") return true;
+  if (role === "SUPERADMIN" || role === "SUPERSUPERADMIN") return true;
   if (stage === "manager") {
     if (request.managerId) return request.managerId === viewerProfileId;
     return role === "MANAGER";
   }
-  return role === "HR";
+  if (request.managerStatus !== "approved") return false;
+  if (stage === "hr") return role === "HR";
+  return role === "FINANCE";
 }
 
 /** Count weekdays (Mon–Fri) in an inclusive date range — used for the default hours estimate. */
@@ -279,14 +299,14 @@ export async function updatePtoRequestStatus(
 }
 
 /**
- * Record a manager or HR decision on one stage of a PTO request, and notify
- * whoever needs to know next: the employee if this stage rejected it or was
- * the final approval, otherwise whoever holds the other stage (so a
- * two-person approval chain doesn't stall on someone not knowing it's their
- * turn).
+ * Record a manager/HR/Accounting decision on one stage of a PTO request, and
+ * notify whoever needs to know next: the employee if this stage rejected it
+ * or was the final approval, otherwise HR+Accounting once the manager has
+ * approved (so the OR-gate second stage doesn't stall on nobody knowing
+ * it's their turn).
  */
 export async function reviewPtoStage(
-  request: Pick<PtoRequestRow, "id" | "profileId" | "managerId" | "managerStatus" | "hrStatus" | "startDate" | "endDate">,
+  request: Pick<PtoRequestRow, "id" | "profileId" | "managerId" | "startDate" | "endDate">,
   stage: PtoStage,
   decision: "approved" | "rejected",
   reviewerId: string,
@@ -296,15 +316,24 @@ export async function reviewPtoStage(
   const payload =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
-      : { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso };
-  const { error } = await supabase.from("pto_requests").update(payload).eq("id", request.id);
+      : stage === "hr"
+        ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
+        : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
+
+  const { data, error } = await supabase
+    .from("pto_requests")
+    .update(payload)
+    .eq("id", request.id)
+    .select(SELECT_COLUMNS)
+    .single();
   if (error) {
     console.error("reviewPtoStage error:", error.message);
     throw new Error(error.message);
   }
+  const updated = mapRow(data);
 
   const dateRange = `${request.startDate} to ${request.endDate}`;
-  const stageLabel = stage === "manager" ? "your manager" : "HR";
+  const stageLabel = stage === "manager" ? "your manager" : stage === "hr" ? "HR" : "Accounting";
 
   if (decision === "rejected") {
     await createNotification({
@@ -317,8 +346,7 @@ export async function reviewPtoStage(
     return;
   }
 
-  const otherStageApproved = stage === "manager" ? request.hrStatus === "approved" : request.managerStatus === "approved";
-  if (otherStageApproved) {
+  if (updated.status === "approved") {
     await createNotification({
       recipientId: request.profileId,
       senderId: reviewerId,
@@ -329,33 +357,27 @@ export async function reviewPtoStage(
     return;
   }
 
-  // First of the two approvals — ping whoever needs to act next.
-  try {
-    const roster = await getCompanyUsers();
-    const requesterName = roster.find((p) => p.id === request.profileId)?.display_name || "An employee";
-    if (stage === "manager") {
-      const hrRecipients = roster.filter((p) => (p.role || "").toUpperCase() === "HR" && p.id !== reviewerId);
+  // Manager-only approval so far — ping HR and Accounting that it's their turn.
+  if (stage === "manager") {
+    try {
+      const roster = await getCompanyUsers();
+      const requesterName = roster.find((p) => p.id === request.profileId)?.display_name || "An employee";
+      const recipients = roster.filter(
+        (p) => ["HR", "FINANCE"].includes((p.role || "").toUpperCase()) && p.id !== reviewerId
+      );
       await Promise.all(
-        hrRecipients.map((hr) =>
+        recipients.map((r) =>
           createNotification({
-            recipientId: hr.id,
+            recipientId: r.id,
             senderId: reviewerId,
             senderName: reviewerName,
-            body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by the manager — awaiting your HR review.`,
+            body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by the manager — awaiting HR or Accounting review.`,
             linkTo: "/m/dashboard/employee-self-service?tab=manage",
           })
         )
       );
-    } else if (request.managerId && request.managerId !== reviewerId) {
-      await createNotification({
-        recipientId: request.managerId,
-        senderId: reviewerId,
-        senderName: reviewerName,
-        body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by HR — awaiting your manager review.`,
-        linkTo: "/m/dashboard/employee-self-service?tab=manage",
-      });
+    } catch (err) {
+      console.error("Failed to notify HR/Accounting of pending PTO request:", err);
     }
-  } catch (err) {
-    console.error("Failed to notify next PTO approver:", err);
   }
 }
