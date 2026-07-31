@@ -9,7 +9,6 @@
 export const ROLE_LABELS: Record<string, string> = {
   SUPERSUPERADMIN: "Super Super Admin",
   SUPERADMIN: "Super Admin",
-  SUPERSUPERADMIN: "Super Super Admin",
   ADMIN: "Admin",
   MANAGER: "Manager",
   SENIOR_MANAGER: "Senior Manager",
