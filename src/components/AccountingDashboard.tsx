@@ -14,6 +14,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import {
   BarChart,
@@ -24,6 +25,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
@@ -174,6 +176,43 @@ function findMissingTimeouts(entries: TimecardEntry[], employees: SupabaseEmploy
       return `${name} (${tc.work_date})`;
     })
     .sort();
+}
+
+// One nation's sheet for the "Payroll by Nation & Department" export —
+// employees grouped by department (readable label, same as the Payroll
+// tab's employee table), each group followed by a subtotal row, and a
+// grand total for the whole nation at the end.
+function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)[][] {
+  const byDept = new Map<string, EmployeePayrollRow[]>();
+  for (const r of rows) {
+    const dept = r.employee.department ? (ROLE_LABELS[r.employee.department] ?? r.employee.department) : "Unspecified";
+    const list = byDept.get(dept) ?? [];
+    list.push(r);
+    byDept.set(dept, list);
+  }
+
+  const sheet: (string | number)[][] = [
+    ["Employee", "Department", "Reg Hrs", "OT Hrs", "Rate ($/hr)", "Gross Pay ($)"],
+  ];
+  let nationTotal = 0;
+  for (const [dept, deptRows] of Array.from(byDept.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const r of deptRows) {
+      sheet.push([
+        r.employee.full_name,
+        dept,
+        Number(r.hoursWorked.toFixed(1)),
+        Number(r.overtimeHours.toFixed(1)),
+        Number(r.hourlyRateUSD.toFixed(2)),
+        Number(r.grossPayUSD.toFixed(2)),
+      ]);
+    }
+    const deptTotal = deptRows.reduce((s, r) => s + r.grossPayUSD, 0);
+    sheet.push(["", `${dept} Subtotal`, "", "", "", Number(deptTotal.toFixed(2))]);
+    sheet.push([]);
+    nationTotal += deptTotal;
+  }
+  sheet.push(["", "Nation Total", "", "", "", Number(nationTotal.toFixed(2))]);
+  return sheet;
 }
 
 // Default period suggested for genStart/genEnd (Finance can freely pick
@@ -604,6 +643,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } finally {
       setGenerating(false);
     }
+  };
+
+  // ── Export: Payroll by Nation & Department (Reports tab) ───────────────────
+  // One sheet per nation (US, PH), each grouped by department with subtotals —
+  // covers the same current period (genStart–genEnd) shown live on the
+  // Payroll tab, just split the way Finance needs it for reconciliation.
+  const exportNationDepartmentReport = () => {
+    const workbook = XLSX.utils.book_new();
+    for (const [label, rows] of [["US", usRows], ["PH", phRows]] as const) {
+      const sheetData: (string | number)[][] = [
+        [`Payroll by Department — ${label}`],
+        [`Period: ${genStart} – ${genEnd}`],
+        [`Generated: ${new Date().toLocaleString()}`],
+        [],
+        ...buildDepartmentSheetRows(rows),
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+      XLSX.utils.book_append_sheet(workbook, worksheet, label);
+    }
+    XLSX.writeFile(workbook, `payroll-by-nation-department_${genStart}_to_${genEnd}.xlsx`);
   };
 
   // ── Expand payroll run line items ────────────────────────────────────────────
@@ -1051,6 +1110,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* ── Reports Tab ──────────────────────────────────────────────────── */}
         {activeTab === "reports" && (
           <div className="space-y-6">
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Payroll by Nation &amp; Department</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Exports the current period ({genStart || "—"} – {genEnd || "—"}) as one sheet per nation (US, PH), each grouped by department with subtotals.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={exportNationDepartmentReport}
+                disabled={payrollRows.length === 0}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 text-sm shrink-0"
+              >
+                <Download className="h-4 w-4" />
+                Export by Nation &amp; Department
+              </button>
+            </div>
+
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10">
                 <span className="text-sm font-semibold">Payroll Runs</span>
