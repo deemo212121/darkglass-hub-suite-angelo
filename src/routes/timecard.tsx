@@ -77,6 +77,10 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [modalEntry, setModalEntry] = useState<TimeEntry | null>(null);
+  // True once ANY punch action (Time In/Out or Meal In/Out) has fired during
+  // this modal-open session — both action buttons then stay locked until the
+  // modal is closed and reopened. See openEntryModal/closeEntryModal.
+  const [modalActionTaken, setModalActionTaken] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -232,12 +236,14 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     };
     setModalEntry(entry);
     setModalOpen(true);
+    setModalActionTaken(false);
   };
 
   const closeEntryModal = () => {
     setModalOpen(false);
     setEditingDate(null);
     setModalEntry(null);
+    setModalActionTaken(false);
   };
 
   const saveEntry = async () => {
@@ -257,17 +263,26 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
     }
   };
 
+  // Only one punch action (Time In/Out OR Meal In/Out) is allowed per modal
+  // open — not a speed/debounce issue, a deliberate limit. Once any action
+  // fires, both buttons lock for the rest of this session (see the disabled
+  // props below); Save + Close are all that's left. Reopening the modal
+  // (openEntryModal) resets this, so the next action needs a fresh open.
+  // Functional setState avoids a stale-closure write even on the one action
+  // that IS allowed to fire.
   const handleTimeToggle = () => {
-    if (!modalEntry) return;
-    if (!modalEntry.checkIn) {
-      setModalEntry({ ...modalEntry, checkIn: getNowTime() });
-    } else if (!modalEntry.checkOut) {
-      setModalEntry({ ...modalEntry, checkOut: getNowTime() });
-    }
+    if (!modalEntry || modalActionTaken) return;
+    setModalEntry((prev) => {
+      if (!prev) return prev;
+      if (!prev.checkIn) return { ...prev, checkIn: getNowTime() };
+      if (!prev.checkOut) return { ...prev, checkOut: getNowTime() };
+      return prev;
+    });
+    setModalActionTaken(true);
   };
 
   const handleMealToggle = () => {
-    if (!modalEntry) return;
+    if (!modalEntry || modalActionTaken) return;
     if (!modalEntry.checkIn) {
       alert("Please log time in first.");
       return;
@@ -291,11 +306,13 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
       return;
     }
 
-    if (!modalEntry.mealStart) {
-      setModalEntry({ ...modalEntry, mealStart: getNowTime() });
-    } else if (!modalEntry.mealEnd) {
-      setModalEntry({ ...modalEntry, mealEnd: getNowTime() });
-    }
+    setModalEntry((prev) => {
+      if (!prev) return prev;
+      if (!prev.mealStart) return { ...prev, mealStart: getNowTime() };
+      if (!prev.mealEnd) return { ...prev, mealEnd: getNowTime() };
+      return prev;
+    });
+    setModalActionTaken(true);
   };
 
   const deleteEntry = async () => {
@@ -612,7 +629,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                          disabled={!!modalEntry.checkOut}
+                          disabled={modalActionTaken || !!modalEntry.checkOut}
                         >
                           {!modalEntry.checkIn
                             ? "🕐 Time In"
@@ -629,7 +646,7 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-600 disabled:opacity-50 text-white rounded-lg font-semibold transition"
-                          disabled={!!modalEntry.mealEnd || !!modalEntry.checkOut}
+                          disabled={modalActionTaken || !!modalEntry.mealEnd || !!modalEntry.checkOut}
                         >
                           {!modalEntry.mealStart
                             ? "🍽 Meal In"
