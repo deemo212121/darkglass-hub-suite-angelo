@@ -24,6 +24,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, resolveScheduledShiftHours, type UITimeEntry } from "@/lib/supabase/timecards";
+import { getCompanyPtoRequests } from "@/lib/supabase/pto";
 
 const EMPTY_ENTRY: UITimeEntry = { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" };
 
@@ -74,6 +75,7 @@ export function TimeClockButtons() {
       setLocked(false);
     }, 2000);
   };
+  const [onApprovedPtoToday, setOnApprovedPtoToday] = useState(false);
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -98,6 +100,24 @@ export function TimeClockButtons() {
     return () => { cancelled = true; };
   }, [profileId]);
 
+  // An approved PTO day needs no punches at all — block Time In outright so
+  // a manager approving PTO after the fact (or the employee clocking in
+  // before it's approved) can't both happen for the same day going forward.
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    const today = todayKey();
+    getCompanyPtoRequests()
+      .then((all) => {
+        if (cancelled) return;
+        setOnApprovedPtoToday(
+          all.some((r) => r.profileId === profileId && r.status === "approved" && today >= r.startDate && today <= r.endDate)
+        );
+      })
+      .catch((err) => console.error("Failed to load PTO status:", err));
+    return () => { cancelled = true; };
+  }, [profileId]);
+
   // Same rule as the full timecard page's handleMealToggle: eligibility is
   // based on the SCHEDULED shift length, not actual hours worked. Shifts of
   // 6 hours or less have no meal break at all.
@@ -118,13 +138,27 @@ export function TimeClockButtons() {
     }
   };
 
+  // An approved PTO day is greyed out entirely — no punch of any kind is
+  // meaningful for it, not just Time In (an employee who already clocked in
+  // before the request was approved shouldn't then be able to Meal/Time Out
+  // either, since HR/managers reviewing the day want it to read as pure PTO).
+  const ptoBlockMessage = "You have an approved PTO for today, so time punches are disabled.";
+
   const handleTimeIn = () => {
     if (entry.checkIn) return;
+    if (onApprovedPtoToday) {
+      alert(ptoBlockMessage);
+      return;
+    }
     withLock(() => void persist({ ...entry, checkIn: nowTime() }));
   };
 
   const handleTimeOut = () => {
     if (!entry.checkIn || entry.checkOut) return;
+    if (onApprovedPtoToday) {
+      alert(ptoBlockMessage);
+      return;
+    }
     withLock(() => void persist({ ...entry, checkOut: nowTime() }));
   };
 
@@ -138,6 +172,10 @@ export function TimeClockButtons() {
       return;
     }
     if (entry.mealStart) return;
+    if (onApprovedPtoToday) {
+      alert(ptoBlockMessage);
+      return;
+    }
     if (!mealEligible) {
       alert(
         (requiredCheckIn && requiredCheckOut) || workingHours
@@ -155,6 +193,10 @@ export function TimeClockButtons() {
       return;
     }
     if (!entry.mealStart || entry.mealEnd) return;
+    if (onApprovedPtoToday) {
+      alert(ptoBlockMessage);
+      return;
+    }
     withLock(() => void persist({ ...entry, mealEnd: nowTime() }));
   };
 
@@ -174,19 +216,22 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeIn}
-          disabled={saving || locked || !!entry.checkIn}
+          disabled={saving || locked || !!entry.checkIn || onApprovedPtoToday}
+          title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
           className={`${btnClass} text-green-300 hover:bg-green-500/15`}
         >
           Time In
         </button>
         {entry.checkIn && <span className={`${stampClass} text-green-300/80`}>{fmtTime(entry.checkIn)}</span>}
+        {!entry.checkIn && onApprovedPtoToday && <span className={`${stampClass} text-purple-300/80`}>On PTO</span>}
       </div>
       {mealEligible && (
         <div className="relative">
           <button
             type="button"
             onClick={handleMealIn}
-            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart}
+            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart || onApprovedPtoToday}
+            title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal In
@@ -199,7 +244,8 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealOut}
-            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd}
+            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd || onApprovedPtoToday}
+            title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal Out
@@ -211,7 +257,8 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeOut}
-          disabled={saving || locked || !entry.checkIn || !!entry.checkOut}
+          disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
+          title={onApprovedPtoToday ? "You have an approved PTO for today" : undefined}
           className={`${btnClass} text-red-300 hover:bg-red-500/15`}
         >
           Time Out

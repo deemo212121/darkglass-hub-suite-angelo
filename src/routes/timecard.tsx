@@ -272,6 +272,10 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   // that IS allowed to fire.
   const handleTimeToggle = () => {
     if (!modalEntry || modalActionTaken) return;
+    if (editingDate && ptoForDate(editingDate)) {
+      alert("You have an approved PTO for this day, so time punches are disabled.");
+      return;
+    }
     setModalEntry((prev) => {
       if (!prev) return prev;
       if (!prev.checkIn) return { ...prev, checkIn: getNowTime() };
@@ -283,6 +287,10 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
 
   const handleMealToggle = () => {
     if (!modalEntry || modalActionTaken) return;
+    if (editingDate && ptoForDate(editingDate)) {
+      alert("You have an approved PTO for this day, so time punches are disabled.");
+      return;
+    }
     if (!modalEntry.checkIn) {
       alert("Please log time in first.");
       return;
@@ -615,6 +623,13 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
                           {isPast
                             ? "Time-in / time-out for past dates is locked. Open My Timecard on the actual day to log your hours."
                             : "You can only log time-in / time-out on today's date."}
+                        </div>
+                      );
+                    }
+                    if (ptoForDate(editingDate)) {
+                      return (
+                        <div className="rounded-lg border border-purple-400/30 bg-purple-500/10 px-3 py-3 text-xs text-purple-200">
+                          You have an approved PTO for today, so time punches are disabled.
                         </div>
                       );
                     }
