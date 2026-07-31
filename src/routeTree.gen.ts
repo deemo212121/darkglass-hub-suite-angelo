@@ -17,6 +17,7 @@ import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as MobileRouteImport } from './routes/mobile'
 import { Route as LandingRouteImport } from './routes/landing'
+import { Route as ItTicketsRouteImport } from './routes/it-tickets'
 import { Route as HrActivityLogRouteImport } from './routes/hr-activity-log'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as FirebaseSetupRouteImport } from './routes/firebase-setup'
@@ -77,6 +78,11 @@ const MobileRoute = MobileRouteImport.update({
 const LandingRoute = LandingRouteImport.update({
   id: '/landing',
   path: '/landing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ItTicketsRoute = ItTicketsRouteImport.update({
+  id: '/it-tickets',
+  path: '/it-tickets',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HrActivityLogRoute = HrActivityLogRouteImport.update({
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/hr-activity-log': typeof HrActivityLogRoute
+  '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
@@ -223,6 +230,7 @@ export interface FileRoutesByTo {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/hr-activity-log': typeof HrActivityLogRoute
+  '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
@@ -255,6 +263,7 @@ export interface FileRoutesById {
   '/firebase-setup': typeof FirebaseSetupRoute
   '/home': typeof HomeRoute
   '/hr-activity-log': typeof HrActivityLogRoute
+  '/it-tickets': typeof ItTicketsRoute
   '/landing': typeof LandingRoute
   '/mobile': typeof MobileRoute
   '/privacy': typeof PrivacyRoute
@@ -288,6 +297,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/hr-activity-log'
+    | '/it-tickets'
     | '/landing'
     | '/mobile'
     | '/privacy'
@@ -319,6 +329,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/hr-activity-log'
+    | '/it-tickets'
     | '/landing'
     | '/mobile'
     | '/privacy'
@@ -350,6 +361,7 @@ export interface FileRouteTypes {
     | '/firebase-setup'
     | '/home'
     | '/hr-activity-log'
+    | '/it-tickets'
     | '/landing'
     | '/mobile'
     | '/privacy'
@@ -382,6 +394,7 @@ export interface RootRouteChildren {
   FirebaseSetupRoute: typeof FirebaseSetupRoute
   HomeRoute: typeof HomeRoute
   HrActivityLogRoute: typeof HrActivityLogRoute
+  ItTicketsRoute: typeof ItTicketsRoute
   LandingRoute: typeof LandingRoute
   MobileRoute: typeof MobileRoute
   PrivacyRoute: typeof PrivacyRoute
@@ -461,6 +474,13 @@ declare module '@tanstack/react-router' {
       path: '/landing'
       fullPath: '/landing'
       preLoaderRoute: typeof LandingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/it-tickets': {
+      id: '/it-tickets'
+      path: '/it-tickets'
+      fullPath: '/it-tickets'
+      preLoaderRoute: typeof ItTicketsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/hr-activity-log': {
@@ -653,6 +673,7 @@ const rootRouteChildren: RootRouteChildren = {
   FirebaseSetupRoute: FirebaseSetupRoute,
   HomeRoute: HomeRoute,
   HrActivityLogRoute: HrActivityLogRoute,
+  ItTicketsRoute: ItTicketsRoute,
   LandingRoute: LandingRoute,
   MobileRoute: MobileRoute,
   PrivacyRoute: PrivacyRoute,

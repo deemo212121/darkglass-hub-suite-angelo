@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import {
@@ -14,6 +14,8 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Mail,
+  Send,
 } from "lucide-react";
 import {
   BarChart,
@@ -28,9 +30,15 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, getAttendanceForRange } from "@/lib/supabase/timecards";
 import { createNotification } from "@/lib/supabase/notifications";
 import { useAuth } from "@/lib/auth";
+import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
+import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
+import { renderPayslipBodyHtml, PAYSLIP_STYLES, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // PH employees are paid in PHP; this converts their PHP-denominated rate into
@@ -218,9 +226,14 @@ function toUSD(li: PayrollLineItem): number {
   return li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0);
 }
 
+function parseGmailRegionParam(value: string | null): GmailRegion {
+  return value === "PH" ? "PH" : "US";
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { uid } = useAuth();
+  const { uid, role, displayName, email } = useAuth();
+  const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "reports">(
     "ahs:accounting-dashboard-active-tab",
@@ -248,6 +261,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [generating, setGenerating] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
+  // One connection per region (US/PH each send payslips from their own
+  // connected Gmail account) — keyed the same way as the currency toggle.
+  const [gmailStatusByRegion, setGmailStatusByRegion] = useState<Record<GmailRegion, GmailConnectionStatus | null>>({ US: null, PH: null });
+  const [connectingGmailRegion, setConnectingGmailRegion] = useState<GmailRegion | null>(null);
+  const [sendingPayslipId, setSendingPayslipId] = useState<string | null>(null);
+  // The Payroll table's currency toggle already reads as "which region" —
+  // reuse it directly rather than a second, easy-to-desync piece of state.
+  const activeGmailRegion: GmailRegion = selectedCurrency === "USD" ? "US" : "PH";
+  const gmailStatus = gmailStatusByRegion[activeGmailRegion];
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
@@ -586,6 +608,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         details: `${existingRun ? "Regenerated" : "Generated"} payroll run for ${genStart} – ${genEnd}. ${payrollRows.length} employees. Total: $${totalPayrollUSD.toFixed(2)}`,
         amount: Math.round(totalPayrollUSD * 100) / 100,
       });
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: existingRun ? "payroll_run_regenerated" : "payroll_run_generated",
+        targetLabel: `${genStart} – ${genEnd}`,
+        details: { employees: payrollRows.length, totalUSD: Math.round(totalPayrollUSD * 100) / 100 },
+      });
 
       // Notify every employee who actually got paid something in this run —
       // skip $0 rows (e.g. no rate set yet) since there's nothing to tell them.
@@ -608,6 +637,146 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setError(err instanceof Error ? err.message : "Failed to generate payroll");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // ── Connect Gmail (for individual payslip test-sends) ────────────────────────
+  const loadGmailStatus = useCallback(async (region: GmailRegion) => {
+    try {
+      const status = await getGmailConnectionStatus(region);
+      setGmailStatusByRegion((prev) => ({ ...prev, [region]: status }));
+    } catch (err) {
+      console.error(`Failed to load ${region} Gmail connection status:`, err);
+    }
+  }, []);
+  useEffect(() => {
+    void loadGmailStatus("US");
+    void loadGmailStatus("PH");
+  }, [loadGmailStatus]);
+
+  // Google redirects back here with ?gmailConnected=1|0&gmailRegion=US|PH
+  // after the consent screen (see gmailBridge.ts) — show the result once,
+  // then strip the params so refreshing the page doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmailConnected");
+    if (result === null) return;
+    const region = parseGmailRegionParam(params.get("gmailRegion"));
+    setError(result === "1" ? null : `Couldn't connect ${region} Gmail — please try again.`);
+    if (result === "1") {
+      void loadGmailStatus(region);
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "gmail_connected",
+        targetLabel: `${region} Payroll`,
+      });
+    }
+    params.delete("gmailConnected");
+    params.delete("gmailRegion");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState(null, "", next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleConnectGmail = async (region: GmailRegion) => {
+    setConnectingGmailRegion(region);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { setError("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=${region}&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setConnectingGmailRegion(null);
+    }
+  };
+
+  const handleDisconnectGmail = async (region: GmailRegion) => {
+    if (!confirm(`Disconnect ${region} Gmail? Payslip emails for ${region} employees won't be sendable until it's reconnected.`)) return;
+    try {
+      await disconnectGmail(region);
+      await loadGmailStatus(region);
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "gmail_disconnected",
+        targetLabel: `${region} Payroll`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to disconnect ${region} Gmail.`);
+    }
+  };
+
+  // Individual send only, deliberately no "send all" yet — see gmailBridge.ts's header comment.
+  // Builds the same "PAYSLIP" document Employee Self-Service shows/downloads
+  // (see payslipTemplate.ts) and renders it to a real PDF client-side —
+  // captureHtmlToPdfBlob needs a real browser DOM/canvas, which the Gmail
+  // server bridge's runtime doesn't have, so the PDF is built here and
+  // handed to the server as base64 to attach as-is.
+  const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
+    const attendanceRows = await getAttendanceForRange(row.employee.id, genStart, genEnd, {});
+    const rate = row.hourlyRateUSD;
+    const dailyRows: PayslipDailyRow[] = attendanceRows
+      .filter((r) => r.hoursWorked > 0)
+      .map((r) => {
+        const regular = Math.min(r.hoursWorked, 8);
+        const overtime = Math.max(0, r.hoursWorked - 8);
+        return {
+          date: r.date,
+          clockIn: r.clockIn,
+          clockOut: r.clockOut,
+          mealStart: r.mealStart,
+          mealEnd: r.mealEnd,
+          hours: r.hoursWorked,
+          rate,
+          amount: regular * rate + overtime * rate * 1.5,
+        };
+      });
+    const payslipData: EmployeePayslipData = {
+      name: row.employee.full_name,
+      department: row.employee.department || "",
+      period: `${genStart} to ${genEnd}`,
+      generatedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+      dailyRows,
+      grossPay: row.grossPayUSD,
+      // No deductions concept in this live-preview flow (unlike a finalized
+      // payroll_line_items row, which has its own stored net_pay) — gross
+      // and net are the same until a real run tracks that separately.
+      netPay: row.grossPayUSD,
+    };
+    const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
+    return blobToBase64(pdfBlob);
+  };
+
+  const handleSendPayslip = async (row: EmployeePayrollRow) => {
+    if (!genStart || !genEnd) return;
+    if (!confirm(`Send a test payslip email to ${row.employee.full_name} for ${genStart} to ${genEnd}?`)) return;
+    setSendingPayslipId(row.employee.id);
+    try {
+      const pdfBase64 = await buildPayslipPdfBase64(row);
+      const { sentTo } = await sendPayslipEmail({
+        profileId: row.employee.id,
+        periodStart: genStart,
+        periodEnd: genEnd,
+        hoursWorked: row.hoursWorked,
+        overtimeHours: row.overtimeHours,
+        hourlyRate: row.hourlyRateUSD,
+        grossPay: row.grossPayUSD,
+        pdfBase64,
+      });
+      alert(`Payslip sent to ${sentTo}.`);
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "payslip_sent",
+        targetType: "profile",
+        targetId: row.employee.id,
+        targetLabel: `${row.employee.full_name} (${genStart} – ${genEnd})`,
+      });
+    } catch (err) {
+      alert(`Failed to send payslip: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSendingPayslipId(null);
     }
   };
 
@@ -658,6 +827,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return true;
   });
   const visibleTotalUSD = visibleRows.reduce((s, r) => s + r.grossPayUSD, 0);
+
+  // Grouped by department, both the department groups and each group's
+  // employees sorted alphabetically, for the table's department-separated view.
+  const visibleRowsByDepartment = (() => {
+    const groups = new Map<string, EmployeePayrollRow[]>();
+    for (const row of visibleRows) {
+      const dept = row.employee.department || "—";
+      if (!groups.has(dept)) groups.set(dept, []);
+      groups.get(dept)!.push(row);
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([department, rows]) => ({
+        department,
+        rows: [...rows].sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name)),
+      }));
+  })();
 
   if (loading) {
     return (
@@ -862,6 +1048,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <LogOut className="h-4 w-4" />
                 Audit Log ({auditLog.length})
               </button>
+              <ActivityLogPanel module="accounting" title="Accounting Activity Log" />
               {/* Currency toggle */}
               <div className="ml-auto flex gap-2">
                 {(["USD", "PHP"] as const).map((cur) => (
@@ -881,6 +1068,45 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Connect Gmail — one connection per region; payslip sends
+                automatically use whichever region the recipient employee
+                belongs to, regardless of which tab is currently active. */}
+            <div className="flex flex-wrap gap-3">
+              {(["US", "PH"] as const).map((region) => {
+                const status = gmailStatusByRegion[region];
+                return (
+                  <div key={region} className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm">
+                    <Mail className={`h-4 w-4 shrink-0 ${status?.connected ? "text-green-400" : "text-slate-500"}`} />
+                    <span className="text-xs text-slate-400 uppercase font-semibold">{region} Payroll:</span>
+                    {status?.connected ? (
+                      <>
+                        <span className="text-slate-200" title={status.connectedByName ? `Connected by ${status.connectedByName}` : undefined}>
+                          {status.connectedAccountName || "Unknown"}
+                          {status.connectedEmail && <span className="text-slate-500"> ({status.connectedEmail})</span>}
+                        </span>
+                        {canConnectGmail && (
+                          <button type="button" onClick={() => handleDisconnectGmail(region)} className="text-red-300 hover:text-red-200 text-xs underline ml-1">
+                            Disconnect
+                          </button>
+                        )}
+                      </>
+                    ) : canConnectGmail ? (
+                      <button
+                        type="button"
+                        onClick={() => handleConnectGmail(region)}
+                        disabled={connectingGmailRegion === region}
+                        className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
+                      >
+                        {connectingGmailRegion === region ? "Connecting…" : "Connect Gmail"}
+                      </button>
+                    ) : (
+                      <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Summary cards */}
@@ -996,59 +1222,82 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Rate</th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
+                    <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Payslip</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
+                      <td colSpan={8} className="px-4 py-8 text-center text-slate-500 text-sm">
                         No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
                       </td>
                     </tr>
                   ) : (
-                    visibleRows.map((row) => (
-                      <tr key={row.employee.id} className="border-b border-white/5 hover:bg-white/5">
-                        <td className="px-4 py-3 font-medium">
-                          <button
-                            type="button"
-                            onClick={() => setDetailEmployee(row.employee)}
-                            title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
-                            className="text-blue-400 hover:text-blue-300 hover:underline"
-                          >
-                            {row.employee.full_name}
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">
-                          {row.employee.department || "—"}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">
-                          {row.employee.roleLabel || "—"}
-                        </td>
-                        <td className="px-4 py-3 text-center text-slate-300">
-                          {row.hoursWorked.toFixed(1)}
-                        </td>
-                        <td className="px-4 py-3 text-center text-orange-300">
-                          {row.overtimeHours.toFixed(1)}
-                        </td>
-                        <td className="px-4 py-3 text-center text-slate-300">
-                          ${row.hourlyRateUSD.toFixed(2)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-green-300">
-                          {fmt(row.grossPayUSD)}
-                        </td>
-                      </tr>
+                    visibleRowsByDepartment.map((group) => (
+                      <Fragment key={group.department}>
+                        <tr className="bg-white/[0.03]">
+                          <td colSpan={8} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                            {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
+                          </td>
+                        </tr>
+                        {group.rows.map((row) => (
+                          <tr key={row.employee.id} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-4 py-3 font-medium">
+                              <button
+                                type="button"
+                                onClick={() => setDetailEmployee(row.employee)}
+                                title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
+                                className="text-blue-400 hover:text-blue-300 hover:underline"
+                              >
+                                {row.employee.full_name}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-slate-300">
+                              {row.employee.department || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300">
+                              {row.employee.roleLabel || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-300">
+                              {row.hoursWorked.toFixed(1)}
+                            </td>
+                            <td className="px-4 py-3 text-center text-orange-300">
+                              {row.overtimeHours.toFixed(1)}
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-300">
+                              ${row.hourlyRateUSD.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-green-300">
+                              {fmt(row.grossPayUSD)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleSendPayslip(row)}
+                                disabled={sendingPayslipId === row.employee.id || !gmailStatus?.connected}
+                                title={gmailStatus?.connected ? "Send a test payslip email to this employee" : "Connect Gmail above first"}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white rounded text-xs font-medium transition"
+                              >
+                                <Send className="h-3 w-3" />
+                                {sendingPayslipId === row.employee.id ? "Sending…" : "Send"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
                     ))
                   )}
                 </tbody>
                 {visibleRows.length > 0 && (
                   <tfoot>
                     <tr className="border-t border-white/20 bg-white/5">
-                      <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-slate-300">
+                      <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-slate-300">
                         Total
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-green-300">
                         {fmt(visibleTotalUSD)}
                       </td>
+                      <td />
                     </tr>
                   </tfoot>
                 )}

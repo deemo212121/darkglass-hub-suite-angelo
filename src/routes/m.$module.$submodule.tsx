@@ -107,6 +107,7 @@ import { AccountingDashboard } from "@/components/AccountingDashboard";
 import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
 import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
 import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
+import { ItTicketsPage } from "@/components/ItTicketsPage";
 import { CSRDashboard } from "@/components/CSRDashboard";
 import { CSRTeamLeaderDashboard } from "@/components/CSRTeamLeaderDashboard";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
@@ -218,7 +219,14 @@ function SubModule() {
   // company-wide utilities (e.g. the internal team messenger).
   const ALL_ROLES_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
 
-  if (mod.slug === "admin" && !hasAdminAccess && !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) {
+  // IT Tickets is also reachable from the Admin module (in addition to
+  // Dashboard) — reuse the same DASHBOARD_ROLE_GATES allow-list so IT and
+  // Senior-tier managers can open this one card without full Admin access;
+  // ItTicketsPage.tsx itself further splits edit (IT/Admin) vs read-only
+  // (Senior Managers), and the it_tickets RLS policies enforce it either way.
+  const hasItTicketsAccess = sub.custom === "it-tickets" && hasDashboardAccess(getDashboardRoleGate("it-tickets") || [], role, extraRoles);
+
+  if (mod.slug === "admin" && !hasAdminAccess && !hasItTicketsAccess && !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) {
     return (
       <>
         <AppHeader />
@@ -461,6 +469,8 @@ function SubModule() {
         ? <PayrollCalculationPage mod={mod} sub={sub} />
         : (sub as any).custom === "employee-self-service"
         ? <EmployeeSelfServicePage mod={mod} sub={sub} />
+        : (sub as any).custom === "it-tickets"
+        ? <ItTicketsPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-dashboard"
         ? <CSRDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "csr-team-leader-dashboard"

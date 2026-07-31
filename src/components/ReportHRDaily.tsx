@@ -58,6 +58,7 @@ import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W9FormData } from "@/lib/w9FormTemplate";
 import { fillW9Pdf } from "@/lib/w9PdfFill";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -261,6 +262,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const today = new Date().toISOString().slice(0, 10);
 
   const [error, setError] = useState<string | null>(null);
+  const [showActivityLog, setShowActivityLog] = useState(false);
   // One section visible at a time — the page used to stack Hiring, Pending
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
@@ -3575,13 +3577,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <p className="text-2xl font-bold leading-tight">{employees.length}</p>
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Employees</p>
         </div>
-        <Link
-          to="/hr-activity-log"
+        <button
+          type="button"
+          onClick={() => setShowActivityLog(true)}
           className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-sm text-muted-foreground hover:text-foreground"
         >
           <History className="h-4 w-4" /> Activity Log
-        </Link>
+        </button>
       </div>
+
+      {showActivityLog && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowActivityLog(false)}
+        >
+          <div
+            className="bg-slate-950 border border-white/10 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-end px-3 pt-3">
+              <button onClick={() => setShowActivityLog(false)} className="text-slate-400 hover:text-white transition p-1">
+                ✕
+              </button>
+            </div>
+            <div className="px-3 pb-3 overflow-y-auto">
+              <HrActivityLogPanel />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── KPI overview — every tile is clickable, same as Attendance: it jumps straight to the tab/filter that explains the number instead of just displaying it. ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">

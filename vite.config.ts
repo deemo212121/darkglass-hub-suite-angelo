@@ -527,6 +527,43 @@ function googleDriveDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/gmail locally — same shape as
+// googleDriveDevPlugin above (real host/port in the reconstructed URL,
+// req.originalUrl so the "/api/gmail" prefix Connect strips off req.url
+// survives, since gmailBridge.ts also derives its OAuth redirect_uri from
+// the request's own origin).
+function gmailDevPlugin() {
+  return {
+    name: "gmail-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/gmail", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleGmailRequest } = await server.ssrLoadModule("/src/lib/server/gmailBridge.ts");
+          const webReq = new Request(`http://${req.headers.host ?? "localhost"}${req.originalUrl ?? req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleGmailRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Gmail request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Dev-only middleware: serve /api/admin-update-email locally — same bridge
 // as production. Plain JSON POST, same shape as liveChatDevPlugin minus the
 // multipart-upload branch (this route never carries a file).
@@ -583,7 +620,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up
