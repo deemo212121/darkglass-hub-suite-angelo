@@ -32,6 +32,13 @@ function monthBounds(monthStr: string): { start: string; end: string } {
   return { start, end };
 }
 
+const SALARY_REASON_LABELS: Record<SalaryChangeReason, string> = {
+  promotion: "Promotion",
+  adjustment: "Adjustment",
+  demotion: "Demotion",
+  initial: "Initial",
+  training_rate: "Training Rate",
+};
 const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   present: "Present",
   absent: "Absent",
@@ -270,6 +277,7 @@ export function EmployeePayrollDetailModal({
                     <option value="adjustment">Adjustment</option>
                     <option value="demotion">Demotion</option>
                     <option value="initial">Initial</option>
+                    <option value="training_rate">Training Rate</option>
                   </select>
                 </div>
                 <button
@@ -296,7 +304,7 @@ export function EmployeePayrollDetailModal({
                   {history.map((h) => (
                     <tr key={h.id} className="border-b border-white/5">
                       <td className="py-1.5 text-slate-200">{h.effectiveDate}</td>
-                      <td className="py-1.5 text-slate-300 capitalize">{h.reason}</td>
+                      <td className="py-1.5 text-slate-300">{SALARY_REASON_LABELS[h.reason] ?? h.reason}</td>
                       <td className="py-1.5 text-right text-white font-semibold">${h.hourlyRate.toFixed(2)}/hr</td>
                     </tr>
                   ))}
