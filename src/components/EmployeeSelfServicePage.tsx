@@ -168,6 +168,8 @@ interface EmployeePayslipData {
   extraPay: number;
   /** Finance-entered note for this specific payslip — see migration 0111. */
   notes: string;
+  /** US employees (assigned_branch !== "Philippines") have a 13% tax withheld; PH employees don't show a Tax line at all. */
+  isUS: boolean;
 }
 
 const ATTENDANCE_DAILY: AttendanceRecord[] = [
@@ -191,6 +193,11 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
     month: "long",
     day: "numeric",
   });
+
+  // US employees only — 13% withheld from Total. PH employees show no Tax
+  // line at all (tax stays 0, row is omitted below).
+  const tax = employee.isUS ? employee.grossPay * 0.13 : 0;
+  const grandTotal = employee.grossPay - tax + employee.extraPay;
 
   return `
 <!DOCTYPE html>
@@ -501,6 +508,13 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
         <div class="amount">$${employee.grossPay.toFixed(2)}</div>
       </div>
 
+      ${employee.isUS ? `
+      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>Tax (13%)</div>
+        <div class="amount">-$${tax.toFixed(2)}</div>
+      </div>
+      ` : ''}
+
       <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>Extra</div>
         <div class="amount">$${employee.extraPay.toFixed(2)}</div>
@@ -508,7 +522,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
 
       <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>GRAND TOTAL</div>
-        <div class="amount">$${(employee.grossPay + employee.extraPay).toFixed(2)}</div>
+        <div class="amount">$${grandTotal.toFixed(2)}</div>
       </div>
     </div>
 
@@ -1180,6 +1194,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         ? `${formatClockTime(myScheduleInfo.requiredCheckIn)} - ${formatClockTime(myScheduleInfo.requiredCheckOut)}`
         : "—";
     const breakLabel = myScheduleInfo?.mealMinutes ? `${myScheduleInfo.mealMinutes} mins Break` : "—";
+    // Same US/PH split as AccountingDashboard.tsx's payrollRows: anyone not
+    // assigned to the Philippines branch is treated as US.
+    const isUS = (companyProfiles.find((p) => p.id === myProfileId)?.assigned_branch ?? "") !== "Philippines";
     return {
       name: displayName || "Employee",
       department: ROLE_LABELS[role || ""] || role || "",
@@ -1202,6 +1219,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       totalDays: offDays + ptoUsed,
       extraPay: selectedPayslip.extraPay,
       notes: selectedPayslip.notes || "",
+      isUS,
     };
   })() : null;
 
