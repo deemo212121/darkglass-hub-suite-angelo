@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0092 — Add "training_rate" as a Salary History reason
+-- 0110 — Add "training_rate" as a Salary History reason
 --
 -- salary_entries.reason has been check-constrained to
 -- 'promotion'/'demotion'/'adjustment'/'initial' since 0001_init.sql — adds
@@ -7,7 +7,7 @@
 -- training, selectable from the Reason dropdown on the Payroll Calculation
 -- / Accounting Dashboard employee detail modal (EmployeePayrollDetailModal.tsx).
 --
--- Run once in the Supabase SQL Editor, after 0091.
+-- Run once in the Supabase SQL Editor, after 0109.
 -- =====================================================================
 
 alter table salary_entries drop constraint if exists salary_entries_reason_check;

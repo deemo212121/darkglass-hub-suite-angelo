@@ -180,20 +180,21 @@ function findMissingTimeouts(entries: TimecardEntry[], employees: SupabaseEmploy
 }
 
 // One nation's sheet for the "Payroll by Nation & Department" export —
-// employees grouped by department (readable label, same as the Payroll
-// tab's employee table), each group followed by a subtotal row, and a
-// grand total for the whole nation at the end.
+// employees grouped by department (same department/role split as the
+// Payroll tab's employee table — see getRoleDepartmentBreakdown), each
+// group followed by a subtotal row, and a grand total for the whole
+// nation at the end.
 function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)[][] {
   const byDept = new Map<string, EmployeePayrollRow[]>();
   for (const r of rows) {
-    const dept = r.employee.department ? (ROLE_LABELS[r.employee.department] ?? r.employee.department) : "Unspecified";
+    const dept = r.employee.department || "Unspecified";
     const list = byDept.get(dept) ?? [];
     list.push(r);
     byDept.set(dept, list);
   }
 
   const sheet: (string | number)[][] = [
-    ["Employee", "Department", "Reg Hrs", "OT Hrs", "Rate ($/hr)", "Gross Pay ($)"],
+    ["Employee", "Department", "Role", "Reg Hrs", "OT Hrs", "Rate ($/hr)", "Gross Pay ($)"],
   ];
   let nationTotal = 0;
   for (const [dept, deptRows] of Array.from(byDept.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -201,6 +202,7 @@ function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)
       sheet.push([
         r.employee.full_name,
         dept,
+        r.employee.roleLabel || "—",
         Number(r.hoursWorked.toFixed(1)),
         Number(r.overtimeHours.toFixed(1)),
         Number(r.hourlyRateUSD.toFixed(2)),
@@ -208,11 +210,11 @@ function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)
       ]);
     }
     const deptTotal = deptRows.reduce((s, r) => s + r.grossPayUSD, 0);
-    sheet.push(["", `${dept} Subtotal`, "", "", "", Number(deptTotal.toFixed(2))]);
+    sheet.push(["", `${dept} Subtotal`, "", "", "", "", Number(deptTotal.toFixed(2))]);
     sheet.push([]);
     nationTotal += deptTotal;
   }
-  sheet.push(["", "Nation Total", "", "", "", Number(nationTotal.toFixed(2))]);
+  sheet.push(["", "Nation Total", "", "", "", "", Number(nationTotal.toFixed(2))]);
   return sheet;
 }
 
