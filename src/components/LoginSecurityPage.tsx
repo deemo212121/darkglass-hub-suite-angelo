@@ -1,16 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyLoginEvents, type LoginEvent } from "@/lib/supabase/loginEvents";
+import { resetLoginLockout, getLoginLockoutHistory, type LoginLockoutEventRow } from "@/lib/supabase/loginLockouts";
+import { createItTicket } from "@/lib/supabase/itTickets";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { haversineMiles } from "@/lib/mapEngine";
+import { useAuth } from "@/lib/auth";
+import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props {
   mod: ModuleDef;
   sub: SubModuleDef;
+}
+
+// Must match LOCKOUT_THRESHOLD in loginLockoutBridge.ts / src/lib/auth.tsx.
+const LOCKOUT_THRESHOLD = 5;
+
+/** "Locked — 12s remaining" while locked_until is still in the future, otherwise "Lock expired — next wrong password re-locks it" (stays flagged here until a successful login resets the counter). */
+function lockStatusLabel(lockedUntil: string | null, now: number): { text: string; active: boolean } {
+  if (!lockedUntil) return { text: "—", active: false };
+  const untilMs = new Date(lockedUntil).getTime();
+  const remaining = Math.ceil((untilMs - now) / 1000);
+  if (remaining > 0) return { text: `Locked — ${remaining}s`, active: true };
+  return { text: "Lock expired", active: false };
 }
 
 /** A login more than this far from the user's own usual location gets flagged. Cloudflare's IP geolocation is city-accurate, not exact, so this is set well above normal same-metro jitter. */
@@ -81,23 +97,37 @@ function computeUserStats(profile: ProfileRow, events: LoginEvent[]): UserLoginS
   return { profile, lastEvent, mostUsedIp, unusualLocation, usualLocationLabel };
 }
 
+const TAB_VALUES = ["security", "lockouts", "lockoutHistory"] as const;
+
 export function LoginSecurityPage({ mod, sub }: Props) {
+  const [activeTab, setActiveTab] = usePersistedTab<(typeof TAB_VALUES)[number]>("loginSecurityPage:tab", TAB_VALUES, "security");
+  const { displayName, email: myEmail } = useAuth();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [events, setEvents] = useState<LoginEvent[]>([]);
+  const [lockoutHistory, setLockoutHistory] = useState<LoginLockoutEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [historyFor, setHistoryFor] = useState<UserLoginStats | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<ProfileRow | null>(null);
   const [freezing, setFreezing] = useState(false);
+  const [unlockingId, setUnlockingId] = useState<string | null>(null);
+  const [ticketingId, setTicketingId] = useState<string | null>(null);
+  // Ticks once a second so lock-status countdowns actually count down live.
+  const [now, setNow] = useState(() => Date.now());
 
   const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [userRows, loginRows] = await Promise.all([getCompanyUsers(), getCompanyLoginEvents()]);
+      const [userRows, loginRows, lockoutRows] = await Promise.all([
+        getCompanyUsers(),
+        getCompanyLoginEvents(),
+        getLoginLockoutHistory(),
+      ]);
       setProfiles(userRows);
       setEvents(loginRows);
+      setLockoutHistory(lockoutRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -108,6 +138,41 @@ export function LoginSecurityPage({ mod, sub }: Props) {
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleUnlock = async (profile: ProfileRow) => {
+    setUnlockingId(profile.id);
+    try {
+      await resetLoginLockout(profile.id);
+      await loadData();
+    } catch (err) {
+      alert(`Failed to unlock: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setUnlockingId(null);
+    }
+  };
+
+  const handleCreateTicket = async (profile: ProfileRow) => {
+    const name = profile.display_name || profile.email;
+    setTicketingId(profile.id);
+    try {
+      await createItTicket({
+        subject: `Login lockout: ${name}`,
+        description: `${name} (${profile.email}) has been locked out after ${profile.failed_login_count} failed login attempts. They've been advised to call IT.`,
+        priority: "high",
+        createdByName: displayName || myEmail || "Admin",
+      });
+      alert(`IT ticket created for ${name}.`);
+    } catch (err) {
+      alert(`Failed to create IT ticket: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setTicketingId(null);
+    }
+  };
 
   // Same is_active flag User Management's Deactivate/Reactivate uses — this
   // is that same action, surfaced here too so an admin looking at a flagged
@@ -128,6 +193,11 @@ export function LoginSecurityPage({ mod, sub }: Props) {
   };
 
   const stats = useMemo(() => profiles.map((p) => computeUserStats(p, events)), [profiles, events]);
+
+  const flaggedProfiles = useMemo(
+    () => profiles.filter((p) => (p.failed_login_count ?? 0) >= LOCKOUT_THRESHOLD),
+    [profiles]
+  );
 
   // Two different employees whose most recent login shares the same IP —
   // compared "most recent vs most recent" (not full history) so this
@@ -208,19 +278,55 @@ export function LoginSecurityPage({ mod, sub }: Props) {
         </button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 border-b border-white/10 overflow-x-auto">
+        {(
+          [
+            { id: "security", label: "Login Security", icon: ShieldCheck },
+            { id: "lockouts", label: "Login Lockouts", icon: ShieldAlert },
+            { id: "lockoutHistory", label: "Lockout History", icon: History },
+          ] as const
+        ).map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
+                activeTab === tab.id
+                  ? "border-blue-500 text-blue-300"
+                  : "border-transparent text-slate-400 hover:text-slate-300"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {tab.label}
+              {tab.id === "lockouts" && flaggedProfiles.length > 0 && (
+                <span className="rounded-full bg-red-500/20 text-red-300 text-[10px] px-1.5 py-0.5 font-semibold">
+                  {flaggedProfiles.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === "security" && (
+      <>
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-muted-foreground">
           <span className="text-foreground font-medium">{filtered.length}</span> users
           {loading ? " · loading…" : null}
           {error ? <span className="text-red-300 ml-3">⚠ {error}</span> : null}
         </span>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="search in result"
-          className="glass-input text-xs py-1 px-2 rounded-md w-52"
-        />
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="search in result"
+            className="glass-input text-xs py-1 px-2 rounded-md w-52"
+          />
+        </div>
       </div>
 
       <div className="panel overflow-x-auto p-0">
@@ -444,6 +550,125 @@ export function LoginSecurityPage({ mod, sub }: Props) {
             </div>
           </div>
         </div>
+      )}
+      </>
+      )}
+
+      {activeTab === "lockouts" && (
+        <>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">
+              <span className="text-foreground font-medium">{flaggedProfiles.length}</span> account{flaggedProfiles.length === 1 ? "" : "s"} with {LOCKOUT_THRESHOLD}+ failed attempts
+              {loading ? " · loading…" : null}
+            </span>
+          </div>
+
+          <div className="panel overflow-x-auto p-0">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5">
+                  {["User", "Role", "Branch", "Failed Attempts", "Lock Status", "Actions"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {flaggedProfiles.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-12 text-center text-muted-foreground">
+                      {loading ? "Loading…" : "No accounts currently have 5 or more failed login attempts."}
+                    </td>
+                  </tr>
+                ) : (
+                  flaggedProfiles.map((p) => {
+                    const status = lockStatusLabel(p.locked_until, now);
+                    return (
+                      <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="px-3 py-3 font-medium whitespace-nowrap">{p.display_name || p.email}</td>
+                        <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{roleDisplay(p.role)}</td>
+                        <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{p.assigned_branch || "—"}</td>
+                        <td className="px-3 py-3 text-center font-semibold text-red-300">{p.failed_login_count}</td>
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 ${status.active ? "text-red-300" : "text-yellow-300"}`}>
+                            {status.active && <Lock className="h-3 w-3" />}
+                            {status.active ? status.text : "Lock expired — next wrong password re-locks it"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void handleCreateTicket(p)}
+                              disabled={ticketingId === p.id}
+                              title="Open an IT ticket about this lockout"
+                              className="rounded border border-blue-400/40 bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+                            >
+                              <Send className="h-3 w-3" />
+                              {ticketingId === p.id ? "Creating…" : "Create IT Ticket"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleUnlock(p)}
+                              disabled={unlockingId === p.id}
+                              className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {unlockingId === p.id ? "Unlocking…" : "Unlock Now"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {activeTab === "lockoutHistory" && (
+        <>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">
+              <span className="text-foreground font-medium">{lockoutHistory.length}</span> recorded lockout{lockoutHistory.length === 1 ? "" : "s"}
+              {loading ? " · loading…" : null}
+            </span>
+          </div>
+
+          <div className="panel overflow-x-auto p-0">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5">
+                  {["Employee", "Email", "Failed Attempts", "Locked At"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lockoutHistory.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-12 text-center text-muted-foreground">
+                      {loading ? "Loading…" : "No lockouts have been recorded yet."}
+                    </td>
+                  </tr>
+                ) : (
+                  lockoutHistory.map((h) => (
+                    <tr key={h.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-3 py-3 font-medium whitespace-nowrap">{h.employeeName}</td>
+                      <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{h.employeeEmail}</td>
+                      <td className="px-3 py-3 text-center font-semibold text-red-300">{h.failCount}</td>
+                      <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{new Date(h.lockedAt).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </main>
   );

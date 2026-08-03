@@ -36,6 +36,7 @@ import {
   UserCheck,
   UserX,
   Search,
+  Loader2,
 } from "lucide-react";
 import {
   createUserAccount,
@@ -66,6 +67,9 @@ export default function UserManagementPage() {
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savingUser, setSavingUser] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
   // Form states
   const [userForm, setUserForm] = useState({
@@ -142,6 +146,7 @@ export default function UserManagementPage() {
         return;
       }
 
+      setSavingUser(true);
       await createUserAccount(
         {
           email: userForm.email,
@@ -163,6 +168,8 @@ export default function UserManagementPage() {
     } catch (error: any) {
       console.error("Error creating user:", error);
       toast.error(error.message || "Failed to create user");
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -170,6 +177,7 @@ export default function UserManagementPage() {
     try {
       if (!editingUser) return;
 
+      setSavingUser(true);
       await updateUserAccount(editingUser.uid, {
         displayName: userForm.displayName,
         role: userForm.role,
@@ -187,10 +195,13 @@ export default function UserManagementPage() {
     } catch (error: any) {
       console.error("Error updating user:", error);
       toast.error(error.message || "Failed to update user");
+    } finally {
+      setSavingUser(false);
     }
   };
 
   const handleToggleUserStatus = async (user: UserAccount) => {
+    setTogglingUserId(user.uid);
     try {
       if (user.isActive) {
         await deactivateUserAccount(user.uid);
@@ -203,6 +214,8 @@ export default function UserManagementPage() {
     } catch (error) {
       console.error("Error toggling user status:", error);
       toast.error("Failed to update user status");
+    } finally {
+      setTogglingUserId(null);
     }
   };
 
@@ -218,6 +231,7 @@ export default function UserManagementPage() {
         return;
       }
 
+      setSavingCompany(true);
       await createCompany(companyForm, currentUser.uid);
 
       toast.success("Company created successfully");
@@ -227,6 +241,8 @@ export default function UserManagementPage() {
     } catch (error) {
       console.error("Error creating company:", error);
       toast.error("Failed to create company");
+    } finally {
+      setSavingCompany(false);
     }
   };
 
@@ -234,6 +250,7 @@ export default function UserManagementPage() {
     try {
       if (!editingCompany) return;
 
+      setSavingCompany(true);
       await updateCompany(editingCompany.companyId, companyForm);
 
       toast.success("Company updated successfully");
@@ -244,6 +261,8 @@ export default function UserManagementPage() {
     } catch (error) {
       console.error("Error updating company:", error);
       toast.error("Failed to update company");
+    } finally {
+      setSavingCompany(false);
     }
   };
 
@@ -486,8 +505,11 @@ export default function UserManagementPage() {
                         size="sm"
                         variant={user.isActive ? "outline" : "default"}
                         onClick={() => handleToggleUserStatus(user)}
+                        disabled={togglingUserId === user.uid}
                       >
-                        {user.isActive ? (
+                        {togglingUserId === user.uid ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : user.isActive ? (
                           <UserX className="h-4 w-4" />
                         ) : (
                           <UserCheck className="h-4 w-4" />
@@ -684,7 +706,9 @@ export default function UserManagementPage() {
             </Button>
             <Button
               onClick={editingUser ? handleUpdateUser : handleCreateUser}
+              disabled={savingUser}
             >
+              {savingUser && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               {editingUser ? "Update User" : "Create User"}
             </Button>
           </DialogFooter>
@@ -815,7 +839,9 @@ export default function UserManagementPage() {
               onClick={
                 editingCompany ? handleUpdateCompany : handleCreateCompany
               }
+              disabled={savingCompany}
             >
+              {savingCompany && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               {editingCompany ? "Update Company" : "Create Company"}
             </Button>
           </DialogFooter>

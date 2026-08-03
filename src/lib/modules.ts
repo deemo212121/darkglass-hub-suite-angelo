@@ -1431,7 +1431,7 @@ const adminMod: ModuleDef = {
     {
       slug: "login-security",
       title: "Login Security",
-      description: "Last/most-used login IP, browser, and device per user — flags unusual locations and IPs shared between employees.",
+      description: "Last/most-used login IP, browser, and device per user — flags unusual locations, shared IPs, and accounts locked out after 5 failed login attempts.",
       custom: "login-security" as any,
       fields: [],
       seed: () => ({}),

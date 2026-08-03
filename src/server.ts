@@ -15,6 +15,7 @@ import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
+import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -117,6 +118,10 @@ export default {
     if (url.pathname === "/api/supabase-token") {
       const merged = await resolveServerEnv(env);
       return await handleSupabaseTokenRequest(request, merged);
+    }
+    if (url.pathname === "/api/login-lockout") {
+      const merged = await resolveServerEnv(env);
+      return await handleLoginLockoutRequest(request, merged);
     }
     if (url.pathname === "/api/servicepower") {
       const merged = await resolveServerEnv(env);

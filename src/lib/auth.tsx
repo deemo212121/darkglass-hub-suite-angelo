@@ -70,6 +70,48 @@ function loadCompanyZipCoverage() {
   })();
 }
 
+interface LoginLockoutResult {
+  locked: boolean;
+  remainingSeconds?: number;
+  failCount?: number;
+}
+
+// Must match LOCKOUT_THRESHOLD in loginLockoutBridge.ts / LoginLockoutsPage.tsx.
+const LOCKOUT_THRESHOLD = 5;
+
+/** Pre-sign-in check against loginLockoutBridge.ts — fails open (never blocks login) if the endpoint itself is unreachable. */
+async function checkLoginLockout(email: string): Promise<LoginLockoutResult> {
+  try {
+    const res = await fetch("/api/login-lockout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "check", email }),
+    });
+    if (!res.ok) return { locked: false };
+    return await res.json();
+  } catch {
+    return { locked: false };
+  }
+}
+
+/** Reports a sign-in outcome to loginLockoutBridge.ts. Best-effort — a failure here must never itself throw and interrupt the real login flow. */
+async function recordLoginLockoutOutcome(
+  email: string,
+  action: "recordSuccess" | "recordFailure"
+): Promise<LoginLockoutResult | null> {
+  try {
+    const res = await fetch("/api/login-lockout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, email }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 function maybeAutoMigrateLegacyUsers(role: string, companyId: string) {
   if (!role || !companyId) return;
   if (!MIGRATION_ROLES.has(role.toUpperCase())) return;
@@ -318,9 +360,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     pendingInteractiveLoginRef.current = true;
     try {
+      // Server-enforced lockout check — 5 failed attempts locks the account
+      // for 30s regardless of browser/device (see loginLockoutBridge.ts).
+      // Never attempt the actual Firebase sign-in while locked.
+      const lockCheck = await checkLoginLockout(email);
+      if (lockCheck.locked) {
+        const lockedError: any = new Error(
+          `Too many failed login attempts. Please wait ${lockCheck.remainingSeconds ?? 30}s and contact IT if this continues.`
+        );
+        lockedError.__isLockoutError = true;
+        throw lockedError;
+      }
+
       console.log("🔐 Attempting Firebase login for:", email);
       const authUser = await firebaseSignIn(email, password);
-      
+      void recordLoginLockoutOutcome(email, "recordSuccess");
+
       console.log("✅ Login successful:", {
         email: authUser.email,
         role: authUser.role,
@@ -329,6 +384,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // State will be updated by onAuthStateChanged listener
     } catch (error: any) {
+      // Only a real Firebase credential failure should count against the
+      // lockout — not our own "already locked" error thrown just above.
+      if (!error?.__isLockoutError) {
+        const failure = await recordLoginLockoutOutcome(email, "recordFailure");
+        if (failure?.locked) {
+          error = new Error(
+            `Too many failed login attempts. Please wait ${failure.remainingSeconds ?? 30}s and contact IT if this continues.`
+          );
+        } else if (typeof failure?.failCount === "number") {
+          // Let them know how many tries are left on every wrong password,
+          // not just once they're already locked out.
+          const remaining = Math.max(0, LOCKOUT_THRESHOLD - failure.failCount);
+          error = new Error(`${error.message} ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before lockout.`);
+        }
+      }
       console.error("❌ Login failed:", error.message);
       // Sign-in never went through, so onAuthStateChanged won't fire to
       // consume this — clear it now or it'd wrongly tag some later,

@@ -30,6 +30,7 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   user_activated: "Activated user",
   user_deactivated: "Deactivated user",
   user_password_reset: "Reset user password",
+  working_hours_template_saved: "Saved branch/role working-hours template",
 };
 
 export function moduleActivityActionLabel(action: string): string {
