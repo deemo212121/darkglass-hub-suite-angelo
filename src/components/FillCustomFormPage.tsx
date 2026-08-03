@@ -16,6 +16,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
+import { randomId } from "@/lib/utils";
 import { getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { uploadSubmissionToDriveIfConfigured } from "@/lib/documentTemplates/driveUpload";
@@ -61,7 +62,7 @@ export function FillCustomFormPage({ formId }: Props) {
     // Just a Storage folder name for file/signature uploads below — not the
     // eventual DB row's real id (Postgres assigns that on insert), which is
     // why the notify call after the insert below uses a separately-returned id.
-    const uploadFolderId = crypto.randomUUID();
+    const uploadFolderId = randomId();
     const responses: Record<string, any> = {};
     for (const field of form.fields) {
       const v = values[field.id];

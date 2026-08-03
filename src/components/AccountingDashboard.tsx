@@ -14,6 +14,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Download,
   Mail,
   Send,
 } from "lucide-react";
@@ -26,12 +27,16 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { calcWorkedHours, getMyProfileSchedule, getAttendanceForRange } from "@/lib/supabase/timecards";
+import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
+import { updatePayrollLineItemExtra } from "@/lib/supabase/payslips";
 import { createNotification } from "@/lib/supabase/notifications";
+import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -69,6 +74,11 @@ interface SupabaseEmployee {
   requiredCheckOut?: string;
   workingHours?: number | null;
   mealMinutes?: number | null;
+  /** Never draws a salary through this system (e.g. the owner) — skipped by
+   *  generatePayroll(), the missing-clock-out gate, and the nation/department
+   *  export, but stays visible in the Payroll tab table so it can be
+   *  unchecked again later. See migration 0112. */
+  payrollExcluded: boolean;
 }
 
 interface SalaryEntry {
@@ -107,6 +117,8 @@ interface PayrollLineItem {
   gross_pay: number;
   net_pay: number;
   currency: string;
+  extra_pay: number;
+  notes: string | null;
 }
 
 interface PayrollAuditLogRow {
@@ -144,14 +156,35 @@ function rollBackToWeekday(d: Date): Date {
   return d;
 }
 
-// Regular/overtime hours per employee from a set of raw timecard rows —
-// shared by the live preview and by generatePayroll() when re-picked dates
-// exactly match an existing run (recomputing it in place).
-function computeHoursMap(entries: TimecardEntry[]): Map<string, { regular: number; overtime: number }> {
+// Regular/overtime hours per employee from a set of raw timecard rows, plus
+// approved PTO credited as if it were a normal scheduled day — shared by the
+// live preview and by generatePayroll() when re-picked dates exactly match
+// an existing run (recomputing it in place).
+//
+// A PTO day only counts toward pay if it was actually approved (pending
+// requests haven't been decided yet) and isn't the "unpaid" type (that one's
+// unpaid by definition — see ptoRequestsInYear in pto.ts, same exclusion).
+// It's credited at the employee's scheduled NET hours for that day
+// (resolveScheduledNetHours — same working_hours/meal_minutes-aware
+// calculation used for meal-break eligibility), clipped to the payroll
+// period and skipped on the employee's own off days or on any date they
+// already have a real punch for (a real punch always wins over a PTO
+// request that happens to overlap it).
+function computeHoursMap(
+  entries: TimecardEntry[],
+  employees: SupabaseEmployee[],
+  ptoRequests: PtoRequestRow[],
+  periodStart: string,
+  periodEnd: string
+): Map<string, { regular: number; overtime: number }> {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
+  const punchedDates = new Map<string, Set<string>>();
   for (const tc of entries) {
     const key = tc.profile_id || tc.employee_id;
     if (!key || !tc.check_in || !tc.check_out) continue;
+    const dates = punchedDates.get(key) ?? new Set<string>();
+    dates.add(tc.work_date);
+    punchedDates.set(key, dates);
     const hours = calcWorkedHours({
       checkIn: tc.check_in,
       checkOut: tc.check_out,
@@ -163,6 +196,27 @@ function computeHoursMap(entries: TimecardEntry[]): Map<string, { regular: numbe
     const ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
     const prev = hoursMap.get(key) ?? { regular: 0, overtime: 0 };
     hoursMap.set(key, { regular: prev.regular + reg, overtime: prev.overtime + ot });
+  }
+
+  if (!periodStart || !periodEnd) return hoursMap;
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+  for (const pto of ptoRequests) {
+    if (pto.status !== "approved" || pto.ptoType === "unpaid") continue;
+    const emp = employeeById.get(pto.profileId);
+    if (!emp) continue;
+    const offDays = new Set(emp.offDays ?? []);
+    const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
+    if (netHours <= 0) continue;
+    const punched = punchedDates.get(pto.profileId);
+    const start = pto.startDate < periodStart ? periodStart : pto.startDate;
+    const end = pto.endDate > periodEnd ? periodEnd : pto.endDate;
+    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (offDays.has(d.getDay())) continue;
+      if (punched?.has(iso)) continue;
+      const prev = hoursMap.get(pto.profileId) ?? { regular: 0, overtime: 0 };
+      hoursMap.set(pto.profileId, { regular: prev.regular + netHours, overtime: prev.overtime });
+    }
   }
   return hoursMap;
 }
@@ -183,6 +237,45 @@ function findMissingTimeouts(entries: TimecardEntry[], employees: SupabaseEmploy
       return `${name} (${tc.work_date})`;
     })
     .sort();
+}
+
+// One nation's sheet for the "Payroll by Nation & Department" export —
+// employees grouped by department (same department/role split as the
+// Payroll tab's employee table — see getRoleDepartmentBreakdown), each
+// group followed by a subtotal row, and a grand total for the whole
+// nation at the end.
+function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)[][] {
+  const byDept = new Map<string, EmployeePayrollRow[]>();
+  for (const r of rows) {
+    const dept = r.employee.department || "Unspecified";
+    const list = byDept.get(dept) ?? [];
+    list.push(r);
+    byDept.set(dept, list);
+  }
+
+  const sheet: (string | number)[][] = [
+    ["Employee", "Department", "Role", "Reg Hrs", "OT Hrs", "Rate ($/hr)", "Gross Pay ($)"],
+  ];
+  let nationTotal = 0;
+  for (const [dept, deptRows] of Array.from(byDept.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const r of deptRows) {
+      sheet.push([
+        r.employee.full_name,
+        dept,
+        r.employee.roleLabel || "—",
+        Number(r.hoursWorked.toFixed(1)),
+        Number(r.overtimeHours.toFixed(1)),
+        Number(r.hourlyRateUSD.toFixed(2)),
+        Number(r.grossPayUSD.toFixed(2)),
+      ]);
+    }
+    const deptTotal = deptRows.reduce((s, r) => s + r.grossPayUSD, 0);
+    sheet.push(["", `${dept} Subtotal`, "", "", "", "", Number(deptTotal.toFixed(2))]);
+    sheet.push([]);
+    nationTotal += deptTotal;
+  }
+  sheet.push(["", "Nation Total", "", "", "", "", Number(nationTotal.toFixed(2))]);
+  return sheet;
 }
 
 // Default period suggested for genStart/genEnd (Finance can freely pick
@@ -244,8 +337,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
-  const [departmentFilter, setDepartmentFilter] = useState("all");
+  // Funnel-style column filters (Ticket List convention) — empty set = no filter.
+  const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
+  const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
+  const [regHoursFilter, setRegHoursFilter] = useState<Set<string>>(new Set());
+  const [rateFilter, setRateFilter] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState("");
+  // Clicking the Name column header cycles asc -> desc -> back to
+  // whatever order the data naturally came in (null).
+  const [nameSort, setNameSort] = useState<"asc" | "desc" | null>(null);
+  const toggleNameSort = () => setNameSort((prev) => (prev === null ? "asc" : prev === "asc" ? "desc" : null));
 
   // Raw data
   const [employees, setEmployees] = useState<SupabaseEmployee[]>([]);
@@ -254,6 +355,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
   const [payrollLineItems, setPayrollLineItems] = useState<PayrollLineItem[]>([]);
   const [auditLog, setAuditLog] = useState<PayrollAuditLogRow[]>([]);
+  const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -292,17 +394,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         runsRes,
         lineRes,
         auditRes,
+        ptoRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
-        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency"),
+        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
+        getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
       ]);
 
       for (const res of [empRes, salRes, runsRes, lineRes, auditRes]) {
         if (res.error) throw new Error(res.error.message);
       }
+      setPtoRequests(ptoRes);
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
@@ -342,6 +447,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         requiredCheckOut: p.required_check_out ?? undefined,
         workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
         mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
+        payrollExcluded: p.payroll_excluded ?? false,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -411,7 +517,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Hours worked per employee in current period. Computed from real
   // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
-  const hoursMap = computeHoursMap(timecardEntries);
+  const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd);
 
   // Build payroll rows. salary_entries.hourly_rate is always entered as a
   // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
@@ -440,6 +546,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
 
+  // Employees who never draw a salary through this system (e.g. the owner)
+  // — kept out of generation, the missing-clock-out gate, and the export,
+  // but still shown (with an unchecked box) in the table above.
+  const includedPayrollRows = payrollRows.filter((r) => !r.employee.payrollExcluded);
+  const includedUsRows = usRows.filter((r) => !r.employee.payrollExcluded);
+  const includedPhRows = phRows.filter((r) => !r.employee.payrollExcluded);
+
+  // Generate Payroll only ever acts on whichever nation tab (US/PH Payroll
+  // toggle) is currently selected — clicking it while on PH Payroll must
+  // never touch US employees, and vice versa. nationPayrollRows (unfiltered
+  // by exclusion) is used to scope which existing line items get cleared
+  // on a regenerate; nationIncludedPayrollRows is what actually gets
+  // (re)inserted.
+  const nationPayrollRows = selectedCurrency === "USD" ? usRows : phRows;
+  const nationIncludedPayrollRows = selectedCurrency === "USD" ? includedUsRows : includedPhRows;
+
   // grossPayUSD is already plain USD (see payrollRows above) — no conversion here.
   const totalUSPayroll = usRows.reduce((s, r) => s + r.grossPayUSD, 0);
   const totalPHPayroll = phRows.reduce((s, r) => s + r.grossPayUSD, 0);
@@ -448,9 +570,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
 
   // Whether the picked genStart/genEnd exactly match an already-generated
-  // run — if so, clicking Generate recomputes that run in place instead of
-  // creating a new one (see generatePayroll's existingRun check).
-  const matchesExistingRun = payrollRuns.some((r) => r.period_start === genStart && r.period_end === genEnd);
+  // run that already has line items for the currently selected nation — if
+  // so, clicking Generate recomputes that nation's line items in place
+  // instead of creating a new run (see generatePayroll's existingRun
+  // check). Nation-aware so generating PH for the first time doesn't show
+  // "Regenerate" just because US was already generated for this period.
+  const matchesExistingRun = (() => {
+    const run = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
+    if (!run) return false;
+    const nationIds = new Set(nationPayrollRows.map((r) => r.employee.id));
+    return payrollLineItems.some((li) => li.payroll_run_id === run.id && nationIds.has(li.profile_id));
+  })();
 
   // Overview KPI cards: either the live current-period preview (computed
   // above from payrollRows) or a specific historical run's actual recorded
@@ -523,6 +653,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }));
   })();
 
+  // ── Toggle "include in payroll" per employee ─────────────────────────────────
+  // Persisted on the profile (not just this session) since it's a standing
+  // fact about the person (e.g. the owner never draws a salary here), not a
+  // one-off pick for a single run.
+  const handleTogglePayrollExcluded = async (employeeId: string, excluded: boolean) => {
+    setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, payrollExcluded: excluded } : e)));
+    const { error } = await supabase.from("profiles").update({ payroll_excluded: excluded }).eq("id", employeeId);
+    if (error) {
+      setError(`Failed to update payroll inclusion: ${error.message}`);
+      setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, payrollExcluded: !excluded } : e)));
+    }
+  };
+
   // ── Generate Payroll ─────────────────────────────────────────────────────────
   // Finance picks the period via genStart/genEnd (the date inputs on the
   // Payroll tab) rather than an auto-computed range. If the picked dates
@@ -531,14 +674,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // a duplicate — so a rate fix or corrected timecard can be re-applied to
   // the same payslip just by re-picking its dates and generating again.
   const generatePayroll = async () => {
-    if (payrollRows.length === 0) return;
+    if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       setError("Pick a valid start and end date before generating payroll.");
       return;
     }
     setGenerating(true);
     try {
-      const missingTimeouts = findMissingTimeouts(timecardEntries, employees);
+      // Scoped to whichever nation tab is selected — the other nation's
+      // employees (and excluded employees' own missing clock-outs) never
+      // factor into this generate action at all.
+      const nationIncludedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+      const nationTimecardEntries = timecardEntries.filter((tc) => nationIncludedIds.has(tc.profile_id || tc.employee_id || ""));
+      const missingTimeouts = findMissingTimeouts(nationTimecardEntries, employees);
       if (missingTimeouts.length > 0) {
         const preview = missingTimeouts.slice(0, 5).join(", ");
         const more = missingTimeouts.length > 5 ? `, and ${missingTimeouts.length - 5} more` : "";
@@ -548,23 +696,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }
 
       const existingRun = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
-      // Any OTHER run whose range intersects the picked one — allowed to
-      // overlap with existingRun itself (that's just re-picking its own
-      // dates), but not with any other run, since that would double-count
-      // those days' hours across two separate payslips.
-      const overlapping = payrollRuns.find(
-        (r) => r.id !== existingRun?.id && genStart <= r.period_end && r.period_start <= genEnd
-      );
-      if (overlapping) {
-        setError(`${genStart} – ${genEnd} overlaps an existing payroll run for ${overlapping.period_start} – ${overlapping.period_end}. Pick a non-overlapping range, or select those exact dates to recompute that run instead.`);
-        setGenerating(false);
-        return;
-      }
+      // Whether THIS nation already has line items in that run — distinct
+      // from existingRun itself, since a run can already exist for the
+      // period from the other nation's tab while this one is still a
+      // first-time generate (see matchesExistingRun above).
+      const nationHasExistingLineItems = existingRun
+        ? payrollLineItems.some((li) => li.payroll_run_id === existingRun.id && nationPayrollRows.some((r) => r.employee.id === li.profile_id))
+        : false;
+      // Overlapping ranges across different runs are allowed for now — no
+      // block here even though that means the same day's hours could get
+      // paid out under two separate runs if Finance picks overlapping dates.
 
       let runId: string;
       if (existingRun) {
         runId = existingRun.id;
-        const { error: deleteErr } = await supabase.from("payroll_line_items").delete().eq("payroll_run_id", runId);
+        // Only this nation's line items get cleared — the other nation's
+        // (generated separately, from its own tab) are left untouched. Uses
+        // every employee in this nation, not just the currently-included
+        // ones, so someone excluded after their last payslip was generated
+        // has that stale line item cleaned up instead of left orphaned.
+        const nationProfileIds = nationPayrollRows.map((r) => r.employee.id);
+        const { error: deleteErr } = await supabase
+          .from("payroll_line_items")
+          .delete()
+          .eq("payroll_run_id", runId)
+          .in("profile_id", nationProfileIds);
         if (deleteErr) throw new Error(deleteErr.message);
         await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
       } else {
@@ -584,8 +740,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       // Build line items — always USD (hourlyRateUSD/grossPayUSD are
       // already exchange-rate-converted for PH rows), so every run this
-      // dashboard generates reads in one currency, no ₱ anywhere.
-      const lineItems = payrollRows.map((r) => ({
+      // dashboard generates reads in one currency, no ₱ anywhere. Only the
+      // currently selected nation, and only its included (non-excluded)
+      // employees, ever get a line item here.
+      const lineItems = nationIncludedPayrollRows.map((r) => ({
         payroll_run_id: runId,
         profile_id: r.employee.id,
         hours_worked: r.hoursWorked,
@@ -601,12 +759,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const { error: lineErr } = await supabase.from("payroll_line_items").insert(lineItems);
       if (lineErr) throw new Error(lineErr.message);
 
+      const nationTotalUSD = nationIncludedPayrollRows.reduce((s, r) => s + r.grossPayUSD, 0);
+      const nationLabel = selectedCurrency === "USD" ? "US" : "PH";
+
       // Insert audit log entry
       await supabase.from("payroll_audit_log").insert({
-        action: existingRun ? "edit" : "generate",
+        action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${existingRun ? "Regenerated" : "Generated"} payroll run for ${genStart} – ${genEnd}. ${payrollRows.length} employees. Total: $${totalPayrollUSD.toFixed(2)}`,
-        amount: Math.round(totalPayrollUSD * 100) / 100,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}`,
+        amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
         module: "accounting",
@@ -619,14 +780,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // Notify every employee who actually got paid something in this run —
       // skip $0 rows (e.g. no rate set yet) since there's nothing to tell them.
       await Promise.all(
-        payrollRows
+        nationIncludedPayrollRows
           .filter((r) => r.grossPayUSD > 0)
           .map((r) =>
             createNotification({
               recipientId: r.employee.id,
               senderId: myProfileId,
               senderName: "Payroll",
-              body: existingRun ? "🔄 Payslip Updated — View Payslip" : "💰 Payslip is Ready — View Payslip",
+              body: nationHasExistingLineItems ? "🔄 Payslip Updated — View Payslip" : "💰 Payslip is Ready — View Payslip",
               linkTo: "/m/dashboard/employee-self-service?tab=payroll",
             }).catch((err) => console.error("Failed to notify", r.employee.id, err))
           )
@@ -638,6 +799,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } finally {
       setGenerating(false);
     }
+  };
+
+  // ── Export: Payroll by Nation & Department (Reports tab) ───────────────────
+  // One sheet per nation (US, PH), each grouped by department with subtotals —
+  // covers the same current period (genStart–genEnd) shown live on the
+  // Payroll tab, just split the way Finance needs it for reconciliation.
+  const exportNationDepartmentReport = () => {
+    const workbook = XLSX.utils.book_new();
+    for (const [label, rows] of [["US", includedUsRows], ["PH", includedPhRows]] as const) {
+      const sheetData: (string | number)[][] = [
+        [`Payroll by Department — ${label}`],
+        [`Period: ${genStart} – ${genEnd}`],
+        [`Generated: ${new Date().toLocaleString()}`],
+        [],
+        ...buildDepartmentSheetRows(rows),
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+      XLSX.utils.book_append_sheet(workbook, worksheet, label);
+    }
+    XLSX.writeFile(workbook, `payroll-by-nation-department_${genStart}_to_${genEnd}.xlsx`);
   };
 
   // ── Connect Gmail (for individual payslip test-sends) ────────────────────────
@@ -792,7 +973,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try {
       const { data, error: e } = await supabase
         .from("payroll_line_items")
-        .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency")
+        .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes")
         .eq("payroll_run_id", runId);
       if (e) throw new Error(e.message);
       setRunLineItems((prev) => ({ ...prev, [runId]: (data ?? []) as PayrollLineItem[] }));
@@ -800,6 +981,39 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setError(err instanceof Error ? err.message : "Failed to load line items");
     } finally {
       setLoadingRunId(null);
+    }
+  };
+
+  // ── Edit Extra Pay / Notes on one employee's line item ──────────────────────
+  // Both show up on that employee's payslip (My Payroll tab) — Extra folds
+  // into the Grand Total there, Notes is a free-text line from Finance.
+  const lineItemEditKey = (runId: string, profileId: string) => `${runId}|${profileId}`;
+  const [lineItemEdits, setLineItemEdits] = useState<Record<string, { extraPay: string; notes: string }>>({});
+  const [savingLineItemKey, setSavingLineItemKey] = useState<string | null>(null);
+
+  const handleSaveLineItemExtra = async (runId: string, profileId: string) => {
+    const key = lineItemEditKey(runId, profileId);
+    const edit = lineItemEdits[key];
+    if (!edit) return;
+    const extraPay = Number(edit.extraPay) || 0;
+    setSavingLineItemKey(key);
+    try {
+      await updatePayrollLineItemExtra(runId, profileId, { extraPay, notes: edit.notes });
+      setRunLineItems((prev) => ({
+        ...prev,
+        [runId]: (prev[runId] ?? []).map((li) =>
+          li.profile_id === profileId ? { ...li, extra_pay: extraPay, notes: edit.notes || null } : li
+        ),
+      }));
+      setLineItemEdits((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Extra/Notes");
+    } finally {
+      setSavingLineItemKey(null);
     }
   };
 
@@ -817,15 +1031,43 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // every amount is always shown in USD regardless of which team is active.
   const displayRows = selectedCurrency === "USD" ? usRows : phRows;
 
-  const departmentOptions = Array.from(
-    new Set(displayRows.map((r) => r.employee.department).filter((d): d is string => !!d))
-  );
-
-  const visibleRows = displayRows.filter((row) => {
-    if (departmentFilter !== "all" && row.employee.department !== departmentFilter) return false;
+  // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
+  // column's own option list reflects every OTHER active filter, so opening
+  // Department still shows every department present among rows that already
+  // pass the Role filter and search, and vice versa.
+  const matchesRowFilters = (
+    row: EmployeePayrollRow,
+    opts: { excludeDept?: boolean; excludeRole?: boolean; excludeRegHours?: boolean; excludeRate?: boolean }
+  ) => {
+    if (!opts.excludeDept && departmentFilter.size > 0 && !departmentFilter.has(row.employee.department || "")) return false;
+    if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(row.employee.roleLabel || "")) return false;
+    if (!opts.excludeRegHours && regHoursFilter.size > 0 && !regHoursFilter.has(row.hoursWorked.toFixed(1))) return false;
+    if (!opts.excludeRate && rateFilter.size > 0 && !rateFilter.has(`$${row.hourlyRateUSD.toFixed(2)}`)) return false;
     if (employeeSearch && !row.employee.full_name.toLowerCase().includes(employeeSearch.toLowerCase())) return false;
     return true;
-  });
+  };
+
+  const departmentOptions = Array.from(
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeDept: true })).map((r) => r.employee.department || ""))
+  );
+  const roleOptions = Array.from(
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRole: true })).map((r) => r.employee.roleLabel || ""))
+  );
+  const regHoursOptions = Array.from(
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRegHours: true })).map((r) => r.hoursWorked.toFixed(1)))
+  );
+  const rateOptions = Array.from(
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRate: true })).map((r) => `$${r.hourlyRateUSD.toFixed(2)}`))
+  );
+
+  const visibleRowsUnsorted = displayRows.filter((row) => matchesRowFilters(row, {}));
+  const visibleRows = nameSort
+    ? [...visibleRowsUnsorted].sort((a, b) =>
+        nameSort === "asc"
+          ? a.employee.full_name.localeCompare(b.employee.full_name)
+          : b.employee.full_name.localeCompare(a.employee.full_name)
+      )
+    : visibleRowsUnsorted;
   const visibleTotalUSD = visibleRows.reduce((s, r) => s + r.grossPayUSD, 0);
 
   // Grouped by department, both the department groups and each group's
@@ -1027,7 +1269,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 type="button"
                 onClick={generatePayroll}
-                disabled={generating || payrollRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
+                disabled={generating || nationIncludedPayrollRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
                 title={matchesExistingRun ? "A payroll run already exists for these dates — this will recompute and replace it" : undefined}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
               >
@@ -1056,7 +1298,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     key={cur}
                     onClick={() => {
                       setSelectedCurrency(cur);
-                      setDepartmentFilter("all");
+                      setDepartmentFilter(new Set());
+                      setRoleFilter(new Set());
+                      setRegHoursFilter(new Set());
+                      setRateFilter(new Set());
                     }}
                     className={`px-4 py-2 rounded text-sm font-semibold transition ${
                       selectedCurrency === cur
@@ -1186,41 +1431,91 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
-              <div className="px-4 py-3 border-b border-white/10 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Department / Role</label>
-                  <select
-                    title="Department / Role"
-                    value={departmentFilter}
-                    onChange={(e) => setDepartmentFilter(e.target.value)}
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="all">All Departments</option>
-                    {departmentOptions.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Search</label>
-                  <input
-                    type="text"
-                    value={employeeSearch}
-                    onChange={(e) => setEmployeeSearch(e.target.value)}
-                    placeholder="Search employee..."
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <div className="px-4 py-3 border-b border-white/10">
+                <label className="block text-[10px] text-slate-400 uppercase mb-1">Search</label>
+                <input
+                  type="text"
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  placeholder="Search employee..."
+                  className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
               </div>
               <table className="w-full text-sm min-w-[700px]">
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Name</th>
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Department</th>
-                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Role</th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Reg. Hours</th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase w-10">
+                      <input
+                        type="checkbox"
+                        title="Include/exclude all visible employees from payroll generation"
+                        checked={visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded)}
+                        onChange={() => {
+                          const nextIncluded = !(visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded));
+                          visibleRows.forEach((r) => {
+                            if (r.employee.payrollExcluded === nextIncluded) {
+                              handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
+                            }
+                          });
+                        }}
+                        className="h-4 w-4 accent-blue-600 cursor-pointer"
+                      />
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <button
+                        type="button"
+                        onClick={toggleNameSort}
+                        title="Sort by name"
+                        className="flex items-center gap-1 hover:text-white transition"
+                      >
+                        Name
+                        <span className="text-[10px]">{nameSort === "asc" ? "▲" : nameSort === "desc" ? "▼" : "⇅"}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <span className="inline-flex items-center">
+                        Department
+                        <TicketColumnFilter
+                          options={departmentOptions}
+                          selected={departmentFilter}
+                          onChange={setDepartmentFilter}
+                          label="Filter by Department"
+                        />
+                      </span>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <span className="inline-flex items-center">
+                        Role
+                        <TicketColumnFilter
+                          options={roleOptions}
+                          selected={roleFilter}
+                          onChange={setRoleFilter}
+                          label="Filter by Role"
+                        />
+                      </span>
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                      <span className="inline-flex items-center justify-center">
+                        Reg. Hours
+                        <TicketColumnFilter
+                          options={regHoursOptions}
+                          selected={regHoursFilter}
+                          onChange={setRegHoursFilter}
+                          label="Filter by Reg. Hours"
+                        />
+                      </span>
+                    </th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Rate</th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                      <span className="inline-flex items-center justify-center">
+                        Rate
+                        <TicketColumnFilter
+                          options={rateOptions}
+                          selected={rateFilter}
+                          onChange={setRateFilter}
+                          label="Filter by Rate"
+                        />
+                      </span>
+                    </th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Payslip</th>
                   </tr>
@@ -1228,7 +1523,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-slate-500 text-sm">
+                      <td colSpan={9} className="px-4 py-8 text-center text-slate-500 text-sm">
                         No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
                       </td>
                     </tr>
@@ -1236,12 +1531,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     visibleRowsByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
-                          <td colSpan={8} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                          <td colSpan={9} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                             {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                           </td>
                         </tr>
                         {group.rows.map((row) => (
-                          <tr key={row.employee.id} className="border-b border-white/5 hover:bg-white/5">
+                          <tr
+                            key={row.employee.id}
+                            className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded ? "opacity-50" : ""}`}
+                          >
+                            <td className="px-4 py-3 text-center">
+                              <input
+                                type="checkbox"
+                                title="Include in payroll generation"
+                                checked={!row.employee.payrollExcluded}
+                                onChange={(e) => handleTogglePayrollExcluded(row.employee.id, !e.target.checked)}
+                                className="h-4 w-4 accent-blue-600 cursor-pointer"
+                              />
+                            </td>
                             <td className="px-4 py-3 font-medium">
                               <button
                                 type="button"
@@ -1298,6 +1605,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         {fmt(visibleTotalUSD)}
                       </td>
                       <td />
+                      <td />
                     </tr>
                   </tfoot>
                 )}
@@ -1309,6 +1617,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* ── Reports Tab ──────────────────────────────────────────────────── */}
         {activeTab === "reports" && (
           <div className="space-y-6">
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Payroll by Nation &amp; Department</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Exports the current period ({genStart || "—"} – {genEnd || "—"}) as one sheet per nation (US, PH), each grouped by department with subtotals.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={exportNationDepartmentReport}
+                disabled={includedPayrollRows.length === 0}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 text-sm shrink-0"
+              >
+                <Download className="h-4 w-4" />
+                Export by Nation &amp; Department
+              </button>
+            </div>
+
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10">
                 <span className="text-sm font-semibold">Payroll Runs</span>
@@ -1388,7 +1714,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       <th className="py-2 text-right text-slate-500 uppercase">Regular Pay</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">OT Pay</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Gross Pay</th>
-                                      <th className="py-2 text-right text-slate-500 uppercase">Currency</th>
+                                      <th className="py-2 text-right text-slate-500 uppercase">Extra</th>
+                                      <th className="py-2 text-right text-slate-500 uppercase">Grand Total</th>
+                                      <th className="py-2 text-left text-slate-500 uppercase">Notes</th>
+                                      <th className="py-2 text-center text-slate-500 uppercase"></th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -1398,6 +1727,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       // may still be flagged "PHP" — convert those for display so every
                                       // run (old or new) reads in USD.
                                       const divisor = li.currency === "PHP" ? EXCHANGE_RATE : 1;
+                                      const grossUSD = li.gross_pay / divisor;
+                                      const key = lineItemEditKey(run.id, li.profile_id);
+                                      const edit = lineItemEdits[key];
+                                      const extraValue = edit?.extraPay ?? String(li.extra_pay || 0);
+                                      const notesValue = edit?.notes ?? (li.notes || "");
+                                      const grandTotal = grossUSD + (Number(extraValue) || 0);
                                       return (
                                         <tr key={idx} className="border-b border-white/5">
                                           <td className="py-2 text-white">
@@ -1417,9 +1752,51 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                             ${(li.overtime_pay / divisor).toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right font-semibold text-green-300">
-                                            ${(li.gross_pay / divisor).toFixed(2)}
+                                            ${grossUSD.toFixed(2)}
                                           </td>
-                                          <td className="py-2 text-right text-slate-400">USD</td>
+                                          <td className="py-2 text-right">
+                                            <input
+                                              type="number"
+                                              step="0.01"
+                                              value={extraValue}
+                                              onChange={(e) =>
+                                                setLineItemEdits((prev) => ({
+                                                  ...prev,
+                                                  [key]: { extraPay: e.target.value, notes: notesValue },
+                                                }))
+                                              }
+                                              className="w-20 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-right text-slate-100 focus:outline-none focus:border-blue-500"
+                                            />
+                                          </td>
+                                          <td className="py-2 text-right font-semibold text-blue-300">
+                                            ${grandTotal.toFixed(2)}
+                                          </td>
+                                          <td className="py-2 text-left">
+                                            <input
+                                              type="text"
+                                              placeholder="Note for this employee…"
+                                              value={notesValue}
+                                              onChange={(e) =>
+                                                setLineItemEdits((prev) => ({
+                                                  ...prev,
+                                                  [key]: { extraPay: extraValue, notes: e.target.value },
+                                                }))
+                                              }
+                                              className="w-40 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-slate-100 focus:outline-none focus:border-blue-500"
+                                            />
+                                          </td>
+                                          <td className="py-2 text-center">
+                                            {edit && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSaveLineItemExtra(run.id, li.profile_id)}
+                                                disabled={savingLineItemKey === key}
+                                                className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-semibold transition"
+                                              >
+                                                {savingLineItemKey === key ? "Saving…" : "Save"}
+                                              </button>
+                                            )}
+                                          </td>
                                         </tr>
                                       );
                                     })}

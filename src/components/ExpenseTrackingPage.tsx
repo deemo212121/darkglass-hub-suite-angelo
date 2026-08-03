@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { randomId } from "@/lib/utils";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import {
@@ -114,7 +115,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const openAdd = () => {
     setForm(emptyForm);
     setEditingId(null);
-    setNewExpenseKey(crypto.randomUUID());
+    setNewExpenseKey(randomId());
     setOriginalReceiptPath(null);
     setShowForm(true);
   };

@@ -111,6 +111,29 @@ export function resolveScheduledShiftHours(
 }
 
 /**
+ * Scheduled NET hours for a day the employee didn't actually punch (e.g. an
+ * approved PTO day being credited toward payroll) — the productive time
+ * they'd have worked, i.e. the gross scheduled shift minus the meal break.
+ * Prefers the explicit working_hours override (already net) same as
+ * resolveScheduledShiftHours; otherwise derives it from Check-In/Check-Out
+ * minus the meal.
+ */
+export function resolveScheduledNetHours(
+  requiredCheckIn: string,
+  requiredCheckOut: string,
+  workingHours: number | null | undefined,
+  mealMinutes?: number | null | undefined
+): number {
+  if (typeof workingHours === "number" && workingHours > 0) {
+    return workingHours;
+  }
+  if (!requiredCheckIn || !requiredCheckOut) return 0;
+  const gross = hoursBetween(requiredCheckIn, requiredCheckOut);
+  const meal = typeof mealMinutes === "number" && mealMinutes > 0 ? mealMinutes / 60 : 0;
+  return Math.max(0, gross - meal);
+}
+
+/**
  * Load all timecard entries for a profile in a given month.
  * @param profileId the logged-in user's profile id
  * @param year e.g. 2026

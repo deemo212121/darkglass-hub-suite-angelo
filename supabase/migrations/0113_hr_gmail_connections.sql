@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0111 — "Connect Gmail": stores one Google OAuth refresh token PER
+-- 0113 — "Connect Gmail": stores one Google OAuth refresh token PER
 -- REGION per company (US and PH are separate payroll currencies/teams —
 -- see AccountingDashboard.tsx's US/PH Payroll toggle — so each gets its
 -- own connected Gmail account) so Payroll can send payslip emails from
@@ -13,7 +13,7 @@
 -- the browser) can touch it — regular users only see connected/not via
 -- get_gmail_connection_status(p_region), never the token.
 --
--- Run once in the Supabase SQL Editor, after 0110.
+-- Run once in the Supabase SQL Editor, after 0112.
 -- =====================================================================
 
 create table if not exists hr_gmail_connections (

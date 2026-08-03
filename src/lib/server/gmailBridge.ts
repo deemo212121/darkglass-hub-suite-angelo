@@ -12,7 +12,7 @@
  * AccountingDashboard.tsx's US/PH Payroll toggle), not one company-wide
  * connection — each region's payslips should come from its own address.
  * The refresh token is stored server-side only (see migration
- * 0111_hr_gmail_connections.sql) — regular users only ever see
+ * 0113_hr_gmail_connections.sql) — regular users only ever see
  * connected/not-connected status (+ who connected it and which address)
  * via get_gmail_connection_status(p_region), never the token itself.
  *

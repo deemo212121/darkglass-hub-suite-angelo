@@ -34,6 +34,10 @@ export interface MyPayslipRow {
   grossPay: number;
   netPay: number;
   currency: string;
+  /** Finance-entered bonus/add-on for this specific payslip — see migration 0111. Folded into grossPay/netPay to get the payslip's Grand Total. */
+  extraPay: number;
+  /** Finance-entered free-text note for this specific payslip — see migration 0111. */
+  notes: string | null;
 }
 
 /** All payslips generated for this employee (profileId), newest first. */
@@ -41,7 +45,7 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
   if (!profileId) return [];
   const { data: lineItems, error: liErr } = await supabase
     .from("payroll_line_items")
-    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency")
+    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency, extra_pay, notes")
     .eq("profile_id", profileId);
   if (liErr) {
     console.error("getMyPayslips error:", liErr.message);
@@ -78,8 +82,24 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
         grossPay: Number(li.gross_pay) || 0,
         netPay: Number(li.net_pay) || 0,
         currency: li.currency || "USD",
+        extraPay: Number(li.extra_pay) || 0,
+        notes: li.notes ?? null,
       };
     })
     .filter((r): r is MyPayslipRow => r !== null)
     .sort((a, b) => (b.generatedAt || "").localeCompare(a.generatedAt || ""));
+}
+
+/** Finance-only: set the Extra pay / Notes on one employee's line item within a specific payroll run. */
+export async function updatePayrollLineItemExtra(
+  runId: string,
+  profileId: string,
+  fields: { extraPay: number; notes: string }
+): Promise<void> {
+  const { error } = await supabase
+    .from("payroll_line_items")
+    .update({ extra_pay: fields.extraPay, notes: fields.notes || null })
+    .eq("payroll_run_id", runId)
+    .eq("profile_id", profileId);
+  if (error) throw new Error(error.message);
 }

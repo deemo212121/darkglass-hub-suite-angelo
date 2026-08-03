@@ -15,6 +15,7 @@
  */
 
 import { supabase } from "./client";
+import { randomId } from "@/lib/utils";
 import type { CustomFormField } from "@/lib/formElements";
 import type { DocumentTemplate } from "@/lib/documentTemplates/types";
 
@@ -109,7 +110,7 @@ export async function getCustomForm(id: string): Promise<CustomForm | null> {
 /** URL-safe slug from a form's title plus a short random suffix, so a title collision never blocks publishing. Once assigned to a form, a slug is never regenerated or cleared — access can be flipped between public/internal any number of times and the link stays the same when it's public again. */
 export function generatePublicSlug(title: string): string {
   const base = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "form";
-  const suffix = crypto.randomUUID().slice(0, 8);
+  const suffix = randomId().slice(0, 8);
   return `${base}-${suffix}`;
 }
 

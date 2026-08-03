@@ -1,6 +1,6 @@
 /**
  * IT Tickets — any employee can submit one (My Profile's "Submit IT
- * Ticket" section); RLS (migration 0112) scopes who can see/edit what:
+ * Ticket" section); RLS (migration 0114) scopes who can see/edit what:
  *  - the original submitter always sees their own ticket (read-only)
  *  - Senior-tier managers see every company ticket (read-only)
  *  - IT/Admin/Superadmin see every ticket and can edit/assign/delete it

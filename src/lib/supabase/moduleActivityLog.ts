@@ -1,6 +1,6 @@
 /**
  * Activity log shared by Payroll Calculation, Attendance Monitoring, IT
- * Tickets, and User Management — one table (migration 0113), partitioned by
+ * Tickets, and User Management — one table (migration 0115), partitioned by
  * the `module` column. Each page only ever fetches its own module, so in
  * practice every page's log is dedicated to that page, not a mixed feed.
  */
@@ -66,7 +66,7 @@ function mapRow(r: any): ModuleActivityLogEntry {
   };
 }
 
-/** 42P01 = relation doesn't exist yet (0113 not applied) — swallow so logging can never break the action it's attached to. */
+/** 42P01 = relation doesn't exist yet (0115 not applied) — swallow so logging can never break the action it's attached to. */
 function isMissingTableError(error: { code?: string } | null): boolean {
   return error?.code === "42P01";
 }

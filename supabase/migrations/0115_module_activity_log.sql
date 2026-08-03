@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0113 — Module Activity Log
+-- 0115 — Module Activity Log
 --
 -- A dedicated audit trail for the Payroll Calculation, Attendance
 -- Monitoring, IT Tickets, and User Management pages — one shared table
@@ -16,7 +16,7 @@
 -- DASHBOARD_ROLE_GATES/ADMIN_MODULE_ROLES checks in
 -- m.$module.$submodule.tsx), not by a separate route anyone could visit.
 --
--- Run once in the Supabase SQL Editor, after 0112.
+-- Run once in the Supabase SQL Editor, after 0114.
 -- =====================================================================
 
 create table if not exists module_activity_log (

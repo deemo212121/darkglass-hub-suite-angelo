@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0112 — IT Tickets: any employee can submit one (from My Profile), a
+-- 0114 — IT Tickets: any employee can submit one (from My Profile), a
 -- dedicated "IT Tickets" dashboard page (src/components/ItTicketsPage.tsx)
 -- lists all of them for privileged viewers:
 --   - the ORIGINAL SUBMITTER can always see their own ticket (read-only)
@@ -12,7 +12,7 @@
 -- submitter can never claim a different company or impersonate someone
 -- else's name on their own ticket.
 --
--- Run once in the Supabase SQL Editor, after 0111.
+-- Run once in the Supabase SQL Editor, after 0113.
 -- =====================================================================
 
 create table if not exists it_tickets (

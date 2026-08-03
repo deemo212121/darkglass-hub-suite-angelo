@@ -61,7 +61,7 @@ function ItSupportPage() {
 
   // Whatever the caller's own RLS visibility allows — for a regular employee
   // that's just the tickets they themselves submitted (see it_tickets_select
-  // policy in migration 0112).
+  // policy in migration 0114).
   const loadMyTickets = async () => {
     try {
       const rows = await getItTickets();

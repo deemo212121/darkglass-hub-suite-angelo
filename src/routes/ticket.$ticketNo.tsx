@@ -3369,6 +3369,10 @@ function TicketDetailsPage() {
   // open the Marcone Parts Order modal for CSR review) from non-Marcone
   // parts (which go through the existing silent batch flow).
   const submitAllPOs = async () => {
+    if (!canOrderParts) {
+      alert("Only Parts Team Leader, Admin, or Super Admin can submit part orders.");
+      return;
+    }
     // First, fix any parts that have PO numbers but incorrect status
     const partsToFix = partRows.filter(part => part.poNo && part.status !== 'PO Made');
     if (partsToFix.length > 0) {
@@ -4239,6 +4243,46 @@ function TicketDetailsPage() {
     return false;
   }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, CSR_ONLY_ROLES]);
 
+  // Split of PART_LOCK_BYPASS_ROLES into two disjoint tiers — everyone in
+  // that set can still SEE the Part Transaction toolbar (canUsePartToolbar,
+  // unchanged above), but which specific actions they can actually use now
+  // depends on which tier they're in. Team Leaders/Admins procure (Submit
+  // POs); the day-to-day Parts/Claims/Manager tier maintains the part
+  // records themselves (add/edit/delete/Update). Neither tier overlaps the
+  // other — a mixed-role user (e.g. primary ADMIN + extra_roles PARTS_MANAGER)
+  // gets the union of both, same as every other multi-role check in this file.
+  const PARTS_ORDER_ONLY_ROLES = useMemo(
+    () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
+    [],
+  );
+  const PARTS_EDIT_ONLY_ROLES = useMemo(
+    () => new Set([
+      "PARTS",
+      "PARTS_MANAGER",
+      "CLAIMS",
+      "CLAIMS_MANAGER",
+      "MANAGER",
+      "SENIOR_MANAGER",
+      "BRANCH_MANAGER",
+      "SENIOR_BRANCH_MANAGER",
+      "BIZOPS_MANAGER",
+      "BIZOPS_SENIOR_MANAGER",
+    ]),
+    [],
+  );
+  const canOrderParts = useMemo(() => {
+    if (isNaveen) return true;
+    const primary = String(currentUserRole || "").toUpperCase();
+    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
+    return allRoles.some((r) => PARTS_ORDER_ONLY_ROLES.has(r));
+  }, [currentUserRole, currentUserExtraRoles, isNaveen, PARTS_ORDER_ONLY_ROLES]);
+  const canEditParts = useMemo(() => {
+    if (isNaveen) return true;
+    const primary = String(currentUserRole || "").toUpperCase();
+    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
+    return allRoles.some((r) => PARTS_EDIT_ONLY_ROLES.has(r));
+  }, [currentUserRole, currentUserExtraRoles, isNaveen, PARTS_EDIT_ONLY_ROLES]);
+
   // Only BizOps Manager (+ BizOps Senior Manager, and the usual Admin/
   // Superadmin platform override) may move a ticket to CL-Cancelled and
   // record its Cancellation Reason. A CSR can still flag CL-Need Cancel and
@@ -4508,6 +4552,10 @@ function TicketDetailsPage() {
   const dirtyRowCount = Object.keys(rowEdits).length;
 
   const saveAllRowEdits = async () => {
+    if (!canEditParts) {
+      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
+      return;
+    }
     if (partsEditDisabled) {
       alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
       return;
@@ -4605,6 +4653,10 @@ function TicketDetailsPage() {
   };
 
   const savePartRow = async () => {
+    if (!canEditParts) {
+      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
+      return;
+    }
     // Friendly validation — alert which required fields are missing so the
     // user knows what to fill instead of getting a silent no-op. Part
     // Status used to require Visit ID too, but that blocks brand-new
@@ -4725,6 +4777,10 @@ function TicketDetailsPage() {
   };
 
   const deletePartRow = async (rowId: string) => {
+    if (!canEditParts) {
+      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
+      return;
+    }
     if (partsEditDisabled) {
       const row = partRows.find((r) => r.id === rowId) ?? null;
       alert(`Parts are locked because this ticket is "${ticket?.status}". Only the Claims department can delete them.`);
@@ -5209,13 +5265,19 @@ function TicketDetailsPage() {
           <button
             type="button"
             onClick={savePartRow}
-            disabled={partsEditDisabled}
+            disabled={partsEditDisabled || !canEditParts}
             className={`rounded border px-3 py-1 text-xs font-semibold transition ${
-              partsEditDisabled
+              partsEditDisabled || !canEditParts
                 ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
                 : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
             }`}
-            title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : (editingPartId ? "Update part" : "Add part")}
+            title={
+              partsEditDisabled
+                ? "Locked: Parts / Claims / Manager roles only"
+                : !canEditParts
+                  ? "Your role can only order parts, not add or edit them."
+                  : (editingPartId ? "Update part" : "Add part")
+            }
           >
             {editingPartId ? "Update" : "Add"}
           </button>
@@ -7523,31 +7585,39 @@ function TicketDetailsPage() {
                   >
                     Truck Stock
                   </button>
-                  <button 
+                  <button
                     type="button"
                     onClick={submitAllPOs}
-                    disabled={partsEditDisabled}
+                    disabled={partsEditDisabled || !canOrderParts}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled
+                      partsEditDisabled || !canOrderParts
                         ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
                         : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
                     }`}
-                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Submit POs for parts that need ordering"}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : !canOrderParts
+                          ? "Only Parts Team Leader, Admin, or Super Admin can submit part orders."
+                          : "Submit POs for parts that need ordering"
+                    }
                   >
                     Submit POs
                   </button>
                   <button
                     type="button"
                     onClick={saveAllRowEdits}
-                    disabled={partsEditDisabled || rowEditsSaving || dirtyRowCount === 0}
+                    disabled={partsEditDisabled || !canEditParts || rowEditsSaving || dirtyRowCount === 0}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || dirtyRowCount === 0
+                      partsEditDisabled || !canEditParts || dirtyRowCount === 0
                         ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
                         : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
                     }`}
                     title={
                       partsEditDisabled
                         ? "Locked: Parts / Claims / Manager roles only"
+                        : !canEditParts
+                        ? "Your role can only order parts, not add or edit them."
                         : dirtyRowCount === 0
                         ? "Edit any cell in a part row, then click Update to save"
                         : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
@@ -7642,9 +7712,9 @@ function TicketDetailsPage() {
                                 <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
                               ) : null}
                             </td>
-                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
                             <td className={cellWrap}>
-                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 <option value="">Dist.*</option>
                                 {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
                                 <option>AIG</option>
@@ -7666,27 +7736,27 @@ function TicketDetailsPage() {
                                 <option>SS</option>
                               </select>
                             </td>
-                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Description" /></td>
-                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="PO No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Invoice No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
-                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
+                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="PO No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Invoice No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
+                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
                             <td className={cellWrap}>
-                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
                                   <option key={v} value={String(v)}>{v}%</option>
                                 ))}
                               </select>
                             </td>
-                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Claim To" /></td>
+                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Claim To" /></td>
                           </tr>
                           <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
                             <td className={cellWrap}>
-                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled} className={`${selectCls} text-blue-300 font-semibold`}>
+                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
                                 <option value="">Status*</option>
                                 <option>Back Order</option>
                                 <option>Cancelled</option>
@@ -7714,9 +7784,9 @@ function TicketDetailsPage() {
                                 <option>Used</option>
                               </select>
                             </td>
-                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Note" /></td>
+                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Note" /></td>
                             <td className={cellWrap}>
-                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 <option value="">Visit ID*</option>
                                 {visitLogEntries.map((entry) => (
                                   <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
@@ -7729,19 +7799,19 @@ function TicketDetailsPage() {
                                 )}
                               </select>
                             </td>
-                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Order #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="In Track #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="RA #" /></td>
-                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Out Track #" /></td>
-                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Credit #" /></td>
+                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Order #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="In Track #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
+                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
+                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
                             <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
                             <td className={cellWrap}>
-                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
                             </td>
                             <td className={cellWrap}>
-                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
                             </td>
                             <td className="px-2 py-1.5 whitespace-nowrap">
                               {row.orderNo && isMarconeDist(row.partDist) ? (
@@ -7758,13 +7828,19 @@ function TicketDetailsPage() {
                               <button
                                 type="button"
                                 onClick={() => deletePartRow(row.id)}
-                                disabled={partsEditDisabled}
+                                disabled={partsEditDisabled || !canEditParts}
                                 className={`rounded border px-2 py-1 text-xs font-semibold transition ${
-                                  partsEditDisabled
+                                  partsEditDisabled || !canEditParts
                                     ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
                                     : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
                                 }`}
-                                title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Delete part"}
+                                title={
+                                  partsEditDisabled
+                                    ? "Locked: Parts / Claims / Manager roles only"
+                                    : !canEditParts
+                                      ? "Your role can only order parts, not add or edit them."
+                                      : "Delete part"
+                                }
                               >
                                 Delete
                               </button>

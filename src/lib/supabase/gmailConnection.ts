@@ -2,7 +2,7 @@
  * "Connect Gmail" for Payroll — one connection PER REGION (US/PH each get
  * their own connected Gmail account, matching AccountingDashboard.tsx's
  * US/PH Payroll toggle). Status/disconnect go through Supabase RPCs (see
- * migration 0111_hr_gmail_connections.sql), same pattern as
+ * migration 0113_hr_gmail_connections.sql), same pattern as
  * customForms.ts's Google Drive connection wrappers. The actual connect
  * flow and payslip send both go through src/lib/server/gmailBridge.ts
  * instead (a real OAuth redirect, and a privileged send action — neither

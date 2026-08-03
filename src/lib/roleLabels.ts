@@ -50,9 +50,12 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   SUPERSUPERADMIN: { department: "Admin", roleLabel: "Super Super Admin" },
   ADMIN: { department: "Admin", roleLabel: "Admin" },
   MANAGER: { department: "Management", roleLabel: "Manager" },
+  SENIOR_MANAGER: { department: "Management", roleLabel: "Senior Manager" },
   CSR: { department: "CSR", roleLabel: "CSR" },
   TECHNICIAN: { department: "Technician", roleLabel: "Technician" },
   TECHNICIAN_MANAGER: { department: "Technician", roleLabel: "Manager" },
+  TECHNICAL_DIRECTOR: { department: "Technician", roleLabel: "Director" },
+  TECHNICAL_ASSISTANT_DIRECTOR: { department: "Technician", roleLabel: "Assistant Director" },
   DISPATCHER: { department: "Dispatch", roleLabel: "Dispatcher" },
   HR: { department: "HR", roleLabel: "HR" },
   IT: { department: "IT", roleLabel: "IT" },
@@ -94,17 +97,17 @@ export function normalizeRole(role: string | null | undefined): string {
 }
 
 /**
- * CSR Agents and Team Leaders get a narrow slice of the app — their own
- * Dashboard tools and Tickets, nothing else. Everyone else is unrestricted
- * (this is an allow-list applied only to these two roles, not a general
- * permission system).
+ * The whole Customer Service department (Agent, Team Leader, and Manager)
+ * gets a narrow slice of the app — their own Dashboard tools and Tickets,
+ * nothing else. Everyone else is unrestricted (this is an allow-list applied
+ * only to these three roles, not a general permission system).
  */
-const CSR_RESTRICTED_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER"]);
+const CSR_RESTRICTED_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
-/** Top-level modules a CSR Agent/Team Leader may open. */
+/** Top-level modules the CSR department may open. */
 const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets"]);
 
-/** Within the Dashboard module, the only submodules a CSR Agent/Team Leader may open. */
+/** Within the Dashboard module, the only submodules the CSR department may open. */
 const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
   "daily-activity",
   "overall-status",
@@ -118,13 +121,13 @@ export function isCsrRestrictedRole(role: string | null | undefined): boolean {
   return CSR_RESTRICTED_ROLES.has(normalizeRole(role));
 }
 
-/** Whether a CSR Agent/Team Leader may open this module at all. Non-CSR roles always pass. */
+/** Whether a CSR department role may open this module at all. Non-CSR roles always pass. */
 export function isModuleAllowed(role: string | null | undefined, moduleSlug: string): boolean {
   if (!isCsrRestrictedRole(role)) return true;
   return CSR_ALLOWED_MODULES.has(moduleSlug);
 }
 
-/** Whether a CSR Agent/Team Leader may open this submodule. Non-CSR roles always pass. */
+/** Whether a CSR department role may open this submodule. Non-CSR roles always pass. */
 export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: string, submoduleSlug: string): boolean {
   if (!isCsrRestrictedRole(role)) return true;
   if (!isModuleAllowed(role, moduleSlug)) return false;
