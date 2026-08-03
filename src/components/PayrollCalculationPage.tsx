@@ -5,7 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
-import { getCompanySalaryEntries, rateEffectiveOn, currentRate, type SalaryEntryRow } from "@/lib/supabase/salary";
+import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -29,10 +29,20 @@ interface PayrollRow {
   department: string;
   roleLabel: string;
   country: "US" | "PH";
+  compensationType: "hourly" | "fixed";
   rate: number;
+  annualSalary: number | null;
   regularHours: number;
   overtimeHours: number;
   grossPay: number;
+}
+
+// A fixed-salary row's rate is always 0 (see rows below) — shown instead
+// as its annual salary so the Rate column/CSV export never display a
+// misleading "$0.00" for these employees.
+function rateLabel(row: PayrollRow): string {
+  if (row.compensationType === "fixed" && row.annualSalary) return `Fixed $${row.annualSalary.toLocaleString()}/yr`;
+  return `$${row.rate.toFixed(2)}/hr`;
 }
 
 export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -93,11 +103,17 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
 
   // Each day's hours are paid at whichever rate was effective ON that day —
   // a mid-period raise/promotion is handled automatically instead of
-  // needing one flat rate for the whole period.
+  // needing one flat rate for the whole period. Fixed-salary employees
+  // (migration 0118) are the exception: they're paid a flat per-cutoff
+  // amount (annual / 24) regardless of hours actually worked, with no
+  // overtime — regularHours/overtimeHours are still tallied from real
+  // attendance for visibility, they just don't feed into grossPay.
   const rows: PayrollRow[] = useMemo(() => {
     return profiles.map((p) => {
       const dayEntries = entriesByProfile.get(p.id) ?? [];
       const history = historyByProfile.get(p.id) ?? [];
+      const currentEntry = entryEffectiveOn(history, endDate);
+      const isFixed = currentEntry?.compensationType === "fixed";
       let regularHours = 0;
       let overtimeHours = 0;
       let grossPay = 0;
@@ -112,11 +128,14 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         });
         const reg = Math.min(hours, REGULAR_HOURS_PER_DAY);
         const ot = Math.max(0, hours - REGULAR_HOURS_PER_DAY);
-        const rate = rateEffectiveOn(history, day.workDate);
         regularHours += reg;
         overtimeHours += ot;
-        grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
+        if (!isFixed) {
+          const rate = rateEffectiveOn(history, day.workDate);
+          grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
+        }
       }
+      if (isFixed && currentEntry?.annualSalary) grossPay = perCutoffSalary(currentEntry.annualSalary);
       const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
       return {
         profileId: p.id,
@@ -124,13 +143,15 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         department,
         roleLabel,
         country: profileCountry(p),
-        rate: currentRate(history),
+        compensationType: isFixed ? "fixed" : "hourly",
+        rate: isFixed ? 0 : currentRate(history),
+        annualSalary: isFixed ? currentEntry?.annualSalary ?? 0 : null,
         regularHours,
         overtimeHours,
         grossPay,
       };
     });
-  }, [profiles, entriesByProfile, historyByProfile]);
+  }, [profiles, entriesByProfile, historyByProfile, endDate]);
 
   const countryRows = rows.filter((r) => r.country === selectedCountry);
   const departments = Array.from(new Set(countryRows.map((r) => r.department).filter(Boolean)));
@@ -165,7 +186,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const handleDownload = () => {
     let csv = "Employee,Department,Role,Regular Hours,Overtime Hours,Rate,Gross Pay\n";
     filteredRows.forEach((r) => {
-      csv += `"${r.name}","${r.department}","${r.roleLabel}",${r.regularHours.toFixed(2)},${r.overtimeHours.toFixed(2)},${r.rate.toFixed(2)},${r.grossPay.toFixed(2)}\n`;
+      csv += `"${r.name}","${r.department}","${r.roleLabel}",${r.regularHours.toFixed(2)},${r.overtimeHours.toFixed(2)},"${rateLabel(r)}",${r.grossPay.toFixed(2)}\n`;
     });
     const el = document.createElement("a");
     el.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(csv));
@@ -339,7 +360,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                         <td className="px-3 py-3 text-slate-300">{row.roleLabel || "—"}</td>
                         <td className="px-3 py-3 text-right text-slate-200">{row.regularHours.toFixed(1)}</td>
                         <td className="px-3 py-3 text-right text-orange-300">{row.overtimeHours.toFixed(1)}</td>
-                        <td className="px-3 py-3 text-right text-slate-200">${row.rate.toFixed(2)}/hr</td>
+                        <td className="px-3 py-3 text-right text-slate-200">{rateLabel(row)}</td>
                         <td className="px-3 py-3 text-right font-semibold text-green-300">{fmtMoney(row.grossPay)}</td>
                       </tr>
                     ))}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -38,6 +38,14 @@ function statusColor(status: ExpenseStatus): string {
   }
 }
 
+// receiptUrl is a Firebase Storage download URL — the original filename
+// (with extension) survives in its path component, before the "?" query
+// string that carries the access token, so a plain extension check still
+// works despite the URL not literally ending in ".pdf".
+function isPdfReceipt(url: string): boolean {
+  return /\.pdf(\?|$)/i.test(url);
+}
+
 export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { uid, ready, companyId } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -61,6 +69,24 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // The receipt path this expense had BEFORE this edit session, so a
   // replace/remove can clean up the old Storage file once the save succeeds.
   const [originalReceiptPath, setOriginalReceiptPath] = useState<string | null>(null);
+  // Receipt clicked in the table's dedicated Receipt column — shown in a
+  // lightbox instead of navigating away, so reviewing a receipt doesn't
+  // lose your place in the table. Same zoom/pan mechanics as TicketPhotos.tsx's
+  // lightbox (scroll/pinch/double-click to zoom, drag to pan when zoomed).
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
+  const lastTouchDist = useRef<number | null>(null);
+  const openReceiptPreview = (url: string) => {
+    setPreviewReceiptUrl(url);
+    setZoomScale(1);
+    setZoomPos({ x: 0, y: 0 });
+  };
+  const closeReceiptPreview = () => {
+    setPreviewReceiptUrl(null);
+    setZoomScale(1);
+    setZoomPos({ x: 0, y: 0 });
+  };
 
   const load = useCallback(async () => {
     if (!ready || !uid) { setLoading(false); return; }
@@ -338,14 +364,15 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Amount</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Receipt</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No expense records match this filter.</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No expense records match this filter.</td></tr>
                 ) : filtered.map((e) => (
                   <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
                     <td className="px-3 py-3 text-white font-medium">{profileName(e.profileId)}</td>
@@ -355,6 +382,26 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <td className="px-3 py-3 text-slate-400 max-w-xs truncate" title={e.description}>{e.description || "—"}</td>
                     <td className="px-3 py-3">
                       <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${statusColor(e.status)}`}>{e.status}</span>
+                    </td>
+                    <td className="px-3 py-3">
+                      {e.receiptUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => e.receiptUrl && openReceiptPreview(e.receiptUrl)}
+                          title="View receipt"
+                          className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                        >
+                          {isPdfReceipt(e.receiptUrl) ? (
+                            <span className="flex h-full w-full items-center justify-center text-slate-400">
+                              <Paperclip className="h-4 w-4" />
+                            </span>
+                          ) : (
+                            <img src={e.receiptUrl} alt="Receipt thumbnail" className="h-full w-full object-cover" />
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-slate-600 text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1">
@@ -373,17 +420,6 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <Wallet className="h-3 w-3" /> Mark Reimbursed
                           </button>
                         )}
-                        {e.receiptUrl && (
-                          <a
-                            href={e.receiptUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="View receipt"
-                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1"
-                          >
-                            <Paperclip className="h-3 w-3" />
-                          </a>
-                        )}
                         <button onClick={() => openEdit(e)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1">
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -399,6 +435,102 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           </div>
         </div>
       </main>
+
+      {/* Receipt Lightbox — same zoom/pan mechanics as TicketPhotos.tsx */}
+      {previewReceiptUrl && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onClick={closeReceiptPreview}>
+          {/* Toolbar */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60 z-10">
+            <div className="text-sm text-slate-200 truncate max-w-xs">Receipt</div>
+            <div className="flex items-center gap-2">
+              {!isPdfReceipt(previewReceiptUrl) && (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setZoomScale((s) => Math.max(1, +(s - 0.5).toFixed(1))); if (zoomScale <= 1.5) setZoomPos({ x: 0, y: 0 }); }}
+                    className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center"
+                    title="Zoom out"
+                  >
+                    −
+                  </button>
+                  <span className="text-xs text-slate-300 w-10 text-center">{Math.round(zoomScale * 100)}%</span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setZoomScale((s) => Math.min(5, +(s + 0.5).toFixed(1))); }}
+                    className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg flex items-center justify-center"
+                    title="Zoom in"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }}
+                    className="px-2 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-xs"
+                    title="Reset zoom"
+                  >
+                    Reset
+                  </button>
+                </>
+              )}
+              <a
+                href={previewReceiptUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="px-2 h-8 rounded bg-blue-600/40 hover:bg-blue-600/60 text-blue-200 text-xs flex items-center"
+              >
+                Open original ↗
+              </a>
+              <button type="button" onClick={closeReceiptPreview} className="w-8 h-8 rounded bg-white/10 hover:bg-rose-600/40 text-white text-sm flex items-center justify-center">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {isPdfReceipt(previewReceiptUrl) ? (
+            <iframe src={previewReceiptUrl} title="Receipt" className="w-full h-full pt-12 pb-8" onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <div
+              className="overflow-hidden w-full h-full flex items-center justify-center cursor-zoom-in pt-12 pb-8"
+              onDoubleClick={(e) => { e.stopPropagation(); if (zoomScale > 1) { setZoomScale(1); setZoomPos({ x: 0, y: 0 }); } else { setZoomScale(2.5); } }}
+              onWheel={(e) => { e.stopPropagation(); const delta = e.deltaY > 0 ? -0.2 : 0.2; setZoomScale((s) => Math.min(5, Math.max(1, +(s + delta).toFixed(1)))); if (zoomScale + delta <= 1) setZoomPos({ x: 0, y: 0 }); }}
+              onTouchStart={(e) => { if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX; const dy = e.touches[0].clientY - e.touches[1].clientY; lastTouchDist.current = Math.sqrt(dx * dx + dy * dy); } }}
+              onTouchMove={(e) => { if (e.touches.length === 2 && lastTouchDist.current !== null) { const dx = e.touches[0].clientX - e.touches[1].clientX; const dy = e.touches[0].clientY - e.touches[1].clientY; const dist = Math.sqrt(dx * dx + dy * dy); setZoomScale((s) => Math.min(5, Math.max(1, +(s * (dist / lastTouchDist.current!)).toFixed(2)))); lastTouchDist.current = dist; } }}
+              onTouchEnd={() => { lastTouchDist.current = null; }}
+            >
+              <img
+                src={previewReceiptUrl}
+                alt="Receipt"
+                draggable={false}
+                style={{
+                  transform: `scale(${zoomScale}) translate(${zoomPos.x / zoomScale}px, ${zoomPos.y / zoomScale}px)`,
+                  transition: zoomScale === 1 ? "transform 0.2s ease" : "none",
+                  maxHeight: "calc(100vh - 80px)",
+                  maxWidth: "100%",
+                  objectFit: "contain",
+                  userSelect: "none",
+                  cursor: zoomScale > 1 ? "grab" : "zoom-in",
+                }}
+                onMouseDown={(e) => {
+                  if (zoomScale <= 1) return;
+                  e.preventDefault();
+                  const startX = e.clientX - zoomPos.x;
+                  const startY = e.clientY - zoomPos.y;
+                  const onMove = (mv: MouseEvent) => { setZoomPos({ x: mv.clientX - startX, y: mv.clientY - startY }); };
+                  const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
+                }}
+              />
+            </div>
+          )}
+
+          {/* Caption */}
+          <div className="absolute bottom-0 left-0 right-0 px-4 py-2 bg-black/60 text-xs text-slate-400 text-center">
+            {isPdfReceipt(previewReceiptUrl) ? "PDF receipt" : "Scroll to zoom · Double-click to zoom in/out · Drag to pan when zoomed"}
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Expense Modal */}
       {showForm && (

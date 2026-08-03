@@ -38,6 +38,10 @@ export interface MyPayslipRow {
   extraPay: number;
   /** Finance-entered free-text note for this specific payslip — see migration 0111. */
   notes: string | null;
+  /** "fixed" means this was a flat per-cutoff salary payout, not hours × hourlyRate — see migration 0119. */
+  compensationType: "hourly" | "fixed";
+  /** Only set when compensationType is "fixed". */
+  annualSalary: number | null;
 }
 
 /** All payslips generated for this employee (profileId), newest first. */
@@ -45,7 +49,7 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
   if (!profileId) return [];
   const { data: lineItems, error: liErr } = await supabase
     .from("payroll_line_items")
-    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency, extra_pay, notes")
+    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency, extra_pay, notes, compensation_type, annual_salary")
     .eq("profile_id", profileId);
   if (liErr) {
     console.error("getMyPayslips error:", liErr.message);
@@ -84,6 +88,8 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
         currency: li.currency || "USD",
         extraPay: Number(li.extra_pay) || 0,
         notes: li.notes ?? null,
+        compensationType: li.compensation_type === "fixed" ? "fixed" : "hourly",
+        annualSalary: li.annual_salary != null ? Number(li.annual_salary) || 0 : null,
       };
     })
     .filter((r): r is MyPayslipRow => r !== null)
@@ -99,6 +105,16 @@ export async function updatePayrollLineItemExtra(
   const { error } = await supabase
     .from("payroll_line_items")
     .update({ extra_pay: fields.extraPay, notes: fields.notes || null })
+    .eq("payroll_run_id", runId)
+    .eq("profile_id", profileId);
+  if (error) throw new Error(error.message);
+}
+
+/** Finance-only: mark/unmark one employee's line item as already paid within a specific payroll run — see migration 0117. */
+export async function updatePayrollLineItemPaid(runId: string, profileId: string, paid: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("payroll_line_items")
+    .update({ paid, paid_at: paid ? new Date().toISOString() : null })
     .eq("payroll_run_id", runId)
     .eq("profile_id", profileId);
   if (error) throw new Error(error.message);

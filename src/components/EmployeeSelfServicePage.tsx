@@ -47,6 +47,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { formatClockTime, type PayslipDailyRow } from "@/lib/payslipTemplate";
+import { perCutoffSalary } from "@/lib/supabase/salary";
 
 interface AttendanceRecord {
   date: string;
@@ -133,6 +134,10 @@ interface EmployeePayslipData {
   workingHoursLabel: string;
   breakLabel: string;
   hourlyRate: number;
+  /** "fixed" means this payslip was a flat per-cutoff salary payout, not hours × hourlyRate — see migration 0119. */
+  compensationType: "hourly" | "fixed";
+  /** Only set when compensationType is "fixed". */
+  annualSalary: number | null;
   /** Total duty days — days actually worked in this period. */
   counts: number;
   /** Total hours worked in this period. */
@@ -431,7 +436,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
       </thead>
       <tbody>
         <tr>
-          <td class="amount">$${employee.hourlyRate.toFixed(2)}</td>
+          <td class="amount">${employee.compensationType === "fixed" && employee.annualSalary ? `$${employee.annualSalary.toLocaleString()}/yr ($${perCutoffSalary(employee.annualSalary).toFixed(2)}/cutoff)` : `$${employee.hourlyRate.toFixed(2)}`}</td>
           <td class="amount">${employee.counts}</td>
           <td class="amount">${employee.totalHours.toFixed(2)}</td>
           <td class="amount">${employee.average.toFixed(2)}</td>
@@ -1110,8 +1115,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // attendance for the selected payslip's exact pay period and apply that
   // run's stored hourly rate per day (payroll runs use one flat rate per
   // employee for the whole period, so no per-day rate lookup is needed).
+  // Fixed-salary payslips (migration 0119) skip this entirely — an hours ×
+  // $0/hr table would read as "you earned $0 today" despite the correct
+  // flat Total below, so the template's own "No daily attendance recorded"
+  // fallback is shown instead (see payslipTemplate.ts).
   useEffect(() => {
-    if (!payslipModalOpen || !selectedPayslip || !myProfileId) {
+    if (!payslipModalOpen || !selectedPayslip || !myProfileId || selectedPayslip.compensationType === "fixed") {
       setPayslipDailyRows([]);
       return;
     }
@@ -1190,6 +1199,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       workingHoursLabel,
       breakLabel,
       hourlyRate: selectedPayslip.hourlyRate,
+      compensationType: selectedPayslip.compensationType,
+      annualSalary: selectedPayslip.annualSalary,
       counts,
       totalHours,
       average,

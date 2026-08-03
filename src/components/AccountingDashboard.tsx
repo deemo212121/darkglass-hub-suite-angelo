@@ -34,9 +34,11 @@ import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailMo
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
-import { updatePayrollLineItemExtra } from "@/lib/supabase/payslips";
+import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
+import { getEmployeeInfoByProfileIds, type EmployeeInfo } from "@/lib/supabase/users";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -84,7 +86,9 @@ interface SupabaseEmployee {
 interface SalaryEntry {
   profile_id: string;
   effective_date: string;
+  compensation_type: "hourly" | "fixed";
   hourly_rate: number;
+  annual_salary: number | null;
 }
 
 interface TimecardEntry {
@@ -119,6 +123,10 @@ interface PayrollLineItem {
   currency: string;
   extra_pay: number;
   notes: string | null;
+  paid: boolean;
+  paid_at: string | null;
+  compensation_type: "hourly" | "fixed";
+  annual_salary: number | null;
 }
 
 interface PayrollAuditLogRow {
@@ -131,10 +139,16 @@ interface PayrollAuditLogRow {
 
 interface EmployeePayrollRow {
   employee: SupabaseEmployee;
+  compensationType: "hourly" | "fixed";
+  /** Only meaningful when compensationType is "hourly" — 0 for fixed-salary employees. */
   hourlyRate: number;
   hourlyRateUSD: number;
+  /** Only set when compensationType is "fixed". */
+  annualSalary: number | null;
   hoursWorked: number;
   overtimeHours: number;
+  /** Scheduled ("duty") hours for the period — see computeDutyHours. */
+  dutyHours: number;
   grossPay: number;
   grossPayUSD: number;
 }
@@ -221,6 +235,25 @@ function computeHoursMap(
   return hoursMap;
 }
 
+// Scheduled ("duty") hours for the period — the employee's expected net
+// hours (resolveScheduledNetHours, same working_hours/meal_minutes-aware
+// calculation used for PTO crediting above) for every day in
+// [periodStart, periodEnd] that isn't one of their own off days. Shown
+// alongside Reg. Hours (actual worked) so Finance can spot under/over
+// attendance at a glance, independent of whether those hours were
+// actually punched.
+function computeDutyHours(emp: SupabaseEmployee, periodStart: string, periodEnd: string): number {
+  if (!periodStart || !periodEnd) return 0;
+  const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
+  if (netHours <= 0) return 0;
+  const offDays = new Set(emp.offDays ?? []);
+  let total = 0;
+  for (let d = new Date(`${periodStart}T00:00:00`); d <= new Date(`${periodEnd}T00:00:00`); d.setDate(d.getDate() + 1)) {
+    if (!offDays.has(d.getDay())) total += netHours;
+  }
+  return total;
+}
+
 // Attendance rows with a clock-in but no clock-out — payroll can't trust
 // what an unfinished shift's hours were, so generation/regeneration must be
 // blocked entirely rather than silently computing 0 hours for that day
@@ -265,7 +298,7 @@ function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)
         r.employee.roleLabel || "—",
         Number(r.hoursWorked.toFixed(1)),
         Number(r.overtimeHours.toFixed(1)),
-        Number(r.hourlyRateUSD.toFixed(2)),
+        r.compensationType === "fixed" && r.annualSalary ? `Fixed ($${r.annualSalary.toLocaleString()}/yr)` : Number(r.hourlyRateUSD.toFixed(2)),
         Number(r.grossPayUSD.toFixed(2)),
       ]);
     }
@@ -317,6 +350,14 @@ function fmt(amount: number) {
 // current rows use currency: "USD") is already a plain USD figure.
 function toUSD(li: PayrollLineItem): number {
   return li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0);
+}
+
+// A fixed-salary row's hourlyRateUSD is always 0 (see payrollRows above) —
+// shown instead as its annual salary so the Rate column/filter/export never
+// display a misleading "$0.00" for these employees.
+function rateLabel(row: EmployeePayrollRow): string {
+  if (row.compensationType === "fixed" && row.annualSalary) return `Fixed $${row.annualSalary.toLocaleString()}/yr`;
+  return `$${row.hourlyRateUSD.toFixed(2)}`;
 }
 
 function parseGmailRegionParam(value: string | null): GmailRegion {
@@ -375,6 +416,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  // Bank name/account number shown next to each employee in the Reports tab's
+  // expanded run view — read straight from profiles.employee_info (the same
+  // JSON blob the Employee Information tab edits), not duplicated anywhere.
+  const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
   // Payroll generation period — Finance picks this via the date inputs on
   // the Payroll tab. Seeded once (see fetchData) from the auto "day after
@@ -397,9 +442,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         ptoRes,
       ] = await Promise.all([
         supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
-        supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
+        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
-        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes"),
+        supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
         getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
       ]);
@@ -426,6 +471,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         } else {
           for (const r of extraRows ?? []) workScheduleById.set((r as any).id, r as any);
         }
+        getEmployeeInfoByProfileIds(empIds)
+          .then(setEmployeeInfoByProfileId)
+          .catch((err) => console.error("Failed to load employee bank info:", err));
       }
 
       setEmployees(((empRes.data ?? []) as any[]).map((p) => {
@@ -507,11 +555,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee (salaryEntries is already ordered by
-  // effective_date desc, so the first hit per profile is the current rate).
-  const latestRateMap = new Map<string, number>();
+  // effective_date desc, so the first hit per profile is the current one).
+  const latestCompMap = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
-    if (!latestRateMap.has(se.profile_id)) {
-      latestRateMap.set(se.profile_id, se.hourly_rate);
+    if (!latestCompMap.has(se.profile_id)) {
+      latestCompMap.set(se.profile_id, se);
     }
   }
 
@@ -526,18 +574,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // are just hourlyRate/grossPay verbatim — no PHP division here. (EXCHANGE_RATE
   // is still used for payroll_line_items rows recorded with currency: "PHP"
   // before this was standardized — see toggleRun()/Reports tab below.)
+  //
+  // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
+  // amount (annual / 24) regardless of hours actually worked or overtime —
+  // hoursWorked/overtimeHours/dutyHours are still computed for attendance
+  // visibility, they just don't feed into grossPay for these employees.
   const payrollRows: EmployeePayrollRow[] = employees.map((emp) => {
-    const hourlyRate =
-      latestRateMap.get(emp.id) ?? emp.hourly_rate ?? 0;
+    const comp = latestCompMap.get(emp.id);
+    const isFixed = comp?.compensation_type === "fixed";
+    const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
+    const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    const grossPay =
-      hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
+    const grossPay = isFixed && annualSalary ? perCutoffSalary(annualSalary) : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
     return {
       employee: emp,
+      compensationType: isFixed ? "fixed" : "hourly",
       hourlyRate,
       hourlyRateUSD: hourlyRate,
+      annualSalary,
       hoursWorked: hours.regular,
       overtimeHours: hours.overtime,
+      dutyHours: computeDutyHours(emp, genStart, genEnd),
       grossPay,
       grossPayUSD: grossPay,
     };
@@ -743,17 +800,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // dashboard generates reads in one currency, no ₱ anywhere. Only the
       // currently selected nation, and only its included (non-excluded)
       // employees, ever get a line item here.
+      //
+      // Fixed-salary employees have no regular/overtime split — their whole
+      // per-cutoff amount (grossPayUSD) goes in as regular_pay, with 0
+      // overtime, matching this session's "no overtime for fixed salary"
+      // decision.
       const lineItems = nationIncludedPayrollRows.map((r) => ({
         payroll_run_id: runId,
         profile_id: r.employee.id,
         hours_worked: r.hoursWorked,
         overtime_hours: r.overtimeHours,
         hourly_rate: r.hourlyRateUSD,
-        regular_pay: r.hoursWorked * r.hourlyRateUSD,
-        overtime_pay: r.overtimeHours * r.hourlyRateUSD * 1.5,
+        regular_pay: r.compensationType === "fixed" ? r.grossPayUSD : r.hoursWorked * r.hourlyRateUSD,
+        overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * 1.5,
         gross_pay: r.grossPayUSD,
         net_pay: r.grossPayUSD, // simplified — no deductions model
         currency: "USD",
+        compensation_type: r.compensationType,
+        annual_salary: r.compensationType === "fixed" ? r.annualSalary : null,
       }));
 
       const { error: lineErr } = await supabase.from("payroll_line_items").insert(lineItems);
@@ -895,24 +959,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // server bridge's runtime doesn't have, so the PDF is built here and
   // handed to the server as base64 to attach as-is.
   const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
-    const attendanceRows = await getAttendanceForRange(row.employee.id, genStart, genEnd, {});
-    const rate = row.hourlyRateUSD;
-    const dailyRows: PayslipDailyRow[] = attendanceRows
-      .filter((r) => r.hoursWorked > 0)
-      .map((r) => {
-        const regular = Math.min(r.hoursWorked, 8);
-        const overtime = Math.max(0, r.hoursWorked - 8);
-        return {
-          date: r.date,
-          clockIn: r.clockIn,
-          clockOut: r.clockOut,
-          mealStart: r.mealStart,
-          mealEnd: r.mealEnd,
-          hours: r.hoursWorked,
-          rate,
-          amount: regular * rate + overtime * rate * 1.5,
-        };
-      });
+    // Fixed-salary employees are paid a flat per-cutoff amount, not an
+    // hourly breakdown — an hours × $0/hr daily table would read as "you
+    // earned $0 today" despite the correct total below, so this skips the
+    // daily rows entirely for them (the template already shows "No daily
+    // attendance recorded" when dailyRows is empty).
+    const dailyRows: PayslipDailyRow[] = row.compensationType === "fixed" ? [] : await (async () => {
+      const attendanceRows = await getAttendanceForRange(row.employee.id, genStart, genEnd, {});
+      const rate = row.hourlyRateUSD;
+      return attendanceRows
+        .filter((r) => r.hoursWorked > 0)
+        .map((r) => {
+          const regular = Math.min(r.hoursWorked, 8);
+          const overtime = Math.max(0, r.hoursWorked - 8);
+          return {
+            date: r.date,
+            clockIn: r.clockIn,
+            clockOut: r.clockOut,
+            mealStart: r.mealStart,
+            mealEnd: r.mealEnd,
+            hours: r.hoursWorked,
+            rate,
+            amount: regular * rate + overtime * rate * 1.5,
+          };
+        });
+    })();
     const payslipData: EmployeePayslipData = {
       name: row.employee.full_name,
       department: row.employee.department || "",
@@ -973,7 +1044,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try {
       const { data, error: e } = await supabase
         .from("payroll_line_items")
-        .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes")
+        .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary")
         .eq("payroll_run_id", runId);
       if (e) throw new Error(e.message);
       setRunLineItems((prev) => ({ ...prev, [runId]: (data ?? []) as PayrollLineItem[] }));
@@ -1017,6 +1088,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
+  // Finance checks this off once the person has actually been paid —
+  // separate from the run's own draft/generated status, since payouts
+  // within a run are often staggered rather than all happening at once.
+  const [togglingPaidKey, setTogglingPaidKey] = useState<string | null>(null);
+  const handleToggleLineItemPaid = async (runId: string, profileId: string, nextPaid: boolean, employeeName: string) => {
+    // Only the undo direction needs confirming — checking it off in the
+    // first place is the routine action, unchecking it is the one that
+    // could undo a real record of payment by accident.
+    if (!nextPaid && !confirm(`Unmark ${employeeName} as paid? Only do this if they were checked off by mistake.`)) {
+      return;
+    }
+    const key = lineItemEditKey(runId, profileId);
+    setTogglingPaidKey(key);
+    try {
+      await updatePayrollLineItemPaid(runId, profileId, nextPaid);
+      setRunLineItems((prev) => ({
+        ...prev,
+        [runId]: (prev[runId] ?? []).map((li) =>
+          li.profile_id === profileId ? { ...li, paid: nextPaid, paid_at: nextPaid ? new Date().toISOString() : null } : li
+        ),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update paid status");
+    } finally {
+      setTogglingPaidKey(null);
+    }
+  };
+
   // ── Totals per run ───────────────────────────────────────────────────────────
   const runTotals = new Map<string, number>();
   for (const li of payrollLineItems) {
@@ -1042,7 +1141,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     if (!opts.excludeDept && departmentFilter.size > 0 && !departmentFilter.has(row.employee.department || "")) return false;
     if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(row.employee.roleLabel || "")) return false;
     if (!opts.excludeRegHours && regHoursFilter.size > 0 && !regHoursFilter.has(row.hoursWorked.toFixed(1))) return false;
-    if (!opts.excludeRate && rateFilter.size > 0 && !rateFilter.has(`$${row.hourlyRateUSD.toFixed(2)}`)) return false;
+    if (!opts.excludeRate && rateFilter.size > 0 && !rateFilter.has(rateLabel(row))) return false;
     if (employeeSearch && !row.employee.full_name.toLowerCase().includes(employeeSearch.toLowerCase())) return false;
     return true;
   };
@@ -1057,7 +1156,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRegHours: true })).map((r) => r.hoursWorked.toFixed(1)))
   );
   const rateOptions = Array.from(
-    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRate: true })).map((r) => `$${r.hourlyRateUSD.toFixed(2)}`))
+    new Set(displayRows.filter((r) => matchesRowFilters(r, { excludeRate: true })).map(rateLabel))
   );
 
   const visibleRowsUnsorted = displayRows.filter((row) => matchesRowFilters(row, {}));
@@ -1504,6 +1603,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         />
                       </span>
                     </th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Expected hours based on the employee's set schedule, for comparison against Reg. Hours">Duty Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
                       <span className="inline-flex items-center justify-center">
@@ -1523,7 +1623,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-slate-500 text-sm">
+                      <td colSpan={10} className="px-4 py-8 text-center text-slate-500 text-sm">
                         No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
                       </td>
                     </tr>
@@ -1531,7 +1631,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     visibleRowsByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
-                          <td colSpan={9} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                          <td colSpan={10} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                             {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                           </td>
                         </tr>
@@ -1568,11 +1668,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <td className="px-4 py-3 text-center text-slate-300">
                               {row.hoursWorked.toFixed(1)}
                             </td>
+                            <td
+                              className={`px-4 py-3 text-center ${row.hoursWorked < row.dutyHours ? "text-amber-300" : "text-slate-300"}`}
+                              title="Expected hours based on the employee's set schedule"
+                            >
+                              {row.dutyHours.toFixed(1)}
+                            </td>
                             <td className="px-4 py-3 text-center text-orange-300">
                               {row.overtimeHours.toFixed(1)}
                             </td>
-                            <td className="px-4 py-3 text-center text-slate-300">
-                              ${row.hourlyRateUSD.toFixed(2)}
+                            <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary).toFixed(2)}/cutoff` : undefined}>
+                              {rateLabel(row)}
                             </td>
                             <td className="px-4 py-3 text-right font-semibold text-green-300">
                               {fmt(row.grossPayUSD)}
@@ -1598,7 +1704,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 {visibleRows.length > 0 && (
                   <tfoot>
                     <tr className="border-t border-white/20 bg-white/5">
-                      <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-slate-300">
+                      <td colSpan={7} className="px-4 py-3 text-sm font-semibold text-slate-300">
                         Total
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-green-300">
@@ -1708,6 +1814,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <thead>
                                     <tr className="border-b border-white/10">
                                       <th className="py-2 text-left text-slate-500 uppercase">Employee</th>
+                                      <th className="py-2 text-left text-slate-500 uppercase">Bank Name</th>
+                                      <th className="py-2 text-left text-slate-500 uppercase">Account #</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">Reg Hrs</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">OT Hrs</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Rate</th>
@@ -1717,6 +1825,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       <th className="py-2 text-right text-slate-500 uppercase">Extra</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Grand Total</th>
                                       <th className="py-2 text-left text-slate-500 uppercase">Notes</th>
+                                      <th className="py-2 text-center text-slate-500 uppercase">Paid</th>
                                       <th className="py-2 text-center text-slate-500 uppercase"></th>
                                     </tr>
                                   </thead>
@@ -1733,6 +1842,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       const extraValue = edit?.extraPay ?? String(li.extra_pay || 0);
                                       const notesValue = edit?.notes ?? (li.notes || "");
                                       const grandTotal = grossUSD + (Number(extraValue) || 0);
+                                      const bankInfo = employeeInfoByProfileId.get(li.profile_id);
                                       return (
                                         <tr key={idx} className="border-b border-white/5">
                                           <td className="py-2 text-white">
@@ -1740,10 +1850,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                               ? emp.full_name
                                               : li.profile_id}
                                           </td>
+                                          <td className="py-2 text-slate-300">{bankInfo?.bankName || "—"}</td>
+                                          <td className="py-2 text-slate-300">{bankInfo?.accountNumber || "—"}</td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
                                           <td className="py-2 text-center text-orange-300">{li.overtime_hours?.toFixed(1)}</td>
                                           <td className="py-2 text-right text-slate-300">
-                                            ${(li.hourly_rate / divisor).toFixed(2)}
+                                            {li.compensation_type === "fixed" && li.annual_salary
+                                              ? `Fixed $${li.annual_salary.toLocaleString()}/yr`
+                                              : `$${(li.hourly_rate / divisor).toFixed(2)}`}
                                           </td>
                                           <td className="py-2 text-right text-slate-300">
                                             ${(li.regular_pay / divisor).toFixed(2)}
@@ -1783,6 +1897,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                                 }))
                                               }
                                               className="w-40 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-slate-100 focus:outline-none focus:border-blue-500"
+                                            />
+                                          </td>
+                                          <td className="py-2 text-center">
+                                            <input
+                                              type="checkbox"
+                                              checked={li.paid}
+                                              disabled={togglingPaidKey === key}
+                                              onChange={(e) => handleToggleLineItemPaid(run.id, li.profile_id, e.target.checked, emp?.full_name || li.profile_id)}
+                                              title={li.paid && li.paid_at ? `Marked paid ${new Date(li.paid_at).toLocaleString()}` : "Mark as paid"}
+                                              className="h-4 w-4 accent-green-600 cursor-pointer"
                                             />
                                           </td>
                                           <td className="py-2 text-center">

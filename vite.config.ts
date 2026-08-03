@@ -599,6 +599,40 @@ function adminUpdateEmailDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/admin-reset-password locally — same
+// bridge as production. Plain JSON POST, same shape as adminUpdateEmailDevPlugin.
+function adminResetPasswordDevPlugin() {
+  return {
+    name: "admin-reset-password-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/admin-reset-password", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleAdminPasswordRequest } = await server.ssrLoadModule("/src/lib/server/adminPasswordBridge.ts");
+          const webReq = new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleAdminPasswordRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Password reset request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -620,7 +654,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up

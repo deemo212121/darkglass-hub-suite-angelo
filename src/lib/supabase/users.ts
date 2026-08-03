@@ -350,6 +350,8 @@ export interface EmployeeInfo {
   bankName?: string;
   routingNumber?: string;
   accountNumber?: string;
+  /** Name on the bank account — not always the employee's own name (e.g. a joint account). */
+  accountName?: string;
   photoName?: string;
   photoDataUrl?: string;
   address1?: string;

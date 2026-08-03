@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { Save, Lock } from "lucide-react";
+import { Save, Lock, Eye, EyeOff } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
@@ -67,6 +67,7 @@ function ProfilePage() {
     poInitials: "",
   });
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
+  const [showPassword, setShowPassword] = useState({ current: false, next: false, confirm: false });
   const [saved, setSaved] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [currentWeekDays, setCurrentWeekDays] = useState<WeekDay[]>([]);
@@ -457,15 +458,63 @@ function ProfilePage() {
         <div className="grid gap-4 mb-4">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Current password</span>
-            <input className="glass-input" type="password" value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} />
+            <div className="relative">
+              <input
+                className="glass-input w-full pr-10"
+                type={showPassword.current ? "text" : "password"}
+                value={password.current}
+                onChange={(e) => setPassword({ ...password, current: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword({ ...showPassword, current: !showPassword.current })}
+                tabIndex={-1}
+                title={showPassword.current ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">New password</span>
-            <input className="glass-input" type="password" value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} />
+            <div className="relative">
+              <input
+                className="glass-input w-full pr-10"
+                type={showPassword.next ? "text" : "password"}
+                value={password.next}
+                onChange={(e) => setPassword({ ...password, next: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword({ ...showPassword, next: !showPassword.next })}
+                tabIndex={-1}
+                title={showPassword.next ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword.next ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Confirm new password</span>
-            <input className="glass-input" type="password" value={password.confirm} onChange={(e) => setPassword({ ...password, confirm: e.target.value })} />
+            <div className="relative">
+              <input
+                className="glass-input w-full pr-10"
+                type={showPassword.confirm ? "text" : "password"}
+                value={password.confirm}
+                onChange={(e) => setPassword({ ...password, confirm: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword({ ...showPassword, confirm: !showPassword.confirm })}
+                tabIndex={-1}
+                title={showPassword.confirm ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword.confirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
         </div>
         <button className="btn btn-primary" onClick={changePassword}><Save className="h-4 w-4" />Update password</button>
