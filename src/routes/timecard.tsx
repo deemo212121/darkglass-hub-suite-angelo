@@ -226,6 +226,10 @@ function FullTimecardPage({ uid, ready }: { uid: string | null; ready: boolean }
   };
 
   const openEntryModal = (dateKey: string) => {
+    if (ptoForDate(dateKey)) {
+      alert("This day is covered by an approved PTO request, so no time punches are needed.");
+      return;
+    }
     setEditingDate(dateKey);
     const entry = entries[dateKey] || {
       checkIn: "",

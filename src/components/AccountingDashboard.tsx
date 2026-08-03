@@ -32,12 +32,13 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, type EmployeeInfo } from "@/lib/supabase/users";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getTechRepairRates, getTechCompletedRepairCounts, DEFAULT_REPAIR_TYPE, type TechRepairRate, type TechRepairCount } from "@/lib/supabase/techPayroll";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -151,11 +152,14 @@ interface EmployeePayrollRow {
   dutyHours: number;
   grossPay: number;
   grossPayUSD: number;
+  /** Tech Payroll only — completed repair tickets in the period. 0 for Office/fixed-salary rows. */
+  ticketsCompleted: number;
 }
 
 interface MonthlyBarData {
   month: string;
-  usPayroll: number;
+  usOfficePayroll: number;
+  usTechPayroll: number;
   phPayroll: number;
   total: number;
 }
@@ -378,6 +382,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
+  // Under US Payroll only — technicians are paid per completed repair ticket
+  // (Tech Payroll) instead of hourly (Office Payroll, the pre-existing view).
+  const [payrollView, setPayrollView] = useState<"office" | "tech">("office");
   // Funnel-style column filters (Ticket List convention) — empty set = no filter.
   const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -397,6 +404,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [payrollLineItems, setPayrollLineItems] = useState<PayrollLineItem[]>([]);
   const [auditLog, setAuditLog] = useState<PayrollAuditLogRow[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [techRepairRates, setTechRepairRates] = useState<TechRepairRate[]>([]);
+  const [techRepairCounts, setTechRepairCounts] = useState<TechRepairCount[]>([]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -440,6 +449,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
         ptoRes,
+        techRatesRes,
       ] = await Promise.all([
         supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
@@ -447,12 +457,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
         getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
+        // Best-effort — Tech Payroll just computes $0 for everyone if this fails.
+        getTechRepairRates().catch((err) => { console.error("Failed to load tech repair rates:", err); return [] as TechRepairRate[]; }),
       ]);
 
       for (const res of [empRes, salRes, runsRes, lineRes, auditRes]) {
         if (res.error) throw new Error(res.error.message);
       }
       setPtoRequests(ptoRes);
+      setTechRepairRates(techRatesRes);
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
@@ -553,6 +566,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return () => { cancelled = true; };
   }, [genStart, genEnd]);
 
+  // Tech Payroll's completed-repair counts for the same picked period.
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setTechRepairCounts([]);
+      return;
+    }
+    let cancelled = false;
+    getTechCompletedRepairCounts(genStart, genEnd)
+      .then((counts) => { if (!cancelled) setTechRepairCounts(counts); })
+      .catch((err) => {
+        console.error("Failed to load tech completed-repair counts:", err);
+        if (!cancelled) setTechRepairCounts([]);
+      });
+    return () => { cancelled = true; };
+  }, [genStart, genEnd]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee (salaryEntries is already ordered by
   // effective_date desc, so the first hit per profile is the current one).
@@ -567,6 +596,42 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
   const hoursMap = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd);
 
+  // Technicians are paid per completed repair ticket (Tech Payroll) instead
+  // of hourly-or-fixed — role === TECHNICIAN only (TECHNICIAN_MANAGER and
+  // everyone else stays on the Office Payroll calculation below).
+  const isTechRole = (emp: SupabaseEmployee) => normalizeRole(emp.role) === "TECHNICIAN";
+
+  // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
+  // back to that repair_type's "All Branches" rate; otherwise the branch's
+  // own "Default Amount" rate; otherwise "Default Amount, All Branches";
+  // otherwise $0 (no rate configured yet — see TechPayrollSetup.tsx).
+  const techRateFor = (repairType: string, branch: string): number => {
+    const exact = techRepairRates.find((r) => r.repairType === repairType && r.branch === branch);
+    if (exact) return exact.amount;
+    const anyBranch = techRepairRates.find((r) => r.repairType === repairType && !r.branch);
+    if (anyBranch) return anyBranch.amount;
+    const defaultForBranch = techRepairRates.find((r) => r.repairType === DEFAULT_REPAIR_TYPE && r.branch === branch);
+    if (defaultForBranch) return defaultForBranch.amount;
+    const defaultAny = techRepairRates.find((r) => r.repairType === DEFAULT_REPAIR_TYPE && !r.branch);
+    return defaultAny ? defaultAny.amount : 0;
+  };
+
+  // visits.technician is free text (no FK to profiles) — matched by name,
+  // same convention as every other free-text technician match in the app
+  // (e.g. resolveTeamLeadOrManager's manager_name match).
+  const employeeByName = new Map(employees.map((e) => [e.full_name.trim().toLowerCase(), e]));
+  const techGrossByProfile = new Map<string, { ticketsCompleted: number; grossPay: number }>();
+  for (const rc of techRepairCounts) {
+    const emp = employeeByName.get(rc.technician.trim().toLowerCase());
+    if (!emp) continue;
+    const rate = techRateFor(rc.repairType, rc.branch || emp.assigned_branch || "");
+    const prev = techGrossByProfile.get(emp.id) ?? { ticketsCompleted: 0, grossPay: 0 };
+    techGrossByProfile.set(emp.id, {
+      ticketsCompleted: prev.ticketsCompleted + rc.count,
+      grossPay: prev.grossPay + rate * rc.count,
+    });
+  }
+
   // Build payroll rows. salary_entries.hourly_rate is always entered as a
   // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
   // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
@@ -579,13 +644,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // amount (annual / 24) regardless of hours actually worked or overtime —
   // hoursWorked/overtimeHours/dutyHours are still computed for attendance
   // visibility, they just don't feed into grossPay for these employees.
+  // Technicians (Tech Payroll) take priority over both: hoursWorked/
+  // overtimeHours/hourlyRate/dutyHours stay populated from real
+  // punches/schedule (informational, shown for reference) but grossPay is
+  // their piece-rate total instead.
   const payrollRows: EmployeePayrollRow[] = employees.map((emp) => {
     const comp = latestCompMap.get(emp.id);
     const isFixed = comp?.compensation_type === "fixed";
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
     const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    const grossPay = isFixed && annualSalary ? perCutoffSalary(annualSalary) : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
+    const tech = isTechRole(emp) ? techGrossByProfile.get(emp.id) : undefined;
+    const grossPay = tech
+      ? tech.grossPay
+      : isFixed && annualSalary
+        ? perCutoffSalary(annualSalary)
+        : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
     return {
       employee: emp,
       compensationType: isFixed ? "fixed" : "hourly",
@@ -594,6 +668,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       annualSalary,
       hoursWorked: hours.regular,
       overtimeHours: hours.overtime,
+      ticketsCompleted: tech?.ticketsCompleted ?? 0,
       dutyHours: computeDutyHours(emp, genStart, genEnd),
       grossPay,
       grossPayUSD: grossPay,
@@ -602,6 +677,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
+  const usOfficeRows = usRows.filter((r) => !isTechRole(r.employee));
+  const usTechRows = usRows.filter((r) => isTechRole(r.employee));
 
   // Employees who never draw a salary through this system (e.g. the owner)
   // — kept out of generation, the missing-clock-out gate, and the export,
@@ -680,17 +757,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   })();
 
   // Monthly bar chart data from payroll_line_items grouped by run period.
+  // US is split into Office/Tech (same TECHNICIAN-role split as US
+  // Payroll's Office/Tech toggle) since that's where the piece-rate Tech
+  // Payroll employees are. PH stays one combined bar.
   const monthlyBarData: MonthlyBarData[] = (() => {
-    const map = new Map<string, { usPayroll: number; phPayroll: number }>();
+    const map = new Map<string, { usOfficePayroll: number; usTechPayroll: number; phPayroll: number }>();
     for (const run of payrollRuns) {
       const label = run.period_start
         ? new Date(run.period_start).toLocaleString("en-US", { month: "short", year: "2-digit" })
         : run.id;
       const items = payrollLineItems.filter((li) => li.payroll_run_id === run.id);
-      const us = items
+      const usOffice = items
         .filter((li) => {
           const emp = employees.find((e) => e.id === li.profile_id);
-          return emp?.country === "US";
+          return emp?.country === "US" && !(emp && isTechRole(emp));
+        })
+        .reduce((s, li) => s + toUSD(li), 0);
+      const usTech = items
+        .filter((li) => {
+          const emp = employees.find((e) => e.id === li.profile_id);
+          return emp?.country === "US" && !!emp && isTechRole(emp);
         })
         .reduce((s, li) => s + toUSD(li), 0);
       const ph = items
@@ -699,14 +785,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           return emp?.country === "PH";
         })
         .reduce((s, li) => s + toUSD(li), 0);
-      const prev = map.get(label) ?? { usPayroll: 0, phPayroll: 0 };
-      map.set(label, { usPayroll: prev.usPayroll + us, phPayroll: prev.phPayroll + ph });
+      const prev = map.get(label) ?? { usOfficePayroll: 0, usTechPayroll: 0, phPayroll: 0 };
+      map.set(label, {
+        usOfficePayroll: prev.usOfficePayroll + usOffice,
+        usTechPayroll: prev.usTechPayroll + usTech,
+        phPayroll: prev.phPayroll + ph,
+      });
     }
     return Array.from(map.entries()).map(([month, v]) => ({
       month,
-      usPayroll: Math.round(v.usPayroll),
+      usOfficePayroll: Math.round(v.usOfficePayroll),
+      usTechPayroll: Math.round(v.usTechPayroll),
       phPayroll: Math.round(v.phPayroll),
-      total: Math.round(v.usPayroll + v.phPayroll),
+      total: Math.round(v.usOfficePayroll + v.usTechPayroll + v.phPayroll),
     }));
   })();
 
@@ -1128,7 +1219,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Render helpers ───────────────────────────────────────────────────────────
   // selectedCurrency is really a "which team" filter (US vs PH employees) —
   // every amount is always shown in USD regardless of which team is active.
-  const displayRows = selectedCurrency === "USD" ? usRows : phRows;
+  const displayRows = selectedCurrency === "USD" ? (payrollView === "tech" ? usTechRows : usOfficeRows) : phRows;
+  const isTechView = selectedCurrency === "USD" && payrollView === "tech";
+  // checkbox, Name, Department, Role, Gross Pay, Payslip (6) + Branch (US
+  // only) + either Tickets Completed (Tech) or Reg/Duty/OT Hours + Rate (Office/PH).
+  const payrollColCount = 6 + (selectedCurrency === "USD" ? 1 : 0) + (isTechView ? 1 : 4);
 
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
   // column's own option list reflects every OTHER active filter, so opening
@@ -1333,7 +1428,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       formatter={(value) => [`$${(value as number).toLocaleString()}`, undefined]}
                     />
                     <Legend />
-                    <Bar dataKey="usPayroll" name="US Payroll" fill="#34d399" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="usOfficePayroll" name="US Office" fill="#34d399" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="usTechPayroll" name="US Tech" fill="#f472b6" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="phPayroll" name="PH Payroll (USD)" fill="#818cf8" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1414,6 +1510,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               </div>
             </div>
 
+            {/* Office/Tech sub-toggle — US Payroll only. Technicians are
+                paid per completed repair ticket (Tech Payroll) instead of
+                hourly (Office Payroll, everyone else). */}
+            {selectedCurrency === "USD" && (
+              <div className="flex gap-2">
+                {(["office", "tech"] as const).map((view) => (
+                  <button
+                    key={view}
+                    onClick={() => {
+                      setPayrollView(view);
+                      setDepartmentFilter(new Set());
+                      setRoleFilter(new Set());
+                      setRegHoursFilter(new Set());
+                      setRateFilter(new Set());
+                    }}
+                    className={`px-3 py-1.5 rounded text-xs font-semibold transition ${
+                      payrollView === view
+                        ? "bg-blue-500/30 text-white border border-blue-400/40"
+                        : "bg-slate-800/50 text-slate-400 border border-white/10 hover:text-white"
+                    }`}
+                  >
+                    {view === "office" ? "Office Payroll" : "Tech Payroll"}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Connect Gmail — one connection per region; payslip sends
                 automatically use whichever region the recipient employee
                 belongs to, regardless of which tab is currently active. */}
@@ -1467,9 +1590,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <p className="text-xs text-slate-500 mt-1">Active in {selectedCurrency === "USD" ? "US" : "PH"}</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Overtime Pay</p>
+                <p className="text-xs text-slate-400 mb-1">{isTechView ? "Tickets Completed" : "Overtime Pay"}</p>
                 <p className="text-2xl font-bold text-orange-300">
-                  {fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
+                  {isTechView
+                    ? displayRows.reduce((s, r) => s + r.ticketsCompleted, 0)
+                    : fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
                 </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -1526,7 +1651,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
-                  {selectedCurrency === "USD" ? "US" : "PH"} Employee Payroll — Current Period
+                  {selectedCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} Employee Payroll — Current Period
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
@@ -1570,6 +1695,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         <span className="text-[10px]">{nameSort === "asc" ? "▲" : nameSort === "desc" ? "▼" : "⇅"}</span>
                       </button>
                     </th>
+                    {selectedCurrency === "USD" && (
+                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Branch</th>
+                    )}
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
                       <span className="inline-flex items-center">
                         Department
@@ -1592,30 +1720,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         />
                       </span>
                     </th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
-                      <span className="inline-flex items-center justify-center">
-                        Reg. Hours
-                        <TicketColumnFilter
-                          options={regHoursOptions}
-                          selected={regHoursFilter}
-                          onChange={setRegHoursFilter}
-                          label="Filter by Reg. Hours"
-                        />
-                      </span>
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Expected hours based on the employee's set schedule, for comparison against Reg. Hours">Duty Hours</th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
-                      <span className="inline-flex items-center justify-center">
-                        Rate
-                        <TicketColumnFilter
-                          options={rateOptions}
-                          selected={rateFilter}
-                          onChange={setRateFilter}
-                          label="Filter by Rate"
-                        />
-                      </span>
-                    </th>
+                    {isTechView ? (
+                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">Tickets Completed</th>
+                    ) : (
+                      <>
+                        <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                          <span className="inline-flex items-center justify-center">
+                            Reg. Hours
+                            <TicketColumnFilter
+                              options={regHoursOptions}
+                              selected={regHoursFilter}
+                              onChange={setRegHoursFilter}
+                              label="Filter by Reg. Hours"
+                            />
+                          </span>
+                        </th>
+                        <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Expected hours based on the employee's set schedule, for comparison against Reg. Hours">Duty Hours</th>
+                        <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
+                        <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                          <span className="inline-flex items-center justify-center">
+                            Rate
+                            <TicketColumnFilter
+                              options={rateOptions}
+                              selected={rateFilter}
+                              onChange={setRateFilter}
+                              label="Filter by Rate"
+                            />
+                          </span>
+                        </th>
+                      </>
+                    )}
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Payslip</th>
                   </tr>
@@ -1623,15 +1757,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-8 text-center text-slate-500 text-sm">
-                        No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
+                      <td colSpan={payrollColCount} className="px-4 py-8 text-center text-slate-500 text-sm">
+                        No {selectedCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} employees found.
                       </td>
                     </tr>
                   ) : (
                     visibleRowsByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
-                          <td colSpan={10} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                          <td colSpan={payrollColCount} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                             {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                           </td>
                         </tr>
@@ -1659,27 +1793,40 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.employee.full_name}
                               </button>
                             </td>
+                            {selectedCurrency === "USD" && (
+                              <td className="px-4 py-3 text-slate-300">
+                                {row.employee.assigned_branch || "—"}
+                              </td>
+                            )}
                             <td className="px-4 py-3 text-slate-300">
                               {row.employee.department || "—"}
                             </td>
                             <td className="px-4 py-3 text-slate-300">
                               {row.employee.roleLabel || "—"}
                             </td>
-                            <td className="px-4 py-3 text-center text-slate-300">
-                              {row.hoursWorked.toFixed(1)}
-                            </td>
-                            <td
-                              className={`px-4 py-3 text-center ${row.hoursWorked < row.dutyHours ? "text-amber-300" : "text-slate-300"}`}
-                              title="Expected hours based on the employee's set schedule"
-                            >
-                              {row.dutyHours.toFixed(1)}
-                            </td>
-                            <td className="px-4 py-3 text-center text-orange-300">
-                              {row.overtimeHours.toFixed(1)}
-                            </td>
-                            <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary).toFixed(2)}/cutoff` : undefined}>
-                              {rateLabel(row)}
-                            </td>
+                            {isTechView ? (
+                              <td className="px-4 py-3 text-center text-slate-300">
+                                {row.ticketsCompleted}
+                              </td>
+                            ) : (
+                              <>
+                                <td className="px-4 py-3 text-center text-slate-300">
+                                  {row.hoursWorked.toFixed(1)}
+                                </td>
+                                <td
+                                  className={`px-4 py-3 text-center ${row.hoursWorked < row.dutyHours ? "text-amber-300" : "text-slate-300"}`}
+                                  title="Expected hours based on the employee's set schedule"
+                                >
+                                  {row.dutyHours.toFixed(1)}
+                                </td>
+                                <td className="px-4 py-3 text-center text-orange-300">
+                                  {row.overtimeHours.toFixed(1)}
+                                </td>
+                                <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary).toFixed(2)}/cutoff` : undefined}>
+                                  {rateLabel(row)}
+                                </td>
+                              </>
+                            )}
                             <td className="px-4 py-3 text-right font-semibold text-green-300">
                               {fmt(row.grossPayUSD)}
                             </td>
@@ -1704,7 +1851,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 {visibleRows.length > 0 && (
                   <tfoot>
                     <tr className="border-t border-white/20 bg-white/5">
-                      <td colSpan={7} className="px-4 py-3 text-sm font-semibold text-slate-300">
+                      <td colSpan={payrollColCount - 3} className="px-4 py-3 text-sm font-semibold text-slate-300">
                         Total
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-green-300">
@@ -1814,6 +1961,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <thead>
                                     <tr className="border-b border-white/10">
                                       <th className="py-2 text-left text-slate-500 uppercase">Employee</th>
+                                      <th className="py-2 text-left text-slate-500 uppercase">Position</th>
+                                      <th className="py-2 text-left text-slate-500 uppercase">Department</th>
                                       <th className="py-2 text-left text-slate-500 uppercase">Bank Name</th>
                                       <th className="py-2 text-left text-slate-500 uppercase">Account #</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">Reg Hrs</th>
@@ -1850,6 +1999,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                               ? emp.full_name
                                               : li.profile_id}
                                           </td>
+                                          <td className="py-2 text-slate-300">{emp?.roleLabel || "—"}</td>
+                                          <td className="py-2 text-slate-300">{emp?.department || "—"}</td>
                                           <td className="py-2 text-slate-300">{bankInfo?.bankName || "—"}</td>
                                           <td className="py-2 text-slate-300">{bankInfo?.accountNumber || "—"}</td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
