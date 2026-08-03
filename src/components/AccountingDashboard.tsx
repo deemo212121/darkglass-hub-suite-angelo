@@ -55,6 +55,30 @@ const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 // clock-in/out save flow) — same convention as PayrollCalculationPage.tsx.
 const REGULAR_HOURS_PER_DAY = 8;
 
+/**
+ * Scheduled/rostered net hours for an employee over a pay period — sum of
+ * resolveScheduledNetHours() for each non-off-day date in [periodStart,
+ * periodEnd], inclusive. Shown as "Duty Hrs" beside actually-worked "Reg
+ * Hrs" on a payroll run's expanded line items, so Accounting can spot gaps
+ * between what someone was scheduled for and what they actually clocked.
+ */
+function computeDutyHours(
+  emp: Pick<SupabaseEmployee, "offDays" | "requiredCheckIn" | "requiredCheckOut" | "workingHours" | "mealMinutes"> | undefined,
+  periodStart: string,
+  periodEnd: string
+): number {
+  if (!emp || !periodStart || !periodEnd) return 0;
+  const perDay = resolveScheduledNetHours(emp.requiredCheckIn ?? "", emp.requiredCheckOut ?? "", emp.workingHours, emp.mealMinutes);
+  if (perDay <= 0) return 0;
+  const offDays = new Set(emp.offDays ?? []);
+  let total = 0;
+  const end = new Date(`${periodEnd}T00:00:00`);
+  for (let d = new Date(`${periodStart}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+    if (!offDays.has(d.getDay())) total += perDay;
+  }
+  return total;
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface SupabaseEmployee {
   id: string;
@@ -337,6 +361,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // be pointed at any previously generated payroll run instead.
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
+  // US-only sub-split — Technician department vs everyone else ("Office"). Not
+  // meaningful for PH, so this only ever affects the table when selectedCurrency is USD.
+  const [usSubTab, setUsSubTab] = useState<"technicians" | "office">("technicians");
   // Funnel-style column filters (Ticket List convention) — empty set = no filter.
   const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -1029,7 +1056,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Render helpers ───────────────────────────────────────────────────────────
   // selectedCurrency is really a "which team" filter (US vs PH employees) —
   // every amount is always shown in USD regardless of which team is active.
-  const displayRows = selectedCurrency === "USD" ? usRows : phRows;
+  // For US, usSubTab further splits into Technicians vs Office (everyone else);
+  // PH has no such split.
+  const displayRows =
+    selectedCurrency === "USD"
+      ? usRows.filter((r) => (r.employee.department === "Technician") === (usSubTab === "technicians"))
+      : phRows;
 
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
   // column's own option list reflects every OTHER active filter, so opening
@@ -1291,27 +1323,64 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 Audit Log ({auditLog.length})
               </button>
               <ActivityLogPanel module="accounting" title="Accounting Activity Log" />
-              {/* Currency toggle */}
-              <div className="ml-auto flex gap-2">
-                {(["USD", "PHP"] as const).map((cur) => (
-                  <button
-                    key={cur}
-                    onClick={() => {
-                      setSelectedCurrency(cur);
-                      setDepartmentFilter(new Set());
-                      setRoleFilter(new Set());
-                      setRegHoursFilter(new Set());
-                      setRateFilter(new Set());
-                    }}
-                    className={`px-4 py-2 rounded text-sm font-semibold transition ${
-                      selectedCurrency === cur
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                    }`}
-                  >
-                    {cur === "USD" ? "US Payroll" : "PH Payroll"}
-                  </button>
-                ))}
+              {/* Currency + Technicians/Office toggle — one row, so US Payroll,
+                  Technicians, Office, and PH Payroll always sit beside each other. */}
+              <div className="ml-auto flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCurrency("USD");
+                    setDepartmentFilter(new Set());
+                    setRoleFilter(new Set());
+                    setRegHoursFilter(new Set());
+                    setRateFilter(new Set());
+                  }}
+                  className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                    selectedCurrency === "USD"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                  }`}
+                >
+                  US Payroll
+                </button>
+                {selectedCurrency === "USD" &&
+                  (["technicians", "office"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => {
+                        setUsSubTab(tab);
+                        setDepartmentFilter(new Set());
+                        setRoleFilter(new Set());
+                        setRegHoursFilter(new Set());
+                        setRateFilter(new Set());
+                      }}
+                      className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                        usSubTab === tab
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                      }`}
+                    >
+                      {tab === "technicians" ? "Technicians" : "Office"}
+                    </button>
+                  ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCurrency("PHP");
+                    setDepartmentFilter(new Set());
+                    setRoleFilter(new Set());
+                    setRegHoursFilter(new Set());
+                    setRateFilter(new Set());
+                  }}
+                  className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                    selectedCurrency === "PHP"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                  }`}
+                >
+                  PH Payroll
+                </button>
               </div>
             </div>
 
@@ -1427,7 +1496,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
-                  {selectedCurrency === "USD" ? "US" : "PH"} Employee Payroll — Current Period
+                  {selectedCurrency === "USD" ? `US ${usSubTab === "technicians" ? "Technicians" : "Office"}` : "PH"} Employee Payroll — Current Period
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
@@ -1493,6 +1562,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         />
                       </span>
                     </th>
+                    {selectedCurrency === "USD" && (
+                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Branch</th>
+                    )}
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
                       <span className="inline-flex items-center justify-center">
                         Reg. Hours
@@ -1504,10 +1576,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         />
                       </span>
                     </th>
-                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
                     <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
                       <span className="inline-flex items-center justify-center">
-                        Rate
+                        Hourly Rate
                         <TicketColumnFilter
                           options={rateOptions}
                           selected={rateFilter}
@@ -1516,6 +1587,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         />
                       </span>
                     </th>
+                    <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
                     <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Payslip</th>
                   </tr>
@@ -1523,15 +1595,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tbody>
                   {visibleRows.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-slate-500 text-sm">
-                        No {selectedCurrency === "USD" ? "US" : "PH"} employees found.
+                      <td colSpan={selectedCurrency === "USD" ? 10 : 9} className="px-4 py-8 text-center text-slate-500 text-sm">
+                        No {selectedCurrency === "USD" ? `US ${usSubTab === "technicians" ? "Technicians" : "Office"}` : "PH"} employees found.
                       </td>
                     </tr>
                   ) : (
                     visibleRowsByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
-                          <td colSpan={9} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                          <td colSpan={selectedCurrency === "USD" ? 10 : 9} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                             {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                           </td>
                         </tr>
@@ -1565,14 +1637,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <td className="px-4 py-3 text-slate-300">
                               {row.employee.roleLabel || "—"}
                             </td>
+                            {selectedCurrency === "USD" && (
+                              <td className="px-4 py-3 text-slate-300">
+                                {row.employee.assigned_branch || "—"}
+                              </td>
+                            )}
                             <td className="px-4 py-3 text-center text-slate-300">
                               {row.hoursWorked.toFixed(1)}
                             </td>
-                            <td className="px-4 py-3 text-center text-orange-300">
-                              {row.overtimeHours.toFixed(1)}
-                            </td>
                             <td className="px-4 py-3 text-center text-slate-300">
                               ${row.hourlyRateUSD.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-3 text-center text-orange-300">
+                              {row.overtimeHours.toFixed(1)}
                             </td>
                             <td className="px-4 py-3 text-right font-semibold text-green-300">
                               {fmt(row.grossPayUSD)}
@@ -1598,7 +1675,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 {visibleRows.length > 0 && (
                   <tfoot>
                     <tr className="border-t border-white/20 bg-white/5">
-                      <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-slate-300">
+                      <td colSpan={selectedCurrency === "USD" ? 7 : 6} className="px-4 py-3 text-sm font-semibold text-slate-300">
                         Total
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-green-300">
@@ -1709,6 +1786,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                     <tr className="border-b border-white/10">
                                       <th className="py-2 text-left text-slate-500 uppercase">Employee</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">Reg Hrs</th>
+                                      <th className="py-2 text-center text-slate-500 uppercase">Duty Hrs</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">OT Hrs</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Rate</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Regular Pay</th>
@@ -1741,6 +1819,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                               : li.profile_id}
                                           </td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
+                                          <td className="py-2 text-center text-slate-400">
+                                            {computeDutyHours(emp, run.period_start, run.period_end).toFixed(1)}
+                                          </td>
                                           <td className="py-2 text-center text-orange-300">{li.overtime_hours?.toFixed(1)}</td>
                                           <td className="py-2 text-right text-slate-300">
                                             ${(li.hourly_rate / divisor).toFixed(2)}
@@ -1829,6 +1910,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           offDays={detailEmployee.offDays}
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}
+          changedByName={displayName || email || "Admin"}
         />
       )}
     </div>

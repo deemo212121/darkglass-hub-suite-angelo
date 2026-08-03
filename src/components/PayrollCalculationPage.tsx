@@ -29,6 +29,7 @@ interface PayrollRow {
   department: string;
   roleLabel: string;
   country: "US" | "PH";
+  branch: string | null;
   rate: number;
   regularHours: number;
   overtimeHours: number;
@@ -45,6 +46,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [selectedCountry, setSelectedCountry] = useState<"US" | "PH">("US");
+  // US-only sub-split — Technician department vs everyone else ("Office").
+  // Not meaningful for PH, so this only ever affects rows when selectedCountry is US.
+  const [usSubTab, setUsSubTab] = useState<"technicians" | "office">("technicians");
   const [detailProfile, setDetailProfile] = useState<ProfileRow | null>(null);
 
   const [startDate, setStartDate] = useState(() => {
@@ -124,6 +128,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         department,
         roleLabel,
         country: profileCountry(p),
+        branch: p.assigned_branch ?? null,
         rate: currentRate(history),
         regularHours,
         overtimeHours,
@@ -132,7 +137,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     });
   }, [profiles, entriesByProfile, historyByProfile]);
 
-  const countryRows = rows.filter((r) => r.country === selectedCountry);
+  const countryRows = rows
+    .filter((r) => r.country === selectedCountry)
+    .filter((r) => selectedCountry !== "US" || (r.department === "Technician") === (usSubTab === "technicians"));
   const departments = Array.from(new Set(countryRows.map((r) => r.department).filter(Boolean)));
 
   const filteredRows = countryRows.filter((r) => {
@@ -179,8 +186,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       module: "payroll",
       actorName: displayName || email || "Unknown",
       action: "payroll_csv_exported",
-      targetLabel: `${selectedCountry} · ${startDate} – ${endDate}`,
-      details: { country: selectedCountry, department: departmentFilter, startDate, endDate, rows: filteredRows.length },
+      targetLabel: `${selectedCountry}${selectedCountry === "US" ? ` (${usSubTab})` : ""} · ${startDate} – ${endDate}`,
+      details: { country: selectedCountry, usSubTab: selectedCountry === "US" ? usSubTab : undefined, department: departmentFilter, startDate, endDate, rows: filteredRows.length },
     });
   };
 
@@ -203,23 +210,50 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         </div>
 
         <div className="space-y-6">
-          {/* US/PH toggle */}
-          <div className="flex gap-2">
-            {(["US", "PH"] as const).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => {
-                  setSelectedCountry(c);
-                  setDepartmentFilter("all");
-                }}
-                className={`px-4 py-2 rounded text-sm font-semibold transition ${
-                  selectedCountry === c ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                }`}
-              >
-                {c === "US" ? "US Payroll" : "PH Payroll"}
-              </button>
-            ))}
+          {/* US/PH toggle + Technicians/Office sub-split — one row, so US
+              Payroll, Technicians, Office, and PH Payroll always sit beside
+              each other. */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedCountry("US");
+                setDepartmentFilter("all");
+              }}
+              className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                selectedCountry === "US" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+              }`}
+            >
+              US Payroll
+            </button>
+            {selectedCountry === "US" &&
+              (["technicians", "office"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => {
+                    setUsSubTab(tab);
+                    setDepartmentFilter("all");
+                  }}
+                  className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                    usSubTab === tab ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                  }`}
+                >
+                  {tab === "technicians" ? "Technicians" : "Office"}
+                </button>
+              ))}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedCountry("PH");
+                setDepartmentFilter("all");
+              }}
+              className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                selectedCountry === "PH" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+              }`}
+            >
+              PH Payroll
+            </button>
           </div>
 
           {/* KPI Cards */}
@@ -299,13 +333,18 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
 
           {/* Table */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-            <h2 className="text-lg font-bold text-white mb-4">Payroll — {startDate} to {endDate}</h2>
+            <h2 className="text-lg font-bold text-white mb-4">
+              {selectedCountry === "US" ? (usSubTab === "technicians" ? "Technicians" : "Office") : "PH"} Payroll — {startDate} to {endDate}
+            </h2>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10">
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
+                  {selectedCountry === "US" && (
+                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Branch</th>
+                  )}
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Reg. Hours</th>
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">OT Hours</th>
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Rate</th>
@@ -314,13 +353,13 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading payroll…</td></tr>
+                  <tr><td colSpan={selectedCountry === "US" ? 8 : 7} className="px-3 py-8 text-center text-slate-400">Loading payroll…</td></tr>
                 ) : filteredRows.length === 0 ? (
-                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                  <tr><td colSpan={selectedCountry === "US" ? 8 : 7} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
                 ) : filteredRowsByDepartment.map((group) => (
                   <Fragment key={group.department}>
                     <tr className="bg-white/[0.03]">
-                      <td colSpan={7} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                      <td colSpan={selectedCountry === "US" ? 8 : 7} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                         {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                       </td>
                     </tr>
@@ -337,6 +376,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                         </td>
                         <td className="px-3 py-3 text-slate-300">{row.department || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{row.roleLabel || "—"}</td>
+                        {selectedCountry === "US" && (
+                          <td className="px-3 py-3 text-slate-300">{row.branch || "—"}</td>
+                        )}
                         <td className="px-3 py-3 text-right text-slate-200">{row.regularHours.toFixed(1)}</td>
                         <td className="px-3 py-3 text-right text-orange-300">{row.overtimeHours.toFixed(1)}</td>
                         <td className="px-3 py-3 text-right text-slate-200">${row.rate.toFixed(2)}/hr</td>
@@ -349,7 +391,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
               {filteredRows.length > 0 && (
                 <tfoot>
                   <tr className="border-t border-white/20 bg-white/5">
-                    <td colSpan={6} className="px-3 py-3 text-sm font-semibold text-slate-300">Total</td>
+                    <td colSpan={selectedCountry === "US" ? 7 : 6} className="px-3 py-3 text-sm font-semibold text-slate-300">Total</td>
                     <td className="px-3 py-3 text-right font-bold text-green-300">{fmtMoney(totalGross)}</td>
                   </tr>
                 </tfoot>
@@ -371,6 +413,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           offDays={detailProfile.off_days || undefined}
           onClose={() => setDetailProfile(null)}
           onRateChanged={load}
+          changedByName={displayName || email || "Unknown"}
         />
       )}
     </div>

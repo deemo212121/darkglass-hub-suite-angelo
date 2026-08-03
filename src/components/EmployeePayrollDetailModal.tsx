@@ -22,6 +22,8 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
+  /** Display name (or email) of the currently logged-in user — recorded as "Changed By" on any rate change made from this modal. */
+  changedByName?: string;
 }
 
 function monthBounds(monthStr: string): { start: string; end: string } {
@@ -65,6 +67,7 @@ export function EmployeePayrollDetailModal({
   offDays,
   onClose,
   onRateChanged,
+  changedByName,
 }: Props) {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loading, setLoading] = useState(true);
@@ -131,6 +134,7 @@ export function EmployeePayrollDetailModal({
         hourlyRate: rate,
         reason: rateForm.reason,
         notes: rateForm.notes,
+        changedBy: changedByName,
       });
       setHistory(await getSalaryHistory(profileId));
       setShowRateForm(false);
@@ -176,6 +180,7 @@ export function EmployeePayrollDetailModal({
           hourlyRate: change.rate,
           reason: "adjustment",
           notes: "Edited from Attendance table",
+          changedBy: changedByName,
         });
       }
       setHistory(await getSalaryHistory(profileId));
@@ -297,6 +302,8 @@ export function EmployeePayrollDetailModal({
                   <tr className="text-slate-400 border-b border-white/10">
                     <th className="text-left py-1.5">Effective</th>
                     <th className="text-left py-1.5">Reason</th>
+                    <th className="text-left py-1.5">Changed By</th>
+                    <th className="text-left py-1.5">Changed At</th>
                     <th className="text-right py-1.5">Rate</th>
                   </tr>
                 </thead>
@@ -305,6 +312,13 @@ export function EmployeePayrollDetailModal({
                     <tr key={h.id} className="border-b border-white/5">
                       <td className="py-1.5 text-slate-200">{h.effectiveDate}</td>
                       <td className="py-1.5 text-slate-300">{SALARY_REASON_LABELS[h.reason] ?? h.reason}</td>
+                      <td className="py-1.5 text-slate-300">{h.changedBy || "—"}</td>
+                      <td className="py-1.5 text-slate-300">
+                        {new Date(h.createdAt).toLocaleString(undefined, {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
+                      </td>
                       <td className="py-1.5 text-right text-white font-semibold">${h.hourlyRate.toFixed(2)}/hr</td>
                     </tr>
                   ))}

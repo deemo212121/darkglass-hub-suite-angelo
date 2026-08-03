@@ -18,6 +18,7 @@ export interface SalaryEntryRow {
   hourlyRate: number;
   reason: SalaryChangeReason;
   notes: string | null;
+  changedBy: string | null;
   createdAt: string;
 }
 
@@ -29,6 +30,7 @@ function mapRow(row: any): SalaryEntryRow {
     hourlyRate: Number(row.hourly_rate) || 0,
     reason: row.reason,
     notes: row.notes ?? null,
+    changedBy: row.changed_by ?? null,
     createdAt: row.created_at,
   };
 }
@@ -37,9 +39,9 @@ function mapRow(row: any): SalaryEntryRow {
 export async function getSalaryHistory(profileId: string): Promise<SalaryEntryRow[]> {
   const { data, error } = await supabase
     .from("salary_entries")
-    .select("id, profile_id, effective_date, hourly_rate, reason, notes, created_at")
+    .select("id, profile_id, effective_date, hourly_rate, reason, notes, changed_by, created_at")
     .eq("profile_id", profileId)
-    .order("effective_date", { ascending: false });
+    .order("created_at", { ascending: false });
   if (error) {
     console.error("getSalaryHistory error:", error.message);
     return [];
@@ -51,7 +53,7 @@ export async function getSalaryHistory(profileId: string): Promise<SalaryEntryRo
 export async function getCompanySalaryEntries(): Promise<SalaryEntryRow[]> {
   const { data, error } = await supabase
     .from("salary_entries")
-    .select("id, profile_id, effective_date, hourly_rate, reason, notes, created_at")
+    .select("id, profile_id, effective_date, hourly_rate, reason, notes, changed_by, created_at")
     .not("profile_id", "is", null)
     .order("effective_date", { ascending: false });
   if (error) {
@@ -68,6 +70,7 @@ export async function addSalaryEntry(input: {
   hourlyRate: number;
   reason: SalaryChangeReason;
   notes?: string;
+  changedBy?: string;
 }): Promise<void> {
   const { error } = await supabase.from("salary_entries").insert({
     profile_id: input.profileId,
@@ -75,6 +78,7 @@ export async function addSalaryEntry(input: {
     hourly_rate: input.hourlyRate,
     reason: input.reason,
     notes: input.notes || null,
+    changed_by: input.changedBy || null,
   });
   if (error) {
     console.error("addSalaryEntry error:", error.message);
