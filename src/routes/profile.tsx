@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { Save, Lock, Eye, EyeOff } from "lucide-react";
+import { Save, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
@@ -69,6 +69,7 @@ function ProfilePage() {
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [showPassword, setShowPassword] = useState({ current: false, next: false, confirm: false });
   const [saved, setSaved] = useState<string>("");
+  const [changingPassword, setChangingPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [currentWeekDays, setCurrentWeekDays] = useState<WeekDay[]>([]);
   const [selectedOffDays, setSelectedOffDays] = useState<number[]>([]);
@@ -217,6 +218,7 @@ function ProfilePage() {
       setSaved("Enter your current password to confirm.");
       return;
     }
+    setChangingPassword(true);
     try {
       const [{ auth }, firebaseAuth] = await Promise.all([
         import("@/lib/firebase/config"),
@@ -256,6 +258,8 @@ function ProfilePage() {
       } else {
         setSaved(err?.message || "Could not update password.");
       }
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -517,7 +521,10 @@ function ProfilePage() {
             </div>
           </label>
         </div>
-        <button className="btn btn-primary" onClick={changePassword}><Save className="h-4 w-4" />Update password</button>
+        <button className="btn btn-primary disabled:opacity-50" onClick={changePassword} disabled={changingPassword}>
+          {changingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {changingPassword ? "Updating…" : "Update password"}
+        </button>
       </section>
     </AccountPageShell>
   );

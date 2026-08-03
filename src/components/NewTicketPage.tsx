@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type Ticket } from "@/lib/ticketData";
 import { createTicket as createSupabaseTicket } from "@/lib/supabase/tickets";
@@ -85,6 +85,7 @@ const DEFAULT_FORM = {
 export function NewTicketPage({ mod, sub }: Props) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState("");
+  const [submittingTicket, setSubmittingTicket] = useState(false);
   const [location, setLocation] = useState("");
   // Live USPS-equivalent zip lookup state.
   // - zipLookup: most recent successful resolution for the current zip.
@@ -335,6 +336,7 @@ export function NewTicketPage({ mod, sub }: Props) {
     console.log("Creating new ticket with data:", newTicket);
 
     // Save to Supabase (company auto-scoped via RLS)
+    setSubmittingTicket(true);
     (async () => {
       try {
         setStatus("Creating ticket...");
@@ -351,6 +353,8 @@ export function NewTicketPage({ mod, sub }: Props) {
         } else {
           setStatus(`Error creating ticket: ${msg || "Unknown error"}`);
         }
+      } finally {
+        setSubmittingTicket(false);
       }
     })();
   };
@@ -638,10 +642,12 @@ export function NewTicketPage({ mod, sub }: Props) {
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-primary disabled:opacity-50"
               onClick={handleCreateTicket}
+              disabled={submittingTicket}
             >
-              Create Ticket
+              {submittingTicket && <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />}
+              {submittingTicket ? "Creating…" : "Create Ticket"}
             </button>
           </div>
         </form>

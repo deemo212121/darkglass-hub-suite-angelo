@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
   uploadTicketPhoto,
@@ -52,6 +53,7 @@ export function TicketPhotos({
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const uploading = uploadQueue.some((q) => q.status === "compressing" || q.status === "uploading");
   const [error, setError] = useState<string | null>(null);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<TicketPhoto | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
@@ -186,12 +188,15 @@ export function TicketPhotos({
 
   const handleDelete = async (photo: TicketPhoto) => {
     if (!confirm(`Delete this photo? This cannot be undone.`)) return;
+    setDeletingPath(photo.fullPath);
     try {
       await deleteTicketPhoto(photo.fullPath);
       setPhotos((prev) => prev.filter((p) => p.fullPath !== photo.fullPath));
     } catch (err) {
       console.error("Photo delete failed:", err);
       alert(`Delete failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingPath(null);
     }
   };
 
@@ -318,9 +323,12 @@ export function TicketPhotos({
                 type="button"
                 onClick={() => handleDelete(photo)}
                 title="Delete photo"
-                className="absolute top-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                disabled={deletingPath === photo.fullPath}
+                className={`absolute top-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white transition-opacity hover:bg-red-600 disabled:opacity-100 ${
+                  deletingPath === photo.fullPath ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                }`}
               >
-                ✕
+                {deletingPath === photo.fullPath ? <Loader2 className="h-3 w-3 animate-spin inline" /> : "✕"}
               </button>
             </div>
           ))}

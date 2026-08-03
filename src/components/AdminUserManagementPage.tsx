@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, ChevronLeft, Check, Filter, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
@@ -11,6 +11,8 @@ import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { ManageWorkingHoursModal } from "@/components/ManageWorkingHoursModal";
+import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supabase/branchSchedules";
 
 /** Readable role text for display — e.g. "BIZOPS_MANAGER" -> "BizOps Manager". Falls back to the raw value for anything not in ROLE_LABELS (legacy free-text roles like "CSR Manager" already read fine as-is). */
 function roleDisplay(role: string | null | undefined): string {
@@ -637,6 +639,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const activeFilterCount = Object.values(colFilters).filter((sel) => sel && sel.size > 0).length;
   const clearAllFilters = () => setColFilters({});
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showWorkingHoursModal, setShowWorkingHoursModal] = useState(false);
+  // Loaded once so the Add User form can prefill Required Schedule from a
+  // matching branch+role template — see the effect below and handleAddUserFormChange.
+  const [branchSchedules, setBranchSchedules] = useState<BranchRoleScheduleRow[]>([]);
+  useEffect(() => {
+    getBranchRoleSchedules().then(setBranchSchedules).catch(() => {});
+  }, []);
   const [creatingUser, setCreatingUser] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
   const [togglingActive, setTogglingActive] = useState(false);
@@ -780,6 +789,25 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const handleAddUserFormChange = (field: keyof NewUserFormData, value: any) => {
     setNewUserForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  // Prefill Required Schedule from a saved branch/role template (Manage
+  // Working Hours) whenever both a branch and a primary role are picked —
+  // still fully editable/overridable before submit, this just replaces the
+  // hardcoded 08:00/17:00 default with whatever that branch+role is set to.
+  useEffect(() => {
+    if (!newUserForm.assignedBranch || !newUserForm.userType) return;
+    const match = branchSchedules.find(
+      (s) => s.branch === newUserForm.assignedBranch && s.role === normalizeRole(newUserForm.userType)
+    );
+    if (match) {
+      setNewUserForm((prev) => ({
+        ...prev,
+        requiredCheckIn: match.requiredCheckIn,
+        requiredCheckOut: match.requiredCheckOut,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newUserForm.assignedBranch, newUserForm.userType, branchSchedules]);
 
   const toggleOffDay = (dayNum: number) => {
     setNewUserForm((prev) => ({
@@ -1018,6 +1046,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </button>
               <button
                 type="button"
+                onClick={() => setShowWorkingHoursModal(true)}
+                className="btn whitespace-nowrap border border-blue-400/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
+              >
+                Manage Working Hours
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowAddUserModal(true)}
                 className="btn btn-primary whitespace-nowrap"
               >
@@ -1213,7 +1248,10 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <button type="button" onClick={() => setShowAddUserModal(false)} disabled={creatingUser} className="btn hover:bg-slate-800">Cancel</button>
-                <button type="button" onClick={handleCreateUser} disabled={creatingUser} className="btn btn-primary">{creatingUser ? "Creating…" : "Create User"}</button>
+                <button type="button" onClick={handleCreateUser} disabled={creatingUser} className="btn btn-primary disabled:opacity-50">
+                  {creatingUser && <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />}
+                  {creatingUser ? "Creating…" : "Create User"}
+                </button>
               </div>
             </div>
             <div className="p-5 space-y-6">
@@ -1485,6 +1523,19 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
           </div>
         </div>
+      )}
+
+      {showWorkingHoursModal && (
+        <ManageWorkingHoursModal
+          branches={LOCATIONS}
+          onClose={() => setShowWorkingHoursModal(false)}
+          changedByName={auth.displayName || auth.email || "Admin"}
+          onApplied={async () => {
+            const [profiles, schedules] = await Promise.all([getCompanyUsers(), getBranchRoleSchedules()]);
+            setUsers(mapProfilesToRecords(profiles));
+            setBranchSchedules(schedules);
+          }}
+        />
       )}
     </main>
   );

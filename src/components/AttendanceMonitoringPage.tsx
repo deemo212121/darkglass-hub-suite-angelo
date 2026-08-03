@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -197,6 +197,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [warnTarget, setWarnTarget] = useState<{ profileId: string; name: string } | null>(null);
   const [warnText, setWarnText] = useState("");
   const [warnSaving, setWarnSaving] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const [submittingPto, setSubmittingPto] = useState(false);
+  // Keyed by request/correction id so only the row actually being reviewed shows as busy.
+  const [busyPtoId, setBusyPtoId] = useState<string | null>(null);
+  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+  const [correctionStageBusy, setCorrectionStageBusy] = useState(false);
 
   // "Today" is anchored to the default policy timezone (Central), not the
   // viewer's own browser locale — otherwise an HR/Admin user physically in
@@ -580,6 +586,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     if (!canManageNotes) return;
     if (!selectedNote) return;
     const employee = allProfileById.get(selectedNote);
+    setSavingNote(true);
     try {
       await upsertAttendanceNote({
         profileId: selectedNote,
@@ -634,6 +641,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (warnings.length) alert(warnings.join("\n"));
     } catch (error) {
       alert(`Failed to save note: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -682,6 +691,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       alert(`${profileName(ptoForm.profileId)} isn't eligible for PTO yet — employees need 1 year of tenure first. Eligible starting ${ptoFormEligibleOn}.`);
       return;
     }
+    setSubmittingPto(true);
     try {
       const requester = profiles.find((p) => p.id === ptoForm.profileId) ?? null;
       const manager = requester ? await resolveTeamLeadOrManager(requester, profiles) : null;
@@ -699,10 +709,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setPtoForm({ profileId: "", ptoType: "vacation", startDate: "", endDate: "", reason: "" });
     } catch (error) {
       alert(`Failed to submit PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setSubmittingPto(false);
     }
   };
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
+    setBusyPtoId(request.id);
     try {
       await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Admin");
       setPtoRequests(await getCompanyPtoRequests());
@@ -717,6 +730,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       });
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setBusyPtoId(null);
     }
   };
 
@@ -726,6 +741,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       return;
     }
     const existing = entriesByKey.get(`${correctionForm.profileId}|${correctionForm.workDate}`);
+    setSubmittingCorrection(true);
     try {
       const requester = profiles.find((p) => p.id === correctionForm.profileId) ?? null;
       const manager = requester ? await resolveTeamLeadOrManager(requester, profiles) : null;
@@ -750,6 +766,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setCorrectionForm({ profileId: "", workDate: "", correctedCheckIn: "", correctedCheckOut: "", correctedMealStart: "", correctedMealEnd: "", reason: "" });
     } catch (error) {
       alert(`Failed to submit correction: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setSubmittingCorrection(false);
     }
   };
 
@@ -760,6 +778,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
+    setCorrectionStageBusy(true);
     try {
       await reviewCorrectionStage(
         selectedCorrection,
@@ -790,6 +809,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setSelectedCorrection(null);
     } catch (error) {
       alert(`Failed to update correction: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setCorrectionStageBusy(false);
     }
   };
 
@@ -1279,33 +1300,33 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
-                                <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <CheckCircle className="h-3 w-3" />
+                                <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
                                 </button>
-                                <button type="button" title="Reject as manager" onClick={() => handlePtoStageAction(request, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <XCircle className="h-3 w-3" />
+                                <button type="button" title="Reject as manager" onClick={() => handlePtoStageAction(request, "manager", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>
                               </div>
                             )}
                             {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                                <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <CheckCircle className="h-3 w-3" />
+                                <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
                                 </button>
-                                <button type="button" title="Reject as HR" onClick={() => handlePtoStageAction(request, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <XCircle className="h-3 w-3" />
+                                <button type="button" title="Reject as HR" onClick={() => handlePtoStageAction(request, "hr", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>
                               </div>
                             )}
                             {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Acct:</span>
-                                <button type="button" title="Approve as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <CheckCircle className="h-3 w-3" />
+                                <button type="button" title="Approve as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
                                 </button>
-                                <button type="button" title="Reject as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
-                                  <XCircle className="h-3 w-3" />
+                                <button type="button" title="Reject as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                                  {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>
                               </div>
                             )}
@@ -1663,7 +1684,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </label>
               </div>
               <div className="flex gap-3">
-                <button onClick={handleSaveNote} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm">Save Note</button>
+                <button onClick={handleSaveNote} disabled={savingNote} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm">{savingNote ? "Saving…" : "Save Note"}</button>
                 <button onClick={() => setSelectedNote(null)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Close</button>
               </div>
             </div>
@@ -1720,10 +1741,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <button
                   type="button"
                   onClick={handleSubmitPtoRequest}
-                  disabled={!ptoFormEligible}
+                  disabled={!ptoFormEligible || submittingPto}
                   className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm"
                 >
-                  Submit
+                  {submittingPto ? "Submitting…" : "Submit"}
                 </button>
                 <button onClick={() => setShowPtoForm(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
               </div>
@@ -1789,7 +1810,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </div>
               </div>
               <div className="flex gap-3">
-                <button onClick={handleSubmitCorrection} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm">Submit</button>
+                <button onClick={handleSubmitCorrection} disabled={submittingCorrection} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm">{submittingCorrection ? "Submitting…" : "Submit"}</button>
                 <button onClick={() => setShowCorrectionForm(false)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
               </div>
             </div>
@@ -1866,36 +1887,36 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="space-y-2 mb-6">
                 {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role) && (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <button onClick={() => handleCorrectionStageAction("manager", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <CheckCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("manager", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                       Approve as Manager
                     </button>
-                    <button onClick={() => handleCorrectionStageAction("manager", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <XCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("manager", "rejected")} disabled={correctionStageBusy} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Reject as Manager
                     </button>
                   </div>
                 )}
                 {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role) && (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <button onClick={() => handleCorrectionStageAction("hr", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <CheckCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                       Approve as HR
                     </button>
-                    <button onClick={() => handleCorrectionStageAction("hr", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <XCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("hr", "rejected")} disabled={correctionStageBusy} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Reject as HR
                     </button>
                   </div>
                 )}
                 {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role) && (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <button onClick={() => handleCorrectionStageAction("accounting", "approved")} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <CheckCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("accounting", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                       Approve as Accounting
                     </button>
-                    <button onClick={() => handleCorrectionStageAction("accounting", "rejected")} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
-                      <XCircle className="h-4 w-4" />
+                    <button onClick={() => handleCorrectionStageAction("accounting", "rejected")} disabled={correctionStageBusy} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                      {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Reject as Accounting
                     </button>
                   </div>

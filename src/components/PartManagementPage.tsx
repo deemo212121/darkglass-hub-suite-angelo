@@ -8,7 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ChevronLeft, Download, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Download, Send, Trash2, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { REPAIR_STATUS_OPTIONS } from "@/lib/ticketData";
@@ -98,6 +98,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
 
   // Location is multi-select. Empty = treated as no location selected, so
   // the table prompts the user to pick a branch (mirrors the v1 spec).
@@ -272,6 +273,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
   const deleteRow = async (id: string) => {
     if (!confirm("Delete this part record? This removes it from the ticket entirely.")) return;
+    setDeletingRowId(id);
     try {
       await deletePartManagementRow(id);
       setRows((current) => current.filter((row) => row.id !== id));
@@ -282,6 +284,8 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
       });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to delete part");
+    } finally {
+      setDeletingRowId(null);
     }
   };
 
@@ -607,10 +611,11 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => deleteRow(row.id)}
-                              className="p-1.5 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition"
+                              disabled={deletingRowId === row.id}
+                              className="p-1.5 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 disabled:opacity-50 transition"
                               title="Delete"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              {deletingRowId === row.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             </button>
                           </div>
                         </td>

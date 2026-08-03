@@ -66,6 +66,10 @@ export interface ProfileRow {
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
+  /** Consecutive failed sign-in attempts — see migration 0122 / loginLockoutBridge.ts. Resets to 0 on a successful login. */
+  failed_login_count: number;
+  /** Set once failed_login_count reaches 5; the account can't sign in again until this passes (or an admin clicks "Unlock Now" on LoginLockoutsPage.tsx). */
+  locked_until: string | null;
   created_at: string;
 }
 
@@ -309,7 +313,7 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
 export async function getCompanyUsers(): Promise<ProfileRow[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, created_at")
+    .select("id, firebase_uid, company_id, email, username, display_name, role, extra_roles, phone_number, department, manager_name, assigned_branch, branch_access, technician_id, po_initials, off_days, work_plan, required_check_in, required_check_out, is_active, must_change_password, failed_login_count, locked_until, created_at")
     // Only the platform-level SUPERSUPERADMIN is excluded here — the new
     // per-company SUPERADMIN role is a real company employee and should
     // show up in the roster like any ADMIN.

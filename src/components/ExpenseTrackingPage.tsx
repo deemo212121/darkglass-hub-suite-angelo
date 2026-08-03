@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { randomId } from "@/lib/utils";
@@ -66,6 +66,9 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // existing expense being edited just uses its own real id.
   const [newExpenseKey, setNewExpenseKey] = useState("");
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [savingExpense, setSavingExpense] = useState(false);
+  const [statusChangingId, setStatusChangingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   // The receipt path this expense had BEFORE this edit session, so a
   // replace/remove can clean up the old Storage file once the save succeeds.
   const [originalReceiptPath, setOriginalReceiptPath] = useState<string | null>(null);
@@ -183,6 +186,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       alert("Please select an employee, date, and a valid amount.");
       return;
     }
+    setSavingExpense(true);
     try {
       if (editingId) {
         await updateExpense(editingId, {
@@ -214,20 +218,26 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       resetForm();
     } catch (error) {
       alert(`Failed to save expense: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setSavingExpense(false);
     }
   };
 
   const handleStatusChange = async (id: string, status: ExpenseStatus) => {
+    setStatusChangingId(id);
     try {
       await updateExpenseStatus(id, status, myProfileId);
       setExpenses(await getCompanyExpenses());
     } catch (error) {
       alert(`Failed to update expense: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setStatusChangingId(null);
     }
   };
 
   const handleDelete = async (row: ExpenseRow) => {
     if (!confirm("Delete this expense record? This cannot be undone.")) return;
+    setDeletingId(row.id);
     try {
       await deleteExpense(row.id);
       if (row.receiptPath) {
@@ -236,6 +246,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setExpenses(await getCompanyExpenses());
     } catch (error) {
       alert(`Failed to delete expense: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -407,24 +419,24 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       <div className="flex flex-wrap gap-1">
                         {e.status === "Pending" && (
                           <>
-                            <button onClick={() => handleStatusChange(e.id, "Approved")} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition flex items-center gap-1">
-                              <CheckCircle className="h-3 w-3" /> Approve
+                            <button onClick={() => handleStatusChange(e.id, "Approved")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                              {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
                             </button>
-                            <button onClick={() => handleStatusChange(e.id, "Rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
-                              <XCircle className="h-3 w-3" /> Reject
+                            <button onClick={() => handleStatusChange(e.id, "Rejected")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                              {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                             </button>
                           </>
                         )}
                         {e.status === "Approved" && (
-                          <button onClick={() => handleStatusChange(e.id, "Reimbursed")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
-                            <Wallet className="h-3 w-3" /> Mark Reimbursed
+                          <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
                           </button>
                         )}
                         <button onClick={() => openEdit(e)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1">
                           <Pencil className="h-3 w-3" />
                         </button>
-                        <button onClick={() => handleDelete(e)} className="px-2 py-1 bg-slate-700 hover:bg-red-700 text-white rounded text-xs transition flex items-center gap-1">
-                          <Trash2 className="h-3 w-3" />
+                        <button onClick={() => handleDelete(e)} disabled={deletingId === e.id} className="px-2 py-1 bg-slate-700 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                          {deletingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                         </button>
                       </div>
                     </td>
@@ -604,7 +616,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={handleSubmit} disabled={uploadingReceipt} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm">{editingId ? "Save Changes" : "Submit"}</button>
+              <button onClick={handleSubmit} disabled={uploadingReceipt || savingExpense} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm">{savingExpense ? "Saving…" : editingId ? "Save Changes" : "Submit"}</button>
               <button onClick={resetForm} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
             </div>
           </div>
