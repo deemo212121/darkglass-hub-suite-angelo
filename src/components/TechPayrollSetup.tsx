@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2, Loader2 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -45,6 +45,7 @@ export function TechPayrollSetup({ mod, sub }: Props) {
   const [newBranch, setNewBranch] = useState(ALL_BRANCHES);
   const [newAmount, setNewAmount] = useState("");
   const [savingNewRate, setSavingNewRate] = useState(false);
+  const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
 
   const loadRates = () => {
     setRatesLoading(true);
@@ -86,11 +87,14 @@ export function TechPayrollSetup({ mod, sub }: Props) {
 
   const handleDeleteRate = async (rate: TechRepairRate) => {
     if (!window.confirm(`Remove the rate for "${rate.repairType}"${rate.branch ? ` (${rate.branch})` : " (all branches)"}?`)) return;
+    setDeletingRateId(rate.id);
     try {
       await deleteTechRepairRate(rate.id);
       setRates((prev) => prev.filter((r) => r.id !== rate.id));
     } catch (err) {
       alert(`Failed to remove rate: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingRateId(null);
     }
   };
 
@@ -183,7 +187,9 @@ export function TechPayrollSetup({ mod, sub }: Props) {
                         />
                       </td>
                       <td className="px-3 py-2.5">
-                        <button onClick={() => handleDeleteRate(r)} className="text-red-400 hover:text-red-300"><Trash2 className="h-3.5 w-3.5"/></button>
+                        <button onClick={() => handleDeleteRate(r)} disabled={deletingRateId === r.id} className="text-red-400 hover:text-red-300 disabled:opacity-40">
+                          {deletingRateId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Trash2 className="h-3.5 w-3.5"/>}
+                        </button>
                       </td>
                     </tr>
                   ))

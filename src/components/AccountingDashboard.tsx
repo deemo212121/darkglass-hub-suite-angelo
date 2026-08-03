@@ -417,6 +417,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // connected Gmail account) — keyed the same way as the currency toggle.
   const [gmailStatusByRegion, setGmailStatusByRegion] = useState<Record<GmailRegion, GmailConnectionStatus | null>>({ US: null, PH: null });
   const [connectingGmailRegion, setConnectingGmailRegion] = useState<GmailRegion | null>(null);
+  const [disconnectingGmailRegion, setDisconnectingGmailRegion] = useState<GmailRegion | null>(null);
   const [sendingPayslipId, setSendingPayslipId] = useState<string | null>(null);
   // The Payroll table's currency toggle already reads as "which region" —
   // reuse it directly rather than a second, easy-to-desync piece of state.
@@ -1029,6 +1030,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   const handleDisconnectGmail = async (region: GmailRegion) => {
     if (!confirm(`Disconnect ${region} Gmail? Payslip emails for ${region} employees won't be sendable until it's reconnected.`)) return;
+    setDisconnectingGmailRegion(region);
     try {
       await disconnectGmail(region);
       await loadGmailStatus(region);
@@ -1040,6 +1042,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to disconnect ${region} Gmail.`);
+    } finally {
+      setDisconnectingGmailRegion(null);
     }
   };
 
@@ -1554,8 +1558,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {status.connectedEmail && <span className="text-slate-500"> ({status.connectedEmail})</span>}
                         </span>
                         {canConnectGmail && (
-                          <button type="button" onClick={() => handleDisconnectGmail(region)} className="text-red-300 hover:text-red-200 text-xs underline ml-1">
-                            Disconnect
+                          <button
+                            type="button"
+                            onClick={() => handleDisconnectGmail(region)}
+                            disabled={disconnectingGmailRegion === region}
+                            className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
+                          >
+                            {disconnectingGmailRegion === region ? "Disconnecting…" : "Disconnect"}
                           </button>
                         )}
                       </>

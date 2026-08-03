@@ -637,7 +637,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const activeFilterCount = Object.values(colFilters).filter((sel) => sel && sel.size > 0).length;
   const clearAllFilters = () => setColFilters({});
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
+  const [togglingActive, setTogglingActive] = useState(false);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
   // "Locked out" recovery — distinct from resetModal above (which only
@@ -790,6 +792,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handleToggleUserActive = async (row: UserRow) => {
     const reactivating = row.isActive === false;
+    setTogglingActive(true);
     try {
       await updateCompanyUser(row.profileId, { isActive: reactivating });
       const profiles = await getCompanyUsers();
@@ -806,6 +809,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       console.error("Toggle active error:", error);
       alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setTogglingActive(false);
       setDeactivateTarget(null);
     }
   };
@@ -897,6 +901,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       return;
     }
 
+    setCreatingUser(true);
     try {
       // Pick the first ticked role as the primary; remaining go into extra_roles.
       const primaryRole = newUserForm.userTypes[0];
@@ -970,6 +975,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     } catch (error: any) {
       console.error("Error creating user:", error);
       alert(`Error creating user: ${error.message || "Unknown error"}`);
+    } finally {
+      setCreatingUser(false);
     }
   };
 
@@ -1205,8 +1212,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="mt-1 text-sm text-slate-300">Create a new user account (Default password: Welcome2024!)</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
-                <button type="button" onClick={() => setShowAddUserModal(false)} className="btn hover:bg-slate-800">Cancel</button>
-                <button type="button" onClick={handleCreateUser} className="btn btn-primary">Create User</button>
+                <button type="button" onClick={() => setShowAddUserModal(false)} disabled={creatingUser} className="btn hover:bg-slate-800">Cancel</button>
+                <button type="button" onClick={handleCreateUser} disabled={creatingUser} className="btn btn-primary">{creatingUser ? "Creating…" : "Create User"}</button>
               </div>
             </div>
             <div className="p-5 space-y-6">
@@ -1462,15 +1469,18 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 : `Deactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They won't be able to log in, but their records stay intact.`}
             </p>
             <div className="mt-5 flex justify-end gap-3">
-              <button type="button" onClick={() => setDeactivateTarget(null)} className="btn hover:bg-slate-800">
+              <button type="button" onClick={() => setDeactivateTarget(null)} disabled={togglingActive} className="btn hover:bg-slate-800">
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => handleToggleUserActive(deactivateTarget)}
+                disabled={togglingActive}
                 className={deactivateTarget.isActive === false ? "btn btn-primary" : "btn btn-danger"}
               >
-                {deactivateTarget.isActive === false ? "Reactivate" : "Deactivate"}
+                {togglingActive
+                  ? (deactivateTarget.isActive === false ? "Reactivating…" : "Deactivating…")
+                  : (deactivateTarget.isActive === false ? "Reactivate" : "Deactivate")}
               </button>
             </div>
           </div>
