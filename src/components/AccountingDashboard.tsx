@@ -246,8 +246,8 @@ function computeHoursMap(
 // alongside Reg. Hours (actual worked) so Finance can spot under/over
 // attendance at a glance, independent of whether those hours were
 // actually punched.
-function computeDutyHours(emp: SupabaseEmployee, periodStart: string, periodEnd: string): number {
-  if (!periodStart || !periodEnd) return 0;
+function computeDutyHours(emp: SupabaseEmployee | undefined, periodStart: string, periodEnd: string): number {
+  if (!emp || !periodStart || !periodEnd) return 0;
   const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
   if (netHours <= 0) return 0;
   const offDays = new Set(emp.offDays ?? []);
@@ -1966,6 +1966,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       <th className="py-2 text-left text-slate-500 uppercase">Bank Name</th>
                                       <th className="py-2 text-left text-slate-500 uppercase">Account #</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">Reg Hrs</th>
+                                      <th className="py-2 text-center text-slate-500 uppercase">Duty Hrs</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">OT Hrs</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Rate</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Regular Pay</th>
@@ -2004,6 +2005,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                           <td className="py-2 text-slate-300">{bankInfo?.bankName || "—"}</td>
                                           <td className="py-2 text-slate-300">{bankInfo?.accountNumber || "—"}</td>
                                           <td className="py-2 text-center text-slate-300">{li.hours_worked?.toFixed(1)}</td>
+                                          <td className="py-2 text-center text-slate-400">
+                                            {computeDutyHours(emp, run.period_start, run.period_end).toFixed(1)}
+                                          </td>
                                           <td className="py-2 text-center text-orange-300">{li.overtime_hours?.toFixed(1)}</td>
                                           <td className="py-2 text-right text-slate-300">
                                             {li.compensation_type === "fixed" && li.annual_salary
