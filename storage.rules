@@ -1,0 +1,45 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // NOTE on auth model:
+    // This app authenticates with Firebase Auth but stores user/company data in
+    // Supabase (not Firestore). Storage rules cannot read Supabase, so we rely on
+    // Firebase Authentication for access control and the app-controlled path
+    // structure (companies/{companyId}/...) for namespacing. Any signed-in user
+    // may read/write company files; uploads are validated for type and size.
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidImageType() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isValidUploadSize() {
+      return request.resource.size < 25 * 1024 * 1024; // 25MB
+    }
+
+    // Ticket photos: companies/{companyId}/tickets/{ticketNo}/{path...}
+    // Covers both the General tab (.../tickets/{ticketNo}/file) and category
+    // subfolders like .../tickets/{ticketNo}/service/file.
+    match /companies/{companyId}/tickets/{ticketNo}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidImageType() && isValidUploadSize();
+      allow delete: if isAuthenticated();
+    }
+
+    // Other company files (profile pics, parts, etc.) — authenticated read/write,
+    // images validated. Keep this AFTER the tickets rule.
+    match /companies/{companyId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidUploadSize();
+    }
+
+    // Deny everything outside /companies/.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

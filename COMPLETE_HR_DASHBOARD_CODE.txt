@@ -1,0 +1,280 @@
+=== EMPLOYEE MANAGEMENT SECTION TO ADD ===
+
+Add this section after the Job Interviews section (before the closing </main></div> tags):
+
+{/* Employee Management Section */}
+<div className="panel p-0 overflow-hidden mt-4">
+  <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+    <h2 className="font-semibold text-sm">Employee Directory</h2>
+    <button onClick={() => setShowAddEmployee(!showAddEmployee)} className="btn text-sm px-3 py-1.5 flex items-center gap-2">
+      <Plus className="h-4 w-4" /> Add Employee
+    </button>
+  </div>
+
+  {/* Add Employee Form */}
+  {showAddEmployee && (
+    <div className="px-4 py-4 border-b border-white/10 bg-white/5">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
+          <input
+            type="text"
+            placeholder="John Doe"
+            value={newEmployee.name || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Email *</label>
+          <input
+            type="email"
+            placeholder="john.doe@ahsolutions.com"
+            value={newEmployee.email || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Position *</label>
+          <input
+            type="text"
+            placeholder="Technician"
+            value={newEmployee.position || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, position: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Branch *</label>
+          <select
+            value={newEmployee.branch || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, branch: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          >
+            <option value="">Select Branch</option>
+            {[...ALL_US_BRANCHES, ...ALL_PH_BRANCHES].map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Country *</label>
+          <select
+            value={newEmployee.country || "US"}
+            onChange={(e) => setNewEmployee({ ...newEmployee, country: e.target.value as "US" | "PH" })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          >
+            <option value="US">US Staff</option>
+            <option value="PH">PH Staff</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Birthday</label>
+          <input
+            type="date"
+            value={newEmployee.birthday || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, birthday: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Start Date (Account Creation) *</label>
+          <input
+            type="date"
+            value={newEmployee.startDate || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, startDate: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+        {newEmployee.country === "US" ? (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-muted-foreground">SSN (US Only)</label>
+            <input
+              type="text"
+              placeholder="***-**-****"
+              value={newEmployee.ssn || ""}
+              onChange={(e) => setNewEmployee({ ...newEmployee, ssn: e.target.value })}
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+          </div>
+        ) : <div></div>}
+      </div>
+      <div className="grid grid-cols-1 gap-3 mb-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-muted-foreground">Address</label>
+          <input
+            type="text"
+            placeholder="123 Main St, City, State ZIP"
+            value={newEmployee.address || ""}
+            onChange={(e) => setNewEmployee({ ...newEmployee, address: e.target.value })}
+            className="glass-input text-sm py-1.5 px-3 rounded-md"
+          />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={handleAddEmployee} className="btn bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5">Create Account</button>
+        <button onClick={() => setShowAddEmployee(false)} className="btn text-sm px-4 py-1.5">Cancel</button>
+      </div>
+    </div>
+  )}
+
+  {/* Employee Filters */}
+  <div className="px-4 py-3 border-b border-white/10 bg-white/5">
+    <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-muted-foreground uppercase">Status</label>
+        <select
+          value={employeeStatusFilter}
+          onChange={(e) => setEmployeeStatusFilter(e.target.value)}
+          className="glass-input text-xs py-1.5 px-2 rounded-md"
+        >
+          <option value="">All</option>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+          <option value="Terminated">Terminated</option>
+          <option value="Resigned">Resigned</option>
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-muted-foreground uppercase">Branch</label>
+        <select
+          value={employeeBranchFilter}
+          onChange={(e) => setEmployeeBranchFilter(e.target.value)}
+          className="glass-input text-xs py-1.5 px-2 rounded-md"
+        >
+          <option value="">All</option>
+          {[...ALL_US_BRANCHES, ...ALL_PH_BRANCHES].map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-muted-foreground uppercase">Sort By</label>
+        <select
+          value={employeeSortBy}
+          onChange={(e) => setEmployeeSortBy(e.target.value as "name" | "startDate" | "warnings")}
+          className="glass-input text-xs py-1.5 px-2 rounded-md"
+        >
+          <option value="name">Name</option>
+          <option value="startDate">Start Date</option>
+          <option value="warnings">Warnings</option>
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-muted-foreground uppercase">Order</label>
+        <button
+          onClick={() => setEmployeeSortOrder(employeeSortOrder === "asc" ? "desc" : "asc")}
+          className="btn text-xs px-2 py-1.5 flex items-center gap-1"
+        >
+          <ArrowUpDown className="h-3 w-3" />
+          {employeeSortOrder === "asc" ? "Ascending" : "Descending"}
+        </button>
+      </div>
+      {(employeeStatusFilter || employeeBranchFilter) && (
+        <button
+          onClick={() => { setEmployeeStatusFilter(""); setEmployeeBranchFilter(""); }}
+          className="btn text-xs px-3 mb-0.5"
+        >
+          Clear Filters
+        </button>
+      )}
+    </div>
+  </div>
+
+  {/* Employee Table */}
+  <div className="overflow-x-auto">
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b border-white/10 bg-white/5">
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Name</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Email</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Position</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Branch</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Birthday</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Start Date</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Termination</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">SSN</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Warnings</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Status</th>
+          <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredEmployees.length === 0 ? (
+          <tr>
+            <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">No employees found.</td>
+          </tr>
+        ) : (
+          filteredEmployees.map((employee) => (
+            <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+              <td className="px-3 py-2 font-medium">{employee.name}</td>
+              <td className="px-3 py-2 text-muted-foreground">{employee.email}</td>
+              <td className="px-3 py-2">{employee.position}</td>
+              <td className="px-3 py-2">{employee.branch}</td>
+              <td className="px-3 py-2 text-muted-foreground">{employee.birthday || "—"}</td>
+              <td className="px-3 py-2">{employee.startDate}</td>
+              <td className="px-3 py-2 text-muted-foreground">
+                {employee.terminationDate ? (
+                  <div>
+                    <div>{employee.terminationDate}</div>
+                    <div className="text-xs italic">{employee.terminationReason}</div>
+                  </div>
+                ) : "—"}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">{employee.ssn || "—"}</td>
+              <td className="px-3 py-2 text-center">
+                <span className={`inline-block px-2 py-0.5 rounded ${employee.warningCount > 0 ? 'bg-red-500/20 text-red-300 font-semibold' : 'text-muted-foreground'}`}>
+                  {employee.warningCount}
+                </span>
+              </td>
+              <td className="px-3 py-2">
+                <select
+                  value={employee.status}
+                  onChange={(e) => handleUpdateEmployeeStatus(employee.id, e.target.value as Employee["status"])}
+                  className={`text-xs font-semibold px-2 py-1 rounded border-0 ${
+                    employee.status === "Active" ? "bg-green-500/20 text-green-300" :
+                    employee.status === "Inactive" ? "bg-yellow-500/20 text-yellow-300" :
+                    "bg-red-500/20 text-red-300"
+                  }`}
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="Terminated">Terminated</option>
+                  <option value="Resigned">Resigned</option>
+                </select>
+              </td>
+              <td className="px-3 py-2">
+                <button
+                  onClick={() => handleDeleteEmployee(employee.id)}
+                  className="btn text-red-400 hover:text-red-300 p-1"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+=== ALSO UPDATE INTERVIEW TABLE ACTIONS COLUMN ===
+
+In the Job Interviews table, change the Actions <td> cell to:
+
+<td className="px-4 py-3 flex gap-2">
+  {candidate.status === "completed" && (
+    <button
+      onClick={() => handleHireCandidate(candidate)}
+      className="btn bg-green-600 hover:bg-green-700 text-white text-xs px-2 py-1"
+    >
+      Create Account
+    </button>
+  )}
+  <button
+    onClick={() => handleDeleteCandidate(candidate.id)}
+    className="btn text-red-400 hover:text-red-300 text-sm p-1"
+  >
+    <Trash2 className="h-4 w-4" />
+  </button>
+</td>

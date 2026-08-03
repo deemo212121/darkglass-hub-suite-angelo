@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ServicePower API Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 { margin-top: 0; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 6px;
+            border: 1px solid;
+        }
+        .success {
+            background: #dcfce7;
+            border-color: #86efac;
+            color: #166534;
+        }
+        .error {
+            background: #fee2e2;
+            border-color: #fca5a5;
+            color: #991b1b;
+        }
+        .config {
+            background: #dbeafe;
+            padding: 16px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .loading { opacity: 0.6; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🧪 ServicePower API Test</h1>
+        <p>Test your ServicePower API connection</p>
+        
+        <div>
+            <button id="testBtn" onclick="testConnection()">Test Connection</button>
+            <button onclick="testWithClaim()">Test with Real Claim</button>
+        </div>
+        
+        <div id="result"></div>
+        
+        <div class="config">
+            <strong>Configuration:</strong><br>
+            Environment: <code id="env">Loading...</code><br>
+            Region: <code id="region">Loading...</code><br>
+            User ID: <code id="userId">Loading...</code><br>
+            Password: <code id="password">Loading...</code>
+        </div>
+    </div>
+
+    <script type="module">
+        // Load environment variables from your .env file
+        const ENV = {
+            SERVICEPOWER_ENV: 'staging',
+            SERVICEPOWER_REGION: 'na',
+            SERVICEPOWER_USER_ID: 'admin@usinhomeservices.com',
+            SERVICEPOWER_PASSWORD: 'Frontier38*',
+        };
+
+        // Display config
+        document.getElementById('env').textContent = ENV.SERVICEPOWER_ENV;
+        document.getElementById('region').textContent = ENV.SERVICEPOWER_REGION;
+        document.getElementById('userId').textContent = ENV.SERVICEPOWER_USER_ID ? '✅ Set' : '❌ Not set';
+        document.getElementById('password').textContent = ENV.SERVICEPOWER_PASSWORD ? '✅ Set' : '❌ Not set';
+
+        // API endpoints
+        const ENDPOINTS = {
+            staging: {
+                na: 'https://upgdev.servicepower.com:8443/services/claim/v1/retrieval',
+                eu: 'https://claimsqa-eu.servicepower.com/services/claim/v1/retrieval'
+            },
+            production: {
+                na: 'https://claimworks.servicepower.com:8443/services/claim/v1/retrieval',
+                eu: 'https://claims-eu.servicepower.com/services/claim/v1/retrieval'
+            }
+        };
+
+        function getEndpoint() {
+            return ENDPOINTS[ENV.SERVICEPOWER_ENV][ENV.SERVICEPOWER_REGION];
+        }
+
+        window.testConnection = async function() {
+            const resultDiv = document.getElementById('result');
+            const testBtn = document.getElementById('testBtn');
+            
+            if (!ENV.SERVICEPOWER_USER_ID || !ENV.SERVICEPOWER_PASSWORD) {
+                resultDiv.innerHTML = '<div class="result error"><strong>❌ Configuration Error</strong><p>Please set SERVICEPOWER_USER_ID and SERVICEPOWER_PASSWORD in this file (lines 76-77)</p></div>';
+                return;
+            }
+
+            testBtn.disabled = true;
+            testBtn.textContent = 'Testing...';
+            resultDiv.innerHTML = '<div class="loading">⏳ Testing connection...</div>';
+
+            try {
+                const response = await fetch(getEndpoint(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        manufacturerName: '',
+                        claimNumber: 'TEST-12345',
+                        authentication: {
+                            userId: ENV.SERVICEPOWER_USER_ID,
+                            password: ENV.SERVICEPOWER_PASSWORD
+                        }
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.responseCode === 'OK') {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>✅ Connection Successful!</strong>
+                            <p>Your credentials are working. API authentication passed.</p>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <strong>⚠️ API Error</strong>
+                            <p>${data.messages?.map(m => m.message).join(', ') || 'Unknown error'}</p>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Connection Failed</strong>
+                        <p>${error.message}</p>
+                        <p><strong>Possible reasons:</strong></p>
+                        <ul>
+                            <li>Check your credentials</li>
+                            <li>Verify internet connection</li>
+                            <li>Try changing environment (staging/production)</li>
+                            <li>Check CORS policy</li>
+                        </ul>
+                    </div>
+                `;
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test Connection';
+            }
+        };
+
+        window.testWithClaim = function() {
+            const claimNumber = prompt('Enter a real claim number:');
+            if (!claimNumber) return;
+            
+            // Same logic but with real claim number
+            // (Implementation similar to testConnection)
+            alert('Feature coming - use developer console to test with real claims');
+        };
+
+        // Auto-display config note
+        console.log('%c⚠️ SETUP REQUIRED', 'color: red; font-size: 20px; font-weight: bold');
+        console.log('Edit lines 76-77 in this HTML file and add your credentials:');
+        console.log('SERVICEPOWER_USER_ID: "your_user_id_here"');
+        console.log('SERVICEPOWER_PASSWORD: "your_password_here"');
+    </script>
+</body>
+</html>

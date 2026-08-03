@@ -1,0 +1,253 @@
+AH SOLUTIONS — DEVELOPMENT REPORT
+Date: 2026-06-29 (Monday)
+
+================================================================================
+SUMMARY
+================================================================================
+Today's session focused on three big themes:
+  1. SquareTrade workflow end-to-end (per-ticket appointment URLs, customer
+     notes mirroring SP, auto-parsing parts from SP notes).
+  2. Location Management coverage tab fixes (Little Rock missing, zip-codes
+     leaking into the dropdown).
+  3. Integrating three new dashboard/management pages handed off by the
+     design team (PartManagement, CSRDashboard, CSRStatusSummary,
+     ReportCSRDaily), plus filter-funnel UX on User Management.
+
+
+================================================================================
+MAJOR UPDATES
+================================================================================
+
+1. Location Management — Coverage tab dropdown + map fixes
+   - Dropdown no longer pulls polluted location values from `coverage_rows`
+     in Supabase. New source: canonical `LOCATIONS` from `@/lib/locations`
+     plus any branch the user has added in the Locations tab.
+   - Stricter cleanliness filter (must contain at least one letter, rejects
+     values starting with 3+ digits, caps length at 40 chars) so zip codes
+     can never leak in again.
+   - `selectedLocationCoverage` and `filteredCoverageRows` now fall back to
+     the bundled CSV data (DEFAULT_COVERAGE_ROWS) when Supabase returns
+     zero rows for the chosen branch. Little Rock and other branches now
+     render polygons immediately even if the Supabase rows are missing or
+     stored under a slightly different spelling.
+   - Normalization uses `normalizeLocationName` consistently on both sides
+     of the comparison.
+   - File: src/components/LocationManagementPage.tsx
+
+2. Ticket Account chip — context-aware redirect (Squaretrade vs ServicePower)
+   - The Account chip in the ticket header now routes based on whether the
+     account is Squaretrade. Squaretrade tickets open the Appointment
+     Completion form; every other account opens the ServicePower
+     workorders dashboard.
+   - Each Squaretrade ticket gets its own token, stored per-ticket via the
+     new `src/lib/squaretradeUrl.ts` helper module
+     (get/set/resolve/buildFromToken).
+   - Inline pencil icon next to the Account chip opens a paste dialog that
+     accepts a full URL or just the token; helper auto-wraps tokens into
+     the canonical confirmappointment URL.
+   - Files: src/lib/squaretradeUrl.ts (new), src/routes/ticket.$ticketNo.tsx
+
+3. Auto-sync of Squaretrade Appointment URL from ServicePower running notes
+   - New `extractSquaretradeUrl(text)` scans an arbitrary text blob for the
+     canonical confirmappointment URL or a bare token preceded by `token=`.
+   - useEffect in the ticket route watches running notes; for Squaretrade
+     accounts it auto-extracts the URL from the SP notes thread and
+     persists it locally. Manual paste still wins if the user sets it.
+   - File: src/lib/squaretradeUrl.ts, src/routes/ticket.$ticketNo.tsx
+
+4. Customer Notes mirrors ServicePower Running Notes
+   - SP Running Notes (`fetchServicePowerNotes`) now auto-load on every
+     ticket open, not just when the Running Notes modal is opened.
+   - New `displayedCustomerNotes` memo formats SP ISO timestamps to
+     `MM/DD/YYYY HH:MM:SS`, dedupes by date+body, and sorts oldest first /
+     newest last so the thread reads naturally.
+   - When SP returns at least one note, the legacy
+     `ticket.customerNotes` array is ignored (was inflating the count with
+     dummy seed entries — e.g. EarlyRepair tickets showing 6 notes when SP
+     only had 4). Falls back to ticket-stored notes only when SP comes
+     back empty.
+   - UI: refresh button, "Syncing from ServicePower…" indicator, inline
+     error pill, empty-state message, `whitespace-pre-wrap` on the note
+     body so the long Allstate/SquareTrade messages keep formatting.
+   - New helper: `formatSpNoteDate`.
+   - File: src/routes/ticket.$ticketNo.tsx
+
+5. "Sync Parts from Notes" — auto-import parts from SquareTrade SP notes
+   - New `src/lib/squaretradeNotesParser.ts`:
+     - `parseSquaretradeNote(note)` handles both "Allstate part order
+       details" and "Allstate part tracking details" formats. Extracts Part
+       Number, Part Description, Quantity, "Requires Return", Tracking
+       Number, Shipping Provider. Skips "not yet available" so junk
+       doesn't enter the tracking column.
+     - `aggregateSquaretradeParts(notes)` collapses results into one
+       record per part number; older order notes set baseline, newer
+       tracking notes overlay carrier/tracking.
+   - New purple "Sync Parts from Notes" button in the Part Transactions
+     toolbar (just before Truck Stock). Disabled when parts are locked or
+     while syncing.
+   - `syncPartsFromNotes()` handler:
+     - For existing part numbers on the ticket: overlays inTracking,
+       description, quantity, note (carrier + requires-return).
+     - For new part numbers: inserts Need-PO rows with `partDist: "Squaretrade"`,
+       `claimTo: "Squaretrade"`.
+     - Persists each change to Supabase via `sbAddTicketPart` /
+       `sbUpdateTicketPart`, reflects in grid immediately, writes audit
+       log entries.
+   - Files: src/lib/squaretradeNotesParser.ts (new),
+     src/routes/ticket.$ticketNo.tsx
+
+6. Part Management page upgrade (integrated PartManagement1.tsx)
+   - Multi-select Location with portal-rendered, search-in-list dropdown
+     (sourced from canonical `LOCATIONS`).
+   - "Select a location to load PO & Management data" gate.
+   - Export CSV button using the shared `exportToCSV` helper.
+   - Cleanliness filter so zip codes / numeric junk can't get into the
+     branch list.
+   - Kept the existing Submit-PO confirmation modal (with line items and
+     running cost total) — better UX than the v1 hand-off.
+   - File: src/components/PartManagementPage.tsx
+
+7. CSR Dashboard / Status Summary / Daily Report — full rebuild
+   - New `src/lib/csrDashboardData.ts` shared dataset: typed
+     `CSR_AGENTS` (with positions and per-agent location arrays),
+     `CSR_TEAMS`, `CSR_TEAM_COLORS`, `CSR_MISTAKES`, `CSR_TREND_10`.
+   - `CSRDashboard.tsx` (rebuilt): 5-column filter bar (Location · Team ·
+     Agent · Date From · Date To); KPI cards (Agents · Schedule · Attempt ·
+     Update · Warnings · Mistakes); Team Performance bar chart; Location
+     Distribution pie with toggleable legend; 10-day trend bar chart;
+     team summary cards with left-border team accent; full Mistakes Log
+     table.
+   - `CSRStatusSummary.tsx` (rebuilt): now powered by real `TICKETS` data
+     instead of randomized samples. Ticket List-style table with column
+     visibility menu (toggle any of 21 columns), per-column funnel
+     filters with search-in-list, click-to-pivot status cards, pie+bar
+     status charts.
+   - `ReportCSRDaily.tsx` (rebuilt): top-bar filters (Date/Team/
+     Location/Mistakes/Warnings) plus inline table filters
+     (Employee Name search, Team, Mistake Date range), team summary
+     cards, team performance comparison chart, 10-day schedule trend
+     line, top-12 agent bar chart, CSV export. Agent names link to
+     `/csr/mistake/:employeeId`.
+   - Files:
+     - src/lib/csrDashboardData.ts (new)
+     - src/components/CSRDashboard.tsx (replaced)
+     - src/components/CSRStatusSummary.tsx (replaced)
+     - src/components/ReportCSRDaily.tsx (replaced)
+
+8. User Management — per-column funnel filters (Ticket-List parity)
+   - Added a `ColumnFilter` component matching the Ticket List / CSR
+     Status Summary pattern — funnel icon, popover with search input,
+     "(Select All)" toggle, distinct-value checkbox list.
+   - New per-column filter state `colFilters: Record<string, Set<string>>`
+     with `setColFilter(field, next)`. Hooks into the existing free-text
+     search.
+   - Funnels added to ID, Login Name, User Name, Type, Email, Manager,
+     Technician ID, and Assigned Branch columns.
+   - Funnel icon turns blue when narrowing so it's easy to see which
+     columns are filtered.
+   - File: src/components/AdminUserManagementPage.tsx
+
+
+================================================================================
+MINOR UPDATES / FIXES
+================================================================================
+
+- Customer Notes sort order flipped to chronological (top = first, bottom
+  = most recent) per user request.
+- Customer Notes: stops merging legacy `ticket.customerNotes` dummies
+  when SP returns real notes — fixes EarlyRepair ticket showing 6 notes
+  instead of the 4 SP actually has.
+- Squaretrade edit modal copy updated to describe auto-sync behaviour
+  ("Auto-synced from ServicePower running notes for ticket #X. Paste a
+  full URL or just the token here only if SP didn't include the link.").
+- Squaretrade pencil icon tooltip mentions auto-sync.
+- Fixed cmd-encoding artifact "ΓǪ" → proper "…" in Customer Notes
+  "Syncing from ServicePower" indicator.
+- Replaced legacy single-select `<select>` for location in Part
+  Management with portal-rendered multi-select that doesn't get clipped
+  by parent overflow.
+- Cleaned up the source files now that their content has been
+  integrated:
+    Parts/PartManagement1.tsx                  (deleted)
+    Parts/CSRDashboard (1).tsx                 (deleted)
+    Parts/CSRStatusSummary1.tsx                (deleted)
+    Parts/ReportCSRDaily1.tsx                  (deleted)
+
+
+================================================================================
+NEW FILES
+================================================================================
+
+  src/lib/squaretradeUrl.ts
+    Per-ticket SquareTrade Appointment Completion URL helpers
+    (get/set/resolve/buildFromToken/extract).
+
+  src/lib/squaretradeNotesParser.ts
+    Parser + aggregator for SquareTrade/Allstate "part order" and "part
+    tracking" running notes.
+
+  src/lib/csrDashboardData.ts
+    Shared typed dataset for CSR dashboards
+    (CSR_AGENTS, CSR_TEAMS, CSR_TEAM_COLORS, CSR_MISTAKES, CSR_TREND_10).
+
+
+================================================================================
+MODIFIED FILES (HIGH-LEVEL)
+================================================================================
+
+  src/routes/ticket.$ticketNo.tsx
+    - Squaretrade-aware Account chip with auto-synced URL + pencil edit
+      modal.
+    - Customer Notes section now mirrors SP Running Notes (auto-load,
+      refresh button, dedupe, oldest-first sort).
+    - "Sync Parts from Notes" toolbar button + handler.
+
+  src/components/LocationManagementPage.tsx
+    - Coverage dropdown sourced from canonical LOCATIONS.
+    - Map + table fall back to bundled CSVs when Supabase rows missing.
+
+  src/components/AdminUserManagementPage.tsx
+    - ColumnFilter component + per-column funnels on the user table.
+
+  src/components/PartManagementPage.tsx
+    - Multi-select Location with portal dropdown.
+    - "Select location to load data" gate.
+    - Export CSV button.
+
+  src/components/CSRDashboard.tsx
+  src/components/CSRStatusSummary.tsx
+  src/components/ReportCSRDaily.tsx
+    - All replaced with the new versions described above.
+
+
+================================================================================
+DEPLOYMENT NOTES
+================================================================================
+
+- No new Supabase migrations needed today. Pending manual runs from
+  earlier remain unchanged: 0019, 0020, 0021, 0022, 0023.
+- Build passes clean (no TypeScript / lint diagnostics) on every modified
+  file as of the last `getDiagnostics` run.
+- All per-ticket SquareTrade URLs persist in browser localStorage under
+  `ahs:squaretrade:appointmentUrl:<ticketNo>`. If we want cross-device
+  sync later, promote to a `tickets.squaretrade_url` column without UI
+  changes.
+- ServicePower notes fetch (`/api/servicepower` getCallNotes +
+  getCallInfo) already lives on the Cloudflare bridge — no new env vars
+  needed.
+
+
+================================================================================
+SUGGESTED NEXT STEPS
+================================================================================
+
+- Wire `syncPartsFromNotes` to also recognise other warranty companies'
+  note formats (Assurant, GE, Encompass) when their templates land.
+- Promote SquareTrade URL persistence from localStorage to a DB column
+  if cross-device claims handoff becomes a need.
+- Audit log feed for `syncPartsFromNotes` is currently per-row; add a
+  rollup entry summarising "Imported N parts from SP notes" for cleaner
+  history.
+- CSR dashboards still use sample data — swap CSR_AGENTS to a Supabase
+  query (likely a view over `profiles` + the new attendance/mistake
+  table) once that schema lands.

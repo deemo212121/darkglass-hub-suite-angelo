@@ -1,0 +1,1891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Part Inventory - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.inventory-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+			width: 100%;
+		}
+
+		.filter-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+			gap: 0.9rem;
+			margin-bottom: 0.9rem;
+		}
+
+		.field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.field label {
+			font-size: 0.78rem;
+			font-weight: 600;
+			color: #e5e7eb;
+			letter-spacing: 0.02em;
+		}
+
+		.field input,
+		.field select {
+			width: 100%;
+			padding: 0.55rem 0.65rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.85rem;
+			font-family: inherit;
+		}
+
+		.field select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.field input:focus,
+		.field select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.16);
+		}
+
+		.quick-add {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+			gap: 0.6rem;
+			margin-bottom: 0;
+		}
+
+		.quick-add button {
+			padding: 0.5rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(96, 165, 250, 0.55);
+			background: rgba(37, 99, 235, 0.85);
+			color: #fff;
+			font-weight: 700;
+			cursor: pointer;
+			align-self: end;
+		}
+
+		.panel-actions {
+			display: flex;
+			justify-content: flex-start;
+			margin-bottom: 0.8rem;
+		}
+
+		.open-add-btn {
+			padding: 0.5rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(96, 165, 250, 0.55);
+			background: rgba(37, 99, 235, 0.85);
+			color: #fff;
+			font-weight: 700;
+			cursor: pointer;
+		}
+
+		.part-add-modal {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 1200;
+			background: rgba(0, 0, 0, 0.55);
+			backdrop-filter: blur(4px);
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.part-add-modal.is-open {
+			display: flex;
+		}
+
+		.part-add-dialog {
+			width: min(760px, 100%);
+			background: rgba(17, 24, 39, 0.98);
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+		}
+
+		.part-add-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: 0.8rem;
+		}
+
+		.part-add-header h3 {
+			margin: 0;
+			font-size: 1rem;
+			color: #bfdbfe;
+		}
+
+		.close-add-btn {
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(255, 255, 255, 0.08);
+			color: #fff;
+			border-radius: 6px;
+			padding: 0.35rem 0.55rem;
+			cursor: pointer;
+		}
+
+		.quick-add-actions {
+			display: flex;
+			justify-content: flex-end;
+			margin-top: 0.8rem;
+		}
+
+		.part-add-dialog .field label {
+			font-size: 0.74rem;
+			font-weight: 700;
+			color: #c7d2fe;
+			letter-spacing: 0.04em;
+			text-transform: uppercase;
+		}
+
+		.part-add-dialog .quick-add {
+			grid-template-columns: repeat(4, minmax(130px, 1fr));
+		}
+
+		.part-add-dialog .field input,
+		.part-add-dialog .field select {
+			height: 40px;
+			padding: 0.55rem 0.75rem;
+			border-radius: 8px;
+			border: 1px solid rgba(148, 163, 184, 0.4);
+			background: rgba(15, 23, 42, 0.92);
+			color: #f8fafc;
+			font-size: 0.86rem;
+		}
+
+		.part-add-dialog .field input::placeholder {
+			color: rgba(203, 213, 225, 0.65);
+		}
+
+		.part-add-dialog .field input:focus,
+		.part-add-dialog .field select:focus {
+			outline: none;
+			border-color: #60a5fa;
+			box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.24);
+		}
+
+		.add-part-btn {
+			min-width: 132px;
+			padding: 0.62rem 1rem;
+			border-radius: 8px;
+			border: 1px solid rgba(147, 197, 253, 0.65);
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			color: #fff;
+			font-weight: 800;
+			letter-spacing: 0.02em;
+			cursor: pointer;
+			box-shadow: 0 8px 18px rgba(37, 99, 235, 0.3);
+			transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+		}
+
+		.add-part-btn:hover {
+			transform: translateY(-1px);
+			box-shadow: 0 10px 20px rgba(37, 99, 235, 0.38);
+			background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+		}
+
+		.add-part-btn:active {
+			transform: translateY(0);
+			box-shadow: 0 4px 10px rgba(37, 99, 235, 0.28);
+		}
+
+		.part-no-link {
+			border: none;
+			background: none;
+			padding: 0;
+			font: inherit;
+			font-weight: 400;
+			color: #111827;
+			text-decoration: none;
+			cursor: pointer;
+		}
+
+		.part-no-link:hover {
+			text-decoration: underline;
+		}
+
+		.part-info-modal {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 1250;
+			background: rgba(0, 0, 0, 0.55);
+			backdrop-filter: blur(4px);
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.part-info-modal.is-open {
+			display: flex;
+		}
+
+		.part-info-dialog {
+			width: min(580px, 100%);
+			background: rgba(17, 24, 39, 0.98);
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+		}
+
+		.part-info-grid {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 0.7rem;
+		}
+
+		.part-image-row {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 0.5rem;
+			align-items: center;
+		}
+
+		.part-image-note {
+			margin: 0;
+			font-size: 0.76rem;
+			color: #cbd5e1;
+		}
+
+		.part-image-preview {
+			max-width: 180px;
+			max-height: 120px;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(15, 23, 42, 0.85);
+			display: none;
+		}
+
+		.part-info-actions {
+			display: flex;
+			justify-content: flex-end;
+			margin-top: 0.8rem;
+		}
+
+		.part-info-save-btn {
+			min-width: 120px;
+			padding: 0.58rem 0.95rem;
+			border-radius: 8px;
+			border: 1px solid rgba(147, 197, 253, 0.65);
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			color: #fff;
+			font-weight: 800;
+			letter-spacing: 0.02em;
+			cursor: pointer;
+		}
+
+		.meta-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1rem;
+			grid-template-columns: auto 1fr;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.9rem;
+			font-weight: 700;
+			color: #bfdbfe;
+		}
+
+		.description-link {
+			border: none;
+			background: none;
+			padding: 0;
+			font: inherit;
+			color: #111827;
+			text-decoration: none;
+			cursor: pointer;
+			text-align: left;
+		}
+
+		.description-link:hover {
+			text-decoration: underline;
+		}
+
+		.lot-link {
+			border: none;
+			background: none;
+			padding: 0;
+			font: inherit;
+			color: #111827;
+			text-decoration: none;
+			cursor: pointer;
+		}
+
+		.lot-link:hover {
+			text-decoration: underline;
+		}
+
+		.tools-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 1rem;
+			margin-bottom: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.tools-row label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.45rem;
+			font-size: 0.85rem;
+			font-weight: 600;
+		}
+
+		.search-inline {
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+		}
+
+		.search-inline input {
+			padding: 0.45rem 0.6rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+			min-width: 220px;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 8px;
+			background: #fff;
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+
+		table.inventory-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.75rem;
+			color: #111827;
+			min-width: 1900px;
+		}
+
+		.inventory-table th,
+		.inventory-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.42rem;
+			text-align: left;
+			vertical-align: top;
+			white-space: nowrap;
+		}
+
+		.inventory-table thead th {
+			background: #1f2937;
+			color: #f9fafb;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.inventory-table thead .subhead th {
+			background: #374151;
+			font-weight: 600;
+			font-size: 0.7rem;
+		}
+
+		.inventory-table tbody tr:nth-child(even) {
+			background: #f9fafb;
+		}
+
+		.qty,
+		.status-num,
+		.aging {
+			text-align: right;
+		}
+
+		.price {
+			text-align: right;
+			font-variant-numeric: tabular-nums;
+		}
+
+		.unique-id-link {
+			color: #111827;
+			text-decoration: none;
+			font-weight: 400;
+		}
+
+		.unique-id-link:visited {
+			color: #111827;
+		}
+
+		.unique-id-link:hover {
+			text-decoration: underline;
+		}
+
+		.ticket-no-link {
+			color: #111827;
+			text-decoration: none;
+			font-weight: 400;
+		}
+
+		.ticket-no-link:visited {
+			color: #111827;
+		}
+
+		.ticket-no-link:hover {
+			text-decoration: underline;
+		}
+
+		.action-btn {
+			padding: 0.22rem 0.5rem;
+			font-size: 0.72rem;
+			border-radius: 4px;
+			border: 1px solid #ef4444;
+			background: #fee2e2;
+			color: #991b1b;
+			cursor: pointer;
+		}
+
+		.total-row td {
+			background: #e5e7eb;
+			font-weight: 700;
+		}
+
+		.footer-actions {
+			display: flex;
+			gap: 0.6rem;
+			margin-top: 0.8rem;
+		}
+
+		.footer-actions button {
+			padding: 0.5rem 0.9rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.22);
+			background: rgba(255, 255, 255, 0.1);
+			color: #fff;
+			cursor: pointer;
+			font-weight: 600;
+		}
+
+		.notes {
+			margin-top: 0.9rem;
+			font-size: 0.78rem;
+			line-height: 1.45;
+			color: #d1d5db;
+		}
+
+		.notes p {
+			margin: 0.2rem 0;
+		}
+
+		.lot-modal-dialog {
+			width: min(760px, 100%);
+			background: rgba(17, 24, 39, 0.98);
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+		}
+
+		.lot-summary-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(220px, 1fr));
+			gap: 0.75rem;
+			margin-bottom: 0.9rem;
+		}
+
+		.lot-summary-grid .field input {
+			height: 40px;
+			padding: 0.55rem 0.75rem;
+			border-radius: 8px;
+			border: 1px solid rgba(148, 163, 184, 0.4);
+			background: rgba(15, 23, 42, 0.92);
+			color: #f8fafc;
+			font-size: 0.86rem;
+		}
+
+		.lot-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #111827;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.lot-table th,
+		.lot-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.5rem;
+			text-align: left;
+		}
+
+		.lot-table th {
+			background: #1f2937;
+			color: #f9fafb;
+		}
+
+		.lot-qty-input {
+			width: 100%;
+			max-width: 110px;
+			padding: 0.4rem 0.5rem;
+			border: 1px solid #cbd5e1;
+			border-radius: 6px;
+		}
+
+		.lot-add-btn,
+		.lot-set-btn {
+			padding: 0.55rem 0.95rem;
+			border-radius: 8px;
+			border: 1px solid rgba(147, 197, 253, 0.65);
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+			color: #fff;
+			font-weight: 800;
+			cursor: pointer;
+		}
+
+		.lot-modal-actions {
+			display: flex;
+			justify-content: flex-end;
+			align-items: center;
+			margin-top: 0.85rem;
+			gap: 0.8rem;
+		}
+
+		.action-cell {
+			display: flex;
+			gap: 0.3rem;
+			align-items: center;
+			white-space: nowrap;
+		}
+
+		.return-btn {
+			padding: 0.22rem 0.5rem;
+			font-size: 0.72rem;
+			border-radius: 4px;
+			border: 1px solid #2563eb;
+			background: #dbeafe;
+			color: #1e40af;
+			cursor: pointer;
+		}
+
+		.history-btn {
+			padding: 0.22rem 0.5rem;
+			font-size: 0.72rem;
+			border-radius: 4px;
+			border: 1px solid #6b7280;
+			background: #f3f4f6;
+			color: #374151;
+			cursor: pointer;
+		}
+
+		.row-history-modal {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 1300;
+			background: rgba(0, 0, 0, 0.6);
+			backdrop-filter: blur(4px);
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+
+		.row-history-modal.is-open {
+			display: flex;
+		}
+
+		.row-history-dialog {
+			width: min(1100px, 100%);
+			max-height: 85vh;
+			display: flex;
+			flex-direction: column;
+			background: rgba(17, 24, 39, 0.98);
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			border-radius: 10px;
+			padding: 1rem;
+			color: #fff;
+		}
+
+		.row-history-table-wrap {
+			overflow: auto;
+			flex: 1;
+			margin-top: 0.75rem;
+			border-radius: 8px;
+		}
+
+		.row-history-table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.73rem;
+			color: #111827;
+			background: #fff;
+			min-width: 1200px;
+		}
+
+		.row-history-table th,
+		.row-history-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.4rem 0.5rem;
+			white-space: nowrap;
+			text-align: left;
+			vertical-align: middle;
+		}
+
+		.row-history-table thead th {
+			background: #1f2937;
+			color: #f9fafb;
+			position: sticky;
+			top: 0;
+			z-index: 1;
+		}
+
+		.row-history-table thead .history-subhead th {
+			background: #374151;
+			font-size: 0.68rem;
+		}
+
+		.row-history-table .history-qty-header {
+			text-align: center;
+		}
+
+		@media (max-width: 768px) {
+			.inventory-panel {
+				padding: 0.75rem;
+			}
+
+			.search-inline input {
+				min-width: 170px;
+			}
+
+			.lot-summary-grid {
+				grid-template-columns: 1fr;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Inventory</h2>
+		</div>
+
+		<div class="inventory-panel">
+			<div class="filter-grid">
+				<div class="field">
+					<label for="locationFilter">Location</label>
+					<select id="locationFilter">
+						<option value="Asheville" selected>Asheville</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Dallas">Dallas</option>
+						<option value="Nashville">Nashville</option>
+						<option value="St. Louis">St. Louis</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="vendorFilter">Vendor</label>
+					<input id="vendorFilter" type="text" placeholder="Vendor">
+				</div>
+				<div class="field">
+					<label for="branchFilter">Branch</label>
+					<input id="branchFilter" type="text" placeholder="Branch">
+				</div>
+				<div class="field">
+					<label for="slowSearch">Search (slow)</label>
+					<input id="slowSearch" type="text" placeholder="(id, part #, po #, ticket #)">
+				</div>
+				<div class="field">
+					<label for="uniqueIdSearch">Unique ID</label>
+					<input id="uniqueIdSearch" type="text" placeholder="(unique id)">
+				</div>
+			</div>
+
+			<div class="panel-actions">
+				<button type="button" id="openAddPartModal" class="open-add-btn">Add New Part</button>
+			</div>
+
+			<div class="meta-row">
+				<div class="record-count"><span id="recordCount">730</span> records found</div>
+			</div>
+
+			<div class="tools-row">
+				<label><input id="autoSaveToggle" type="checkbox" checked> Auto Save</label>
+				<div class="search-inline">
+					<span>search in result</span>
+					<input id="resultSearch" type="text" placeholder="Search in result">
+				</div>
+			</div>
+
+			<div id="inventoryTableWrap" class="table-wrap table-scroll-wrapper">
+				<table class="inventory-table">
+					<thead>
+						<tr>
+							<th rowspan="2">Location</th>
+							<th rowspan="2">Part Dist.</th>
+							<th rowspan="2">PO No</th>
+							<th rowspan="2">Invoice No</th>
+							<th rowspan="2">Unique ID</th>
+							<th rowspan="2">Part No</th>
+							<th rowspan="2">Ticket No</th>
+							<th rowspan="2">Aging</th>
+							<th rowspan="2">Description</th>
+							<th rowspan="2">Branch</th>
+							<th rowspan="2">Price</th>
+							<th rowspan="2">Lot No</th>
+							<th rowspan="2">Adjust Reason</th>
+							<th colspan="11" style="text-align: center;">Qty</th>
+							<th rowspan="2">Actions</th>
+						</tr>
+						<tr class="subhead">
+							<th>Ordered</th>
+							<th>Received</th>
+							<th>Reserved</th>
+							<th>Used</th>
+							<th>In Review</th>
+							<th>Defect</th>
+							<th>PNN</th>
+							<th>Returned</th>
+							<th>Adjust</th>
+							<th>Avail</th>
+							<th>In Stock</th>
+						</tr>
+					</thead>
+					<tbody id="inventoryBody"></tbody>
+					<tfoot>
+						<tr class="total-row" id="totalRow"></tr>
+					</tfoot>
+				</table>
+			</div>
+
+			<div class="footer-actions">
+				<button type="button">Return</button>
+				<button type="button" onclick="window.location.href='part_history.html'">History</button>
+			</div>
+
+			<div class="notes">
+				<p>102050100100012345678910</p>
+				<p>*Note 1: Do you want import Encompass parts that is ordered at Encompass web site? Refresh your inventory and press [Add Encompass P/O #] button.</p>
+				<p>*Note 2: Do you want import LG parts that is ordered at GSFS system? Refresh your inventory and press [Add LG P/O #] button.</p>
+				<p>*Note 3: Do you want import Marcone parts that is ordered at Marcone web site? Refresh your inventory and press [Add Marcone P/O #] button.</p>
+				<p>*Note 4: Do you want import Samsung parts that is ordered at GSPN system? Refresh your inventory and press [Add Samsung P/O #] button.</p>
+			</div>
+		</div>
+	</div>
+
+	<div id="addPartModal" class="part-add-modal" aria-hidden="true">
+		<div class="part-add-dialog" role="dialog" aria-modal="true" aria-labelledby="addPartModalTitle">
+			<div class="part-add-header">
+				<h3 id="addPartModalTitle">Add New Part</h3>
+				<button type="button" id="closeAddPartModal" class="close-add-btn">Close</button>
+			</div>
+			<div class="quick-add">
+				<div class="field">
+					<label for="newInvoiceNo">(new invoice #)</label>
+					<input id="newInvoiceNo" type="text" value="1">
+				</div>
+				<div class="field">
+					<label for="newPartDist">Part Dist.</label>
+					<input id="newPartDist" type="text" placeholder="Distributor/vendor">
+				</div>
+				<div class="field">
+					<label for="newPartNo">Part No</label>
+					<input id="newPartNo" type="text" placeholder="Part no">
+				</div>
+				<div class="field">
+					<label for="newLotNo">Lot No</label>
+					<input id="newLotNo" type="number" min="1" step="1" value="1">
+				</div>
+				<div class="field" style="grid-column: span 2;">
+					<label for="newDescription">Description</label>
+					<input id="newDescription" type="text" placeholder="Part description">
+				</div>
+				<div class="field">
+					<label for="newPrice">Price</label>
+					<input id="newPrice" type="number" step="0.01" min="0" value="0">
+				</div>
+				<div class="field">
+					<label for="newQty">Qty</label>
+					<input id="newQty" type="number" min="1" step="1" value="1">
+				</div>
+			</div>
+			<div class="quick-add-actions">
+				<button type="button" id="addInvoiceBtn" class="add-part-btn">Add Part</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="partInfoModal" class="part-info-modal" aria-hidden="true">
+		<div class="part-info-dialog" role="dialog" aria-modal="true" aria-labelledby="partInfoTitle">
+			<div class="part-add-header">
+				<h3 id="partInfoTitle">Part Information</h3>
+				<button type="button" id="closePartInfoModal" class="close-add-btn">Close</button>
+			</div>
+			<div class="part-info-grid">
+				<div class="field">
+					<label for="partInfoPartNo">Part No</label>
+					<input id="partInfoPartNo" type="text" value="05795681">
+				</div>
+				<div class="part-image-row">
+					<div class="field">
+						<label for="partInfoImage">Part Image</label>
+						<input id="partInfoImage" type="file" accept="image/*">
+						<p id="partInfoImageSavedName" class="part-image-note">No image saved</p>
+						<img id="partInfoImagePreview" class="part-image-preview" alt="Part image preview">
+					</div>
+				</div>
+				<div class="field">
+					<label id="partInfoDescriptionLabel" for="partInfoDescription">Description</label>
+					<input id="partInfoDescription" type="text" value="">
+				</div>
+				<div class="field">
+					<label for="partInfoUnitPrice">Unit Price (Tax is not included)</label>
+					<input id="partInfoUnitPrice" type="number" step="0.01" min="0" value="0">
+				</div>
+				<div class="field">
+					<label for="partInfoRetailPrice">Retail Price</label>
+					<input id="partInfoRetailPrice" type="number" step="0.01" min="0" value="0">
+				</div>
+			</div>
+			<div class="part-info-actions">
+				<button type="button" id="partInfoSaveBtn" class="part-info-save-btn">Save</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="inventoryFloatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+		<div id="inventoryFloatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+	</div>
+
+	<div id="rowHistoryModal" class="row-history-modal" aria-hidden="true">
+		<div class="row-history-dialog" role="dialog" aria-modal="true" aria-labelledby="rowHistoryTitle">
+			<div class="part-add-header">
+				<h3 id="rowHistoryTitle">Change Log</h3>
+				<button type="button" id="closeRowHistoryModal" class="close-add-btn">Close</button>
+			</div>
+			<div class="row-history-table-wrap">
+				<table class="row-history-table">
+					<thead>
+						<tr>
+							<th rowspan="2">Part No</th>
+							<th rowspan="2">Log Time</th>
+							<th rowspan="2">Part Dist.</th>
+							<th rowspan="2">Location</th>
+							<th rowspan="2">P/O No</th>
+							<th rowspan="2">P/O Date</th>
+							<th rowspan="2">Invoice Date</th>
+							<th colspan="11" class="history-qty-header">Qty</th>
+							<th rowspan="2">Lot No</th>
+							<th rowspan="2">Modified by</th>
+						</tr>
+						<tr class="history-subhead">
+							<th>Ordered</th>
+							<th>Received</th>
+							<th>Reserved</th>
+							<th>Review</th>
+							<th>Defect</th>
+							<th>PNN</th>
+							<th>Returned</th>
+							<th>Used</th>
+							<th>Adjust</th>
+							<th>Avail</th>
+							<th>In Stock</th>
+						</tr>
+					</thead>
+					<tbody id="rowHistoryBody"></tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<div id="lotInfoModal" class="part-add-modal" aria-hidden="true">
+		<div class="lot-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="lotInfoTitle">
+			<div class="part-add-header">
+				<h3 id="lotInfoTitle">Part Inventory by Lot</h3>
+				<button type="button" id="closeLotInfoModal" class="close-add-btn">Close</button>
+			</div>
+			<div class="lot-summary-grid">
+				<div class="field">
+					<label for="lotInfoPartNo">Part No</label>
+					<input id="lotInfoPartNo" type="text" readonly>
+				</div>
+				<div class="field">
+					<label for="lotInfoDescription">Description</label>
+					<input id="lotInfoDescription" type="text" readonly>
+				</div>
+				<div class="field">
+					<label for="lotInfoUniqueId">Unique ID</label>
+					<input id="lotInfoUniqueId" type="text" readonly>
+				</div>
+				<div class="field">
+					<label for="lotInfoQty">Qty</label>
+					<input id="lotInfoQty" type="number" readonly>
+				</div>
+			</div>
+			<div class="table-wrap">
+				<table class="lot-table">
+					<thead>
+						<tr>
+							<th>Lot No</th>
+							<th>Qty</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="lotInfoBody"></tbody>
+				</table>
+			</div>
+			<div class="lot-modal-actions">
+				<button type="button" id="setLotInfoBtn" class="lot-set-btn">Set</button>
+			</div>
+		</div>
+	</div>
+
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+
+	<script src="./dummy_data/part_inventory_dummy_data.js"></script>
+	<script src="../../supabase.min.js"></script>
+	<script src="../../js/app-config.js"></script>
+	<script src="../../js/app-data.js"></script>
+	<script src="../../routes.js"></script>
+	<script>
+		const INVENTORY_STORAGE_KEY = 'partInventoryFilters';
+		const PART_INFO_STORAGE_KEY = 'partInventoryPartInfo';
+		const PART_LOT_STORAGE_KEY = 'partInventoryLotInfo';
+		const seedInventoryRows = Array.isArray(window.PART_INVENTORY_DUMMY_DATA)
+			? window.PART_INVENTORY_DUMMY_DATA.map((row) => ({ ...row, location: 'Asheville' }))
+			: [];
+		let activePartInfoUniqueId = '';
+		let partInfoByUniqueId = {};
+		let activeLotUniqueId = '';
+		let lotInfoByUniqueId = {};
+		let activeLotEntries = [];
+
+		function dedupeRows(rows) {
+			const seen = new Set();
+			return rows.filter((row) => {
+				const uniqueKey = (row.uniqueId || '').trim().toUpperCase();
+				if (!uniqueKey) {
+					return true;
+				}
+				if (seen.has(uniqueKey)) {
+					return false;
+				}
+				seen.add(uniqueKey);
+				return true;
+			});
+		}
+
+		let inventoryRows = dedupeRows(seedInventoryRows);
+		let inventoryDataSource = 'seed';
+
+		async function loadInventoryFromDatabase() {
+			const companyId = localStorage.getItem('userCompanyId');
+			const countEl = document.getElementById('recordCount');
+			if (!window.AdminHubData) {
+				inventoryRows = dedupeRows(seedInventoryRows);
+				inventoryDataSource = 'seed';
+				return;
+			}
+			try {
+				if (countEl) countEl.textContent = 'Loading...';
+				const rows = await AdminHubData.fetchPartInventory({
+					companyCode: companyId,
+					limit: 5000,
+					includeGlobalRows: true
+				});
+				if (rows.length > 0) {
+					const ashevilleRows = rows.filter((row) => (row.location || '').trim().toLowerCase() === 'asheville');
+					if (ashevilleRows.length > 0) {
+						inventoryRows = dedupeRows(ashevilleRows);
+						inventoryDataSource = 'database';
+					} else if (seedInventoryRows.length) {
+						inventoryRows = dedupeRows(seedInventoryRows);
+						inventoryDataSource = 'seed';
+					} else {
+						inventoryRows = [];
+						inventoryDataSource = 'empty';
+					}
+				} else if (seedInventoryRows.length) {
+					inventoryRows = dedupeRows(seedInventoryRows);
+					inventoryDataSource = 'seed';
+				} else {
+					inventoryRows = [];
+					inventoryDataSource = 'empty';
+				}
+			} catch (error) {
+				console.warn('Could not load inventory from database:', error);
+				inventoryRows = dedupeRows(seedInventoryRows);
+				inventoryDataSource = 'seed';
+			}
+		}
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return false;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+			return true;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function formatCurrency(value) {
+			return '$' + Number(value).toFixed(2);
+		}
+
+		function getPartHistoryUrl(uniqueId) {
+			return 'part_history.html?uniqueId=' + encodeURIComponent(uniqueId || '');
+		}
+
+		function getTicketDetailsUrl(ticketNo) {
+			return '../Tickets/ticket_details.html?ticket=' + encodeURIComponent(ticketNo || '');
+		}
+
+		function parseTicketNoDisplay(ticketNo, ticketDate = '') {
+			const raw = (ticketNo || '').trim();
+			const cleanedDate = (ticketDate || '').trim();
+			const match = raw.match(/^(.*?)(\s*\(\d{2}\/\d{2}\))$/);
+			if (match) {
+				return {
+					ticketNo: match[1].trim(),
+					suffix: match[2].trim()
+				};
+			}
+			return {
+				ticketNo: raw,
+				suffix: cleanedDate ? `(${cleanedDate})` : ''
+			};
+		}
+
+		function getRetailPriceForRow(row) {
+			if (typeof row.retailPrice === 'number' && Number.isFinite(row.retailPrice)) {
+				return row.retailPrice;
+			}
+			return 0;
+		}
+
+		function loadPartInfoStore() {
+			const raw = localStorage.getItem(PART_INFO_STORAGE_KEY);
+			if (!raw) {
+				partInfoByUniqueId = {};
+				return;
+			}
+			try {
+				const parsed = JSON.parse(raw);
+				partInfoByUniqueId = parsed && typeof parsed === 'object' ? parsed : {};
+			} catch (_err) {
+				partInfoByUniqueId = {};
+			}
+		}
+
+		function savePartInfoStore() {
+			localStorage.setItem(PART_INFO_STORAGE_KEY, JSON.stringify(partInfoByUniqueId));
+		}
+
+		function loadLotInfoStore() {
+			const raw = localStorage.getItem(PART_LOT_STORAGE_KEY);
+			if (!raw) {
+				lotInfoByUniqueId = {};
+				return;
+			}
+			try {
+				const parsed = JSON.parse(raw);
+				lotInfoByUniqueId = parsed && typeof parsed === 'object' ? parsed : {};
+			} catch (_err) {
+				lotInfoByUniqueId = {};
+			}
+		}
+
+		function saveLotInfoStore() {
+			localStorage.setItem(PART_LOT_STORAGE_KEY, JSON.stringify(lotInfoByUniqueId));
+		}
+
+		function normalizeLotEntries(entries) {
+			return (Array.isArray(entries) ? entries : []).map((entry, index) => ({
+				lotNo: Number(entry && entry.lotNo ? entry.lotNo : (index + 1)),
+				qty: Math.max(0, Number(entry && entry.qty ? entry.qty : 0))
+			}));
+		}
+
+		function buildDefaultLotEntries(row) {
+			const lotCount = Math.max(1, Number(row && row.lotNo ? row.lotNo : 1));
+			const totalQty = Math.max(0, Number(row && row.qty ? row.qty : 0));
+			const entries = [];
+			for (let index = 0; index < lotCount; index += 1) {
+				entries.push({
+					lotNo: index + 1,
+					qty: totalQty > index ? 1 : 0
+				});
+			}
+			return entries;
+		}
+
+		function getLotEntries(uniqueId, row) {
+			const saved = lotInfoByUniqueId[uniqueId];
+			if (saved && Array.isArray(saved.lots) && saved.lots.length) {
+				return normalizeLotEntries(saved.lots);
+			}
+			return buildDefaultLotEntries(row);
+		}
+
+		function sumLotQty(entries) {
+			return entries.reduce((total, entry) => total + Math.max(0, Number(entry.qty || 0)), 0);
+		}
+
+		function syncSavedLotInfoToRows() {
+			Object.keys(lotInfoByUniqueId).forEach((uniqueId) => {
+				const row = inventoryRows.find((item) => (item.uniqueId || '') === uniqueId);
+				const saved = lotInfoByUniqueId[uniqueId];
+				if (!row || !saved || !Array.isArray(saved.lots)) return;
+				const entries = normalizeLotEntries(saved.lots);
+				row.lotNo = entries.length;
+				row.qty = sumLotQty(entries);
+			});
+		}
+
+		function getSavedPartInfo(uniqueId) {
+			if (!uniqueId) return null;
+			return partInfoByUniqueId[uniqueId] || null;
+		}
+
+		function applySavedPartInfoToRow(uniqueId, data) {
+			const row = inventoryRows.find((item) => (item.uniqueId || '') === uniqueId);
+			if (!row) return;
+			row.description = data.description;
+			row.price = data.unitPrice;
+			row.retailPrice = data.retailPrice;
+		}
+
+		function syncSavedPartInfoToRows() {
+			Object.keys(partInfoByUniqueId).forEach((uniqueId) => {
+				const data = partInfoByUniqueId[uniqueId];
+				if (!data) return;
+				applySavedPartInfoToRow(uniqueId, {
+					description: typeof data.description === 'string' ? data.description : '',
+					unitPrice: Number(data.unitPrice || 0),
+					retailPrice: Number(data.retailPrice || 0)
+				});
+			});
+		}
+
+		function updatePartInfoImageUI(savedInfo) {
+			const preview = document.getElementById('partInfoImagePreview');
+			const nameLabel = document.getElementById('partInfoImageSavedName');
+			if (savedInfo && savedInfo.imageDataUrl) {
+				preview.src = savedInfo.imageDataUrl;
+				preview.style.display = 'block';
+				nameLabel.textContent = savedInfo.imageFileName || 'Saved image';
+				return;
+			}
+			preview.removeAttribute('src');
+			preview.style.display = 'none';
+			nameLabel.textContent = 'No image saved';
+		}
+
+		function isSavedPartInfo(savedInfo) {
+			return !!(savedInfo && typeof savedInfo === 'object' && savedInfo.updatedAt);
+		}
+
+		function isBaseRegisteredPart(row) {
+			if (!row) return false;
+			const hasDescription = String(row.description || '').trim().length > 0;
+			const hasUnitPrice = Number(row.price || 0) > 0;
+			const hasRetailPrice = Number(getRetailPriceForRow(row) || 0) > 0;
+			return hasDescription || hasUnitPrice || hasRetailPrice;
+		}
+
+		function setPartInfoHeader(isRegistered) {
+			document.getElementById('partInfoTitle').textContent = isRegistered
+				? 'Part Information (ENC)'
+				: 'Register your part information';
+			document.getElementById('partInfoDescriptionLabel').textContent = isRegistered ? 'PartDesc' : 'Description';
+		}
+
+		function toSearchBlob(row) {
+			return [
+				row.location, row.partDist, row.poNo, row.invoiceNo, row.uniqueId,
+				row.partNo, row.ticketNo, row.description, row.branch, row.adjustReason
+			].join(' ').toLowerCase();
+		}
+
+		function getFilters() {
+			return {
+				location: document.getElementById('locationFilter').value.trim().toLowerCase(),
+				vendor: document.getElementById('vendorFilter').value.trim().toLowerCase(),
+				branch: document.getElementById('branchFilter').value.trim().toLowerCase(),
+				slow: document.getElementById('slowSearch').value.trim().toLowerCase(),
+				uniqueId: document.getElementById('uniqueIdSearch').value.trim().toLowerCase(),
+				result: document.getElementById('resultSearch').value.trim().toLowerCase()
+			};
+		}
+
+		function applyFilters(rows) {
+			const filters = getFilters();
+			return rows.filter((row) => {
+				if (filters.location && row.location.toLowerCase() !== filters.location) return false;
+				if (filters.vendor && !row.partDist.toLowerCase().includes(filters.vendor)) return false;
+				if (filters.branch && !row.branch.toLowerCase().includes(filters.branch)) return false;
+				if (filters.uniqueId && !row.uniqueId.toLowerCase().includes(filters.uniqueId)) return false;
+				const blob = toSearchBlob(row);
+				if (filters.slow && !blob.includes(filters.slow)) return false;
+				if (filters.result && !blob.includes(filters.result)) return false;
+				return true;
+			});
+		}
+
+		function renderTotals(rows) {
+			const sums = {
+				lotNo: 0,
+				ordered: 0,
+				received: 0,
+				reserved: 0,
+				used: 0,
+				inReview: 0,
+				defect: 0,
+				pnn: 0,
+				returned: 0,
+				adjust: 0,
+				avail: 0,
+				inStock: 0
+			};
+
+			rows.forEach((row) => {
+				sums.lotNo += row.lotNo;
+				sums.ordered += row.ordered;
+				sums.received += row.received;
+				sums.reserved += row.reserved;
+				sums.used += row.used;
+				sums.inReview += row.inReview;
+				sums.defect += row.defect;
+				sums.pnn += row.pnn;
+				sums.returned += row.returned;
+				sums.adjust += row.adjust;
+				sums.avail += row.avail;
+				sums.inStock += row.inStock;
+			});
+
+			document.getElementById('totalRow').innerHTML = `
+				<td colspan="11">TOTAL</td>
+				<td class="qty">${sums.lotNo}</td>
+				<td></td>
+				<td class="status-num">${sums.ordered}</td>
+				<td class="status-num">${sums.received}</td>
+				<td class="status-num">${sums.reserved}</td>
+				<td class="status-num">${sums.used}</td>
+				<td class="status-num">${sums.inReview}</td>
+				<td class="status-num">${sums.defect}</td>
+				<td class="status-num">${sums.pnn}</td>
+				<td class="status-num">${sums.returned}</td>
+				<td class="status-num">${sums.adjust}</td>
+				<td class="status-num">${sums.avail}</td>
+				<td class="status-num">${sums.inStock}</td>
+				<td></td>
+			`;
+		}
+
+		function renderTable() {
+			const filtered = applyFilters(inventoryRows);
+			const countEl = document.getElementById('recordCount');
+			if (countEl) {
+				const suffix = inventoryDataSource === 'database' ? '' : ' (offline sample)';
+				countEl.textContent = `${filtered.length}${suffix}`;
+			}
+			const tbody = document.getElementById('inventoryBody');
+			tbody.innerHTML = filtered.map((row, idx) => `
+				<tr>
+					<td>${row.location}</td>
+					<td>${row.partDist}</td>
+					<td>${row.poNo}</td>
+					<td>${row.invoiceNo}</td>
+					<td><a class="unique-id-link" href="${getPartHistoryUrl(row.uniqueId)}" target="_blank" rel="noopener noreferrer">${row.uniqueId}</a></td>
+					<td><button class="part-no-link" type="button" onclick="openPartInfoByUniqueId('${encodeURIComponent(row.uniqueId || '')}')">${row.partNo}</button></td>
+					<td>${row.ticketNo ? (() => { const ticketParts = parseTicketNoDisplay(row.ticketNo, row.ticketDate); return `<a class="ticket-no-link" href="${getTicketDetailsUrl(ticketParts.ticketNo)}" target="_blank" rel="noopener noreferrer">${ticketParts.ticketNo}${ticketParts.suffix ? ` ${ticketParts.suffix}` : ''}</a>`; })() : ''}</td>
+					<td class="aging">${row.aging}</td>
+					<td><button class="description-link" type="button" onclick="openPartInfoByUniqueId('${encodeURIComponent(row.uniqueId || '')}')">${row.description || ''}</button></td>
+					<td>${row.branch}</td>
+					<td class="price">${formatCurrency(row.price)}</td>
+					<td><button class="lot-link" type="button" onclick="openLotInfoByUniqueId('${encodeURIComponent(row.uniqueId || '')}')">${row.lotNo}</button></td>
+					<td>${row.adjustReason}</td>
+					<td class="status-num">${row.ordered}</td>
+					<td class="status-num">${row.received}</td>
+					<td class="status-num">${row.reserved}</td>
+					<td class="status-num">${row.used}</td>
+					<td class="status-num">${row.inReview}</td>
+					<td class="status-num">${row.defect}</td>
+					<td class="status-num">${row.pnn}</td>
+					<td class="status-num">${row.returned}</td>
+					<td class="status-num">${row.adjust}</td>
+					<td class="status-num">${row.avail}</td>
+					<td class="status-num">${row.inStock}</td>
+					<td class="action-cell">
+					<button class="action-btn" type="button" onclick="deleteRow(${idx})">Delete</button>
+					<button class="return-btn" type="button" onclick="openPartReturn('${encodeURIComponent(row.uniqueId || '')}')">Return</button>
+					<button class="history-btn" type="button" onclick="openRowHistory('${encodeURIComponent(row.uniqueId || '')}')">History</button>
+				</td>
+				</tr>
+			`).join('');
+
+			document.getElementById('recordCount').textContent = filtered.length;
+			renderTotals(filtered);
+			syncInventoryScrollbarWidth();
+			updateInventoryScrollbarVisibility();
+		}
+
+		function syncInventoryScrollbarWidth() {
+			const tableWrap = document.getElementById('inventoryTableWrap');
+			const table = tableWrap ? tableWrap.querySelector('.inventory-table') : null;
+			const floatingBar = document.getElementById('inventoryFloatingScrollbar');
+			const floatingInner = document.getElementById('inventoryFloatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateInventoryScrollbarVisibility() {
+			const tableWrap = document.getElementById('inventoryTableWrap');
+			const floatingBar = document.getElementById('inventoryFloatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const nativeScrollbarVisible = rect.bottom <= window.innerHeight;
+			const shouldShow = hasHorizontalOverflow && !nativeScrollbarVisible;
+
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncInventoryScrollbarWidth();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupInventoryScrollbars() {
+			const floatingBar = document.getElementById('inventoryFloatingScrollbar');
+			const tableWrap = document.getElementById('inventoryTableWrap');
+			if (!floatingBar || !tableWrap) return;
+
+			let syncingFromFloating = false;
+			let syncingFromBottom = false;
+
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingFromBottom) {
+					syncingFromBottom = false;
+					return;
+				}
+				syncingFromFloating = true;
+				tableWrap.scrollLeft = floatingBar.scrollLeft;
+			});
+
+			tableWrap.addEventListener('scroll', function () {
+				if (syncingFromFloating) {
+					syncingFromFloating = false;
+					return;
+				}
+				syncingFromBottom = true;
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+				updateInventoryScrollbarVisibility();
+			});
+
+			window.addEventListener('resize', function () {
+				syncInventoryScrollbarWidth();
+				updateInventoryScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateInventoryScrollbarVisibility, { passive: true });
+			syncInventoryScrollbarWidth();
+			updateInventoryScrollbarVisibility();
+		}
+
+		function getRowHistoryEntries(row) {
+			const p = row.partNo || '';
+			const d = row.partDist || '';
+			const l = row.location || '';
+			const po = row.poNo || '';
+			const poDate = '04/04/2025';
+			const invDate = '04/07/2025';
+			const lot = row.lotNo || 0;
+			return [
+				{ partNo: p, logTime: '05/30/2025 18:23:31', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: 0, review: row.inReview, defect: 0, pnn: 0, returned: 0, used: 0, adjust: 0, avail: 0, inStock: row.inStock, lotNo: lot, modifiedBy: 'Nashville Admin' },
+				{ partNo: p, logTime: '06/25/2025 14:29:52', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: 0, review: 0, defect: row.defect, pnn: 0, returned: 0, used: 0, adjust: 0, avail: 0, inStock: row.inStock, lotNo: lot, modifiedBy: 'Brittney Sims' },
+				{ partNo: p, logTime: '05/30/2025 18:18:53', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: 0, review: row.inReview, defect: 0, pnn: 0, returned: row.returned, used: row.used, adjust: 0, avail: -row.avail, inStock: 0, lotNo: lot, modifiedBy: 'Nashville Admin' },
+				{ partNo: p, logTime: '04/21/2025 17:35:01', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: 0, review: 0, defect: 0, pnn: 0, returned: 0, used: row.used, adjust: 0, avail: 0, inStock: 0, lotNo: lot, modifiedBy: '' },
+				{ partNo: p, logTime: '04/14/2025 14:22:01', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: row.reserved, review: 0, defect: 0, pnn: 0, returned: 0, used: 0, adjust: 0, avail: 0, inStock: row.inStock, lotNo: lot, modifiedBy: 'Brittney Sims' },
+				{ partNo: p, logTime: '04/14/2025 14:22:00', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: row.received, reserved: 0, review: 0, defect: 0, pnn: 0, returned: 0, used: 0, adjust: 0, avail: row.avail, inStock: row.inStock, lotNo: lot, modifiedBy: 'Brittney Sims' },
+				{ partNo: p, logTime: '04/07/2025 16:36:34', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: 0, reserved: 0, review: 0, defect: 0, pnn: 0, returned: 0, used: 0, adjust: 0, avail: 0, inStock: 0, lotNo: lot, modifiedBy: '' },
+				{ partNo: p, logTime: '04/07/2025 14:36:41', partDist: d, location: l, poNo: po, poDate, invDate, ordered: row.ordered, received: 0, reserved: 0, review: 0, defect: 0, pnn: 0, returned: 0, used: 0, adjust: 0, avail: 0, inStock: 0, lotNo: lot, modifiedBy: '' }
+			];
+		}
+
+		function openRowHistory(encodedUniqueId) {
+			const uniqueId = decodeURIComponent(encodedUniqueId || '');
+			const row = inventoryRows.find((item) => (item.uniqueId || '') === uniqueId);
+			if (!row) return;
+			document.getElementById('rowHistoryTitle').textContent = 'Change Log of Unique ID: ' + uniqueId;
+			const entries = getRowHistoryEntries(row);
+			const tbody = document.getElementById('rowHistoryBody');
+			tbody.innerHTML = entries.map((e) => `
+				<tr>
+					<td>${e.partNo}</td>
+					<td>${e.logTime}</td>
+					<td>${e.partDist}</td>
+					<td>${e.location}</td>
+					<td>${e.poNo}</td>
+					<td>${e.poDate}</td>
+					<td>${e.invDate}</td>
+					<td style="text-align:right">${e.ordered}</td>
+					<td style="text-align:right">${e.received}</td>
+					<td style="text-align:right">${e.reserved}</td>
+					<td style="text-align:right">${e.review}</td>
+					<td style="text-align:right">${e.defect}</td>
+					<td style="text-align:right">${e.pnn}</td>
+					<td style="text-align:right">${e.returned}</td>
+					<td style="text-align:right">${e.used}</td>
+					<td style="text-align:right">${e.adjust}</td>
+					<td style="text-align:right">${e.avail}</td>
+					<td style="text-align:right">${e.inStock}</td>
+					<td style="text-align:right">${e.lotNo}</td>
+					<td>${e.modifiedBy}</td>
+				</tr>
+			`).join('');
+			const modal = document.getElementById('rowHistoryModal');
+			modal.classList.add('is-open');
+			modal.setAttribute('aria-hidden', 'false');
+		}
+
+		function closeRowHistoryModal() {
+			const modal = document.getElementById('rowHistoryModal');
+			modal.classList.remove('is-open');
+			modal.setAttribute('aria-hidden', 'true');
+		}
+
+		function openPartReturn(encodedUniqueId) {
+			window.open('part_return?uniqueId=' + encodedUniqueId, '_blank', 'noopener,noreferrer');
+		}
+
+		function deleteRow(filteredIndex) {
+			const filtered = applyFilters(inventoryRows);
+			const selected = filtered[filteredIndex];
+			if (!selected) return;
+			inventoryRows = inventoryRows.filter((row) => row.uniqueId !== selected.uniqueId);
+			renderTable();
+		}
+
+		function saveFilters() {
+			if (!document.getElementById('autoSaveToggle').checked) return;
+			const values = {
+				locationFilter: document.getElementById('locationFilter').value,
+				vendorFilter: document.getElementById('vendorFilter').value,
+				branchFilter: document.getElementById('branchFilter').value,
+				slowSearch: document.getElementById('slowSearch').value,
+				uniqueIdSearch: document.getElementById('uniqueIdSearch').value,
+				resultSearch: document.getElementById('resultSearch').value
+			};
+			localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(values));
+		}
+
+		function restoreFilters() {
+			const raw = localStorage.getItem(INVENTORY_STORAGE_KEY);
+			if (!raw) return;
+			try {
+				const values = JSON.parse(raw);
+				Object.keys(values).forEach((key) => {
+					const element = document.getElementById(key);
+					if (element) {
+						element.value = values[key];
+					}
+				});
+				const locationFilter = document.getElementById('locationFilter');
+				if (locationFilter) locationFilter.value = 'Asheville';
+			} catch (_err) {
+				// Ignore invalid saved JSON.
+			}
+		}
+
+		function addInvoiceRow() {
+			const invoiceNo = document.getElementById('newInvoiceNo').value.trim();
+			const partDist = document.getElementById('newPartDist').value.trim();
+			const partNo = document.getElementById('newPartNo').value.trim();
+			const description = document.getElementById('newDescription').value.trim();
+			const price = Number(document.getElementById('newPrice').value || 0);
+			const qty = Math.max(1, Number(document.getElementById('newQty').value || 1));
+			const lotNo = Math.max(1, Number(document.getElementById('newLotNo').value || qty));
+			if (!invoiceNo) return;
+			if (!partNo || !description || !partDist) return;
+
+			let generatedUniqueId = invoiceNo + '-' + partNo;
+			const usedUniqueIds = new Set(inventoryRows.map((row) => (row.uniqueId || '').toUpperCase()));
+			let counter = 1;
+			while (usedUniqueIds.has(generatedUniqueId.toUpperCase())) {
+				generatedUniqueId = invoiceNo + '-' + partNo + '-' + counter;
+				counter += 1;
+			}
+
+			const newRow = {
+				location: document.getElementById('locationFilter').value || 'Asheville',
+				partDist,
+				poNo: 'NEW-' + Date.now().toString().slice(-6),
+				invoiceNo,
+				uniqueId: generatedUniqueId,
+				partNo,
+				ticketNo: '',
+				aging: 0,
+				description,
+				branch: document.getElementById('branchFilter').value,
+				price,
+				qty,
+				lotNo,
+				adjustReason: '',
+				ordered: qty,
+				received: qty,
+				reserved: 0,
+				used: 0,
+				inReview: 0,
+				defect: 0,
+				pnn: 0,
+				returned: 0,
+				adjust: 0,
+				avail: 1,
+				inStock: 1
+			};
+			inventoryRows.unshift(newRow);
+			inventoryRows = dedupeRows(inventoryRows);
+			document.getElementById('newInvoiceNo').value = '';
+			document.getElementById('newPartDist').value = '';
+			document.getElementById('newPartNo').value = '';
+			document.getElementById('newDescription').value = '';
+			document.getElementById('newPrice').value = '0';
+			document.getElementById('newQty').value = '1';
+			document.getElementById('newLotNo').value = '1';
+			closeAddPartModal();
+			renderTable();
+		}
+
+		function openAddPartModal() {
+			const modal = document.getElementById('addPartModal');
+			modal.classList.add('is-open');
+			modal.setAttribute('aria-hidden', 'false');
+			document.getElementById('newPartDist').value = document.getElementById('vendorFilter').value.trim();
+			document.getElementById('newInvoiceNo').focus();
+		}
+
+		function closeAddPartModal() {
+			const modal = document.getElementById('addPartModal');
+			modal.classList.remove('is-open');
+			modal.setAttribute('aria-hidden', 'true');
+		}
+
+		function openPartInfoByUniqueId(encodedUniqueId) {
+			const uniqueId = decodeURIComponent(encodedUniqueId || '');
+			const row = inventoryRows.find((item) => (item.uniqueId || '') === uniqueId);
+			if (!row) return;
+			activePartInfoUniqueId = uniqueId;
+
+			const savedInfo = getSavedPartInfo(uniqueId);
+			const hasSavedInfo = isSavedPartInfo(savedInfo);
+			const isRegistered = hasSavedInfo || isBaseRegisteredPart(row);
+			const description = hasSavedInfo
+				? (typeof savedInfo.description === 'string' ? savedInfo.description : '')
+				: (isRegistered ? (row.description || '') : '');
+			const unitPrice = hasSavedInfo
+				? (typeof savedInfo.unitPrice === 'number' ? savedInfo.unitPrice : 0)
+				: (isRegistered ? Number(row.price || 0) : 0);
+			const retailPrice = hasSavedInfo
+				? (typeof savedInfo.retailPrice === 'number' ? savedInfo.retailPrice : 0)
+				: (isRegistered ? Number(getRetailPriceForRow(row) || 0) : 0);
+			setPartInfoHeader(isRegistered);
+
+			document.getElementById('partInfoPartNo').value = row.partNo || '05795681';
+			document.getElementById('partInfoDescription').value = description;
+			document.getElementById('partInfoUnitPrice').value = Number(unitPrice);
+			document.getElementById('partInfoRetailPrice').value = Number(retailPrice);
+			document.getElementById('partInfoImage').value = '';
+			updatePartInfoImageUI(savedInfo);
+
+			const modal = document.getElementById('partInfoModal');
+			modal.classList.add('is-open');
+			modal.setAttribute('aria-hidden', 'false');
+		}
+
+		function closePartInfoModal() {
+			const modal = document.getElementById('partInfoModal');
+			modal.classList.remove('is-open');
+			modal.setAttribute('aria-hidden', 'true');
+		}
+
+		function renderLotInfoTable() {
+			const tbody = document.getElementById('lotInfoBody');
+			tbody.innerHTML = activeLotEntries.map((entry, index) => `
+				<tr>
+					<td>${entry.lotNo}</td>
+					<td><input class="lot-qty-input" type="number" min="0" step="1" data-lot-index="${index}" value="${entry.qty}"></td>
+					<td><button class="action-btn" type="button" onclick="removeLotRow(${index})">Delete</button></td>
+				</tr>
+			`).join('');
+			document.getElementById('lotInfoQty').value = sumLotQty(activeLotEntries);
+		}
+
+		function openLotInfoByUniqueId(encodedUniqueId) {
+			const uniqueId = decodeURIComponent(encodedUniqueId || '');
+			const row = inventoryRows.find((item) => (item.uniqueId || '') === uniqueId);
+			if (!row) return;
+
+			activeLotUniqueId = uniqueId;
+			activeLotEntries = getLotEntries(uniqueId, row);
+			document.getElementById('lotInfoPartNo').value = row.partNo || '';
+			document.getElementById('lotInfoDescription').value = row.description || '';
+			document.getElementById('lotInfoUniqueId').value = row.uniqueId || '';
+			renderLotInfoTable();
+
+			const modal = document.getElementById('lotInfoModal');
+			modal.classList.add('is-open');
+			modal.setAttribute('aria-hidden', 'false');
+		}
+
+		function closeLotInfoModal() {
+			const modal = document.getElementById('lotInfoModal');
+			modal.classList.remove('is-open');
+			modal.setAttribute('aria-hidden', 'true');
+		}
+
+		function removeLotRow(index) {
+			activeLotEntries = activeLotEntries.filter((_entry, entryIndex) => entryIndex !== index);
+			if (!activeLotEntries.length) {
+				activeLotEntries = [{ lotNo: 1, qty: 0 }];
+			}
+			renderLotInfoTable();
+		}
+
+		function collectLotEntriesFromInputs() {
+			const qtyInputs = Array.from(document.querySelectorAll('#lotInfoBody [data-lot-index]'));
+			activeLotEntries = activeLotEntries.map((entry, index) => {
+				const input = qtyInputs.find((item) => Number(item.getAttribute('data-lot-index')) === index);
+				return {
+					lotNo: entry.lotNo,
+					qty: Math.max(0, Number(input ? input.value : entry.qty || 0))
+				};
+			});
+		}
+
+		function setLotInfo() {
+			if (!activeLotUniqueId) return;
+			collectLotEntriesFromInputs();
+
+			lotInfoByUniqueId[activeLotUniqueId] = {
+				lots: activeLotEntries,
+				updatedAt: Date.now()
+			};
+			saveLotInfoStore();
+
+			const row = inventoryRows.find((item) => (item.uniqueId || '') === activeLotUniqueId);
+			if (row) {
+				row.lotNo = activeLotEntries.length;
+				row.qty = sumLotQty(activeLotEntries);
+			}
+
+			renderLotInfoTable();
+			renderTable();
+			closeLotInfoModal();
+		}
+
+		function findPartByPartNo(partNoValue) {
+			const targetPartNo = String(partNoValue || '').trim().toLowerCase();
+			if (!targetPartNo) return null;
+			return inventoryRows.find((row) => String(row.partNo || '').trim().toLowerCase() === targetPartNo) || null;
+		}
+
+		function searchPartInfoFromInput() {
+			const row = findPartByPartNo(document.getElementById('partInfoPartNo').value);
+			if (!row) return;
+			openPartInfoByUniqueId(encodeURIComponent(row.uniqueId || ''));
+		}
+
+		function saveCurrentPartInfo() {
+			if (!activePartInfoUniqueId) return;
+
+			const description = document.getElementById('partInfoDescription').value.trim();
+			const unitPrice = Math.max(0, Number(document.getElementById('partInfoUnitPrice').value || 0));
+			const retailPrice = Math.max(0, Number(document.getElementById('partInfoRetailPrice').value || 0));
+			const imageInput = document.getElementById('partInfoImage');
+			const selectedFile = imageInput.files && imageInput.files[0] ? imageInput.files[0] : null;
+
+			const existingInfo = getSavedPartInfo(activePartInfoUniqueId) || {};
+			const baseData = {
+				description,
+				unitPrice,
+				retailPrice,
+				imageDataUrl: existingInfo.imageDataUrl || '',
+				imageFileName: existingInfo.imageFileName || '',
+				updatedAt: Date.now()
+			};
+
+			const finalizeSave = function (finalData) {
+				partInfoByUniqueId[activePartInfoUniqueId] = finalData;
+				savePartInfoStore();
+				applySavedPartInfoToRow(activePartInfoUniqueId, finalData);
+				setPartInfoHeader(true);
+				updatePartInfoImageUI(finalData);
+				renderTable();
+				imageInput.value = '';
+			};
+
+			if (!selectedFile) {
+				finalizeSave(baseData);
+				return;
+			}
+
+			const reader = new FileReader();
+			reader.onload = function (event) {
+				finalizeSave({
+					...baseData,
+					imageDataUrl: event.target && event.target.result ? String(event.target.result) : '',
+					imageFileName: selectedFile.name
+				});
+			};
+			reader.onerror = function () {
+				finalizeSave(baseData);
+			};
+			reader.readAsDataURL(selectedFile);
+		}
+
+		document.addEventListener('DOMContentLoaded', async function () {
+			if (!loadUserInfo()) return;
+			applyPrettyUrl('partInventory');
+			await loadInventoryFromDatabase();
+			loadPartInfoStore();
+			loadLotInfoStore();
+			syncSavedPartInfoToRows();
+			syncSavedLotInfoToRows();
+
+			restoreFilters();
+
+			['locationFilter', 'vendorFilter', 'branchFilter', 'slowSearch', 'uniqueIdSearch', 'resultSearch'].forEach((id) => {
+				document.getElementById(id).addEventListener('input', function () {
+					renderTable();
+					saveFilters();
+				});
+				document.getElementById(id).addEventListener('change', function () {
+					renderTable();
+					saveFilters();
+				});
+			});
+
+			document.getElementById('autoSaveToggle').addEventListener('change', saveFilters);
+			document.getElementById('openAddPartModal').addEventListener('click', openAddPartModal);
+			document.getElementById('closeAddPartModal').addEventListener('click', closeAddPartModal);
+			document.getElementById('addPartModal').addEventListener('click', function (event) {
+				if (event.target === this) {
+					closeAddPartModal();
+				}
+			});
+			document.getElementById('closePartInfoModal').addEventListener('click', closePartInfoModal);
+			document.getElementById('closeLotInfoModal').addEventListener('click', closeLotInfoModal);
+			document.getElementById('partInfoModal').addEventListener('click', function (event) {
+				if (event.target === this) {
+					closePartInfoModal();
+				}
+			});
+			document.getElementById('lotInfoModal').addEventListener('click', function (event) {
+				if (event.target === this) {
+					closeLotInfoModal();
+				}
+			});
+			document.getElementById('partInfoPartNo').addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					searchPartInfoFromInput();
+				}
+			});
+			document.getElementById('partInfoSaveBtn').addEventListener('click', saveCurrentPartInfo);
+			document.getElementById('setLotInfoBtn').addEventListener('click', setLotInfo);
+			document.getElementById('closeRowHistoryModal').addEventListener('click', closeRowHistoryModal);
+			document.getElementById('rowHistoryModal').addEventListener('click', function (event) {
+				if (event.target === this) {
+					closeRowHistoryModal();
+				}
+			});
+			setupInventoryScrollbars();
+			document.addEventListener('keydown', function (event) {
+				if (event.key === 'Escape') {
+					closeAddPartModal();
+					closePartInfoModal();
+					closeLotInfoModal();
+					closeRowHistoryModal();
+				}
+			});
+			document.getElementById('addInvoiceBtn').addEventListener('click', addInvoiceRow);
+
+			renderTable();
+		});
+	</script>
+	<script src="../../locations-loader.js"></script>
+</body>
+</html>

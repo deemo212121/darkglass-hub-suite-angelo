@@ -1,0 +1,834 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<base href="../">
+	<title>Part Return - Admin Hub Solutions</title>
+	<link rel="stylesheet" href="../../styles.css">
+	<style>
+		.return-panel {
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 10px;
+			padding: 1.2rem;
+			color: #fff;
+			backdrop-filter: blur(10px);
+		}
+
+		.controls-grid {
+			display: grid;
+			grid-template-columns: 220px 180px 220px 1fr;
+			gap: 0.9rem;
+			align-items: end;
+		}
+
+		.control-group {
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+		}
+
+		.control-group label {
+			font-size: 0.8rem;
+			font-weight: 600;
+			color: #e5e7eb;
+		}
+
+		.required::after {
+			content: " *";
+			color: #ef4444;
+		}
+
+		.control-group input,
+		.control-group select {
+			width: 100%;
+			padding: 0.62rem 0.72rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.88rem;
+		}
+
+		.control-group select option {
+			background: #111827;
+			color: #fff;
+		}
+
+		.aging-range {
+			display: grid;
+			grid-template-columns: 1fr auto 1fr;
+			gap: 0.35rem;
+			align-items: center;
+		}
+
+		.aging-range span {
+			color: #94a3b8;
+			font-weight: 700;
+			font-size: 0.92rem;
+		}
+
+		.option-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.8rem;
+			margin-top: 0.7rem;
+			flex-wrap: wrap;
+		}
+
+		.option-group {
+			display: flex;
+			align-items: center;
+			gap: 1rem;
+			flex-wrap: wrap;
+			font-size: 0.84rem;
+		}
+
+		.option-group label {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			color: #dbeafe;
+			cursor: pointer;
+		}
+
+		.limit-card-wrap {
+			margin-top: 0.9rem;
+			padding: 0.85rem;
+			border-radius: 8px;
+			border: 1px solid rgba(96, 165, 250, 0.22);
+			background: rgba(30, 64, 175, 0.17);
+		}
+
+		.limit-title {
+			font-size: 0.92rem;
+			font-weight: 700;
+			margin-bottom: 0.55rem;
+			color: #bfdbfe;
+		}
+
+		.limit-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(220px, 1fr));
+			gap: 0.65rem;
+		}
+
+		.limit-box {
+			background: rgba(17, 24, 39, 0.75);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			border-radius: 7px;
+			padding: 0.58rem 0.72rem;
+		}
+
+		.limit-account {
+			font-size: 0.86rem;
+			font-weight: 700;
+			margin-bottom: 0.32rem;
+			color: #fff;
+		}
+
+		.limit-row {
+			display: flex;
+			justify-content: space-between;
+			font-size: 0.78rem;
+			color: #cbd5e1;
+			margin: 0.16rem 0;
+		}
+
+		.section-label {
+			font-size: 0.82rem;
+			font-weight: 700;
+			color: #cbd5e1;
+			margin-bottom: 0.65rem;
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
+		}
+
+		.view-switch {
+			display: flex;
+			gap: 0.55rem;
+			flex-wrap: wrap;
+		}
+
+		.view-btn {
+			padding: 0.46rem 0.9rem;
+			border-radius: 999px;
+			border: 1px solid rgba(255, 255, 255, 0.25);
+			background: rgba(17, 24, 39, 0.95);
+			color: #cbd5e1;
+			font-size: 0.82rem;
+			font-weight: 700;
+			cursor: pointer;
+			transition: all 0.2s ease;
+		}
+
+		.view-btn:hover {
+			border-color: rgba(96, 165, 250, 0.4);
+			background: rgba(20, 28, 46, 0.95);
+		}
+
+		.view-btn.active {
+			background: rgba(30, 64, 175, 0.5);
+			border-color: rgba(96, 165, 250, 0.6);
+			color: #fff;
+		}
+
+		.return-title {
+			margin-top: 0.9rem;
+			font-size: 1rem;
+			font-weight: 700;
+			color: #fff;
+		}
+
+		.meta-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 0.8rem;
+			margin: 0.65rem 0 0.9rem;
+			flex-wrap: wrap;
+		}
+
+		.record-count {
+			font-size: 0.88rem;
+			font-weight: 600;
+			color: #bfdbfe;
+		}
+
+		.meta-row input {
+			min-width: 220px;
+			padding: 0.56rem 0.68rem;
+			border-radius: 6px;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			background: rgba(17, 24, 39, 0.95);
+			color: #fff;
+			font-size: 0.84rem;
+		}
+
+		.table-wrap {
+			overflow-x: auto;
+		}
+
+		.table-wrap.hidden {
+			display: none;
+		}
+
+		table.return-table {
+			width: 100%;
+			border-collapse: collapse;
+			background: #fff;
+			color: #1f2937;
+			border-radius: 8px;
+			overflow: hidden;
+		}
+
+		.return-table th,
+		.return-table td {
+			border: 1px solid #d1d5db;
+			padding: 0.42rem 0.52rem;
+			font-size: 0.74rem;
+			white-space: nowrap;
+			vertical-align: top;
+		}
+
+		.return-table th {
+			background: #f3f4f6;
+			font-weight: 700;
+			text-align: center;
+		}
+
+		.reason-select {
+			padding: 0.26rem 0.34rem;
+			border: 1px solid #cbd5e1;
+			border-radius: 4px;
+			font-size: 0.72rem;
+		}
+
+		.return-btn {
+			padding: 0.3rem 0.55rem;
+			font-size: 0.72rem;
+			font-weight: 700;
+			border-radius: 5px;
+			border: 1px solid #1d4ed8;
+			background: #2563eb;
+			color: #fff;
+			cursor: pointer;
+		}
+
+		.return-btn:disabled {
+			opacity: 0.55;
+			cursor: not-allowed;
+		}
+
+		@media (max-width: 1024px) {
+			.controls-grid {
+				grid-template-columns: 1fr 1fr;
+			}
+
+			.controls-grid .control-group:last-child {
+				grid-column: 1 / -1;
+			}
+		}
+
+		@media (max-width: 768px) {
+			.module-header {
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 0.75rem;
+			}
+
+			.controls-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.limit-grid {
+				grid-template-columns: 1fr;
+			}
+
+			table.return-table {
+				min-width: 2400px;
+			}
+		}
+
+		.floating-table-scrollbar {
+			position: fixed;
+			left: 0;
+			bottom: 14px;
+			z-index: 1100;
+			overflow-x: auto;
+			overflow-y: hidden;
+			border: 1px solid rgba(148, 163, 184, 0.5);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.92);
+			box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+			display: none;
+			max-width: calc(100vw - 28px);
+		}
+
+		.floating-table-scrollbar.is-visible {
+			display: block;
+		}
+
+		.floating-table-scrollbar-inner {
+			height: 1px;
+		}
+	</style>
+</head>
+<body>
+	<div id="dashboard" class="dashboard" style="display: flex; flex-direction: column; min-height: auto;">
+		<div class="dashboard-header">
+			<a href="../../home.html" style="display: flex; align-items: center; gap: 1rem; text-decoration: none; cursor: pointer;">
+				<img src="../../logo/Admin Hub Solutions Logo.png" alt="Admin Hub Solutions Logo" class="dashboard-logo-img">
+				<h1 class="dashboard-title">Admin Hub Solutions</h1>
+			</a>
+			<div class="user-info">
+				<div>
+					<p id="userDisplayName" style="font-weight: 600; color: white; margin: 0;"></p>
+					<p id="companyDisplayId" style="font-size: 0.9rem; opacity: 0.7; color: white; margin: 0;"></p>
+				</div>
+				<button class="logout-btn" onclick="logout()">Logout</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="module-page" style="display: flex;">
+		<div class="module-header">
+			<button class="back-btn" onclick="window.location.href='../../home.html'">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="19" y1="12" x2="5" y2="12"></line>
+					<polyline points="12 19 5 12 12 5"></polyline>
+				</svg>
+				Back to Dashboard
+			</button>
+			<h2 style="color: white; margin: 0;">Part Return</h2>
+		</div>
+
+		<div class="return-panel">
+			<div class="controls-grid">
+				<div class="control-group">
+					<label class="required" for="providerFilter">Part Provider</label>
+					<select id="providerFilter">
+						<option value="Encompass" selected>Encompass</option>
+						<option value="Marcone">Marcone</option>
+						<option value="GE">GE</option>
+					</select>
+				</div>
+
+				<div class="control-group">
+					<label for="locationFilter">Location</label>
+					<select id="locationFilter">
+						<option value="">All</option>
+						<option value="Asheville" selected>Asheville</option>
+						<option value="Birmingham">Birmingham</option>
+						<option value="Atlanta">Atlanta</option>
+						<option value="Dallas">Dallas</option>
+					</select>
+				</div>
+
+				<div class="control-group">
+					<label for="agingFrom">Aging</label>
+					<div class="aging-range">
+						<input id="agingFrom" type="number" min="0" value="0">
+						<span>~</span>
+						<input id="agingTo" type="number" min="0" value="90">
+					</div>
+				</div>
+
+				<div class="control-group">
+					<label for="uniqueSearch">Unique ID / Invoice No</label>
+					<input id="uniqueSearch" type="text" placeholder="Search unique ID or invoice #">
+				</div>
+			</div>
+
+			<div class="option-row">
+				<div class="option-group">
+					<label><input id="includeReturned" type="checkbox"> Include Returned</label>
+					<label><input id="includeReserved" type="checkbox"> Include Reserved</label>
+				</div>
+			</div>
+
+			<div class="view-switch-section">
+				<div class="section-label">Select Return Type</div>
+				<div class="view-switch">
+					<button id="partReturnViewBtn" class="view-btn active" type="button">Part Return</button>
+					<button id="coreReturnViewBtn" class="view-btn" type="button">Core Part Return</button>
+				</div>
+			</div>
+
+			<div id="returnTitle" class="return-title">Part Return</div>
+
+			<div class="meta-row">
+				<div id="recordCount" class="record-count">0 records found</div>
+				<input id="searchInResult" type="text" placeholder="search in result">
+			</div>
+
+			<div id="partTableWrap" class="table-wrap">
+				<table class="return-table">
+					<thead>
+						<tr>
+							<th rowspan="2">Unique ID</th>
+							<th rowspan="2">Part #</th>
+							<th rowspan="2">Lot #</th>
+							<th colspan="5">Inventory</th>
+							<th rowspan="2">Reserved Ticket #</th>
+							<th rowspan="2">Part Status</th>
+							<th rowspan="2">Aging</th>
+							<th rowspan="2">Return Qty</th>
+							<th rowspan="2">RA #</th>
+							<th rowspan="2">Return</th>
+						</tr>
+						<tr>
+							<th>In-Review</th>
+							<th>Defect</th>
+							<th>PNN</th>
+							<th>Current</th>
+							<th>Reserved</th>
+						</tr>
+					</thead>
+					<tbody id="tableBody"></tbody>
+				</table>
+			</div>
+
+			<div id="coreTableWrap" class="table-wrap hidden">
+				<table class="return-table">
+					<thead>
+						<tr>
+							<th>ID</th>
+							<th>Ticket No.</th>
+							<th>Unique ID</th>
+							<th>Part #</th>
+							<th>Description</th>
+							<th>Invoice Date</th>
+							<th>Return Qty</th>
+							<th>Core Value</th>
+							<th>Part Status</th>
+							<th>Schedule Date</th>
+							<th>Technician</th>
+							<th>Core RA #</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="coreTableBody"></tbody>
+				</table>
+			</div>
+
+		</div>
+	</div>
+
+	<div id="floatingScrollbar" class="floating-table-scrollbar" aria-hidden="true">
+		<div id="floatingScrollbarInner" class="floating-table-scrollbar-inner"></div>
+	</div>
+
+	<script>
+		const records = [
+			{ account:'272467', uniqueId:'12-587529-0426-1', partNo:'11002012025802', description:'', lotNo:'C4', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-30', modelCode:'MLE45N3BWW', aging:14, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'6-283031-0326-1', partNo:'140173679014', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'1006449532-10', partStatus:'Lost', invoiceDate:'2026-03-16', modelCode:'GCRE3060BF', aging:59, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-988071-0326-2', partNo:'241734001', description:'', lotNo:'InReview(1) Defect(1)', inventory:1, reservedInv:1, ticketNo:'26000383486DF', partStatus:'Defective', invoiceDate:'2026-03-20', modelCode:'LFSS2612TE0', aging:55, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:1, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-114170-0326-1', partNo:'242095406', description:'', lotNo:'', inventory:2, reservedInv:0, ticketNo:'1006541105-10', partStatus:'RA - PNN', invoiceDate:'2026-03-26', modelCode:'GRSS2652AF', aging:49, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'1-03253', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-129819-0326-1', partNo:'242095423', description:'', lotNo:'A3', inventory:3, reservedInv:0, ticketNo:'26000409390DF', partStatus:'RA - PNN', invoiceDate:'2026-03-30', modelCode:'GRFS28553AF4', aging:45, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'1-50442', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-988071-0326-1', partNo:'242221501', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000383486DF', partStatus:'Defective', invoiceDate:'2026-03-20', modelCode:'LFSS2612TE0', aging:55, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-219413-0426-2', partNo:'35535', description:'', lotNo:'PNN(1)', inventory:1, reservedInv:0, ticketNo:'2345457', partStatus:'RA - Qty Discrepancy', invoiceDate:'2026-04-17', modelCode:'AWN632SP116TB02', aging:27, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:1, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-281829-0526-1', partNo:'5304519235', description:'', lotNo:'', inventory:2, reservedInv:0, ticketNo:'26000287987DF', partStatus:'RA - PNN', invoiceDate:'2026-05-01', modelCode:'FFBD2420UB0A', aging:13, reason:'(No Defect - Good Unused)', returnQty:2, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:2, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-201402-0426-2', partNo:'5304519235', description:'', lotNo:'', inventory:2, reservedInv:0, ticketNo:'26000287987DF', partStatus:'RA - PNN', invoiceDate:'2026-04-14', modelCode:'FFBD2420UB0A', aging:30, reason:'(No Defect - Good Unused)', returnQty:2, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:2, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-944656-0326-1', partNo:'5304519271', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-03-11', modelCode:'FFBD2420UB0A', aging:64, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'6-279066-0326-1', partNo:'5304519292', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-03-11', modelCode:'FFBD2420UB0A', aging:64, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-129905-0326-1', partNo:'5304519303', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-03-30', modelCode:'FFBD2420UB0A', aging:45, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-764059-0226-1', partNo:'5304519906', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-02-25', modelCode:'LFID2426TF6A', aging:78, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'25-142655-0426-1', partNo:'5304523037', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'1006779624-10', partStatus:'Defective', invoiceDate:'2026-04-27', modelCode:'GRMC2273CF', aging:17, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-767859-0326-2', partNo:'5304523071', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-03-03', modelCode:'PRMC2285AF', aging:72, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'25-936493-0326-1', partNo:'5304523152', description:'', lotNo:'', inventory:4, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-03-18', modelCode:'ELFE7637AT', aging:57, reason:'(No Defect - Good Unused)', returnQty:4, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:4, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-281524-0526-1', partNo:'5304524953', description:'', lotNo:'A4', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-01', modelCode:'FFUE2022AWG', aging:13, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-799762-0426-1', partNo:'5304526183', description:'', lotNo:'PNN(5)', inventory:5, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-27', modelCode:'FPRU19F8WF', aging:17, reason:'(No Defect - Good Unused)', returnQty:5, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:5, current:5, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'29-019010-0426-1', partNo:'5304526959', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-15', modelCode:'GRSS2652AF', aging:29, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-784634-0326-1', partNo:'5304529567', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-03-30', modelCode:'GRMC2273CF', aging:45, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'12-572119-0426-1', partNo:'5304529782', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-17', modelCode:'ELFE7537AW', aging:27, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-784480-0326-2', partNo:'5304529943', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'1006428346-10', partStatus:'Lost', invoiceDate:'2026-03-30', modelCode:'ELFE7437AW', aging:45, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-782879-0326-2', partNo:'5304531506', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-03-26', modelCode:'FFUE2024AN', aging:49, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-767859-0326-1', partNo:'5304531710', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-03-03', modelCode:'PRMC2285AF', aging:72, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-784634-0326-2', partNo:'5304531885', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-03-30', modelCode:'GRMC2273CF', aging:45, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-858332-0226-2', partNo:'5304534043', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-02-20', modelCode:'PRMC2285AF', aging:83, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-202029-0426-1', partNo:'5304536819', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-15', modelCode:'FPRU19F8WF', aging:29, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'26-360948-0426-2', partNo:'861106', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'INT20260331886819', partStatus:'Defective', invoiceDate:'2026-04-06', modelCode:'VERIFY_MODEL', aging:38, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-136440-0326-1', partNo:'AEQ73449910', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000516617DF', partStatus:'RA - Defect', invoiceDate:'2026-03-31', modelCode:'LRSOS2706S', aging:44, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-985205-0326-1', partNo:'D514567P', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'2350836', partStatus:'RA - Defect', invoiceDate:'2026-03-19', modelCode:'ADEE9BGS175TW01', aging:56, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'12-537171-0326-1', partNo:'D515873', description:'', lotNo:'Defect(1) PNN(1)', inventory:1, reservedInv:0, ticketNo:'2310459', partStatus:'RA - Defect', invoiceDate:'2026-03-18', modelCode:'ADE4BRGS177TW01', aging:57, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:1, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'12-510156-0226-1', partNo:'D518192', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-02-26', modelCode:'ADEE9BYS178TB01', aging:77, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-304595-0526-1', partNo:'DC92-03567L', description:'ASSY PCB KIT', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-07', modelCode:'WA50R5200A', aging:7, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-304595-0526-2', partNo:'DC97-19289H', description:'ASSY PUMP DRAIN', lotNo:'F4', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-07', modelCode:'WA50R5200A', aging:7, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'8-195422-0426-EBR38539502', partNo:'EBR38539502', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'', modelCode:'', aging:0, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-865622-0226-1', partNo:'EBR43713602', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000225739DF', partStatus:'RA - Defect', invoiceDate:'2026-02-23', modelCode:'LSGL5833F', aging:80, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-208600-0426-1', partNo:'W10734521', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-04-15', modelCode:'MVW7230HC1', aging:29, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-289066-0526-1', partNo:'W10780045', description:'', lotNo:'C1', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-04', modelCode:'NTW4516FW3', aging:10, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-784632-0326-1', partNo:'W10822553', description:'', lotNo:'Defect(4)', inventory:4, reservedInv:0, ticketNo:'725878', partStatus:'Defective', invoiceDate:'2026-03-30', modelCode:'WFW9750WW01', aging:45, reason:'(No Defect - Good Unused)', returnQty:4, raNo:'', returnRecd:0, inReview:0, defect:4, pnn:0, current:4, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-759118-0226-3', partNo:'W11027980', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'', partStatus:'', invoiceDate:'2026-02-18', modelCode:'WTW8127LC1', aging:85, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-807652-0526-2', partNo:'W11178227', description:'', lotNo:'PNN(1)', inventory:1, reservedInv:0, ticketNo:'26000550259DF', partStatus:'RA - DMG', invoiceDate:'2026-05-11', modelCode:'MVW7230HW', aging:3, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:1, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'17-764068-0226-1', partNo:'W11249952', description:'', lotNo:'InReview(1)', inventory:1, reservedInv:1, ticketNo:'26000236554DF', partStatus:'Lost', invoiceDate:'2026-02-25', modelCode:'KRMF706ESS04', aging:78, reason:'(No Defect - Good Unused)', returnQty:0, raNo:'', returnRecd:0, inReview:1, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'6-332487-0526-3', partNo:'W11399437', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-11', modelCode:'MVW4505MW2', aging:3, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-160434-0426-1', partNo:'W11481722', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000441844DF', partStatus:'Defective', invoiceDate:'2026-04-06', modelCode:'WTW5057LW0', aging:38, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'273746', uniqueId:'1-160434-0426-2', partNo:'W11513248', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000441844DF', partStatus:'Defective', invoiceDate:'2026-04-06', modelCode:'WTW5057LW0', aging:38, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'8-255888-0526-2', partNo:'W11513248', description:'', lotNo:'', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-05-08', modelCode:'WTW5010LW0', aging:6, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-117598-0326-1', partNo:'W11524105', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'', partStatus:'', invoiceDate:'2026-03-26', modelCode:'WFW5620HW2', aging:49, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-925600-0326-1', partNo:'W11602886', description:'', lotNo:'', inventory:2, reservedInv:0, ticketNo:'26000243573DF', partStatus:'RA - PNN', invoiceDate:'2026-03-06', modelCode:'WRS315SDHZ08', aging:69, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'1-13851', returnRecd:0, inReview:0, defect:0, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-269474-0426-2', partNo:'W11607637', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000558441DF', partStatus:'RA - Defect', invoiceDate:'2026-04-29', modelCode:'NTW4519JW2', aging:15, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' },
+			{ account:'272467', uniqueId:'1-274806-0426-1', partNo:'W11608056', description:'', lotNo:'Defect(1)', inventory:1, reservedInv:0, ticketNo:'26000554879DF', partStatus:'Defective', invoiceDate:'2026-04-30', modelCode:'WTW4957PW0', aging:14, reason:'(No Defect - Good Unused)', returnQty:1, raNo:'', returnRecd:0, inReview:0, defect:1, pnn:0, current:1, reserved:0, provider:'Encompass', location:'Asheville' }
+		];
+
+		const coreRecords = [
+			{ id:11970, ticketNo:'23001002155DF', uniqueId:'17-235505-1123-1', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/16/2023', technician:'Christopher Bowles', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:35760, ticketNo:'24000316787DF', uniqueId:'1-552626-0324-1', partNo:'W11513246', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'04/30/2024', technician:'Christian Newson', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:41212, ticketNo:'47039494', uniqueId:'1-888503-1123-1', partNo:'W10906422', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:48983, ticketNo:'24000537178DF', uniqueId:'17-271478-0124-1', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'07/10/2024', technician:'Jesse Thomason', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:52580, ticketNo:'24000602438DF', uniqueId:'1-905998-1123-1', partNo:'W11654023', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Used', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:59478, ticketNo:'24000786518DF', uniqueId:'1-853047-1023-1', partNo:'W11325569', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/09/2024', technician:'Carlon Ellis', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:59998, ticketNo:'24000800384DF', uniqueId:'1-594952-0424-1', partNo:'W11510463', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/13/2024', technician:'Christian Eckwright', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:60496, ticketNo:'24000806676DF', uniqueId:'1-421553-0224-2', partNo:'W11621180', description:'CONTROL BOARD', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/13/2024', technician:'Tavon Baker', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:60952, ticketNo:'24000817039DF', uniqueId:'6-358366-0224-3', partNo:'W11543994', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/17/2024', technician:'Gabriel Mulkey', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:61917, ticketNo:'24000830365DF', uniqueId:'1-842709-0624-1', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/23/2024', technician:'Baolin Henry Zhang', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:71087, ticketNo:'24001012049DF', uniqueId:'1-330189-0124-1', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:73097, ticketNo:'24001011835DF', uniqueId:'1-458578-0324-2', partNo:'W11542754', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/04/2024', technician:'Elisha Rhett', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:76864, ticketNo:'24001125787DF', uniqueId:'1-787396-1023-2', partNo:'W11478524', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/21/2024', technician:'Nelson Ogutu', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:78066, ticketNo:'24001161460DF', uniqueId:'1-458578-0324-1', partNo:'W11043763', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'01/03/2025', technician:'Nick Villegas', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:91903, ticketNo:'25000230723DF', uniqueId:'6-521395-0724-2', partNo:'W11556725', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'03/12/2025', technician:'Darryel Burdette', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:103228, ticketNo:'25000404393DF', uniqueId:'1-117467-0325-1', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'04/30/2025', technician:'Jordan Stanley', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:105140, ticketNo:'25000423491DF', uniqueId:'1-686280-0424-1', partNo:'W11550649', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'05/22/2025', technician:'Memphis Admin', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:107702, ticketNo:'25000479153DF', uniqueId:'1-425924-0224-2', partNo:'W11419051', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'05/23/2025', technician:'Justin Parker', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:115582, ticketNo:'25000600900DF', uniqueId:'6-259245-1123-1', partNo:'W11170319', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'06/25/2025', technician:'Hayden Wagner', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:116300, ticketNo:'25000617338DF', uniqueId:'1-319141-0425-1', partNo:'W11627413', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'06/27/2025', technician:'Christian Newson', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:116692, ticketNo:'25000593114DF', uniqueId:'1-363201-0224-1', partNo:'W11478526', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'06/30/2025', technician:'Rico Shaw', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:122505, ticketNo:'25000687546DF', uniqueId:'1-458357-0324-1', partNo:'W11543998', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'07/29/2025', technician:'Garrett McCarley', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:124412, ticketNo:'25000714820DF', uniqueId:'1-748497-0524-3', partNo:'W11543997', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'07/30/2025', technician:'Tarik Peoples', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:125521, ticketNo:'25000746036DF', uniqueId:'6-260695-1123-1', partNo:'W11478525', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'07/30/2025', technician:'Joe Gallagher', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:139661, ticketNo:'25000747865DF', uniqueId:'6-224392-1023-1', partNo:'W11624938', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'08/12/2025', technician:'Garrett McCarley', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:143696, ticketNo:'25000745934DF', uniqueId:'17-202049-0923-1', partNo:'W11170319', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'08/08/2025', technician:'Brandon Phillips', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:147020, ticketNo:'25000796438DF', uniqueId:'1-391569-0525-1', partNo:'W11319991', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'08/12/2025', technician:'Justin Parker', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:203333, ticketNo:'25000940232DF', uniqueId:'1-853620-0825-2', partNo:'W11626074', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'09/23/2025', technician:"Brye'shawn Butler", coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:267629, ticketNo:'25001049826DF', uniqueId:'1-354297-0224-2', partNo:'W11654022', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'10/28/2025', technician:'Calvin Nguyen', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:315641, ticketNo:'25001192055DF', uniqueId:'1-387776-0224-2', partNo:'W11419171', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'11/26/2025', technician:'Darryel Burdette', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:337862, ticketNo:'25001215508DF', uniqueId:'6-259506-1123-1', partNo:'W11608058', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/08/2025', technician:'Bradley Hollowell', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:343103, ticketNo:'25001299282DF', uniqueId:'1-543715-1225-1', partNo:'W11608056', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/29/2025', technician:'Rico Shaw', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:343530, ticketNo:'25001320594DF', uniqueId:'1-274634-0425-1', partNo:'W11510463', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'12/31/2025', technician:'Garrett McCarley', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:344204, ticketNo:'25001324985DF', uniqueId:'1-746016-0725-1', partNo:'W11510463', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'01/02/2026', technician:'Eric Kennedy', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:50430, ticketNo:'ARW20240711393693', uniqueId:'1-971754-0724-1', partNo:'W11025829', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'07/22/2024', technician:'Salvator Joey Cirrito', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:51809, ticketNo:'24000622965DF', uniqueId:'6-516344-0724-2', partNo:'W11637581', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:52989, ticketNo:'24000656850DF', uniqueId:'1-131643-0724-1', partNo:'W11378950', description:'CONSOLE', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'08/14/2024', technician:'Danny Thornton', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:53092, ticketNo:'24000643256DF', uniqueId:'17-406363-0824-1', partNo:'W11478519', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:53682, ticketNo:'24000655974DF', uniqueId:'17-406364-0824-1', partNo:'W11478525', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:54204, ticketNo:'24000662704DF', uniqueId:'12-703930-0824-1', partNo:'W11626080', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:55299, ticketNo:'24000687901DF', uniqueId:'6-538683-0824-1', partNo:'W11417461', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:55688, ticketNo:'24000676051DF', uniqueId:'1-201419-0824-1', partNo:'W11478525', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:56280, ticketNo:'24000725375DF', uniqueId:'1-214229-0824-1', partNo:'W11543994', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'08/23/2024', technician:'Heath Mosley', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:58067, ticketNo:'24000744227DFB', uniqueId:'1-228030-0124-1', partNo:'W11614514', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:58787, ticketNo:'24000756434DF', uniqueId:'1-273334-0924-3', partNo:'W11406681', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:58783, ticketNo:'24000754133DF', uniqueId:'1-291724-0924-2', partNo:'W11478526', description:'PANEL-UI', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:59057, ticketNo:'24000775702DF', uniqueId:'17-429487-0924-2', partNo:'W11429620', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:58601, ticketNo:'2304907E1', uniqueId:'1-302351-0924-1', partNo:'DC92-02965F', description:'ASSY PBA MODULE', invoiceDate:'', returnQty:1, coreValue:27.5, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:62600, ticketNo:'24000826003DF', uniqueId:'1-370363-0924-1', partNo:'W11723354', description:'CNTRL-ELEC', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 },
+			{ id:62842, ticketNo:'24000839827DF', uniqueId:'12-746272-0924-1', partNo:'W11660283', description:'ACU FINAL ASSY - MDB4949SK*1 2021 DASH', invoiceDate:'', returnQty:1, coreValue:60, partStatus:'Claimed', scheduleDate:'', technician:'', coreRaNo:'', provider:'Encompass', location:'Asheville', aging:0 }
+		];
+
+		const tableBody = document.getElementById('tableBody');
+		const coreTableBody = document.getElementById('coreTableBody');
+		const recordCount = document.getElementById('recordCount');
+		const returnTitle = document.getElementById('returnTitle');
+		const partTableWrap = document.getElementById('partTableWrap');
+		const coreTableWrap = document.getElementById('coreTableWrap');
+		const partReturnViewBtn = document.getElementById('partReturnViewBtn');
+		const coreReturnViewBtn = document.getElementById('coreReturnViewBtn');
+
+		let activeView = 'part';
+
+		function loadUserInfo() {
+			const userEmail = localStorage.getItem('userEmail');
+			const userCompanyId = localStorage.getItem('userCompanyId');
+			if (!userEmail || !userCompanyId) {
+				window.location.href = '../../landing.html';
+				return;
+			}
+			document.getElementById('userDisplayName').textContent = userEmail;
+			document.getElementById('companyDisplayId').textContent = `Company: ${userCompanyId}`;
+		}
+
+		function logout() {
+			logoutAcrossAllTabs('../../landing.html');
+		}
+
+		function fmtDate(iso) {
+			if (!iso) return '';
+			const d = new Date(iso + 'T00:00:00');
+			if (Number.isNaN(d.getTime())) return iso;
+			const mm = String(d.getMonth() + 1).padStart(2, '0');
+			const dd = String(d.getDate()).padStart(2, '0');
+			const yyyy = d.getFullYear();
+			return `${mm}/${dd}/${yyyy}`;
+		}
+
+		function filterPartRows() {
+			const provider = document.getElementById('providerFilter').value;
+			const location = document.getElementById('locationFilter').value;
+			const from = Number(document.getElementById('agingFrom').value || 0);
+			const to = Number(document.getElementById('agingTo').value || 9999);
+			const uniqueSearch = document.getElementById('uniqueSearch').value.trim().toLowerCase();
+			const search = document.getElementById('searchInResult').value.trim().toLowerCase();
+			const includeReturned = document.getElementById('includeReturned').checked;
+			const includeReserved = document.getElementById('includeReserved').checked;
+
+			return records.filter((row) => {
+				if (provider && row.provider !== provider) return false;
+				if (location && row.location !== location) return false;
+				if (row.aging < from || row.aging > to) return false;
+
+				if (!includeReturned && row.returnRecd > 0) return false;
+				if (!includeReserved && row.reserved > 0) return false;
+
+				if (uniqueSearch) {
+					const small = `${row.uniqueId} ${row.raNo}`.toLowerCase();
+					if (!small.includes(uniqueSearch)) return false;
+				}
+
+				if (search) {
+					const bag = [
+						row.account, row.uniqueId, row.partNo, row.description, row.ticketNo,
+						row.partStatus, row.modelCode, row.reason
+					].join(' ').toLowerCase();
+					if (!bag.includes(search)) return false;
+				}
+
+				return true;
+			});
+		}
+
+		function renderPartTable() {
+			const filtered = filterPartRows();
+			recordCount.textContent = `${filtered.length} records found`;
+
+			tableBody.innerHTML = filtered.map((row) => {
+				return `
+					<tr>
+						<td>${row.uniqueId}</td>
+						<td>${row.partNo}</td>
+						<td>${row.lotNo || ''}</td>
+						<td>${row.inReview}</td>
+						<td>${row.defect}</td>
+						<td>${row.pnn}</td>
+						<td>${row.current}</td>
+						<td>${row.reserved}</td>
+						<td>${row.ticketNo || ''}</td>
+						<td>${row.partStatus || ''}</td>
+						<td>${row.aging}</td>
+						<td>${row.returnQty}</td>
+						<td>${row.raNo || ''}</td>
+						<td><button class="return-btn" type="button" ${row.returnQty <= 0 ? 'disabled' : ''}>Return Encompass</button></td>
+					</tr>
+				`;
+			}).join('');
+		}
+
+		function filterCoreRows() {
+			const provider = document.getElementById('providerFilter').value;
+			const location = document.getElementById('locationFilter').value;
+			const uniqueSearch = document.getElementById('uniqueSearch').value.trim().toLowerCase();
+			const search = document.getElementById('searchInResult').value.trim().toLowerCase();
+
+			return coreRecords.filter((row) => {
+				if (provider && row.provider !== provider) return false;
+				if (location && row.location !== location) return false;
+
+				if (uniqueSearch) {
+					const small = `${row.uniqueId} ${row.coreRaNo}`.toLowerCase();
+					if (!small.includes(uniqueSearch)) return false;
+				}
+
+				if (search) {
+					const bag = [
+						row.id, row.ticketNo, row.uniqueId, row.partNo, row.description,
+						row.partStatus, row.technician, row.coreRaNo
+					].join(' ').toLowerCase();
+					if (!bag.includes(search)) return false;
+				}
+
+				return true;
+			});
+		}
+
+		function renderCoreTable() {
+			const filtered = filterCoreRows();
+			recordCount.textContent = `${filtered.length} records found`;
+
+			coreTableBody.innerHTML = filtered.map((row) => {
+				return `
+					<tr>
+						<td>${row.id}</td>
+						<td>${row.ticketNo || ''}</td>
+						<td>${row.uniqueId || ''}</td>
+						<td>${row.partNo || ''}</td>
+						<td>${row.description || ''}</td>
+						<td>${fmtDate(row.invoiceDate)}</td>
+						<td>${row.returnQty}</td>
+						<td>${row.coreValue}</td>
+						<td>${row.partStatus || ''}</td>
+						<td>${row.scheduleDate || ''}</td>
+						<td>${row.technician || ''}</td>
+						<td>${row.coreRaNo || ''}</td>
+						<td><button class="return-btn" type="button">Core Return Encompass</button></td>
+					</tr>
+				`;
+			}).join('');
+		}
+
+		function renderActiveView() {
+			if (activeView === 'part') {
+				partTableWrap.classList.remove('hidden');
+				coreTableWrap.classList.add('hidden');
+				partReturnViewBtn.classList.add('active');
+				coreReturnViewBtn.classList.remove('active');
+				returnTitle.textContent = 'Part Return';
+				renderPartTable();
+				return;
+			}
+
+			partTableWrap.classList.add('hidden');
+			coreTableWrap.classList.remove('hidden');
+			partReturnViewBtn.classList.remove('active');
+			coreReturnViewBtn.classList.add('active');
+			returnTitle.textContent = 'Core Part Return';
+			renderCoreTable();
+		}
+
+		document.getElementById('providerFilter').addEventListener('change', renderActiveView);
+		document.getElementById('locationFilter').addEventListener('change', renderActiveView);
+		document.getElementById('agingFrom').addEventListener('input', renderActiveView);
+		document.getElementById('agingTo').addEventListener('input', renderActiveView);
+		document.getElementById('uniqueSearch').addEventListener('input', renderActiveView);
+		document.getElementById('searchInResult').addEventListener('input', renderActiveView);
+		document.getElementById('includeReturned').addEventListener('change', renderActiveView);
+		document.getElementById('includeReserved').addEventListener('change', renderActiveView);
+
+		partReturnViewBtn.addEventListener('click', () => {
+			activeView = 'part';
+			renderActiveView();
+			syncFloatingScrollbar();
+			updateFloatingScrollbarVisibility();
+		});
+
+		coreReturnViewBtn.addEventListener('click', () => {
+			activeView = 'core';
+			renderActiveView();
+			syncFloatingScrollbar();
+			updateFloatingScrollbarVisibility();
+		});
+
+		window.addEventListener('load', () => {
+			loadUserInfo();
+			renderActiveView();
+			setupFloatingScrollbar();
+			window.addEventListener('scroll', updateFloatingScrollbarVisibility, { passive: true });
+		});
+
+		function getActiveReturnWrap() {
+			return document.getElementById(activeView === 'core' ? 'coreTableWrap' : 'partTableWrap');
+		}
+
+		function syncFloatingScrollbar() {
+			const tableWrap = getActiveReturnWrap();
+			const table = tableWrap ? tableWrap.querySelector('table') : null;
+			const floatingBar = document.getElementById('floatingScrollbar');
+			const floatingInner = document.getElementById('floatingScrollbarInner');
+			if (!tableWrap || !table || !floatingBar || !floatingInner) return;
+			floatingInner.style.width = table.scrollWidth + 'px';
+			const rect = tableWrap.getBoundingClientRect();
+			floatingBar.style.width = Math.max(0, Math.floor(rect.width)) + 'px';
+			floatingBar.style.left = Math.max(14, Math.floor(rect.left)) + 'px';
+		}
+
+		function updateFloatingScrollbarVisibility() {
+			const tableWrap = getActiveReturnWrap();
+			const floatingBar = document.getElementById('floatingScrollbar');
+			if (!tableWrap || !floatingBar) return;
+			const hasHorizontalOverflow = tableWrap.scrollWidth > tableWrap.clientWidth + 1;
+			const rect = tableWrap.getBoundingClientRect();
+			const shouldShow = hasHorizontalOverflow && rect.bottom > window.innerHeight;
+			floatingBar.classList.toggle('is-visible', shouldShow);
+			if (shouldShow) {
+				syncFloatingScrollbar();
+				floatingBar.scrollLeft = tableWrap.scrollLeft;
+			}
+		}
+
+		function setupFloatingScrollbar() {
+			const floatingBar = document.getElementById('floatingScrollbar');
+			if (!floatingBar) return;
+			let syncingA = false, syncingB = false;
+			['partTableWrap', 'coreTableWrap'].forEach(function (wrapId) {
+				const tw = document.getElementById(wrapId);
+				if (!tw) return;
+				tw.addEventListener('scroll', function () {
+					if (syncingA) { syncingA = false; return; }
+					syncingB = true;
+					floatingBar.scrollLeft = tw.scrollLeft;
+					updateFloatingScrollbarVisibility();
+				});
+			});
+			floatingBar.addEventListener('scroll', function () {
+				if (syncingB) { syncingB = false; return; }
+				syncingA = true;
+				const tw = getActiveReturnWrap();
+				if (tw) tw.scrollLeft = floatingBar.scrollLeft;
+			});
+			window.addEventListener('resize', function () {
+				syncFloatingScrollbar();
+				updateFloatingScrollbarVisibility();
+			});
+			window.addEventListener('scroll', updateFloatingScrollbarVisibility, { passive: true });
+		}
+	</script>
+	<script src="../../routes.js"></script>
+	<!-- Footer -->
+	<footer id="contact">
+		<p>For any questions or support, contact us at <a href="mailto:support@adminhubsolutions.com">support@adminhubsolutions.com</a></p>
+		<p style="margin-top: 1rem; opacity: 0.7;">© 2026 Admin Hub Solutions. All rights reserved.</p>
+	</footer>
+	<script src="../../../locations-loader.js"></script>
+</body>
+</html>

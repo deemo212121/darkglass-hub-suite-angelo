@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tanstack-start-app",
+  "compatibility_date": "2025-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/server.ts",
+  // Two schedules — see the scheduled() handler in src/server.ts, which
+  // dispatches on event.cron:
+  //   "0 * * * *"   hourly (top of every hour, UTC) — runNsaPartsSync()
+  //                 from src/lib/server/nsaPartsSync.ts.
+  //   "*/5 * * * *" every 5 minutes — runAttendanceAlertCheck() from
+  //                 src/lib/server/attendanceAlerts.ts (missing clock-in/out
+  //                 grace-period notifications).
+  "triggers": {
+    "crons": ["0 * * * *", "*/5 * * * *"]
+  },
+}

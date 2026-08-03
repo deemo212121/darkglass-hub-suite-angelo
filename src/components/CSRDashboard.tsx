@@ -1,0 +1,754 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { CsrTeamComposition } from "@/components/CsrTeamComposition";
+import { useAuth } from "@/lib/auth";
+import { normalizeRole } from "@/lib/roleLabels";
+import {
+  AlertTriangle,
+  CheckCircle,
+  ChevronLeft,
+  Download,
+  Loader2,
+  MessageSquare,
+  Search,
+  Users,
+  XCircle,
+} from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { getTicketAuditLog, getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { LOCATIONS, mergeLocationOptions, parseBranchAccess } from "@/lib/locations";
+import type { Ticket } from "@/lib/ticketData";
+
+const COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15"];
+// These statuses are restricted for CSR-facing views (Claims/financial-close
+// states CSRs shouldn't be working from) — excluded from the ticket-status
+// breakdown below, unlike the full Status Summary page which shows everyone.
+const CSR_HIDDEN_STATUSES = new Set(["CL-Cancelled", "CL-Claimed", "CL-Data-Closed"]);
+// Stage 1 of the two-stage review chain (Team Leader submits -> CSR
+// Manager reviews first -> HR makes the final call). This panel only
+// handles stage 1 — items CSR Managers weigh in on before they go to HR.
+const STAGE1_REVIEWER_ROLES = new Set(["CSR_MANAGER", "MANAGER", "SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
+
+interface Agent {
+  id: string;
+  name: string;
+  teamKey: string | null; // null = not yet placed on a team (Team Composition)
+  locations: string[];
+  schedule: number; // reschedule actions this CSR made (ticket_audit_log)
+  update: number; // status_change actions this CSR made (ticket_audit_log)
+}
+
+interface TeamMeta {
+  key: string;
+  name: string;
+  color: string;
+}
+
+const branchesOf = (assignedBranch: string | null, branchAccess: string | null): string[] => {
+  const raw = [assignedBranch ?? "", ...parseBranchAccess(branchAccess)];
+  return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
+};
+
+export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { role, ready } = useAuth();
+  const navigate = useNavigate();
+  const normalizedRole = normalizeRole(role);
+  // CSR Agents and Team Leaders don't get the org-wide manager overview —
+  // they land on their own Personal + Team dashboard instead.
+  const shouldRedirectToPersonalDashboard = normalizedRole === "CSR_AGENT" || normalizedRole === "CSR_TEAM_LEADER";
+  const isCsrManager = normalizedRole === "CSR_MANAGER";
+  const canReviewNotes = ready && STAGE1_REVIEWER_ROLES.has(normalizedRole);
+
+  useEffect(() => {
+    if (ready && shouldRedirectToPersonalDashboard) {
+      navigate({ to: "/m/$module/$submodule", params: { module: "dashboard", submodule: "csr-team-leader-dashboard" } });
+    }
+  }, [ready, shouldRedirectToPersonalDashboard, navigate]);
+
+  const [pendingNotes, setPendingNotes] = useState<CsrAgentNote[]>([]);
+  const [pendingNotesLoading, setPendingNotesLoading] = useState(true);
+  const loadPendingNotes = async () => {
+    try {
+      setPendingNotesLoading(true);
+      // getPendingAgentNotes() returns both stages — this panel is stage 1 only.
+      setPendingNotes((await getPendingAgentNotes()).filter((n) => n.status === "pending"));
+    } catch (err) {
+      console.error("Failed to load pending agent notes:", err);
+    } finally {
+      setPendingNotesLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (canReviewNotes) loadPendingNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReviewNotes]);
+  const decideNote = async (id: string, status: "manager_approved" | "rejected") => {
+    try {
+      await reviewAgentNote(id, status);
+      await loadPendingNotes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update review status.");
+    }
+  };
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [teams, setTeams] = useState<TeamMeta[]>([]);
+
+  // ── Filters ──
+  const [locationSearchFilter, setLocationSearchFilter] = useState("All Locations");
+  const [teamFilter, setTeamFilter] = useState<string>("");
+  const [agentSearch, setAgentSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [showPieLabels, setShowPieLabels] = useState(true);
+  const [showTeamComposition, setShowTeamComposition] = useState(false);
+
+  // ── Ticket Status breakdown (Location Distribution panel) ──
+  // Independent of the agent roster/filters above — its own ticket fetch and
+  // its own location scope, since it's counting tickets, not agents.
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [statusLocationFilter, setStatusLocationFilter] = useState("All Locations");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getCompanyTickets();
+        if (!cancelled) setTickets(rows);
+      } catch (err) {
+        console.error("Failed to load tickets for status breakdown:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Generate Report (CSV export) ──
+  // Independent of the on-screen filters above — this covers every CSR
+  // Agent/Team Leader company-wide for a chosen period, since it's meant
+  // to be a standalone downloadable record rather than a snapshot of
+  // whatever's currently on screen.
+  const [showGenerateReport, setShowGenerateReport] = useState(false);
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const locationOptions = useMemo(
+    () => ["All Locations", ...mergeLocationOptions(LOCATIONS, agents.flatMap((a) => a.locations))],
+    [agents],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        // Team composition lives in its own tables (added by a migration that
+        // may not have been run yet) — fetch it separately so a missing/broken
+        // csr_teams table degrades to "no teams assigned" instead of blanking
+        // out the whole roster and KPIs below.
+        const [profiles, auditLog, composition] = await Promise.all([
+          getCompanyUsers(),
+          getTicketAuditLog({ startDate: dateFrom || undefined, endDate: dateTo || undefined }),
+          getCsrTeamComposition().catch((err) => {
+            console.error("Failed to load CSR team composition:", err);
+            setError(
+              `Team Composition unavailable (${err instanceof Error ? err.message : "unknown error"}). ` +
+              `Run the 0027_csr_team_composition.sql migration in Supabase, then reload.`,
+            );
+            return { teams: [], members: [] };
+          }),
+        ]);
+        if (cancelled) return;
+
+        const teamOf = new Map<string, string>(); // profileId -> teamId
+        for (const m of composition.members) teamOf.set(m.profileId, m.teamId);
+
+        const scheduleCount = new Map<string, number>();
+        const updateCount = new Map<string, number>();
+        for (const entry of auditLog) {
+          if (!entry.changedBy) continue;
+          if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
+          if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+        }
+
+        const roster: Agent[] = profiles
+          .filter((p) => p.is_active !== false)
+          .filter((p) => {
+            const extras = p.extra_roles || [];
+            return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+          })
+          .map((p) => ({
+            id: p.id,
+            name: p.display_name || p.username || p.email,
+            teamKey: teamOf.get(p.id) ?? null,
+            locations: branchesOf(p.assigned_branch, p.branch_access),
+            schedule: scheduleCount.get(p.id) ?? 0,
+            update: updateCount.get(p.id) ?? 0,
+          }));
+
+        setAgents(roster);
+        setTeams(composition.teams.map((t) => ({ key: t.id, name: t.name, color: t.color })));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load CSR Dashboard data.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
+
+  const filteredAgents = useMemo(() => {
+    return agents.filter((a) => {
+      const matchLocation = locationSearchFilter === "All Locations" || a.locations.includes(locationSearchFilter);
+      const matchTeam = !teamFilter || a.teamKey === teamFilter;
+      const q = agentSearch.toLowerCase();
+      const matchSearch = !q || a.name.toLowerCase().includes(q);
+      return matchLocation && matchTeam && matchSearch;
+    });
+  }, [agents, locationSearchFilter, teamFilter, agentSearch]);
+
+  const totals = useMemo(
+    () =>
+      filteredAgents.reduce(
+        (acc, a) => ({
+          agents: acc.agents + 1,
+          schedule: acc.schedule + a.schedule,
+          update: acc.update + a.update,
+        }),
+        { agents: 0, schedule: 0, update: 0 },
+      ),
+    [filteredAgents],
+  );
+
+  const teamData = useMemo(
+    () =>
+      teams
+        .map((t) => {
+          const ta = filteredAgents.filter((a) => a.teamKey === t.key);
+          return {
+            key: t.key,
+            name: t.name,
+            color: t.color,
+            agents: ta.length,
+            schedule: ta.reduce((s, a) => s + a.schedule, 0),
+            update: ta.reduce((s, a) => s + a.update, 0),
+          };
+        })
+        .filter((t) => t.agents > 0),
+    [teams, filteredAgents],
+  );
+
+  const agentNameById = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
+
+  // Ticket count by status — scoped to statusLocationFilter, excluding
+  // statuses restricted for CSR-facing views (see CSR_HIDDEN_STATUSES).
+  const statusBreakdown = useMemo(() => {
+    const map: Record<string, number> = {};
+    tickets.forEach((t) => {
+      if (statusLocationFilter !== "All Locations" && t.location !== statusLocationFilter) return;
+      if (CSR_HIDDEN_STATUSES.has(t.status)) return;
+      map[t.status] = (map[t.status] || 0) + 1;
+    });
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [tickets, statusLocationFilter]);
+
+  const csvEscape = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const generateReport = async () => {
+    try {
+      setGeneratingReport(true);
+      setReportError(null);
+
+      const [profiles, auditLog, composition, allNotes] = await Promise.all([
+        getCompanyUsers(),
+        getTicketAuditLog({ startDate: reportFrom || undefined, endDate: reportTo || undefined }),
+        getCsrTeamComposition().catch(() => ({ teams: [], members: [] })),
+        getAllAgentNotes().catch(() => [] as CsrAgentNote[]),
+      ]);
+
+      const teamOf = new Map(composition.members.map((m) => [m.profileId, m.teamId]));
+      const teamNameOf = new Map(composition.teams.map((t) => [t.id, t.name]));
+
+      const scheduleCount = new Map<string, number>();
+      const updateCount = new Map<string, number>();
+      for (const entry of auditLog) {
+        if (!entry.changedBy) continue;
+        if (entry.action === "reschedule") scheduleCount.set(entry.changedBy, (scheduleCount.get(entry.changedBy) ?? 0) + 1);
+        if (entry.action === "status_change") updateCount.set(entry.changedBy, (updateCount.get(entry.changedBy) ?? 0) + 1);
+      }
+
+      // Only approved notes count as the official record — same rule used
+      // everywhere else this workflow shows up.
+      const inPeriod = (iso: string) => {
+        if (reportFrom && iso < reportFrom) return false;
+        if (reportTo && iso > `${reportTo}T23:59:59`) return false;
+        return true;
+      };
+      const warningCount = new Map<string, number>();
+      const mistakeCount = new Map<string, number>();
+      for (const n of allNotes) {
+        if (n.status !== "approved" || !inPeriod(n.createdAt)) continue;
+        const bucket = n.type === "warning" ? warningCount : mistakeCount;
+        bucket.set(n.agentProfileId, (bucket.get(n.agentProfileId) ?? 0) + 1);
+      }
+
+      const isCsrRoster = (p: { role: string | null; extra_roles: string[] | null }) => {
+        const extras = p.extra_roles || [];
+        return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+      };
+
+      const roster = profiles
+        .filter((p) => p.is_active !== false && isCsrRoster(p))
+        .map((p) => {
+          const teamKey = teamOf.get(p.id) ?? null;
+          return {
+            name: p.display_name || p.username || p.email,
+            team: teamKey ? teamNameOf.get(teamKey) ?? "" : "",
+            locations: branchesOf(p.assigned_branch, p.branch_access).join("; "),
+            schedule: scheduleCount.get(p.id) ?? 0,
+            update: updateCount.get(p.id) ?? 0,
+            warnings: warningCount.get(p.id) ?? 0,
+            mistakes: mistakeCount.get(p.id) ?? 0,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      const grandTotal = roster.reduce(
+        (acc, a) => ({
+          agents: acc.agents + 1,
+          schedule: acc.schedule + a.schedule,
+          update: acc.update + a.update,
+          warnings: acc.warnings + a.warnings,
+          mistakes: acc.mistakes + a.mistakes,
+        }),
+        { agents: 0, schedule: 0, update: 0, warnings: 0, mistakes: 0 },
+      );
+
+      const teamRows = composition.teams
+        .map((t) => {
+          const ta = roster.filter((a) => a.team === t.name);
+          return {
+            name: t.name,
+            agents: ta.length,
+            schedule: ta.reduce((s, a) => s + a.schedule, 0),
+            update: ta.reduce((s, a) => s + a.update, 0),
+            warnings: ta.reduce((s, a) => s + a.warnings, 0),
+            mistakes: ta.reduce((s, a) => s + a.mistakes, 0),
+          };
+        })
+        .filter((t) => t.agents > 0);
+
+      const locationCount = new Map<string, number>();
+      for (const p of profiles) {
+        if (p.is_active === false || !isCsrRoster(p)) continue;
+        for (const loc of branchesOf(p.assigned_branch, p.branch_access)) {
+          locationCount.set(loc, (locationCount.get(loc) ?? 0) + 1);
+        }
+      }
+
+      const rows: (string | number)[][] = [
+        ["CSR Dashboard Report"],
+        [`Period: ${reportFrom || "All time"} to ${reportTo || "All time"}`],
+        [`Generated: ${new Date().toLocaleString()}`],
+        [],
+        ["Summary"],
+        ["Metric", "Value"],
+        ["Total Agents", grandTotal.agents],
+        ["Total Schedule Actions", grandTotal.schedule],
+        ["Total Update Actions", grandTotal.update],
+        ["Total Warnings (Approved)", grandTotal.warnings],
+        ["Total Mistakes (Approved)", grandTotal.mistakes],
+        [],
+        ["By Agent"],
+        ["Agent", "Team", "Location(s)", "Schedule", "Update", "Warnings", "Mistakes"],
+        ...roster.map((a) => [a.name, a.team, a.locations, a.schedule, a.update, a.warnings, a.mistakes]),
+        [],
+        ["By Team"],
+        ["Team", "Agents", "Schedule", "Update", "Warnings", "Mistakes"],
+        ...teamRows.map((t) => [t.name, t.agents, t.schedule, t.update, t.warnings, t.mistakes]),
+        [],
+        ["By Location"],
+        ["Location", "Agents"],
+        ...Array.from(locationCount.entries()).sort((a, b) => b[1] - a[1]),
+      ];
+
+      const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `csr-dashboard-report_${reportFrom || "all"}_to_${reportTo || "all"}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Failed to generate report.");
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
+  // Waiting on auth to resolve, or mid-redirect to the personal dashboard —
+  // don't flash the manager-only overview in either case.
+  if (!ready || shouldRedirectToPersonalDashboard) {
+    return (
+      <div className="min-h-screen flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-5">
+        <div className="flex items-center gap-3 mb-1">
+          <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+            <ChevronLeft className="h-4 w-4" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-bold">CSR Dashboard</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">{totals.agents} agents active</p>
+          </div>
+        </div>
+
+        {/* Quick nav */}
+        <div className="flex flex-wrap gap-2 mb-4 mt-3">
+          {[
+            { slug: "csr-team-leader-dashboard", label: "My Team Dashboard", icon: "🧑‍💼" },
+            { slug: "csr-daily-report", label: "CSR Daily Report", icon: "📋" },
+            { slug: "csr-status-summary", label: "Status Summary", icon: "📊" },
+            { slug: "live-chat-support", label: "Live Chat", icon: "💬" },
+          ]
+            // CSR Managers oversee every team, not one of their own — the
+            // personal/team dashboard doesn't apply to them.
+            .filter((item) => !(isCsrManager && item.slug === "csr-team-leader-dashboard"))
+            .map((item) => (
+            <Link
+              key={item.slug}
+              to="/m/$module/$submodule"
+              params={{ module: "dashboard", submodule: item.slug }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
+            >
+              <span>{item.icon}</span>{item.label}
+            </Link>
+          ))}
+          <button
+            type="button"
+            onClick={() => { setShowTeamComposition((v) => !v); setShowGenerateReport(false); }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showTeamComposition ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+          >
+            <span>👥</span>Team Composition
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowGenerateReport((v) => !v); setShowTeamComposition(false); }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+          >
+            <span>📄</span>Generate Report
+          </button>
+        </div>
+
+        {/* Pending warning/mistake submissions awaiting a manager's decision. */}
+        {canReviewNotes && (
+          <div className="panel p-3 mb-4">
+            <p className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+              <AlertTriangle className="h-4 w-4 text-yellow-400" /> Pending Reviews
+              {pendingNotes.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-300 border border-yellow-500/25">{pendingNotes.length}</span>
+              )}
+            </p>
+            {pendingNotesLoading ? (
+              <p className="text-xs text-muted-foreground py-2">Loading…</p>
+            ) : pendingNotes.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">Nothing waiting on review.</p>
+            ) : (
+              <div className="space-y-2">
+                {pendingNotes.map((n) => (
+                  <div key={n.id} className="rounded-lg border border-white/10 bg-white/5 p-2 flex items-start gap-2">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${n.type === "warning" ? "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" : "bg-orange-500/20 text-orange-300 border border-orange-500/30"}`}>
+                      {n.type === "warning" ? "Warning" : "Mistake"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs">
+                        <span className="font-semibold">{agentNameById.get(n.agentProfileId) || "Unknown agent"}</span> — {n.note}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {n.ticketNo && <>Ticket <span className="font-mono text-blue-400">{n.ticketNo}</span> · </>}
+                        Submitted by {n.createdByName || "Unknown"} · {new Date(n.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => decideNote(n.id, "manager_approved")}
+                        title="Sends to HR for the final decision"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-green-500/15 text-green-300 border border-green-500/30 hover:bg-green-500/25 transition-colors"
+                      >
+                        <CheckCircle className="h-3 w-3" /> Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => decideNote(n.id, "rejected")}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25 transition-colors"
+                      >
+                        <XCircle className="h-3 w-3" /> Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showTeamComposition && <CsrTeamComposition />}
+
+        {showGenerateReport && (
+          <div className="panel p-3 mb-4">
+            <p className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+              <Download className="h-4 w-4" /> Generate Report
+            </p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Pick a period and download a CSV covering every CSR Agent/Team Leader company-wide — schedule &amp; update actions from the ticket audit trail, plus approved warnings/mistakes issued in that window.
+            </p>
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Period From</label>
+                <input type="date" aria-label="Period from" title="Period from" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="glass-input mt-1" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Period To</label>
+                <input type="date" aria-label="Period to" title="Period to" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="glass-input mt-1" />
+              </div>
+              <button
+                type="button"
+                onClick={generateReport}
+                disabled={generatingReport}
+                className="btn bg-primary/15 border-primary/40 text-primary hover:bg-primary/25 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {generatingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {generatingReport ? "Generating…" : "Download CSV"}
+              </button>
+            </div>
+            {reportError && <p className="mt-3 text-xs text-red-300">{reportError}</p>}
+            <p className="mt-3 text-[10px] text-muted-foreground">Leave both blank to cover all-time.</p>
+          </div>
+        )}
+
+        {!showTeamComposition && !showGenerateReport && (<>
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>
+        )}
+
+        {/* Filters */}
+        <div className="panel p-3 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Location</label>
+              <select
+                value={locationSearchFilter}
+                onChange={(e) => setLocationSearchFilter(e.target.value)}
+                className="glass-input mt-1 w-full"
+              >
+                {locationOptions.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Team</label>
+              <select
+                value={teamFilter}
+                onChange={(e) => setTeamFilter(e.target.value)}
+                className="glass-input mt-1 w-full"
+              >
+                <option value="">All Teams</option>
+                {teams.map((t) => (
+                  <option key={t.key} value={t.key}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Agent Name</label>
+              <div className="relative mt-1">
+                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={agentSearch}
+                  onChange={(e) => setAgentSearch(e.target.value)}
+                  placeholder="Search agent…"
+                  className="glass-input w-full pl-8"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="glass-input mt-1 w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date To</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="glass-input mt-1 w-full"
+              />
+            </div>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Schedule/Update counts reflect ticket status &amp; reschedule changes made by each CSR (from the ticket audit trail), optionally narrowed by Date From/To.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="panel p-6 mb-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading CSR Dashboard…
+          </div>
+        ) : agents.length === 0 ? (
+          <p className="panel p-6 mb-4 text-center text-sm text-muted-foreground">
+            No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+          </p>
+        ) : (
+        <>
+        {/* KPI cards */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {[
+            { label: "Agents", value: totals.agents, color: "text-white", icon: <Users className="h-4 w-4" /> },
+            { label: "Schedule", value: totals.schedule, color: "text-green-300", icon: <CheckCircle className="h-4 w-4" /> },
+            { label: "Update", value: totals.update, color: "text-purple-300", icon: <MessageSquare className="h-4 w-4" /> },
+          ].map((k) => (
+            <div key={k.label} className="panel p-3 text-center">
+              <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+              <p className={`text-xl font-bold ${k.color}`}>{k.value}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Charts row 1 */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+          <div className="panel p-3 lg:col-span-2">
+            <p className="text-sm font-semibold mb-2">Team Performance</p>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={teamData} margin={{ left: -10 }}>
+                {/* Team names move to the legend row below instead of
+                    crowding the axis as tick labels. */}
+                <XAxis dataKey="name" tick={false} axisLine={{ stroke: "rgba(148,163,184,0.3)" }} />
+                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
+                <Bar dataKey="schedule" fill="#34d399" radius={[4, 4, 0, 0]} name="Schedule" />
+                <Bar dataKey="update" fill="#a78bfa" radius={[4, 4, 0, 0]} name="Update" />
+              </BarChart>
+            </ResponsiveContainer>
+            {/* Team legend — which bar group is which team, plus each
+                team's Agents/Schedule/Update, so this replaces the old
+                per-team card grid entirely. */}
+            <div className="mt-2 pt-2 border-t border-white/10 divide-y divide-white/5">
+              {teamData.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 text-center">
+                  No agents placed on a team yet — use Team Composition to assign them.
+                </p>
+              ) : teamData.map((t) => (
+                <div key={t.key} className="flex items-center gap-3 py-1 px-1 hover:bg-white/5 rounded">
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ background: t.color }} />
+                  <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color: t.color }}>{t.name}</span>
+                  <span className="text-[10px] text-muted-foreground w-16 text-right shrink-0">{t.agents} agent{t.agents === 1 ? "" : "s"}</span>
+                  <span className="text-[10px] text-green-300 w-14 text-right shrink-0">Sch {t.schedule}</span>
+                  <span className="text-[10px] text-purple-300 w-14 text-right shrink-0">Upd {t.update}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="panel p-3">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <p className="text-sm font-semibold shrink-0">Ticket Status</p>
+              <select
+                value={statusLocationFilter}
+                onChange={(e) => setStatusLocationFilter(e.target.value)}
+                className="glass-input text-[10px] py-1 px-2 rounded-md flex-1 min-w-0"
+              >
+                {locationOptions.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setShowPieLabels((v) => !v)}
+                className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded border transition-colors shrink-0 ${showPieLabels ? "border-white/20 bg-white/10 text-foreground" : "border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
+              >
+                {showPieLabels ? "Hide Legend" : "Show Legend"}
+              </button>
+            </div>
+            {/* This panel's legend can list many distinct statuses — a fixed
+                height tight enough for other charts squeezes/clips the pie
+                itself once the legend wraps to that many rows, so it keeps
+                more room (and a denser legend line-height) than its
+                neighbors when expanded. */}
+            <ResponsiveContainer width="100%" height={showPieLabels ? 320 : 170}>
+              <PieChart>
+                <Pie
+                  data={statusBreakdown}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="38%"
+                  outerRadius={62}
+                  label={false}
+                  labelLine={false}
+                >
+                  {statusBreakdown.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}
+                  formatter={(value: any, name: any) => [value, name]}
+                />
+                {showPieLabels && (
+                  <Legend
+                    layout="horizontal"
+                    verticalAlign="bottom"
+                    align="center"
+                    wrapperStyle={{ fontSize: 9, color: "var(--foreground)", paddingTop: 6, lineHeight: "1.4" }}
+                    formatter={(value) => <span style={{ color: "var(--foreground)" }}>{value}</span>}
+                  />
+                )}
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        </>
+        )}
+        </>)}
+      </main>
+    </div>
+  );
+}

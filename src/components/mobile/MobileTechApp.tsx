@@ -1,0 +1,3581 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth";
+import { setDesktopOverride } from "@/lib/device";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Send,
+  Ticket as TicketIcon,
+  MapPin,
+  MessageCircle,
+  FileText,
+  DollarSign,
+  ExternalLink,
+} from "lucide-react";
+// Mobile shell is an isolated surface — no navigation to desktop routes,
+// no device-override toggle. The desktop UI is available only from an
+// actual desktop browser.
+import {
+  getCompanyTickets,
+  getTicketVisits,
+  updateTicketVisit,
+  updateTicketStatus,
+  getLatestVisitTechnicianByTicketIds,
+  getTicketParts,
+  updateTicketPart,
+  type UIPartRow,
+} from "@/lib/supabase/tickets";
+import { getMyProfileId } from "@/lib/supabase/users";
+import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import type * as Leaflet from "leaflet";
+import {
+  getDmMessages,
+  getOrCreateDmThread,
+  sendMessage,
+  subscribeToMessages,
+  listMyDmInbox,
+  markThreadRead,
+  type MessageRow,
+  type DmThreadRow,
+  type DmInboxEntry,
+} from "@/lib/supabase/messaging";
+import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { getCsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
+import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
+import { TicketPhotos } from "@/components/TicketPhotos";
+import { uploadTicketSignature } from "@/lib/firebase/storage";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { lookupZip } from "@/lib/zipCoverage";
+import { resolveTierCode } from "@/lib/tierCodes";
+import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
+import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
+import {
+  parseServicePerformed,
+  composeServicePerformed,
+  emptyServicePerformed,
+} from "@/lib/servicePerformedNotes";
+import type { Ticket } from "@/lib/ticketData";
+import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
+
+type View =
+  | "roster"
+  | "tickets"
+  | "map"
+  | "detail"
+  | "chat"
+  | "home"
+  | "payroll"
+  | "timecard"
+  | "clockinteam"
+  | "parts"
+  | "sheets";
+type DetailTab = "general" | "tracking" | "parts" | "billing";
+
+// Repair-status options the tech can pick from when editing a visit row
+// on mobile. Same set the desktop Add Visit modal uses so both surfaces
+// stay in sync — kept inline because the desktop list lives in
+// ticket.$ticketNo.tsx and isn't exported yet. Alphabetical order per
+// the "dropdowns must be alphabetical" rule.
+const MOBILE_REPAIR_STATUSES = [
+  "CL-Cancelled",
+  "CL-Claimed",
+  "CL-Data-Closed",
+  "CL-Need Cancel",
+  "CL-Parts Back Ordered",
+  "CL-Ready to Complete",
+  "CSR-Acknowledged",
+  "CSR-Assigned to ASC",
+  "CSR-Left Message for Cx",
+  "CSR-Needs Scheduling",
+  "OP-Ready for Service",
+  "OP-Reschedule Follow up",
+  "OP-UPDATE HOLD",
+  "OP-Waiting for Part",
+  "PT-Need PreAuthorization",
+  "TR-Need PO",
+  "TR-Need Triage",
+].sort((a, b) => a.localeCompare(b));
+
+// Roles that see their OWN tickets directly (skip the technician roster).
+const SELF_ROLES = new Set(["TECHNICIAN"]);
+
+// Days a ticket has been open, from aging if present else from created date.
+function openDays(t: Ticket): number {
+  if (t.aging && t.aging > 0) return t.aging;
+  const raw = String(t.created || "").trim();
+  if (!raw) return 0;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
+// A "done"/closed ticket for the To Do vs Done split.
+function isDone(status: string): boolean {
+  const s = (status || "").toLowerCase();
+  return s.includes("complete") || s.includes("closed") || s.includes("cl-") || s.includes("claim");
+}
+
+function statusTone(status: string): string {
+  const s = (status || "").toLowerCase();
+  if (s.includes("complete") || s.includes("ready to complete")) return "tone-green";
+  if (s.includes("cancel")) return "tone-red";
+  if (s.includes("waiting") || s.includes("pending") || s.includes("back order")) return "tone-amber";
+  if (s.includes("ready for service") || s.includes("ready to repair")) return "tone-blue";
+  return "tone-blue";
+}
+
+function productLabel(t: Ticket): string {
+  const explicit = (t.productType || "").trim();
+  if (explicit) return explicit.toUpperCase();
+  const m = (t.model || "").toLowerCase();
+  if (/dryer/.test(m)) return "DRYER";
+  if (/wash/.test(m)) return "WASHER";
+  if (/refrig|fridge/.test(m)) return "REFRIGERATOR";
+  if (/dishwash/.test(m)) return "DISHWASHER";
+  if (/range|oven|stove|cooktop/.test(m)) return "RANGE/OVEN";
+  if (/microwave/.test(m)) return "MICROWAVE";
+  return (t.manufacturer || "APPLIANCE").toUpperCase();
+}
+
+function fmtAddress(t: Ticket): string {
+  const parts = [t.address, t.city, [t.state, t.zip].filter(Boolean).join(" ")].filter(Boolean);
+  return parts.join(", ");
+}
+
+// Resolve a ticket's branch/location. If the stored location is missing or
+// "Unknown", fall back to the zip-coverage map (e.g. a Salem zip resolves to
+// the Asheville branch).
+function resolveLocation(t: Ticket): string {
+  const loc = (t.location || "").trim();
+  if (loc && loc.toLowerCase() !== "unknown") return loc;
+  const zip = (t.zip || "").trim();
+  if (zip) {
+    const cov = lookupZip(zip);
+    if (cov?.location) return cov.location;
+  }
+  return loc || "Unknown";
+}
+
+// Initials for the map badge, matching the Work Planner web style (e.g. "JR").
+function getInitials(value: string | null | undefined): string {
+  if (!value) return "U";
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  return value.slice(0, 2).toUpperCase();
+}
+
+export function MobileTechApp() {
+  const { email, displayName, role, companyId, allowedLocations, logout, uid } = useAuth();
+  const navigate = useNavigate();
+
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<ProfileRow[]>([]);
+  const isSelfRole = role ? SELF_ROLES.has(role.toUpperCase()) : false;
+
+  // Resolved once for the whole app shell — needed by DetailView to know
+  // which technician is looking at a ticket, for the mobile alert-popup
+  // dismiss tracking (ticket_alert_dismissals is keyed per profile).
+  const [profileId, setProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyProfileId(uid).then((id) => { if (!cancelled) setProfileId(id); });
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  // Persist the mobile tech-app navigation state across page reloads.
+  // The tech expects a refresh to keep them on the same view instead of
+  // bouncing back to the technician roster or the ticket list.
+  // Stored in sessionStorage so it clears on browser close (but survives
+  // ctrl-R, iOS pull-to-refresh, or a mid-shift reload).
+  const NAV_STATE_KEY = "ahs:mtech:nav-state:v1";
+  const readNavState = (): {
+    view?: View;
+    tab?: "todo" | "done" | "search";
+    detailTab?: DetailTab;
+    selectedTech?: string | null;
+    activeTicketNo?: string | null;
+  } => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.sessionStorage.getItem(NAV_STATE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  };
+  const _persisted = readNavState();
+
+  // Manager flow: which technician's tickets are we viewing.
+  const [selectedTech, setSelectedTech] = useState<string | null>(
+    _persisted.selectedTech ?? null,
+  );
+  const [view, setView] = useState<View>(() => {
+    const stored = _persisted.view;
+    const known: View[] = [
+      "roster",
+      "tickets",
+      "map",
+      "detail",
+      "chat",
+      "home",
+      "payroll",
+      "parts",
+      "sheets",
+    ];
+    if (stored && (known as string[]).includes(stored)) {
+      return stored as View;
+    }
+    return isSelfRole ? "tickets" : "roster";
+  });
+  const [tab, setTab] = useState<"todo" | "done" | "search">(
+    _persisted.tab ?? "todo",
+  );
+  const [search, setSearch] = useState("");
+  const [activeTicketNo, setActiveTicketNo] = useState<string | null>(
+    _persisted.activeTicketNo ?? null,
+  );
+  const [detailTab, setDetailTab] = useState<DetailTab>(
+    _persisted.detailTab ?? "general",
+  );
+
+  // Save nav state on every change so a reload restores exactly where
+  // the tech was. Only persists the fields we care about; search text
+  // is intentionally left transient.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(
+        NAV_STATE_KEY,
+        JSON.stringify({
+          view,
+          tab,
+          detailTab,
+          selectedTech,
+          activeTicketNo,
+        }),
+      );
+    } catch { /* quota — nothing to do */ }
+  }, [view, tab, detailTab, selectedTech, activeTicketNo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const rows = await getCompanyTickets();
+        // Overlay the latest visit-recorded technician onto tickets whose
+        // `technician` is blank. Same rule the Work Map and Daily Schedule
+        // already use — without this, a tech only sees the tickets where
+        // their name is on the ticket row itself and misses tickets whose
+        // assignment lives only in the Visit Log.
+        try {
+          const ids = rows
+            .map((t: any) => String(t?._id ?? "").trim())
+            .filter(Boolean);
+          if (ids.length > 0) {
+            const techMap = await getLatestVisitTechnicianByTicketIds(ids);
+            for (const t of rows as any[]) {
+              const tid = String(t?._id ?? "").trim();
+              const currentTech = String(t.technician ?? "").trim();
+              if (!currentTech || currentTech.toLowerCase() === "unassigned") {
+                const visitTech = tid ? techMap.get(tid) : "";
+                if (visitTech) t.technician = visitTech;
+              }
+            }
+          }
+        } catch (visitErr) {
+          console.warn("Mobile: tech overlay skipped", visitErr);
+        }
+        if (!cancelled) setTickets(rows);
+      } catch (e) {
+        console.error("Mobile: failed to load tickets", e);
+        if (!cancelled) setTickets([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load real company users (for the manager technician roster). Techs don't
+  // need this list, so only fetch for non-self roles.
+  useEffect(() => {
+    if (isSelfRole) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await getCompanyUsers();
+        if (!cancelled) setUsers(rows);
+      } catch (e) {
+        console.error("Mobile: failed to load users", e);
+        if (!cancelled) setUsers([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfRole]);
+
+  // Location-restricted set (techs/restricted roles). null = unrestricted.
+  const locScoped = useMemo(() => {
+    if (allowedLocations === null) return tickets;
+    return tickets.filter((t) => allowedLocations.includes(t.location));
+  }, [tickets, allowedLocations]);
+
+  // The technician name we're scoping to: self for techs, selected for managers.
+  const scopeTech = isSelfRole ? displayName || email || "" : selectedTech;
+
+  const myTickets = useMemo(() => {
+    if (!scopeTech) return [];
+    // Tolerant name match: normalise whitespace + case, and accept the
+    // ticket's technician field matching either the technician's full
+    // display name or the email-derived alias (e.g. "jkoetsier"). This
+    // keeps the mobile to-do list in sync with the Work Map / Daily
+    // Schedule, where the same person can appear under slightly
+    // different name strings across sources.
+    const normalise = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const candidates = new Set<string>();
+    const scope = normalise(scopeTech);
+    if (scope) candidates.add(scope);
+    // Add a "lastname-only" alias so "Jordan Koetsier" still matches a
+    // ticket stored as just "Koetsier".
+    const parts = scope.split(" ");
+    if (parts.length >= 2) candidates.add(parts[parts.length - 1]);
+    // If the scope looks like an email, also key by the local part.
+    if (scope.includes("@")) candidates.add(scope.split("@")[0]);
+    return locScoped.filter((t) => {
+      const tt = normalise(String(t.technician ?? ""));
+      if (!tt) return false;
+      if (candidates.has(tt)) return true;
+      // Fuzzy contains so "Jordan Koetsier" matches "jkoetsier" or
+      // vice-versa — the planner already uses this tolerance to bucket
+      // tickets to a tech.
+      return Array.from(candidates).some((c) => tt.includes(c) || c.includes(tt));
+    });
+  }, [locScoped, scopeTech]);
+
+  // Technician roster for managers — real TECHNICIAN-role users from Supabase,
+  // scoped to the manager's allowed locations (assigned_branch / branch_access).
+  const roster = useMemo(() => {
+    // Include users who have TECHNICIAN as their primary role OR in
+    // extra_roles. Daven Hodge is a manager+technician, for example.
+    const techUsers = users.filter((u) => {
+      const primary = (u.role || "").toUpperCase();
+      if (primary === "TECHNICIAN") return true;
+      const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
+      return extras.some((r) => String(r).toUpperCase() === "TECHNICIAN");
+    });
+    const inScope = techUsers.filter((u) => {
+      if (allowedLocations === null) return true;
+      const branches = [u.assigned_branch, ...(u.branch_access || "").split(/[,;]/)]
+        .map((b) => (b || "").trim())
+        .filter(Boolean);
+      // If the tech has no branch info, keep them visible (don't hide silently).
+      if (branches.length === 0) return true;
+      return branches.some((b) => allowedLocations.includes(b));
+    });
+    return inScope
+      .map((u) => ({
+        name: u.display_name || u.username || u.email,
+        branch: u.assigned_branch || "",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [users, allowedLocations]);
+
+  const visibleTickets = useMemo(() => {
+    let list = myTickets;
+    if (tab === "todo") list = list.filter((t) => !isDone(t.status));
+    else if (tab === "done") list = list.filter((t) => isDone(t.status));
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((t) =>
+        [t.ticketNo, t.customer, t.city, t.model, t.status, t.location].some((v) =>
+          (v || "").toLowerCase().includes(q)
+        )
+      );
+    }
+    return list;
+  }, [myTickets, tab, search]);
+
+  const activeTicket = useMemo(
+    () => tickets.find((t) => t.ticketNo === activeTicketNo) || null,
+    [tickets, activeTicketNo]
+  );
+
+  // (goDesktop removed — mobile is a separate surface; users stay here.)
+
+  const openTicket = (t: Ticket) => {
+    setActiveTicketNo(t.ticketNo);
+    setDetailTab("general");
+    setView("detail");
+  };
+
+  // Slide-in side navigation replaced by persistent bottom nav bar.
+
+  const headerName = displayName || email || "User";
+  const companyLabel = companyId || "AH";
+
+  // Unified back navigation for the top-bar back button.
+  const handleTopBack = () => {
+    if (view === "detail") {
+      setView("tickets");
+    } else if (view === "map") {
+      setView("tickets");
+    }
+    // All other views are directly reachable from the bottom nav —
+    // no in-header back needed.
+  };
+
+  // Show the in-header back arrow only for detail (ticket report sub-view).
+  // Route map is a bottom-nav primary destination so no back needed there.
+  const showTopBack = view === "detail";
+
+  // The five primary tabs shown in the bottom nav.
+  const activeBottomTab: BottomTab =
+    view === "chat"
+      ? "chat"
+      : view === "sheets"
+      ? "sheets"
+      : view === "payroll"
+      ? "payroll"
+      : view === "map"
+      ? "route"
+      : "tickets"; // tickets, roster, detail, home, parts all highlight Tickets
+
+  return (
+    <div className="mtech">
+      {/* ── Fixed top header ───────────────────────────────────────── */}
+      <AppHeaderMobile
+        logoSrc={logo}
+        userName={headerName}
+        showBack={showTopBack}
+        onBack={handleTopBack}
+        onOpenTimecard={() => setView("timecard")}
+        showClockInTeam={isAttendanceManagerTierRole(role)}
+        onOpenClockInTeam={() => setView("clockinteam")}
+        onSwitchToDesktop={() => {
+          setDesktopOverride(true);
+          navigate({ to: "/home", replace: true });
+        }}
+        onLogout={logout}
+      />
+
+      {/* ── Scrollable content area ────────────────────────────────── */}
+      <div className="mtech-content">
+        {view === "roster" && (
+          <RosterView
+            roster={roster}
+            onSelect={(tech) => {
+              setSelectedTech(tech);
+              setTab("todo");
+              setView("tickets");
+            }}
+          />
+        )}
+
+        {view === "tickets" && (
+          <TicketsView
+            loading={loading}
+            tickets={visibleTickets}
+            tab={tab}
+            setTab={setTab}
+            search={search}
+            setSearch={setSearch}
+            onOpen={openTicket}
+            techLabel={scopeTech || ""}
+          />
+        )}
+
+        {view === "map" && (
+          <RouteMapView
+            tickets={myTickets.filter((t) => {
+              if (isDone(t.status)) return false;
+              const status = String(t.status || "").toLowerCase();
+              if (status.startsWith("csr-assigned to asc")) return false;
+              if (status.startsWith("csr-needs scheduling")) return false;
+              if (status.startsWith("pt-")) return false;
+              if (status.includes("resched")) return false;
+              const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
+              if (!rawDate) return false;
+              const today = new Date();
+              const yyyy = today.getFullYear();
+              const mm = String(today.getMonth() + 1).padStart(2, "0");
+              const dd = String(today.getDate()).padStart(2, "0");
+              const todayIso = `${yyyy}-${mm}-${dd}`;
+              if (rawDate.startsWith(todayIso)) return true;
+              const usMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+              if (usMatch) {
+                const yy = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
+                const iso = `${yy}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+                return iso === todayIso;
+              }
+              return false;
+            })}
+            onBackToTickets={() => setView("tickets")}
+          />
+        )}
+
+        {view === "detail" && activeTicket && (
+          <DetailView
+            ticket={activeTicket}
+            tab={detailTab}
+            setTab={setDetailTab}
+            companyId={companyId}
+            authorName={displayName || email || "User"}
+            authorRole={role || ""}
+            profileId={profileId}
+          />
+        )}
+
+        {view === "chat" && (
+          <ChatView
+            firebaseUid={uid || ""}
+            authorName={displayName || email || "User"}
+          />
+        )}
+
+        {view === "sheets" && (
+          <MobileStubView
+            title="Tech Sheets"
+            message="Tech Sheets browsing is best experienced on desktop. Open the desktop site on a computer to look up model documents."
+          />
+        )}
+
+        {view === "payroll" && (
+          <MobilePayrollView userName={headerName} profileId={profileId} />
+        )}
+
+        {view === "timecard" && (
+          <MobileTimecardView uid={uid} profileId={profileId} userName={headerName} />
+        )}
+
+        {view === "clockinteam" && (
+          <MobileClockInTeamView profileId={profileId} />
+        )}
+
+        {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
+        {view === "home" && (
+          <MobileHomeView
+            userName={headerName}
+            openTickets={myTickets.filter((t) => !isDone(t.status)).length}
+            onOpenTickets={() => setView("tickets")}
+            onOpenPayroll={() => setView("payroll")}
+            onOpenParts={() => setView("sheets")}
+            onOpenSheets={() => setView("sheets")}
+          />
+        )}
+
+        {view === "parts" && (
+          <MobileStubView
+            title="Part Pickup"
+            message="Part pickup workflows are being redesigned for mobile. Use the desktop site to record part pickups."
+          />
+        )}
+      </div>
+
+      {/* ── Persistent bottom navigation bar ──────────────────────── */}
+      <BottomNav
+        active={activeBottomTab}
+        onSelect={(tab) => {
+          if (tab === "tickets") setView(isSelfRole ? "tickets" : "roster");
+          else if (tab === "route") setView("map");
+          else setView(tab);
+        }}
+      />
+    </div>
+  );
+}
+
+// ── New top header — logo left, profile bubble right ─────────────────────
+function AppHeaderMobile({
+  logoSrc,
+  userName,
+  showBack,
+  onBack,
+  onOpenTimecard,
+  showClockInTeam,
+  onOpenClockInTeam,
+  onSwitchToDesktop,
+  onLogout,
+}: {
+  logoSrc: string;
+  userName: string;
+  showBack: boolean;
+  onBack: () => void;
+  onOpenTimecard: () => void;
+  showClockInTeam: boolean;
+  onOpenClockInTeam: () => void;
+  onSwitchToDesktop: () => void;
+  onLogout: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  const initials = userName
+    .split(/[\s.@]/)[0]
+    .slice(0, 2)
+    .toUpperCase() || "U";
+  return (
+    <header className="mtech-app-header">
+      {/* Left: optional back arrow for sub-views like detail/map */}
+      <div className="mtech-app-header-left">
+        {showBack ? (
+          <button
+            className="mtech-app-header-back"
+            onClick={onBack}
+            type="button"
+            aria-label="Back"
+          >
+            ‹
+          </button>
+        ) : (
+          <img src={logoSrc} alt="AH Solutions" className="mtech-app-header-logo" />
+        )}
+      </div>
+
+      {/* Center: app name wordmark */}
+      <div className="mtech-app-header-title">Admin Hub</div>
+
+      {/* Right: profile bubble → logout dropdown */}
+      <div className="mtech-app-header-right">
+        <button
+          type="button"
+          className="mtech-app-profile-btn"
+          onClick={() => setMenu((m) => !m)}
+          aria-label="Account menu"
+        >
+          {initials}
+        </button>
+        {menu && (
+          <>
+            <div className="mtech-menu-overlay" onClick={() => setMenu(false)} />
+            <div className="mtech-app-profile-menu">
+              <div className="mtech-app-profile-name">{userName}</div>
+              <div className="mtech-app-profile-divider" />
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenTimecard(); }}
+              >
+                🕐 Timecard
+              </button>
+              {showClockInTeam && (
+                <button
+                  type="button"
+                  className="mtech-app-profile-timecard"
+                  onClick={() => { setMenu(false); onOpenClockInTeam(); }}
+                >
+                  👥 Clock In Team
+                </button>
+              )}
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onSwitchToDesktop(); }}
+              >
+                🖥️ Desktop Site
+              </button>
+              <button
+                type="button"
+                className="mtech-app-profile-logout"
+                onClick={() => { setMenu(false); onLogout(); }}
+              >
+                🚪 Sign out
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </header>
+  );
+}
+
+// ── Persistent bottom navigation bar ────────────────────────────────────
+type BottomTab = "tickets" | "route" | "chat" | "sheets" | "payroll";
+const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }> = [
+  { id: "tickets", label: "Tickets",   icon: <TicketIcon  className="mtech-bottom-tab-svg" /> },
+  { id: "route",   label: "Route",     icon: <MapPin      className="mtech-bottom-tab-svg" /> },
+  { id: "chat",    label: "Chat",      icon: <MessageCircle className="mtech-bottom-tab-svg" /> },
+  { id: "sheets",  label: "Tech Sheet",icon: <FileText    className="mtech-bottom-tab-svg" /> },
+  { id: "payroll", label: "Payroll",   icon: <DollarSign  className="mtech-bottom-tab-svg" /> },
+];
+
+function BottomNav({
+  active,
+  onSelect,
+}: {
+  active: BottomTab;
+  onSelect: (tab: BottomTab) => void;
+}) {
+  return (
+    <nav className="mtech-bottom-nav" aria-label="Main navigation">
+      {BOTTOM_TABS.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={`mtech-bottom-tab${active === tab.id ? " mtech-bottom-tab-active" : ""}`}
+          onClick={() => onSelect(tab.id)}
+          aria-label={tab.label}
+          aria-current={active === tab.id ? "page" : undefined}
+        >
+          <span className="mtech-bottom-tab-icon">{tab.icon}</span>
+          <span className="mtech-bottom-tab-label">{tab.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function RosterView({
+  roster,
+  onSelect,
+}: {
+  roster: Array<{ name: string; branch: string }>;
+  onSelect: (tech: string) => void;
+}) {
+  return (
+    <div className="mtech-scroll">
+      {roster.length === 0 && <div className="mtech-empty">No technicians in your locations.</div>}
+      {roster.map((tech) => (
+        <button
+          key={tech.name}
+          className="mtech-roster-card"
+          onClick={() => onSelect(tech.name)}
+          type="button"
+        >
+          <div className="mtech-roster-info">
+            <span className="mtech-roster-role">Technician{tech.branch ? ` · ${tech.branch}` : ""}</span>
+            <span className="mtech-roster-name">{tech.name}</span>
+          </div>
+          <span className="mtech-roster-chev">›</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TicketsView({
+  loading,
+  tickets,
+  tab,
+  setTab,
+  search,
+  setSearch,
+  onOpen,
+  techLabel,
+}: {
+  loading: boolean;
+  tickets: Ticket[];
+  tab: "todo" | "done" | "search";
+  setTab: (t: "todo" | "done" | "search") => void;
+  search: string;
+  setSearch: (s: string) => void;
+  onOpen: (t: Ticket) => void;
+  techLabel: string;
+}) {
+  const today = new Date().toLocaleDateString("en-US");
+  return (
+    <>
+      <div className="mtech-subbar">
+        <span className="mtech-date">{techLabel ? techLabel : today}</span>
+      </div>
+
+      <div className="mtech-tabs">
+        <button className={tab === "todo" ? "active" : ""} onClick={() => setTab("todo")} type="button">
+          To Do
+        </button>
+        <button className={tab === "done" ? "active" : ""} onClick={() => setTab("done")} type="button">
+          Done
+        </button>
+        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} type="button">
+          Search
+        </button>
+      </div>
+
+      {tab === "search" && (
+        <div className="mtech-searchbar">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search ticket, customer, city..."
+          />
+        </div>
+      )}
+
+      <div className="mtech-scroll">
+        {loading && <div className="mtech-empty">Loading tickets…</div>}
+        {!loading && tickets.length === 0 && <div className="mtech-empty">No tickets here.</div>}
+        {!loading &&
+          tickets.map((t, i) => (
+            <button key={t.ticketNo} className="mtech-ticket-card" onClick={() => onOpen(t)} type="button">
+              {/* Left accent strip with tone color */}
+              <div className={`mtech-ticket-accent ${statusTone(t.status)}`} />
+              {/* Card body */}
+              <div className="mtech-ticket-body">
+                <div className="mtech-ticket-row-top">
+                  <span className="mtech-ticket-no">{t.ticketNo}</span>
+                  <span className={`mtech-ticket-tone-badge ${statusTone(t.status)}`}>
+                    {openDays(t)}d
+                  </span>
+                </div>
+                <div className="mtech-ticket-customer">{t.customer || "—"}</div>
+                <div className="mtech-ticket-meta-row">
+                  <span className="mtech-ticket-meta-chip">{resolveLocation(t)}</span>
+                  {t.warranty && <span className="mtech-ticket-meta-chip">{t.warranty}</span>}
+                  {t.city && <span className="mtech-ticket-meta-chip">{t.city}</span>}
+                </div>
+                <div className="mtech-ticket-status-line">{t.status}</div>
+                {t.schedule && (
+                  <div className="mtech-ticket-sched">
+                    {t.schedule}
+                    {t.model ? ` · ${t.model}` : ""}
+                  </div>
+                )}
+              </div>
+              <span className="mtech-ticket-chev-icon">
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            </button>
+          ))}
+      </div>
+    </>
+  );
+}
+
+function RouteMapView({
+  tickets,
+  onBackToTickets,
+}: {
+  tickets: Ticket[];
+  onBackToTickets: () => void;
+}) {
+  const mapEl = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
+  const dirRendererRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+
+  // Company-wide map provider (see migration 0050) — set from /m/admin.
+  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
+    return () => { cancelled = true; };
+  }, []);
+  const leafletMapRef = useRef<Leaflet.Map | null>(null);
+  const leafletMarkersRef = useRef<Leaflet.Marker[]>([]);
+  const leafletRouteLineRef = useRef<Leaflet.Layer | null>(null);
+  const [L, setL] = useState<typeof Leaflet | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(null);
+  const [stops, setStops] = useState<Array<{ ticket: Ticket; pos: { lat: number; lng: number } }>>([]);
+  const [legs, setLegs] = useState<
+    Array<{ ticketNo: string; customer: string; address: string; distance: string; duration: string; pos: { lat: number; lng: number } }>
+  >([]);
+  const [routing, setRouting] = useState(true);
+  // Toggle a full-screen mode where the directions list, top bar, and
+  // Start Navigation button are hidden so only the map + its zoom/pan
+  // controls are visible. Handy for eyeballing pin positions or showing
+  // the route to a customer without the surrounding chrome.
+  const [expanded, setExpanded] = useState(false);
+  // When the map container resizes (expand toggle) tell the map engine to
+  // recompute so the tiles fill the new dimensions and the route stays
+  // centered.
+  useEffect(() => {
+    if (!mapProvider) return;
+    // Give the DOM a beat to flip classes / re-layout before recalculating.
+    const t = window.setTimeout(() => {
+      try {
+        if (mapProvider === "google") {
+          const map = mapRef.current;
+          const maps = (window as any).google?.maps;
+          if (!map || !maps) return;
+          maps.event.trigger(map, "resize");
+          if (stops.length > 0) {
+            const bounds = new maps.LatLngBounds();
+            for (const s of stops) bounds.extend(s.pos);
+            if (origin) bounds.extend(origin);
+            map.fitBounds(bounds, 40);
+          }
+        } else {
+          const map = leafletMapRef.current;
+          if (!map || !L) return;
+          map.invalidateSize();
+          if (stops.length > 0) {
+            const points = stops.map((s) => [s.pos.lat, s.pos.lng] as [number, number]);
+            if (origin) points.push([origin.lat, origin.lng]);
+            map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+          }
+        }
+      } catch (err) {
+        console.warn("map resize skipped", err);
+      }
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [expanded, stops, origin, mapProvider, L]);
+
+  // Try to get the technician's current location for the route origin.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (p) => setOrigin({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => {
+        /* permission denied — we'll route between stops only */
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }, []);
+
+  // Instantiate the Google map once Google is the active provider.
+  useEffect(() => {
+    if (mapProvider !== "google") return;
+    let cancelled = false;
+    loadGoogleMapsScript()
+      .then(() => {
+        if (cancelled || !mapEl.current) return;
+        const g = (window as any).google;
+        if (!g?.maps) return;
+        if (!mapRef.current) {
+          mapRef.current = new g.maps.Map(mapEl.current, {
+            zoom: 9,
+            center: { lat: 39.5, lng: -98.35 },
+            disableDefaultUI: true,
+            zoomControl: true,
+            gestureHandling: "greedy",
+          });
+          dirRendererRef.current = new g.maps.DirectionsRenderer({
+            map: mapRef.current,
+            suppressMarkers: true,
+            polylineOptions: { strokeColor: "#5b7eff", strokeWeight: 5 },
+          });
+        }
+        setMapReady(true);
+      })
+      .catch(() => { if (!cancelled) setError("Google Maps failed to load."); });
+    return () => {
+      cancelled = true;
+      mapRef.current = null;
+      dirRendererRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider]);
+
+  // Load the Leaflet module (client-only) once it's the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || L) return;
+    let cancelled = false;
+    getLeaflet().then((mod) => { if (!cancelled) setL(mod); });
+    return () => { cancelled = true; };
+  }, [mapProvider, L]);
+
+  // Instantiate the Leaflet map once Leaflet is the active provider.
+  useEffect(() => {
+    if (mapProvider !== "leaflet" || !L || !mapEl.current) return;
+    const container = mapEl.current;
+    const map = L.map(container, { zoom: 9, center: [39.5, -98.35], zoomControl: true });
+    L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    leafletMapRef.current = map;
+    const detachResizeFix = attachLeafletResizeFix(map, container);
+    setMapReady(true);
+    return () => {
+      detachResizeFix();
+      map.remove();
+      leafletMapRef.current = null;
+      leafletRouteLineRef.current = null;
+      setMapReady(false);
+    };
+  }, [mapProvider, L]);
+
+  // Geocode stops + build the route once the map is ready. Google mode uses
+  // real turn-by-turn driving directions (DirectionsService); Leaflet mode
+  // uses Geoapify's Routing API (same key as geocoding) for real driving
+  // distance/routes too — only falls back to a straight line if that
+  // routing call itself fails.
+  useEffect(() => {
+    if (!mapProvider) return;
+    const activeMap = mapProvider === "google" ? mapRef.current : leafletMapRef.current;
+    if (!activeMap) return;
+    if (mapProvider === "leaflet" && !L) return;
+    let cancelled = false;
+
+    const buildRoute = async () => {
+      setRouting(true);
+      setError(null);
+      const geocode = makeGeocoder(mapProvider);
+
+      // Geocode each ticket stop in ticket order.
+      const resolved: Array<{ ticket: Ticket; pos: { lat: number; lng: number } }> = [];
+      for (const t of tickets) {
+        const addr = fmtAddress(t) || t.city || t.location;
+        if (!addr) continue;
+        const pos = await geocode(addr);
+        if (cancelled) return;
+        if (pos) resolved.push({ ticket: t, pos });
+      }
+      setStops(resolved);
+
+      // Place Work-Planner-style badge markers (rounded box + pointer, white
+      // border, technician initials + stop number) for each stop.
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+      leafletMarkersRef.current.forEach((m) => m.remove());
+      leafletMarkersRef.current = [];
+      const badgeColors = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899"];
+      resolved.forEach((s, i) => {
+        const initials = getInitials(s.ticket.technician);
+        const label = `${initials}${i + 1}`;
+        const color = badgeColors[i % badgeColors.length];
+        const title = `${s.ticket.ticketNo} - ${s.ticket.customer}`;
+        if (mapProvider === "google") {
+          const g = (window as any).google;
+          const svgMarker = {
+            path: "M2 2 L38 2 Q40 2 40 4 L40 16 Q40 18 38 18 L22 18 L20 22 L18 18 L2 18 Q0 18 0 16 L0 4 Q0 2 2 2 Z",
+            fillColor: color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 2,
+            scale: 1.8,
+            anchor: new g.maps.Point(20, 22),
+            labelOrigin: new g.maps.Point(20, 10),
+          };
+          const marker = new g.maps.Marker({
+            map: mapRef.current,
+            position: s.pos,
+            title,
+            icon: svgMarker,
+            label: { text: label, color: "#ffffff", fontSize: "13px", fontWeight: "bold" },
+          });
+          markersRef.current.push(marker);
+        } else {
+          const marker = L!.marker([s.pos.lat, s.pos.lng], {
+            icon: createBadgeDivIcon(
+              L!,
+              `<div style="background:${color};color:#fff;font-size:13px;font-weight:bold;border:2px solid #fff;border-radius:6px;padding:2px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${label}</div>`,
+              { className: "mtech-stop-marker", anchor: "bottom" },
+            ),
+            title,
+          }).addTo(activeMap as Leaflet.Map);
+          leafletMarkersRef.current.push(marker);
+        }
+      });
+
+      if (resolved.length === 0) {
+        setRouting(false);
+        setError("No mappable stops for these tickets.");
+        return;
+      }
+
+      // origin = device location (or first stop); destination = last stop;
+      // the middle stops become ordered waypoints.
+      const start = origin || resolved[0].pos;
+      const points = origin ? resolved : resolved.slice(1);
+      if (points.length === 0) {
+        if (mapProvider === "google") {
+          mapRef.current.setCenter(resolved[0].pos);
+          mapRef.current.setZoom(13);
+        } else {
+          (activeMap as Leaflet.Map).setView([resolved[0].pos.lat, resolved[0].pos.lng], 13);
+        }
+        setLegs([
+          {
+            ticketNo: resolved[0].ticket.ticketNo,
+            customer: resolved[0].ticket.customer || "",
+            address: fmtAddress(resolved[0].ticket),
+            distance: "",
+            duration: "",
+            pos: resolved[0].pos,
+          },
+        ]);
+        setRouting(false);
+        return;
+      }
+
+      const destination = points[points.length - 1].pos;
+
+      if (mapProvider === "google") {
+        const g = (window as any).google;
+        const waypoints = points.slice(0, -1).map((p) => ({ location: p.pos, stopover: true }));
+        const ds = new g.maps.DirectionsService();
+        ds.route(
+          {
+            origin: start,
+            destination,
+            waypoints,
+            optimizeWaypoints: false,
+            travelMode: g.maps.TravelMode.DRIVING,
+          },
+          (result: any, status: string) => {
+            if (cancelled) return;
+            if (status === "OK" && result) {
+              dirRendererRef.current.setDirections(result);
+              const route = result.routes[0];
+              const legInfo = route.legs.map((leg: any, i: number) => {
+                const t = points[i]?.ticket;
+                return {
+                  ticketNo: t?.ticketNo || "",
+                  customer: t?.customer || "",
+                  address: leg.end_address || "",
+                  distance: leg.distance?.text || "",
+                  duration: leg.duration?.text || "",
+                  pos: points[i]?.pos,
+                };
+              });
+              setLegs(legInfo);
+            } else {
+              setError("Could not build a driving route. Showing stops only.");
+              const bounds = new g.maps.LatLngBounds();
+              resolved.forEach((s) => bounds.extend(s.pos));
+              mapRef.current.fitBounds(bounds);
+            }
+            setRouting(false);
+          }
+        );
+      } else {
+        // Real driving route via Geoapify's Routing API (Leaflet-mode
+        // equivalent of Google's DirectionsService) — falls back to a
+        // straight line only if the routing call itself fails.
+        const routePoints = [start, ...points.map((p) => p.pos)];
+        const route = await routeGeoapify(routePoints, "drive");
+        if (cancelled) return;
+
+        leafletRouteLineRef.current?.remove();
+        leafletRouteLineRef.current = route
+          ? L!.geoJSON(route.geometry, { style: { color: "#5b7eff", weight: 5 } }).addTo(activeMap as Leaflet.Map)
+          : L!.polyline(routePoints.map((p) => [p.lat, p.lng] as [number, number]), { color: "#5b7eff", weight: 5 }).addTo(activeMap as Leaflet.Map);
+
+        const legInfo = points.map((p, i) => {
+          const leg = route?.legs[i];
+          if (leg) {
+            return {
+              ticketNo: p.ticket.ticketNo,
+              customer: p.ticket.customer || "",
+              address: fmtAddress(p.ticket),
+              distance: `${metersToMiles(leg.distanceMeters).toFixed(1)} mi`,
+              duration: formatDuration(leg.durationSeconds),
+              pos: p.pos,
+            };
+          }
+          const from = i === 0 ? start : points[i - 1].pos;
+          const miles = haversineMiles(from, p.pos);
+          return {
+            ticketNo: p.ticket.ticketNo,
+            customer: p.ticket.customer || "",
+            address: fmtAddress(p.ticket),
+            distance: `${miles.toFixed(1)} mi (straight-line)`,
+            duration: "",
+            pos: p.pos,
+          };
+        });
+        setLegs(legInfo);
+        if (!route) setError("Could not build a driving route. Showing straight-line stops only.");
+        (activeMap as Leaflet.Map).fitBounds(L!.latLngBounds(routePoints.map((p) => [p.lat, p.lng] as [number, number])), { padding: [40, 40] });
+        setRouting(false);
+      }
+    };
+
+    void buildRoute();
+
+    return () => {
+      cancelled = true;
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+      leafletMarkersRef.current.forEach((m) => m.remove());
+      leafletMarkersRef.current = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickets, origin, mapProvider, mapReady, L]);
+
+  // Format a stop's destination string for the Google Maps deep link.
+  // Passing the real street address makes Google Maps drop a properly
+  // labeled pin at the building (instead of a freeform "Dropped pin"
+  // somewhere near the lat/lng we geocoded ourselves).
+  // Falls back to lat/lng only when we have no usable address.
+  const stopDestination = (
+    ticket: Ticket | undefined,
+    pos: { lat: number; lng: number } | null,
+  ): string => {
+    const addr = ticket ? fmtAddress(ticket).trim() : "";
+    if (addr) return addr;
+    const city = [ticket?.city, ticket?.state, ticket?.zip]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (city) return city;
+    if (pos) return `${pos.lat},${pos.lng}`;
+    return "";
+  };
+
+  // Open the full multi-stop route in the device's Google Maps (turn-by-turn).
+  const openInGoogleMaps = () => {
+    if (stops.length === 0) return;
+    const destinations = stops.map((s) => stopDestination(s.ticket, s.pos)).filter(Boolean);
+    if (destinations.length === 0) return;
+    const destination = destinations[destinations.length - 1];
+    const waypoints = destinations.slice(0, -1);
+    const params = new URLSearchParams({ api: "1", destination, travelmode: "driving" });
+    if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
+    if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+    window.open(
+      `https://www.google.com/maps/dir/?${params.toString()}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
+  // Navigate to a single stop from the directions list. Prefer the
+  // address string so the destination pin in Google Maps lands on the
+  // actual building. Lat/lng is kept only as a fallback when we don't
+  // have an address.
+  const navigateToStop = (
+    ticketNoOrNull: string | null,
+    pos: { lat: number; lng: number } | null,
+  ) => {
+    const t = ticketNoOrNull
+      ? tickets.find((x) => x.ticketNo === ticketNoOrNull)
+      : undefined;
+    const dest = stopDestination(t, pos);
+    if (!dest) return;
+    const params = new URLSearchParams({ api: "1", destination: dest, travelmode: "driving" });
+    if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
+    window.open(
+      `https://www.google.com/maps/dir/?${params.toString()}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
+  return (
+    <div className={`mtech-route ${expanded ? "mtech-route-expanded" : ""}`}>
+      {!expanded && (
+        <div className="mtech-subbar">
+          <span className="mtech-date">{new Date().toLocaleDateString("en-US")}</span>
+        </div>
+      )}
+
+      <div className={`mtech-map-wrap ${expanded ? "expanded" : ""}`}>
+        <div className="mtech-map" ref={mapEl}>
+          {error && <div className="mtech-empty">{error}</div>}
+        </div>
+        {/* Expand / collapse toggle — floats over the top-right of the
+            map so the tech can flip to a full-screen view of just the
+            pinned tickets and back without losing route context. */}
+        <button
+          type="button"
+          className="mtech-map-expand"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Exit full-screen map" : "Full-screen map"}
+        >
+          {expanded ? "✕ Close" : "⛶ Expand"}
+        </button>
+      </div>
+
+      {!expanded && (
+        <button className="mtech-nav-btn" onClick={openInGoogleMaps} type="button" disabled={stops.length === 0}>
+          🧭 Start Navigation
+        </button>
+      )}
+
+      {!expanded && (
+        <div className="mtech-directions">
+          <div className="mtech-directions-title">
+            {routing ? "Building route…" : `Route · ${legs.length} stop${legs.length === 1 ? "" : "s"}`}
+          </div>
+          {legs.map((leg, i) => (
+            <button
+              key={`${leg.ticketNo}-${i}`}
+              className="mtech-direction-row"
+              onClick={() => navigateToStop(leg.ticketNo, leg.pos)}
+              type="button"
+            >
+              <span className="mtech-direction-num">{i + 1}</span>
+              <span className="mtech-direction-info">
+                <span className="mtech-direction-cust">{leg.customer || leg.ticketNo}</span>
+                <span className="mtech-direction-addr">{leg.address}</span>
+              </span>
+              <span className="mtech-direction-meta">
+                {leg.duration && <span>{leg.duration}</span>}
+                {leg.distance && <span className="mtech-direction-dist">{leg.distance}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailView({
+  ticket,
+  tab,
+  setTab,
+  companyId,
+  authorName,
+  authorRole,
+  profileId,
+}: {
+  ticket: Ticket;
+  tab: DetailTab;
+  setTab: (t: DetailTab) => void;
+  companyId: string | null;
+  authorName: string;
+  authorRole: string;
+  profileId: string | null;
+}) {
+  // Mobile popup alerts — fires once per ticket-open (this component mounts
+  // fresh whenever a different ticket is opened; it does NOT remount on tab
+  // switches, so this doesn't re-fire every time the tech taps a tab).
+  const ticketDbId = (ticket as any)._id as string | undefined;
+  const [popupAlerts, setPopupAlerts] = useState<TicketAlert[]>([]);
+  useEffect(() => {
+    setPopupAlerts([]);
+    if (!ticketDbId || !profileId) return;
+    let cancelled = false;
+    getUndismissedMobilePopupAlerts(ticketDbId, profileId)
+      .then((alerts) => { if (!cancelled) setPopupAlerts(alerts); })
+      .catch((err) => console.error("getUndismissedMobilePopupAlerts error:", err));
+    return () => { cancelled = true; };
+  }, [ticketDbId, profileId]);
+
+  const dismissPopupAlerts = async () => {
+    if (!profileId) { setPopupAlerts([]); return; }
+    const ids = popupAlerts.map((a) => a.id);
+    setPopupAlerts([]);
+    try {
+      await Promise.all(ids.map((id) => dismissTicketAlert(id, profileId)));
+    } catch (err) {
+      console.error("dismissTicketAlert error:", err);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      {popupAlerts.length > 0 && (
+        <TicketAlertPopup alerts={popupAlerts} onDismiss={() => void dismissPopupAlerts()} />
+      )}
+      {/* Always-on ticket info header */}
+      <div className="mtech-detail-head">
+        <div className="mtech-detail-headinfo">
+          <div className="mtech-detail-no">{ticket.ticketNo}</div>
+          <div className="mtech-detail-status">🔖 {ticket.status}</div>
+          <div className="mtech-detail-line">👤 {ticket.customer || "—"}</div>
+          <div className="mtech-detail-line">
+            🕑 {ticket.schedule || "Unscheduled"} {ticket.city ? `@ ${ticket.city}` : ""}
+          </div>
+          <div className="mtech-detail-line">
+            📦 {ticket.model} <span className="mtech-ticket-product">({productLabel(ticket)})</span>
+          </div>
+        </div>
+        <div className={`mtech-detail-railbadge ${statusTone(ticket.status)}`}>
+          <span>{resolveLocation(ticket)}</span>
+          <span>{openDays(ticket)}d</span>
+          {ticket.warranty && <span>{ticket.warranty}</span>}
+        </div>
+      </div>
+
+      {/* Tabs only exist inside an open ticket */}
+      <div className="mtech-detail-tabs">
+        <button className={tab === "general" ? "active" : ""} onClick={() => setTab("general")} type="button">
+          General
+        </button>
+        <button className={tab === "tracking" ? "active" : ""} onClick={() => setTab("tracking")} type="button">
+          Service Tracking
+        </button>
+        <button className={tab === "parts" ? "active" : ""} onClick={() => setTab("parts")} type="button">
+          Parts
+        </button>
+        <button className={tab === "billing" ? "active" : ""} onClick={() => setTab("billing")} type="button">
+          Billing
+        </button>
+      </div>
+
+      {tab === "general" && (
+        <DetailsTab ticket={ticket} authorName={authorName} authorRole={authorRole} />
+      )}
+      {tab === "tracking" && <RepairTab ticket={ticket} authorName={authorName} />}
+      {tab === "parts" && <PartsTab ticket={ticket} authorName={authorName} />}
+      {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
+    </div>
+  );
+}
+
+/** Centered, blocking popup for mobile-flagged ticket alerts. No exact
+    centered-dialog precedent existed in this file (the only prior overlay,
+    the profile menu, is a corner dropdown) — new class names below. */
+function TicketAlertPopup({ alerts, onDismiss }: { alerts: TicketAlert[]; onDismiss: () => void }) {
+  return (
+    <div className="mtech-alert-popup-scrim">
+      <div className="mtech-alert-popup-card">
+        <div className="mtech-alert-popup-title">⚠️ Alert{alerts.length > 1 ? "s" : ""}</div>
+        <div className="mtech-alert-popup-body">
+          {alerts.map((alert) => (
+            <p key={alert.id} className="mtech-alert-popup-text">{alert.text}</p>
+          ))}
+        </div>
+        <button type="button" className="mtech-btn mtech-btn-primary mtech-alert-popup-ok" onClick={onDismiss}>
+          OK, got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, type }: { label: string; value?: string; type?: "phone" }) {
+  const digits = type === "phone" ? String(value || "").replace(/[^\d+]/g, "") : "";
+  return (
+    <div className="mtech-inforow">
+      <span className="mtech-info-label">{label}</span>
+      {type === "phone" && digits ? (
+        <a href={`tel:${digits}`} className="mtech-info-value mtech-phone-link" title={`Call ${value}`}>
+          {value}
+        </a>
+      ) : (
+        <span className="mtech-info-value">{value || "—"}</span>
+      )}
+    </div>
+  );
+}
+
+/** Like InfoRow, but stacked (label above value) with real line breaks
+    preserved — needed for the Service Performed field, which is
+    multi-line free text. */
+function ServiceSection({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mtech-service-section">
+      <div className="mtech-info-label">{label}</div>
+      <div className="mtech-service-section-value">{value}</div>
+    </div>
+  );
+}
+
+/** Live, read-only list of parts currently marked "Used" on this ticket -
+    not something the tech types, so it's rendered separately from
+    Service Performed rather than as one of its sections. */
+function PartsUsedList({ parts }: { parts: UIPartRow[] }) {
+  if (parts.length === 0) return null;
+  const value = parts
+    .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
+    .join("\n");
+  return <ServiceSection label="Parts Used" value={value} />;
+}
+
+function DetailsTab({
+  ticket,
+  authorName,
+  authorRole,
+}: {
+  ticket: Ticket;
+  authorName: string;
+  authorRole: string;
+}) {
+  // Per-model reference links (Exploded View / Service Bulletin) — same
+  // model_resources data the desktop ticket page's Product Information
+  // section shows, just never wired up on mobile before. Shared across
+  // every ticket carrying this model number, so a tech adding one in the
+  // field also benefits everyone else on the same model.
+  const [modelResources, setModelResources] = useState<ModelResources>({
+    model: "", explodedViewUrl: "", serviceBulletinUrl: "",
+  });
+  const [editingResource, setEditingResource] = useState<"exploded" | "bulletin" | null>(null);
+  const [resourceDraft, setResourceDraft] = useState("");
+  const [savingResource, setSavingResource] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!ticket.model) {
+      setModelResources({ model: "", explodedViewUrl: "", serviceBulletinUrl: "" });
+      return;
+    }
+    getModelResources(ticket.model)
+      .then((res) => { if (!cancelled) setModelResources(res); })
+      .catch((err) => console.error("getModelResources error:", err));
+    return () => { cancelled = true; };
+  }, [ticket.model]);
+
+  const beginEditResource = (kind: "exploded" | "bulletin") => {
+    setEditingResource(kind);
+    setResourceDraft(kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl);
+  };
+  const cancelEditResource = () => {
+    setEditingResource(null);
+    setResourceDraft("");
+  };
+  const saveEditResource = async () => {
+    if (!editingResource || !ticket.model) return;
+    setSavingResource(true);
+    try {
+      const updated = await saveModelResources(ticket.model, {
+        explodedViewUrl: editingResource === "exploded" ? resourceDraft.trim() : modelResources.explodedViewUrl,
+        serviceBulletinUrl: editingResource === "bulletin" ? resourceDraft.trim() : modelResources.serviceBulletinUrl,
+      });
+      setModelResources(updated);
+      cancelEditResource();
+    } catch (err) {
+      console.error("saveModelResources error:", err);
+      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingResource(false);
+    }
+  };
+
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-actions">
+        <button type="button" disabled title="Coming soon">On my way</button>
+        <button type="button" disabled title="Coming soon">Check In</button>
+        <button type="button" disabled title="Coming soon">Check Out</button>
+      </div>
+
+      <div className="mtech-section-title">Customer</div>
+      <InfoRow label="Name" value={ticket.customer || [ticket.firstName, ticket.lastName].filter(Boolean).join(" ")} />
+      <InfoRow label="Phone" value={ticket.phone || ticket.secondPhone} type="phone" />
+      <InfoRow label="Location" value={resolveLocation(ticket)} />
+      {/* Tier Code — derived from warranty + zip. Shows "N/A" for warranty
+          companies outside the Assurant / GE / Miele set so techs can see
+          the field exists and that no tiered rate applies. */}
+      {(() => {
+        const tier = resolveTierCode(ticket.account || ticket.warranty, ticket.zip, (ticket as any).accountNo);
+        return <InfoRow label="Tier Code" value={tier ? tier.label : "N/A"} />;
+      })()}
+
+      <div className="mtech-section-title">Contact Details</div>
+      <InfoRow label="Address" value={ticket.address} />
+      <InfoRow label="Address 2" value={ticket.address2} />
+      <InfoRow label="State/Zip" value={[ticket.state, ticket.zip].filter(Boolean).join(" ")} />
+      <InfoRow label="Home Phone" value={ticket.phone} type="phone" />
+      <InfoRow label="Cell Phone" value={ticket.secondPhone} type="phone" />
+      <InfoRow label="Email" value={ticket.email} />
+
+      <div className="mtech-section-title">Product Information</div>
+      {ticket.model && (
+        <div className="mtech-visit-actions" style={{ flexWrap: "wrap" }}>
+          {(["exploded", "bulletin"] as const).map((kind) => {
+            const label = kind === "exploded" ? "Exploded View" : "Service Bulletin";
+            const url = kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl;
+            return url ? (
+              <a
+                key={kind}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mtech-btn mtech-btn-primary"
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}
+              >
+                <ExternalLink size={14} /> {label}
+              </a>
+            ) : (
+              <button
+                key={kind}
+                type="button"
+                className="mtech-btn"
+                onClick={() => beginEditResource(kind)}
+              >
+                + Add {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {editingResource && (
+        <div className="mtech-visit-edit">
+          <label className="mtech-visit-edit-label">
+            {editingResource === "exploded" ? "Exploded View" : "Service Bulletin"} link
+          </label>
+          <input
+            className="mtech-visit-edit-input"
+            type="url"
+            inputMode="url"
+            value={resourceDraft}
+            onChange={(e) => setResourceDraft(e.target.value)}
+            placeholder="https://…"
+            autoFocus
+          />
+          <div className="mtech-visit-edit-actions">
+            <button
+              type="button"
+              className="mtech-btn mtech-btn-primary"
+              disabled={savingResource}
+              onClick={() => void saveEditResource()}
+            >
+              {savingResource ? "Saving…" : "Save"}
+            </button>
+            <button type="button" className="mtech-btn" disabled={savingResource} onClick={cancelEditResource}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      <InfoRow label="Brand" value={ticket.manufacturer} />
+      <InfoRow label="Product Category" value={productLabel(ticket)} />
+      <InfoRow label="Model Code" value={ticket.model} />
+      <InfoRow label="Model Version" value={ticket.modelVersion} />
+      <InfoRow label="Serial No" value={ticket.serial} />
+      <InfoRow label="Cx Preferred Date" value={(ticket as any).customerPrefDate || ticket.schedule} />
+      <InfoRow label="Warranty Type" value={ticket.warranty} />
+      <InfoRow label="Redo" value={ticket.redo === "Y" ? "Yes" : "No"} />
+      {ticket.purchaseDate && <InfoRow label="Purchase Date" value={ticket.purchaseDate} />}
+
+      <div className="mtech-section-title">Problem Description</div>
+      <p className="mtech-problem">{ticket.problemDescription || "—"}</p>
+
+      {/* Servicer Notes thread lives at the bottom of General Information */}
+      <CommentThread ticket={ticket} authorName={authorName} authorRole={authorRole} />
+    </div>
+  );
+}
+
+function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string }) {
+  const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
+  const [loading, setLoading] = useState(true);
+  // Per-visit inline edit state. Techs can edit Repair Status, Cause
+  // of Failure, Service Performed, and Non-Completion Reason from the
+  // mobile app — everything else stays read-only because it's owned
+  // by dispatch / CSR on the desktop side.
+  const [editVisitId, setEditVisitId] = useState<string | null>(null);
+  // `service` holds the raw textarea text as typed, not a parsed sections
+  // object - it's only normalized (labels/blank-lines snapped back into
+  // place, Parts Used hint refreshed) on blur and on save, never on every
+  // keystroke. Recomposing live on every onChange looks tempting but fights
+  // the browser's own cursor position the instant someone types on the
+  // blank line reserved under a label (the normal, common case) - the
+  // canonical text always differs from what was just typed by one blank
+  // line, so a controlled <textarea> would reset the DOM value - and hence
+  // the cursor - on nearly every keystroke.
+  const [editDraft, setEditDraft] = useState<{
+    repairStatus: string;
+    diagnosis: string;
+    service: string;
+    nonCompletionReason: string;
+  }>({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
+  const [savingVisit, setSavingVisit] = useState(false);
+
+  // Parts Used isn't part of the free-text notes anymore - it's a live,
+  // read-only readout of whichever parts the Parts tab currently has
+  // marked "Used" on this ticket, attached only to the latest visit log
+  // entry (visits[0], since getTicketVisits orders newest-first). This tab
+  // unmounts/remounts on every switch (see the `{tab === "tracking" && ...}`
+  // gate above), so re-fetching here is enough to pick up a status change
+  // made moments ago on the Parts tab without any push/sync machinery.
+  const [usedParts, setUsedParts] = useState<UIPartRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const [rows, partRows] = await Promise.all([
+          getTicketVisits(ticket.ticketNo),
+          getTicketParts(ticket.ticketNo),
+        ]);
+        if (!cancelled) {
+          setVisits(rows as any);
+          setUsedParts(partRows.filter((p) => p.status === "Used"));
+        }
+      } catch (e) {
+        console.error("load visits failed", e);
+        if (!cancelled) {
+          setVisits([]);
+          setUsedParts([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.ticketNo]);
+
+  const fmtDate = (v: string) => {
+    if (!v) return "";
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? v : d.toLocaleDateString("en-US");
+  };
+
+  const beginEdit = (v: NonNullable<Ticket["visits"]>[number]) => {
+    setEditVisitId(v.id);
+    setEditDraft({
+      repairStatus: String(v.repairStatus ?? ""),
+      diagnosis: String(v.diagnosis ?? ""),
+      service: composeServicePerformed(parseServicePerformed(String(v.resolution ?? ""))),
+      nonCompletionReason: String(v.nonCompletionReason ?? ""),
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditVisitId(null);
+    setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
+  };
+
+  const saveEdit = async (visitId: string) => {
+    setSavingVisit(true);
+    try {
+      const original = visits.find((row) => row.id === visitId);
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
+      // updateTicketVisit overwrites every column (?? null fallback), so the
+      // full existing row must be spread first or fields the tech never
+      // touched (schedule date, technician, time slot, locked, ...) get
+      // silently nulled out.
+      await updateTicketVisit(visitId, {
+        ...original,
+        repairStatus: editDraft.repairStatus,
+        diagnosis: editDraft.diagnosis,
+        resolution,
+        nonCompletionReason: editDraft.nonCompletionReason,
+        updateReason: `Tech ${authorName || ""} updated visit`.trim(),
+      } as any);
+      // Reflect changes locally so the row updates without a re-fetch.
+      setVisits((prev) =>
+        prev.map((row) =>
+          row.id === visitId
+            ? {
+                ...row,
+                repairStatus: editDraft.repairStatus,
+                diagnosis: editDraft.diagnosis,
+                resolution,
+                nonCompletionReason: editDraft.nonCompletionReason,
+              }
+            : row,
+        ),
+      );
+      cancelEdit();
+    } catch (err) {
+      console.error("Failed to save visit edit", err);
+      alert(
+        `Failed to save visit: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setSavingVisit(false);
+    }
+  };
+
+  // "Complete" flow — save the visit edits and flip the parent ticket's
+  // repair status to "CL-Ready to Complete". Only available when the
+  // tech has filled BOTH Cause of Failure AND the Notes section of
+  // Service Performed. If the tech put anything into Non-Completion
+  // Reason, we assume the job wasn't finished and hide the button
+  // entirely; they save with Save instead.
+  const completeVisit = async (visitId: string) => {
+    setSavingVisit(true);
+    try {
+      // Force the visit's repair status to Ready to Complete so the visit
+      // log and the ticket status stay aligned.
+      const readyStatus = "CL-Ready to Complete";
+      const resolution = composeServicePerformed(parseServicePerformed(editDraft.service));
+      const original = visits.find((row) => row.id === visitId);
+      await updateTicketVisit(visitId, {
+        ...original,
+        repairStatus: readyStatus,
+        diagnosis: editDraft.diagnosis,
+        resolution,
+        nonCompletionReason: editDraft.nonCompletionReason,
+        updateReason: `Tech ${authorName || ""} marked visit complete`.trim(),
+      } as any);
+      // Push the same status to the ticket so it lands on the CSR/dispatch
+      // "Ready to Complete" bucket. If this fails we still keep the visit
+      // update so the tech's work isn't lost.
+      try {
+        await updateTicketStatus(ticket.ticketNo, readyStatus);
+      } catch (err) {
+        console.warn("Ticket status update failed after complete", err);
+      }
+      setVisits((prev) =>
+        prev.map((row) =>
+          row.id === visitId
+            ? {
+                ...row,
+                repairStatus: readyStatus,
+                diagnosis: editDraft.diagnosis,
+                resolution,
+                nonCompletionReason: editDraft.nonCompletionReason,
+              }
+            : row,
+        ),
+      );
+      cancelEdit();
+      alert("Ticket marked Ready to Complete.");
+    } catch (err) {
+      console.error("Failed to complete visit", err);
+      alert(
+        `Failed to complete: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    } finally {
+      setSavingVisit(false);
+    }
+  };
+
+  const canComplete =
+    editDraft.diagnosis.trim().length > 0 &&
+    parseServicePerformed(editDraft.service).notes.trim().length > 0 &&
+    editDraft.nonCompletionReason.trim().length === 0;
+
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-section-title">Service Tracking</div>
+      {loading && <div className="mtech-muted">Loading visits…</div>}
+      {!loading && visits.length === 0 && <div className="mtech-muted">No visits recorded yet.</div>}
+
+      <div className="mtech-visit-list">
+        {visits.map((v, idx) => {
+          const isEditing = editVisitId === v.id;
+          const isLatestVisit = idx === 0;
+          return (
+            <div key={v.id} className="mtech-visit">
+              <div className="mtech-visit-head">
+                <span className="mtech-visit-no">{v.visitNo || "Visit"}</span>
+                <span className="mtech-visit-status">{v.repairStatus || v.status || "—"}</span>
+              </div>
+              <div className="mtech-visit-meta">
+                <span>📅 {fmtDate(v.scheduleDate)}{v.timeSlot ? ` · ${v.timeSlot}` : ""}</span>
+                <span>👤 {v.technician || "—"}</span>
+              </div>
+              {v.activity && <InfoRow label="Activity" value={v.activity} />}
+              {v.actionType && <InfoRow label="Action" value={v.actionType} />}
+              {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
+              {v.symptomCx && <InfoRow label="Symptom (Cx)" value={v.symptomCx} />}
+              {!isEditing && v.diagnosis && (
+                <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
+              )}
+              {!isEditing && v.resolution && (
+                <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
+              )}
+              {isLatestVisit && <PartsUsedList parts={usedParts} />}
+              {!isEditing && v.nonCompletionReason && (
+                <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
+              )}
+              {v.schedNotes && <InfoRow label="Sched Notes" value={v.schedNotes} />}
+              {v.note && <InfoRow label="Internal Note" value={v.note} />}
+
+              {isEditing ? (
+                <div className="mtech-visit-edit">
+                  <label className="mtech-visit-edit-label">Repair Status</label>
+                  <select
+                    className="mtech-visit-edit-input"
+                    value={editDraft.repairStatus}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
+                  >
+                    <option value="">— select —</option>
+                    {MOBILE_REPAIR_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <label className="mtech-visit-edit-label">Cause of Failure (Tech)</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.diagnosis}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, diagnosis: e.target.value }))}
+                    placeholder="What failed and why"
+                    rows={2}
+                  />
+                  <label className="mtech-visit-edit-label">Service Performed (Tech)</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.service}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, service: e.target.value }))}
+                    onBlur={() =>
+                      setEditDraft((d) => ({
+                        ...d,
+                        service: composeServicePerformed(parseServicePerformed(d.service)),
+                      }))
+                    }
+                    rows={10}
+                  />
+                  <label className="mtech-visit-edit-label">Non-Completion Reason</label>
+                  <textarea
+                    className="mtech-visit-edit-input"
+                    value={editDraft.nonCompletionReason}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, nonCompletionReason: e.target.value }))}
+                    placeholder="If the repair wasn't completed, why"
+                    rows={2}
+                  />
+                  <div className="mtech-visit-edit-actions">
+                    <button
+                      type="button"
+                      className="mtech-btn mtech-btn-primary"
+                      disabled={savingVisit}
+                      onClick={() => void saveEdit(v.id)}
+                    >
+                      {savingVisit ? "Saving…" : "Save"}
+                    </button>
+                    {canComplete && (
+                      <button
+                        type="button"
+                        className="mtech-btn mtech-btn-complete"
+                        disabled={savingVisit}
+                        onClick={() => void completeVisit(v.id)}
+                        title="Save and mark the ticket Ready to Complete"
+                      >
+                        {savingVisit ? "Saving…" : "Complete"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="mtech-btn"
+                      disabled={savingVisit}
+                      onClick={cancelEdit}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {editDraft.nonCompletionReason.trim().length > 0 && (
+                    <div className="mtech-visit-edit-note">
+                      Non-Completion Reason is filled — Complete is disabled.
+                      Save this as an incomplete visit instead.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mtech-visit-actions">
+                  <button
+                    type="button"
+                    className="mtech-btn mtech-btn-primary"
+                    onClick={() => beginEdit(v)}
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mtech-section-title">Repair Information</div>
+      <InfoRow label="Model Code" value={ticket.model} />
+      <InfoRow label="Model Version" value={ticket.modelVersion} />
+      <InfoRow label="Serial No" value={ticket.serial} />
+      <InfoRow label="Diagnosed" value={ticket.diagnosed === "Y" ? "Yes" : "No"} />
+      <InfoRow label="Internal Note" value={ticket.internalNote} />
+
+      <div className="mtech-section-title">Attachments</div>
+      <TicketPhotos
+        ticketNo={ticket.ticketNo}
+        category="service"
+        title=""
+        uploadedBy={authorName}
+        visitOptions={visits.map((v) => String(v.visitNo || "")).filter(Boolean)}
+      />
+    </div>
+  );
+}
+
+function CommentThread({
+  ticket,
+  authorName,
+  authorRole,
+}: {
+  ticket: Ticket;
+  authorName: string;
+  authorRole: string;
+}) {
+  const [comments, setComments] = useState<TicketComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      const rows = await getTicketComments(ticket.ticketNo);
+      setComments(rows);
+    } catch (e) {
+      console.error("load comments failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await load();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket.ticketNo]);
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body) return;
+    setSending(true);
+    try {
+      const added = await addTicketComment(ticket.ticketNo, body, authorName, authorRole);
+      setComments((prev) => [...prev, added]);
+      setText("");
+    } catch (e: any) {
+      console.error("send comment failed", e);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const fmt = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <div className="mtech-comment-section">
+      <div className="mtech-section-title">Servicer Notes</div>
+      <p className="mtech-muted" style={{ marginTop: 0 }}>
+        Shared with the office — CSRs see these on the ticket's Servicer Notes.
+      </p>
+
+      <div className="mtech-comment-thread">
+        {loading && <div className="mtech-muted">Loading…</div>}
+        {!loading && comments.length === 0 && <div className="mtech-muted">No comments yet.</div>}
+        {comments.map((c) => (
+          <div key={c.id} className="mtech-comment">
+            <div className="mtech-comment-head">
+              <span className="mtech-comment-author">
+                {c.authorName || "User"}
+                {c.authorRole ? ` · ${c.authorRole}` : ""}
+              </span>
+              <span className="mtech-comment-time">{fmt(c.createdAt)}</span>
+            </div>
+            <div className="mtech-comment-body">{c.body}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mtech-comment-compose">
+        <textarea
+          rows={2}
+          value={text}
+          placeholder="Write a message to the office…"
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button type="button" onClick={send} disabled={sending || !text.trim()}>
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const PAYMENT_METHODS = ["Cash", "Check", "Credit Card", "Ext Warranty"];
+
+const EMPTY_BILLING: TicketBilling = {
+  labor: 0,
+  laborTaxable: true,
+  parts: 0,
+  partsTaxable: true,
+  partsUsed: "",
+  diagnose: 0,
+  diagnoseTaxable: true,
+  others: 0,
+  othersTaxable: true,
+  taxRate: 0,
+  tax: 0,
+  deduction: 0,
+  total: 0,
+  customerName: "",
+  paymentMethod: "",
+  comment: "",
+  signature: "",
+};
+
+// Status options the tech can pick from on the mobile part row. Same
+// canonical set the desktop Part Transaction table uses — kept in
+// sync manually because the desktop list is inlined in ticket.$ticketNo.tsx.
+// Sorted alphabetically per the "dropdowns must be alphabetical" rule;
+// the blank "" placeholder is pinned to the top so it acts as the
+// "— select —" option.
+const MOBILE_PART_STATUSES = [
+  "",
+  ...[
+    "Need PO",
+    "PO Made",
+    "Part Ready",
+    "Tech Pickup",
+    "Cx Home",
+    "Cx Received",
+    "SQT Received",
+    "Back Order",
+    "Cancelled",
+    "Used",
+    "Not Used & Stocked",
+    "Defective",
+    "Hold for next vist",
+    "Hold for Estimation",
+    "Lost",
+    "RA - Defect",
+    "RA- DMG",
+    "RA - PNN",
+    "RA - Qty Discrepancy",
+    "Claimed",
+    "PAID",
+  ].sort((a, b) => a.localeCompare(b)),
+];
+
+function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }) {
+  const [parts, setParts] = useState<UIPartRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const rows = await getTicketParts(ticket.ticketNo);
+        if (!cancelled) setParts(rows);
+      } catch (e) {
+        console.error("load parts failed", e);
+        if (!cancelled) setParts([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.ticketNo]);
+
+  const onStatusChange = async (row: UIPartRow, nextStatus: string) => {
+    // Optimistic update so the dropdown reflects the pick immediately.
+    setParts((prev) =>
+      prev.map((r) => (r.id === row.id ? { ...r, status: nextStatus } : r)),
+    );
+    setSavingId(row.id);
+    try {
+      await updateTicketPart(row.id, {
+        status: nextStatus,
+        lastModifiedBy: authorName || row.lastModifiedBy,
+      });
+    } catch (e) {
+      console.error("save part status failed", e);
+      alert(`Failed to update status: ${e instanceof Error ? e.message : "Unknown error"}`);
+      // Roll back.
+      setParts((prev) =>
+        prev.map((r) => (r.id === row.id ? { ...r, status: row.status } : r)),
+      );
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-section-title">Part Transactions</div>
+      <div className="mtech-muted mtech-parts-hint">
+        Read-only for everything except <strong>Part Status</strong>. Tap the
+        status pill to change it (auto-saves).
+      </div>
+
+      {loading && <div className="mtech-muted">Loading parts…</div>}
+      {!loading && parts.length === 0 && (
+        <div className="mtech-muted">No parts logged for this work order.</div>
+      )}
+
+      <div className="mtech-part-list">
+        {parts.map((p) => (
+          <div key={p.id} className="mtech-part">
+            <div className="mtech-part-head">
+              <span className="mtech-part-no">{p.partNo || "—"}</span>
+              <span className="mtech-part-dist">{p.partDist || "—"}</span>
+            </div>
+            <div className="mtech-part-desc">{p.partDesc || "No description"}</div>
+
+            <div className="mtech-part-status-row">
+              <label className="mtech-part-status-label">Part Status</label>
+              <select
+                className="mtech-part-status-input"
+                value={p.status || ""}
+                onChange={(e) => void onStatusChange(p, e.target.value)}
+                disabled={savingId === p.id}
+              >
+                {MOBILE_PART_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s || "— select —"}
+                  </option>
+                ))}
+              </select>
+              {savingId === p.id && (
+                <span className="mtech-part-saving">Saving…</span>
+              )}
+            </div>
+
+            <div className="mtech-part-details">
+              {p.quantity && <InfoRow label="Qty" value={p.quantity} />}
+              {p.poNo && <InfoRow label="PO #" value={p.poNo} />}
+              {p.poDate && <InfoRow label="PO Date" value={p.poDate} />}
+              {p.orderNo && <InfoRow label="Order #" value={p.orderNo} />}
+              {p.invoiceNo && <InfoRow label="Invoice #" value={p.invoiceNo} />}
+              {p.eta && <InfoRow label="ETA" value={p.eta} />}
+              {p.inTracking && (
+                <InfoRow label="In Tracking #" value={p.inTracking} />
+              )}
+              {p.outTracking && (
+                <InfoRow label="Out Tracking #" value={p.outTracking} />
+              )}
+              {p.raNo && <InfoRow label="RA #" value={p.raNo} />}
+              {p.claimTo && <InfoRow label="Claim To" value={p.claimTo} />}
+              {p.note && <InfoRow label="Note" value={p.note} />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Roles the tech can start a DM with from the mobile Chat view. Keeps
+// the contact picker focused on the people techs actually need to
+// reach: CSR / Triage / Parts / Claims (+ their managers) and admins.
+const MOBILE_CHAT_ROLE_ALLOW = new Set(
+  [
+    "ADMIN",
+    "SUPERADMIN",
+    "MANAGER",
+    "SENIOR_MANAGER",
+    "BRANCH_MANAGER",
+    "SENIOR_BRANCH_MANAGER",
+    "BIZOPS_MANAGER",
+    "BIZOPS_SENIOR_MANAGER",
+    "CSR",
+    "CSR_AGENT",
+    "CSR_TEAM_LEADER",
+    "CSR_MANAGER",
+    "PARTS",
+    "PARTS_MANAGER",
+    "PARTS_TEAM_LEADER",
+    "CLAIMS",
+    "CLAIMS_MANAGER",
+    "TRIAGE_USER",
+    "TRIAGE_MANAGER",
+    "DISPATCHER",
+  ].map((r) => r.toUpperCase()),
+);
+
+function readableRoleLabel(role: string): string {
+  const key = String(role || "").toUpperCase();
+  const map: Record<string, string> = {
+    ADMIN: "Admin",
+    SUPERADMIN: "Super Admin",
+    MANAGER: "Manager",
+    SENIOR_MANAGER: "Senior Manager",
+    BRANCH_MANAGER: "Branch Manager",
+    SENIOR_BRANCH_MANAGER: "Senior Branch Manager",
+    BIZOPS_MANAGER: "BizOps Manager",
+    BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
+    CSR: "CSR",
+    CSR_AGENT: "CSR Agent",
+    CSR_TEAM_LEADER: "CSR Team Leader",
+    CSR_MANAGER: "CSR Manager",
+    PARTS: "Parts",
+    PARTS_MANAGER: "Parts Manager",
+    PARTS_TEAM_LEADER: "Parts Team Leader",
+    CLAIMS: "Claims",
+    CLAIMS_MANAGER: "Claims Manager",
+    TRIAGE_USER: "Technical Support",
+    TRIAGE_MANAGER: "Technical Support Manager",
+    DISPATCHER: "Dispatcher",
+    TECHNICIAN: "Technician",
+  };
+  return map[key] || key;
+}
+
+interface ChatContact {
+  id: string;
+  name: string;
+  role: string;
+  roleLabel: string;
+}
+
+function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName: string }) {
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [contacts, setContacts] = useState<ChatContact[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(true);
+  const [contactErr, setContactErr] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ChatContact | null>(null);
+  const [thread, setThread] = useState<DmThreadRow | null>(null);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [roleFilter, setRoleFilter] = useState<string>("");
+  const [searchName, setSearchName] = useState("");
+  // Last message + unread count per teammate, keyed by their profile id -
+  // what turns the plain contact directory into a real messenger-style
+  // inbox (last message preview, timestamp, unread badge, most-recent-
+  // first ordering) without changing how contacts themselves are loaded.
+  const [inboxByContact, setInboxByContact] = useState<Map<string, DmInboxEntry>>(new Map());
+
+  const refreshInbox = async (pid: string) => {
+    try {
+      const entries = await listMyDmInbox(pid);
+      setInboxByContact(new Map(entries.map((e) => [e.otherProfileId, e])));
+    } catch (e) {
+      console.error("chat: load inbox failed", e);
+    }
+  };
+
+  // 1. Resolve my Supabase profile id from my Firebase uid.
+  useEffect(() => {
+    let cancelled = false;
+    if (!firebaseUid) return;
+    (async () => {
+      try {
+        const id = await getMyProfileId(firebaseUid);
+        if (!cancelled) setProfileId(id);
+      } catch (e) {
+        console.error("chat: resolve profile id failed", e);
+        if (!cancelled) setProfileId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [firebaseUid]);
+
+  // 1b. Once we know who I am, load my inbox (last message + unread per
+  // teammate) for the contact list.
+  useEffect(() => {
+    if (!profileId) return;
+    void refreshInbox(profileId);
+  }, [profileId]);
+
+  // 2. Load company users, filter to allowed chat roles.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingContacts(true);
+      setContactErr(null);
+      try {
+        const rows = await getCompanyUsers();
+        if (cancelled) return;
+        const list: ChatContact[] = [];
+        for (const u of rows) {
+          const primary = String((u as any).role || "").toUpperCase();
+          const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
+          const allRoles = [primary, ...extras.map((r) => String(r).toUpperCase())];
+          if (!allRoles.some((r) => MOBILE_CHAT_ROLE_ALLOW.has(r))) continue;
+          if ((u as any).firebase_uid === firebaseUid) continue; // don't chat with self
+          list.push({
+            id: (u as any).id,
+            name: (u as any).display_name || (u as any).username || (u as any).email || "User",
+            role: primary,
+            roleLabel: readableRoleLabel(primary),
+          });
+        }
+        // Alphabetical by display name — as requested for all dropdowns.
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setContacts(list);
+      } catch (e: any) {
+        console.error("chat: load contacts failed", e);
+        setContactErr(e?.message || "Failed to load contacts.");
+        setContacts([]);
+      } finally {
+        setLoadingContacts(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [firebaseUid]);
+
+  // 3. When a contact is picked, open/create the DM thread + load history.
+  useEffect(() => {
+    let cancelled = false;
+    if (!profileId || !selected) return;
+    (async () => {
+      setMessagesLoading(true);
+      try {
+        const t = await getOrCreateDmThread(profileId, selected.id);
+        if (cancelled) return;
+        setThread(t);
+        const rows = await getDmMessages(t.id);
+        if (!cancelled) setMessages(rows);
+        // Opening the thread reads it - clear its unread badge on the
+        // contact list right away rather than waiting for the next
+        // inbox refresh.
+        await markThreadRead({ profileId, dmThreadId: t.id });
+        if (!cancelled) {
+          setInboxByContact((prev) => {
+            const existing = prev.get(selected.id);
+            if (!existing || existing.unreadCount === 0) return prev;
+            const next = new Map(prev);
+            next.set(selected.id, { ...existing, unreadCount: 0 });
+            return next;
+          });
+        }
+      } catch (e) {
+        console.error("chat: open thread failed", e);
+      } finally {
+        if (!cancelled) setMessagesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profileId, selected]);
+
+  // 4. Realtime updates for the open thread. Two channels:
+  //   a) Postgres realtime subscription (best case — instant push).
+  //   b) A 5-second poll fallback so the thread still auto-refreshes
+  //      when realtime isn't enabled on the Supabase project. Merge
+  //      is done by message id so we don't double up on the initial
+  //      history rows.
+  useEffect(() => {
+    if (!thread) return;
+    let cancelled = false;
+    const mergeById = (prev: MessageRow[], incoming: MessageRow[]): MessageRow[] => {
+      const seen = new Set(prev.map((m) => m.id));
+      const additions = incoming.filter((m) => !seen.has(m.id));
+      if (additions.length === 0) return prev;
+      return [...prev, ...additions].sort((a, b) => {
+        const ta = new Date((a as any).created_at ?? 0).getTime();
+        const tb = new Date((b as any).created_at ?? 0).getTime();
+        return ta - tb;
+      });
+    };
+    const unsub = subscribeToMessages({
+      dmThreadId: thread.id,
+      onMessage: (m) => setMessages((prev) => mergeById(prev, [m])),
+    });
+    const poll = async () => {
+      try {
+        const rows = await getDmMessages(thread.id);
+        if (!cancelled) setMessages((prev) => mergeById(prev, rows));
+      } catch (err) {
+        console.warn("chat: poll refresh failed", err);
+      }
+    };
+    const intervalId = window.setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      unsub && unsub();
+    };
+  }, [thread]);
+
+  // Auto-scroll to the bottom whenever the message list grows so newly
+  // arrived messages are visible without the tech having to swipe.
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
+  const send = async () => {
+    const body = draft.trim();
+    if (!body || !thread || !profileId) return;
+    setSending(true);
+    try {
+      await sendMessage({
+        senderId: profileId,
+        senderName: authorName || "Technician",
+        dmThreadId: thread.id,
+        body,
+      });
+      setDraft("");
+    } catch (e) {
+      console.error("chat: send failed", e);
+      alert(`Failed to send: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const availableRoles = useMemo(() => {
+    const s = new Set<string>();
+    contacts.forEach((c) => c.roleLabel && s.add(c.roleLabel));
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [contacts]);
+
+  const visibleContacts = useMemo(() => {
+    const q = searchName.trim().toLowerCase();
+    const filtered = contacts.filter((c) => {
+      if (roleFilter && c.roleLabel !== roleFilter) return false;
+      if (q && !c.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    // Messenger-style ordering: teammates with an existing conversation
+    // float to the top, most recently active first (contacts is already
+    // alphabetical, so everyone without a thread yet just keeps that
+    // order beneath them).
+    return [...filtered].sort((a, b) => {
+      const ea = inboxByContact.get(a.id);
+      const eb = inboxByContact.get(b.id);
+      if (ea && !eb) return -1;
+      if (!ea && eb) return 1;
+      if (ea && eb) return eb.lastMessageAt.localeCompare(ea.lastMessageAt);
+      return 0;
+    });
+  }, [contacts, roleFilter, searchName, inboxByContact]);
+
+  // Compact "messenger" timestamp for the inbox row: clock time for
+  // today, weekday for the last week, short date beyond that - same
+  // convention most chat apps use so recent activity stays scannable.
+  const fmtInboxTime = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (diffDays < 7) return d.toLocaleDateString("en-US", { weekday: "short" });
+    return d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+  };
+
+  const fmtTime = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+      ? iso
+      : d.toLocaleString("en-US", {
+          month: "numeric",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  };
+
+  if (selected) {
+    return (
+      <div className="mtech-chat mtech-chat-thread">
+        {/* ── Thread header ── */}
+        <div className="mtech-chat-thread-header">
+          <button
+            className="mtech-chat-back-btn"
+            type="button"
+            aria-label="Back to contacts"
+            onClick={() => {
+              setSelected(null);
+              setThread(null);
+              setMessages([]);
+              // Refresh so the contact list's last-message preview picks
+              // up anything just sent in this thread.
+              if (profileId) void refreshInbox(profileId);
+            }}
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="mtech-chat-thread-avatar">
+            {selected.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="mtech-chat-thread-info">
+            <div className="mtech-chat-thread-name">{selected.name}</div>
+            <div className="mtech-chat-thread-role">{selected.roleLabel}</div>
+          </div>
+        </div>
+
+        {/* ── Message bubbles ── */}
+        <div className="mtech-chat-messages" ref={messagesScrollRef}>
+          {messagesLoading && (
+            <div className="mtech-chat-status">Loading messages…</div>
+          )}
+          {!messagesLoading && messages.length === 0 && (
+            <div className="mtech-chat-status">No messages yet. Say hello 👋</div>
+          )}
+          {messages.map((m) => {
+            const mine = m.sender_id === profileId;
+            return (
+              <div key={m.id} className={`mtech-msg-row ${mine ? "mine" : "theirs"}`}>
+                {!mine && (
+                  <div className="mtech-msg-avatar">
+                    {selected.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="mtech-msg-bubble-wrap">
+                  <div className={`mtech-msg-bubble ${mine ? "mine" : "theirs"}`}>
+                    {m.body}
+                  </div>
+                  <div className={`mtech-msg-time ${mine ? "mine" : ""}`}>
+                    {fmtTime((m as any).created_at)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Composer ── */}
+        <div className="mtech-chat-composer">
+          <input
+            className="mtech-chat-composer-input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Message…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <button
+            className="mtech-chat-send-btn"
+            type="button"
+            onClick={() => void send()}
+            disabled={sending || !draft.trim()}
+            aria-label="Send"
+          >
+            <Send className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Contact / inbox list ──────────────────────────────────────────────
+  return (
+    <div className="mtech-chat mtech-chat-inbox">
+      {/* Header bar — full-width search */}
+      <div className="mtech-chat-inbox-header">
+        <span className="mtech-chat-inbox-title">Messages</span>
+        <div className="mtech-chat-search-wrap">
+          <svg className="mtech-chat-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+          </svg>
+          <input
+            className="mtech-chat-search-input"
+            value={searchName}
+            onChange={(e) => setSearchName(e.target.value)}
+            placeholder="Search teammates…"
+          />
+          {searchName && (
+            <button className="mtech-chat-search-clear" onClick={() => setSearchName("")} type="button" aria-label="Clear">
+              ×
+            </button>
+          )}
+        </div>
+        {/* Role filter pills */}
+        {availableRoles.length > 0 && (
+          <div className="mtech-chat-role-pills">
+            <button
+              className={`mtech-chat-role-pill${roleFilter === "" ? " active" : ""}`}
+              type="button"
+              onClick={() => setRoleFilter("")}
+            >
+              All
+            </button>
+            {availableRoles.map((r) => (
+              <button
+                key={r}
+                className={`mtech-chat-role-pill${roleFilter === r ? " active" : ""}`}
+                type="button"
+                onClick={() => setRoleFilter(roleFilter === r ? "" : r)}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Contact rows */}
+      {loadingContacts && (
+        <div className="mtech-chat-status">Loading contacts…</div>
+      )}
+      {contactErr && (
+        <div className="mtech-chat-status mtech-chat-status-err">{contactErr}</div>
+      )}
+      {!loadingContacts && visibleContacts.length === 0 && (
+        <div className="mtech-chat-status">No matching teammates found.</div>
+      )}
+
+      <div className="mtech-chat-contact-list">
+        {visibleContacts.map((c) => {
+          const entry = inboxByContact.get(c.id);
+          const preview = entry?.lastMessageBody
+            ? `${entry.lastMessageSenderId === profileId ? "You: " : ""}${entry.lastMessageBody}`
+            : "";
+          const hasUnread = (entry?.unreadCount ?? 0) > 0;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              className="mtech-chat-contact-row"
+              onClick={() => setSelected(c)}
+            >
+              <div className="mtech-chat-contact-avatar">
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="mtech-chat-contact-info">
+                <span className={`mtech-chat-contact-name${hasUnread ? " unread" : ""}`}>
+                  {c.name}
+                </span>
+                {/* Last message preview once a conversation exists; falls
+                    back to the role label for teammates never messaged
+                    yet, same as before. */}
+                <span className={`mtech-chat-contact-preview${hasUnread ? " unread" : ""}`}>
+                  {preview || c.roleLabel}
+                </span>
+              </div>
+              <div className="mtech-chat-contact-meta">
+                {entry?.lastMessageAt && (
+                  <span className="mtech-chat-contact-time">{fmtInboxTime(entry.lastMessageAt)}</span>
+                )}
+                {hasUnread ? (
+                  <span className="mtech-chat-contact-unread-badge">{entry!.unreadCount}</span>
+                ) : (
+                  <ChevronRight className="mtech-chat-contact-chev h-4 w-4" />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BillingTab({ ticket, companyId }: { ticket: Ticket; companyId: string | null }) {
+  const [form, setForm] = useState<TicketBilling>(EMPTY_BILLING);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
+  const hasDrawnRef = useRef(false);
+
+  // Load existing billing for this ticket.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const existing = await getTicketBilling(ticket.ticketNo);
+        if (cancelled) return;
+        setForm(existing ?? { ...EMPTY_BILLING, customerName: ticket.customer || "" });
+      } catch (e) {
+        console.error("load billing failed", e);
+        if (!cancelled) setForm({ ...EMPTY_BILLING, customerName: ticket.customer || "" });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.ticketNo, ticket.customer]);
+
+  // Compute tax + total whenever taxable inputs change.
+  const taxableBase =
+    (form.laborTaxable ? form.labor : 0) +
+    (form.partsTaxable ? form.parts : 0) +
+    (form.diagnoseTaxable ? form.diagnose : 0) +
+    (form.othersTaxable ? form.others : 0);
+  const tax = +(taxableBase * (form.taxRate / 100)).toFixed(2);
+  const total = +(
+    form.labor + form.parts + form.diagnose + form.others + tax - form.deduction
+  ).toFixed(2);
+
+  const num = (v: string) => {
+    const n = parseFloat(v.replace(/[^0-9.\-]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // ---- Signature canvas drawing ----
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Restore existing signature if present (display only — don't mark as a
+    // freshly drawn signature, so we don't re-upload an unchanged one).
+    if (form.signature) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = form.signature;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = canvasRef.current!;
+    const r = c.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * c.width, y: ((e.clientY - r.top) / r.height) * c.height };
+  };
+  const startDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    drawingRef.current = true;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    const { x, y } = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    const { x, y } = pos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    hasDrawnRef.current = true;
+  };
+  const endDraw = () => {
+    drawingRef.current = false;
+  };
+  const clearSignature = () => {
+    const c = canvasRef.current;
+    if (!c) return;
+    c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
+    hasDrawnRef.current = false;
+    setForm((f) => ({ ...f, signature: "" }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      // If the tech drew a new signature, upload it to Firebase Storage as a
+      // PNG and store the resulting URL (not the raw base64) in the DB.
+      let signatureUrl = form.signature;
+      if (hasDrawnRef.current && canvasRef.current) {
+        const dataUrl = canvasRef.current.toDataURL("image/png");
+        // Only re-upload when it's a freshly drawn signature (data URL), not an
+        // already-saved https URL.
+        if (dataUrl.startsWith("data:image")) {
+          if (companyId) {
+            signatureUrl = await uploadTicketSignature(companyId, ticket.ticketNo, dataUrl);
+          } else {
+            // No company context — fall back to storing the data URL inline.
+            signatureUrl = dataUrl;
+          }
+        }
+      }
+      const payload: TicketBilling = { ...form, tax, total, signature: signatureUrl };
+      await saveTicketBilling(ticket.ticketNo, payload);
+      setForm(payload);
+      setMsg("Billing saved.");
+    } catch (e: any) {
+      setMsg(e?.message || "Failed to save billing.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="mtech-panel mtech-muted">Loading billing…</div>;
+
+  const money = (n: number) => `$${n.toFixed(2)}`;
+
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-section-title">Billing Info</div>
+
+      <table className="mtech-bill">
+        <thead>
+          <tr>
+            <th>Cost</th>
+            <th>Fee</th>
+            <th className="mtech-bill-tax">Tax</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Labor</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.labor || ""}
+                onChange={(e) => setForm((f) => ({ ...f, labor: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.laborTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, laborTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Parts Used</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                value={form.partsUsed}
+                placeholder="0.00 / 0.00"
+                onChange={(e) => setForm((f) => ({ ...f, partsUsed: e.target.value }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Parts</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.parts || ""}
+                onChange={(e) => setForm((f) => ({ ...f, parts: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.partsTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, partsTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Diagnose (Trip)</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.diagnose || ""}
+                onChange={(e) => setForm((f) => ({ ...f, diagnose: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.diagnoseTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, diagnoseTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Others</td>
+            <td>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.others || ""}
+                onChange={(e) => setForm((f) => ({ ...f, others: num(e.target.value) }))}
+              />
+            </td>
+            <td className="mtech-bill-tax">
+              <input
+                type="checkbox"
+                checked={form.othersTaxable}
+                onChange={(e) => setForm((f) => ({ ...f, othersTaxable: e.target.checked }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Tax Rate (%)</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.taxRate || ""}
+                onChange={(e) => setForm((f) => ({ ...f, taxRate: num(e.target.value) }))}
+              />
+            </td>
+          </tr>
+          <tr>
+            <td>Tax</td>
+            <td colSpan={2}>{money(tax)}</td>
+          </tr>
+          <tr>
+            <td>Deduction</td>
+            <td colSpan={2}>
+              <input
+                className="mtech-bill-input"
+                inputMode="decimal"
+                value={form.deduction || ""}
+                onChange={(e) => setForm((f) => ({ ...f, deduction: num(e.target.value) }))}
+              />
+            </td>
+          </tr>
+          <tr className="mtech-bill-total">
+            <td>Total</td>
+            <td colSpan={2}>{money(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p className="mtech-muted">
+        Service has a limited warranty of 90 days for parts and 30 days for labor. Labor is covered for 30 days from
+        the first service date; parts only if the same part is defective within 90 days. Only company-supplied parts
+        are covered under the limited warranty.
+      </p>
+
+      <div className="mtech-section-title">Customer Name</div>
+      <input
+        className="mtech-bill-input full"
+        value={form.customerName}
+        onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
+      />
+
+      <div className="mtech-section-title">Payment Method</div>
+      <select
+        className="mtech-bill-input full"
+        value={form.paymentMethod}
+        onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
+      >
+        <option value="">Select payment method</option>
+        {PAYMENT_METHODS.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+
+      <div className="mtech-section-title">Billing (Repair) Comment</div>
+      <textarea
+        className="mtech-bill-input full"
+        rows={3}
+        value={form.comment}
+        onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
+      />
+
+      <div className="mtech-sig-head">
+        <span className="mtech-section-title" style={{ margin: 0, border: "none" }}>
+          Signature
+        </span>
+        <button type="button" className="mtech-sig-clear" onClick={clearSignature}>
+          Clear
+        </button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={600}
+        height={200}
+        className="mtech-sig-canvas"
+        onPointerDown={startDraw}
+        onPointerMove={moveDraw}
+        onPointerUp={endDraw}
+        onPointerLeave={endDraw}
+      />
+
+      <button type="button" className="mtech-save-btn" onClick={save} disabled={saving}>
+        {saving ? "Saving…" : "Save"}
+      </button>
+      {msg && <div className="mtech-save-msg">{msg}</div>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Sidebar-launched views — stay inside the mobile shell
+// ══════════════════════════════════════════════════════════════════════
+
+// Home tab: high-level greeting + quick jumps to the same sidebar
+// destinations so users can navigate without opening the drawer.
+function MobileHomeView({
+  userName,
+  openTickets,
+  onOpenTickets,
+  onOpenPayroll,
+  onOpenParts,
+  onOpenSheets,
+}: {
+  userName: string;
+  openTickets: number;
+  onOpenTickets: () => void;
+  onOpenPayroll: () => void;
+  onOpenParts: () => void;
+  onOpenSheets: () => void;
+}) {
+  const hourNow = new Date().getHours();
+  const greeting =
+    hourNow < 12 ? "Good morning" : hourNow < 18 ? "Good afternoon" : "Good evening";
+  return (
+    <div className="mtech-scroll mtech-home">
+      <div className="mtech-home-greeting">
+        <div className="mtech-home-hi">{greeting},</div>
+        <div className="mtech-home-name">{userName}</div>
+      </div>
+
+      <div className="mtech-home-stats">
+        <div className="mtech-home-stat">
+          <div className="mtech-home-stat-value">{openTickets}</div>
+          <div className="mtech-home-stat-label">Open Tickets</div>
+        </div>
+      </div>
+
+      <div className="mtech-home-grid">
+        <button className="mtech-home-tile" type="button" onClick={onOpenTickets}>
+          <TicketIcon className="mtech-home-tile-svg" />
+          <span className="mtech-home-tile-label">Tickets</span>
+        </button>
+        <button className="mtech-home-tile" type="button" onClick={onOpenParts}>
+          <FileText className="mtech-home-tile-svg" />
+          <span className="mtech-home-tile-label">Tech Sheet</span>
+        </button>
+        <button className="mtech-home-tile" type="button" onClick={onOpenSheets}>
+          <MapPin className="mtech-home-tile-svg" />
+          <span className="mtech-home-tile-label">Route</span>
+        </button>
+        <button className="mtech-home-tile" type="button" onClick={onOpenPayroll}>
+          <DollarSign className="mtech-home-tile-svg" />
+          <span className="mtech-home-tile-label">Payroll</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Payroll tab: same real payslip data (getMyPayslips) and status mapping
+// as the /timecard MobilePayrollPage, so users get the same numbers from
+// either entry point.
+interface MobilePayRowInline {
+  id: string;
+  periodLabel: string;
+  periodEnd: string;
+  amount: number;
+  status: ReturnType<typeof payslipStatusLabel>;
+  payslip: MyPayslipRow;
+}
+
+function MobilePayrollView({ userName, profileId }: { userName: string; profileId: string | null }) {
+  const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!profileId) {
+      setPayslips([]);
+      setLoading(false);
+      return;
+    }
+    (async () => {
+      setLoading(true);
+      try {
+        const rows = await getMyPayslips(profileId);
+        if (!cancelled) setPayslips(rows);
+      } catch (e) {
+        console.error("payroll: load payslips failed", e);
+        if (!cancelled) setPayslips([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
+  };
+
+  const rows = useMemo<MobilePayRowInline[]>(
+    () =>
+      payslips.map((p) => ({
+        id: p.runId,
+        periodLabel: `${fmtDate(p.periodStart)} – ${fmtDate(p.periodEnd)}`,
+        periodEnd: p.periodEnd,
+        amount: p.netPay,
+        status: payslipStatusLabel(p.status),
+        payslip: p,
+      })),
+    [payslips],
+  );
+
+  const totalPaid = rows.filter((r) => r.status === "Paid").reduce((s, r) => s + r.amount, 0);
+  const totalPending = rows.filter((r) => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+
+  return (
+    <div className="mtech-scroll mtech-payroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">{userName}</div>
+        <div className="mtech-payroll-sub">
+          {rows.length > 0 ? `${rows.length} pay period${rows.length === 1 ? "" : "s"}` : "Pay history"}
+        </div>
+      </div>
+
+      <div className="mtech-payroll-summary">
+        <div className="mtech-payroll-card">
+          <div className="mtech-payroll-card-label">Paid</div>
+          <div className="mtech-payroll-card-value paid">${totalPaid.toFixed(2)}</div>
+        </div>
+        <div className="mtech-payroll-card">
+          <div className="mtech-payroll-card-label">Pending</div>
+          <div className="mtech-payroll-card-value pending">${totalPending.toFixed(2)}</div>
+        </div>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading payroll…</div>}
+      {!loading && rows.length === 0 && (
+        <div className="mtech-muted">No payroll runs yet.</div>
+      )}
+
+      <div className="mtech-payroll-list">
+        {rows.map((row) => (
+          <div key={row.id} className="mtech-payroll-row">
+            <div className="mtech-payroll-row-head">
+              <div className="mtech-payroll-row-date">{row.periodLabel}</div>
+              <div className={`mtech-payroll-status mtech-payroll-status-${row.status.toLowerCase().replace(/\s+/g, "-")}`}>
+                {row.status}
+              </div>
+            </div>
+            <div className="mtech-payroll-row-body">
+              <div className="mtech-payroll-row-amount">${row.amount.toFixed(2)}</div>
+              <div className="mtech-payroll-row-actions">
+                <button
+                  type="button"
+                  className="mtech-payroll-action"
+                  onClick={() => {
+                    const p = row.payslip;
+                    alert(
+                      `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
+                        `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
+                        `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
+                        `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                    );
+                  }}
+                >
+                  View
+                </button>
+                <button
+                  type="button"
+                  className="mtech-payroll-action mtech-payroll-action-secondary"
+                  disabled={row.status !== "Paid"}
+                  onClick={() =>
+                    alert(
+                      `Pay stub for ${row.periodLabel} will be available once your finance team publishes it.`,
+                    )
+                  }
+                >
+                  Stub
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="mtech-payroll-note">
+        Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
+      </p>
+    </div>
+  );
+}
+
+// Timecard tab: real punch clock (Time In/Out, Meal In/Out), reached from
+// the profile menu. Unlike desktop's FullTimecardPage this only ever shows
+// TODAY — no calendar to browse, since desktop already locks editing to
+// today's date anyway (timecard.tsx) — so there's no "locked past day" state
+// to handle here at all. Business rules (meal break requires an 8+ hour
+// scheduled shift, checked-in first) are copied verbatim from
+// FullTimecardPage's handleMealToggle so mobile and desktop never disagree.
+function MobileTimecardView({
+  uid,
+  profileId,
+  userName,
+}: {
+  uid: string | null;
+  profileId: string | null;
+  userName: string;
+}) {
+  const [requiredCheckIn, setRequiredCheckIn] = useState("");
+  const [requiredCheckOut, setRequiredCheckOut] = useState("");
+  const [workingHours, setWorkingHours] = useState<number | null>(null);
+  const [mealMinutes, setMealMinutes] = useState<number | null>(null);
+  const [entry, setEntry] = useState<UITimeEntry>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const todayLabel = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+  useEffect(() => {
+    if (!uid) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const schedule = await getMyProfileSchedule(uid);
+        if (cancelled) return;
+        setRequiredCheckIn(schedule.requiredCheckIn);
+        setRequiredCheckOut(schedule.requiredCheckOut);
+        setWorkingHours(schedule.workingHours);
+        setMealMinutes(schedule.mealMinutes);
+        if (!schedule.profileId) {
+          setEntry({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+          return;
+        }
+        const monthEntries = await getMonthEntries(schedule.profileId, now.getFullYear(), now.getMonth());
+        if (cancelled) return;
+        setEntry(monthEntries[todayKey] || { checkIn: "", checkOut: "", mealStart: "", mealEnd: "", notes: "" });
+      } catch (e) {
+        console.error("MobileTimecardView: load failed", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const getNowTime = (): string => {
+    const t = new Date();
+    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+  };
+
+  const timeDiff = (t1: string, t2: string): number => {
+    if (!t1 || !t2) return 0;
+    const [h1, m1, s1 = 0] = t1.split(":").map(Number);
+    const [h2, m2, s2 = 0] = t2.split(":").map(Number);
+    return (h2 * 3600 + m2 * 60 + s2 - (h1 * 3600 + m1 * 60 + s1)) / 3600;
+  };
+
+  const persist = async (next: UITimeEntry) => {
+    setEntry(next);
+    if (!profileId) {
+      alert("Could not resolve your profile. Please re-login.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveTimecardEntry(profileId, todayKey, next);
+    } catch (e) {
+      console.error("MobileTimecardView: save failed", e);
+      alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTimeToggle = () => {
+    if (!entry.checkIn) persist({ ...entry, checkIn: getNowTime() });
+    else if (!entry.checkOut) persist({ ...entry, checkOut: getNowTime() });
+  };
+
+  const handleMealToggle = () => {
+    if (!entry.checkIn) {
+      alert("Please log time in first.");
+      return;
+    }
+    if (entry.checkOut) {
+      alert("You've already timed out for the day.");
+      return;
+    }
+    if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
+      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
+      return;
+    }
+    // Same rule as TimeClockMenu.tsx / routes/timecard.tsx: shifts of 6 hours
+    // or less have no meal break, and an explicit Working Hours override
+    // (migration 0109) takes priority over the Time In/Out subtraction.
+    const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+    if (scheduledShift <= 6) {
+      alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+      return;
+    }
+    if (!entry.mealStart) persist({ ...entry, mealStart: getNowTime() });
+    else if (!entry.mealEnd) persist({ ...entry, mealEnd: getNowTime() });
+  };
+
+  const hoursToday = entry.checkIn && entry.checkOut
+    ? Math.max(0, timeDiff(entry.checkIn, entry.checkOut) - (entry.mealStart && entry.mealEnd ? timeDiff(entry.mealStart, entry.mealEnd) : 0))
+    : null;
+
+  return (
+    <div className="mtech-scroll mtech-timecard">
+      <div className="mtech-timecard-heading">
+        <div className="mtech-timecard-name">{userName}</div>
+        <div className="mtech-timecard-sub">{todayLabel}</div>
+      </div>
+
+      {loading ? (
+        <div className="mtech-muted">Loading timecard…</div>
+      ) : (
+        <>
+          <div className="mtech-timecard-summary">
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check In</div>
+              <div className="mtech-timecard-card-value in">{entry.checkIn ? entry.checkIn.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Check Out</div>
+              <div className="mtech-timecard-card-value out">{entry.checkOut ? entry.checkOut.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal Start</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealStart ? entry.mealStart.slice(0, 5) : "—"}</div>
+            </div>
+            <div className="mtech-timecard-card">
+              <div className="mtech-timecard-card-label">Meal End</div>
+              <div className="mtech-timecard-card-value meal">{entry.mealEnd ? entry.mealEnd.slice(0, 5) : "—"}</div>
+            </div>
+          </div>
+
+          {hoursToday !== null && <div className="mtech-timecard-hours">{hoursToday.toFixed(1)}h worked today</div>}
+
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-time"
+            disabled={!!entry.checkOut || saving}
+            onClick={handleTimeToggle}
+          >
+            {!entry.checkIn ? "🕐 Time In" : !entry.checkOut ? "🛑 Time Out" : "✓ Shift Complete"}
+          </button>
+          <button
+            type="button"
+            className="mtech-timecard-btn mtech-timecard-btn-meal"
+            disabled={!!entry.mealEnd || saving}
+            onClick={handleMealToggle}
+          >
+            {!entry.mealStart ? "🍽 Meal In" : !entry.mealEnd ? "✓ Meal Out" : "Meal Done"}
+          </button>
+
+          {requiredCheckIn && requiredCheckOut && (
+            <p className="mtech-timecard-note">Scheduled shift: {requiredCheckIn}–{requiredCheckOut}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Clock In Team: a manager-tier viewer's direct-report technicians, each
+// with a Clock In button — reachable from the profile menu. Deliberately
+// Clock-In-only; there is no Clock Out or Meal action here at all, since
+// only the technician themselves ends their own shift. Reuses the exact
+// same manager -> direct-reports scoping already built for Attendance
+// Monitoring (visibleAttendanceProfileIds), so "my team" here always
+// matches what that dashboard already shows for this same viewer.
+interface ClockInTechRow {
+  id: string;
+  name: string;
+  branch: string | null;
+  checkIn: string;
+  clockedInByName: string | null;
+}
+
+function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
+  const [rows, setRows] = useState<ClockInTechRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [clockingIn, setClockingIn] = useState<Set<string>>(new Set());
+
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const load = async () => {
+    if (!profileId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+        getCompanyUsers(),
+        getCsrTeamComposition().catch(() => null),
+        getCompanyTimecardEntries(todayKey, todayKey),
+      ]);
+      const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
+      if (!myProfile) {
+        setRows([]);
+        return;
+      }
+      const nameById = new Map(allProfiles.map((p) => [p.id, p.display_name || p.email]));
+      const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
+      const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
+      const myTechnicians = allProfiles.filter(
+        (p) => (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+      );
+      setRows(
+        myTechnicians
+          .map((p) => {
+            const entry = entryByProfile.get(p.id);
+            return {
+              id: p.id,
+              name: p.display_name || p.email,
+              branch: p.assigned_branch,
+              checkIn: entry?.checkIn || "",
+              clockedInByName: entry?.clockedInBy ? nameById.get(entry.clockedInBy) || null : null,
+            };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (e) {
+      console.error("MobileClockInTeamView: load failed", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
+
+  const handleClockIn = async (tech: ClockInTechRow) => {
+    if (!profileId) return;
+    if (!window.confirm(`Clock in ${tech.name} now?`)) return;
+    setClockingIn((prev) => new Set(prev).add(tech.id));
+    try {
+      const branchTz = timezoneForBranch(tech.branch);
+      const hhmm = nowInTimezone(branchTz).hhmm;
+      const seconds = String(new Date().getSeconds()).padStart(2, "0");
+      await saveTimecardEntry(
+        tech.id,
+        todayKey,
+        { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
+        { clockedInBy: profileId }
+      );
+      await load();
+    } catch (e) {
+      alert(`Failed to clock in: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setClockingIn((prev) => {
+        const next = new Set(prev);
+        next.delete(tech.id);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Clock In Team</div>
+        <div className="mtech-clockin-sub">Your direct-report technicians, today</div>
+      </div>
+
+      {loading && <div className="mtech-muted">Loading your team…</div>}
+      {!loading && rows.length === 0 && <div className="mtech-muted">No technicians report to you.</div>}
+
+      <div className="mtech-clockin-list">
+        {rows.map((tech) => (
+          <div key={tech.id} className="mtech-clockin-row">
+            <div className="mtech-clockin-row-info">
+              <div className="mtech-clockin-row-name">{tech.name}</div>
+              <div className="mtech-clockin-row-status">
+                {tech.checkIn
+                  ? `Clocked in ${tech.checkIn.slice(0, 5)}${tech.clockedInByName ? ` (by ${tech.clockedInByName})` : ""}`
+                  : "Not clocked in yet"}
+              </div>
+            </div>
+            {!tech.checkIn && (
+              <button
+                type="button"
+                className="mtech-clockin-btn"
+                disabled={clockingIn.has(tech.id)}
+                onClick={() => handleClockIn(tech)}
+              >
+                {clockingIn.has(tech.id) ? "…" : "Clock In"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Generic "coming soon on mobile" screen for views where the desktop
+// implementation isn't practical on a phone.
+function MobileStubView({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="mtech-scroll mtech-stub">
+      <div className="mtech-stub-icon">🚧</div>
+      <div className="mtech-stub-title">{title}</div>
+      <p className="mtech-stub-message">{message}</p>
+    </div>
+  );
+}

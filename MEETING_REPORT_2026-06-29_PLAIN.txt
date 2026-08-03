@@ -1,0 +1,119 @@
+AH SOLUTIONS — WHAT WE DID TODAY (PLAIN ENGLISH)
+Date: Monday, June 29, 2026
+
+
+WHAT YOU'LL NOTICE WHEN YOU LOG IN
+================================================================================
+
+1. SquareTrade tickets now go straight to their own claim page
+   - Before: clicking "Account" on a SquareTrade ticket opened the
+     general ServicePower dashboard. The claims team still had to dig
+     for the right confirmation page.
+   - Now: clicking "Account" on a SquareTrade ticket opens that
+     ticket's specific Appointment Completion form in a new tab. Every
+     other account still opens ServicePower like before.
+   - The system automatically pulls the right link from the ticket's
+     running notes, so most of the time there's nothing to set up.
+     If the link is missing, a small pencil icon next to the account
+     name lets you paste it in once.
+
+2. Customer Notes on the ticket now show what ServicePower actually has
+   - Before: this section showed the same sample notes for every
+     ticket (so an Allstate ticket might show 6 notes when SP only had
+     4).
+   - Now: it pulls the real running notes from ServicePower the moment
+     you open the ticket, sorted from oldest at the top to newest at
+     the bottom — same way SP shows them. A "Refresh" button forces a
+     re-pull if needed.
+
+3. A new button: "Sync Parts from Notes"
+   - Sits on the Part Transactions toolbar next to "Truck Stock".
+   - Click it on a SquareTrade or Allstate ticket and it reads the
+     part-order and tracking-number notes the warranty company posted
+     on ServicePower, then:
+       • Adds any new parts as "Need PO" rows automatically.
+       • Updates tracking numbers and carrier on parts that already
+         exist on the ticket.
+   - Saves the claims team from copy-pasting part numbers and tracking
+     numbers by hand.
+
+4. Coverage map now works for every branch
+   - Before: clicking Little Rock (and a few others) showed a blank
+     map and no zip codes, and the location dropdown sometimes had
+     zip codes mixed into it.
+   - Now: the dropdown only lists real branch names. The map falls
+     back to the local coverage file when our database doesn't have
+     rows for a branch yet, so every branch shows polygons
+     immediately.
+
+5. Part Management page got a facelift
+   - You can now select multiple branches at once instead of one at a
+     time, with a search box inside the dropdown.
+   - A "Select a location to load data" message replaces the
+     confusing empty table when you first open the page.
+   - New "Export CSV" button so you can hand a clean spreadsheet to
+     anyone who needs it.
+   - The existing "Submit POs" flow with the confirmation popup is
+     kept — that part already worked well.
+
+6. CSR dashboards rebuilt (Dashboard, Status Summary, Daily Report)
+   - All three pages now share one cleaner data source so numbers
+     match across them.
+   - CSR Dashboard: clear KPI cards (Agents, Schedule, Attempt,
+     Update, Warnings, Mistakes), team performance chart, location
+     pie chart, 10-day trend, plus a full Mistakes Log table.
+   - Status Summary: shows real tickets (no more random sample
+     numbers). You can show/hide any of 21 columns and filter by any
+     column header like in Ticket List.
+   - Daily Report: per-agent table with searchable name, team
+     filter, and a mistake-date range filter. Each name links to
+     that employee's detail page. CSV export at the top.
+
+7. User Management — column filters
+   - The user list (ID / Login Name / User Name / Type / Email /
+     Manager / Technician ID / Assigned Branch) now has a small
+     funnel icon on each column header — same one used on Ticket
+     List.
+   - Click the funnel to pick which values you want to see. The icon
+     lights up blue when a filter is active so you know at a glance
+     which columns are narrowed.
+
+
+SMALL TWEAKS YOU PROBABLY WON'T SEE BUT MATTER
+================================================================================
+
+- Customer Notes now read top-to-bottom in time order (oldest first)
+  instead of newest-on-top, matching how SP displays them.
+- Customer Notes no longer mix in old dummy entries when real SP
+  notes are available — fixes "why does this ticket show 6 notes
+  when SP only has 4."
+- The little pencil icon next to the SquareTrade account name shows
+  green when a URL is saved, amber when one is needed.
+- A garbled character ("ΓǪ") that showed up in the syncing text was
+  replaced with the proper "…".
+- The Part Management location dropdown is now rendered on top of
+  the page (instead of inside the table) so it never gets clipped.
+- Internal cleanup: the four hand-off files in the Parts/ folder
+  were merged into the live components and removed.
+
+
+WHAT'S NEXT
+================================================================================
+
+- Teach "Sync Parts from Notes" to recognize other warranty
+  companies' note formats too (Assurant, GE, Encompass) once we have
+  samples.
+- Move the per-ticket SquareTrade URL from the browser into the
+  database so it follows you across devices.
+- Add a single summary entry in the audit log when many parts are
+  imported at once, instead of one entry per part.
+- Switch the CSR dashboards from sample agents to live data once the
+  HR/attendance tables are ready.
+
+
+DEPLOYMENT
+================================================================================
+
+- No new database migrations needed today.
+- All code compiles cleanly — safe to push to Cloudflare.
+- The pending migration list from before is unchanged (0019–0023).
