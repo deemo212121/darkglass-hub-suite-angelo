@@ -92,7 +92,7 @@ export function EmployeePayrollDetailModal({
   const [rateEdits, setRateEdits] = useState<Record<string, string>>({});
   const [savingRates, setSavingRates] = useState(false);
 
-  const load = async () => {
+  const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
     setRateEdits({});
     try {
@@ -101,17 +101,20 @@ export function EmployeePayrollDetailModal({
         getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays }),
         getSalaryHistory(profileId),
       ]);
+      if (cancelledRef.current) return;
       setAttendance(attRows);
       setHistory(hist);
     } catch (err) {
       console.error("Failed to load employee payroll detail:", err);
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    const cancelledRef = { current: false };
+    load(cancelledRef);
+    return () => { cancelledRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId, month]);
 
