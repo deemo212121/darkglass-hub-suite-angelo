@@ -14,6 +14,7 @@ import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBr
 import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
+import { handleGmailRequest } from "./lib/server/gmailBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -143,6 +144,10 @@ export default {
     if (url.pathname === "/api/google-drive") {
       const merged = await resolveServerEnv(env);
       return await handleGoogleDriveRequest(request, merged);
+    }
+    if (url.pathname === "/api/gmail") {
+      const merged = await resolveServerEnv(env);
+      return await handleGmailRequest(request, merged);
     }
     if (url.pathname === "/api/signable-documents") {
       const merged = await resolveServerEnv(env);

@@ -9,6 +9,8 @@ import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePas
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 
 /** Readable role text for display — e.g. "BIZOPS_MANAGER" -> "BizOps Manager". Falls back to the raw value for anything not in ROLE_LABELS (legacy free-text roles like "CSR Manager" already read fine as-is). */
 function roleDisplay(role: string | null | undefined): string {
@@ -783,6 +785,14 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       await updateCompanyUser(row.profileId, { isActive: reactivating });
       const profiles = await getCompanyUsers();
       setUsers(mapProfilesToRecords(profiles));
+      void logModuleActivity({
+        module: "user-management",
+        actorName: auth.displayName || auth.email || "Admin",
+        action: reactivating ? "user_activated" : "user_deactivated",
+        targetType: "profile",
+        targetId: row.profileId,
+        targetLabel: row.userName,
+      });
     } catch (error) {
       console.error("Toggle active error:", error);
       alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -803,6 +813,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     setResettingPassword(true);
     try {
       await setMustChangePassword(targets.map((u) => u.profileId), true);
+      void logModuleActivity({
+        module: "user-management",
+        actorName: auth.displayName || auth.email || "Admin",
+        action: "user_password_reset",
+        targetLabel: resetModal.mode === "single" ? resetModal.row.userName : `All users (${targets.length})`,
+        details: { mode: resetModal.mode, count: targets.length },
+      });
       alert(
         resetModal.mode === "single"
           ? `${resetModal.row.userName} will be asked to change their password next time they log in.`
@@ -867,6 +884,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
 
       alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
+
+      void logModuleActivity({
+        module: "user-management",
+        actorName: auth.displayName || auth.email || "Admin",
+        action: "user_created",
+        targetType: "profile",
+        targetId: newUid,
+        targetLabel: newUserForm.userName,
+        details: { role: primaryRole, extraRoles },
+      });
 
       // Reload users from Supabase
       const profiles = await getCompanyUsers();
@@ -941,6 +968,10 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 + Add User
               </button>
             </div>
+          </div>
+
+          <div className="mt-4">
+            <ActivityLogPanel module="user-management" title="User Management Activity Log" />
           </div>
 
           <div className="mt-5 flex flex-wrap items-end gap-4">

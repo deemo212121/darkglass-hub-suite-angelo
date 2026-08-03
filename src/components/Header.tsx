@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon } from "lucide-react";
+import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -182,6 +182,9 @@ export function AppHeader() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => navigate({ to: "/privacy" })} className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer">
                   <Shield className="h-4 w-4 text-muted-foreground" /> Privacy
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate({ to: "/it-tickets" })} className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer">
+                  <LifeBuoy className="h-4 w-4 text-muted-foreground" /> IT Support
                 </DropdownMenuItem>
                 <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
                 <DropdownMenuItem

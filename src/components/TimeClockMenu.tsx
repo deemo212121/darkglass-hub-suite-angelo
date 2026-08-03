@@ -21,7 +21,7 @@
  * underneath that button (read straight from the saved entry, not a
  * transient toast) — so it stays visible/correct even after a refresh.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, resolveScheduledShiftHours, type UITimeEntry } from "@/lib/supabase/timecards";
 
@@ -54,26 +54,6 @@ export function TimeClockButtons() {
   const [mealMinutes, setMealMinutes] = useState<number | null>(null);
   const [entry, setEntry] = useState<UITimeEntry>(EMPTY_ENTRY);
   const [saving, setSaving] = useState(false);
-  // Time In/Meal In/Meal Out/Time Out sit right next to each other — `saving`
-  // alone only disables the row for the duration of the network round-trip,
-  // which on a fast connection can be well under a second, so two adjacent
-  // buttons clicked in one quick motion (or an accidental double-click) could
-  // both land before the first punch's disabled state is even visible. This
-  // adds a floor: once any punch fires, every button in the row stays
-  // disabled for a couple seconds regardless of how fast the save itself
-  // finishes, so two punches can never register as one near-instant motion.
-  const [locked, setLocked] = useState(false);
-  const lockRef = useRef(false);
-  const withLock = (fn: () => void) => {
-    if (lockRef.current) return;
-    lockRef.current = true;
-    setLocked(true);
-    fn();
-    setTimeout(() => {
-      lockRef.current = false;
-      setLocked(false);
-    }, 2000);
-  };
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -120,12 +100,12 @@ export function TimeClockButtons() {
 
   const handleTimeIn = () => {
     if (entry.checkIn) return;
-    withLock(() => void persist({ ...entry, checkIn: nowTime() }));
+    void persist({ ...entry, checkIn: nowTime() });
   };
 
   const handleTimeOut = () => {
     if (!entry.checkIn || entry.checkOut) return;
-    withLock(() => void persist({ ...entry, checkOut: nowTime() }));
+    void persist({ ...entry, checkOut: nowTime() });
   };
 
   const handleMealIn = () => {
@@ -146,7 +126,7 @@ export function TimeClockButtons() {
       );
       return;
     }
-    withLock(() => void persist({ ...entry, mealStart: nowTime() }));
+    void persist({ ...entry, mealStart: nowTime() });
   };
 
   const handleMealOut = () => {
@@ -155,7 +135,7 @@ export function TimeClockButtons() {
       return;
     }
     if (!entry.mealStart || entry.mealEnd) return;
-    withLock(() => void persist({ ...entry, mealEnd: nowTime() }));
+    void persist({ ...entry, mealEnd: nowTime() });
   };
 
   const btnClass =
@@ -174,7 +154,7 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeIn}
-          disabled={saving || locked || !!entry.checkIn}
+          disabled={saving || !!entry.checkIn}
           className={`${btnClass} text-green-300 hover:bg-green-500/15`}
         >
           Time In
@@ -186,7 +166,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealIn}
-            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || !!entry.mealStart}
+            disabled={saving || !entry.checkIn || !!entry.checkOut || !!entry.mealStart}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal In
@@ -199,7 +179,7 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealOut}
-            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd}
+            disabled={saving || !!entry.checkOut || !entry.mealStart || !!entry.mealEnd}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15`}
           >
             Meal Out
@@ -211,7 +191,7 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeOut}
-          disabled={saving || locked || !entry.checkIn || !!entry.checkOut}
+          disabled={saving || !entry.checkIn || !!entry.checkOut}
           className={`${btnClass} text-red-300 hover:bg-red-500/15`}
         >
           Time Out

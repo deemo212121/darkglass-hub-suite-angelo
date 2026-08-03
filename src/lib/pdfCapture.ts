@@ -76,6 +76,19 @@ export async function captureHtmlToPdfBlob(
   }
 }
 
+/** Raw base64 (no "data:...;base64," prefix) — for handing a captured PDF to a JSON API that attaches/uploads it server-side (e.g. gmailBridge.ts's send-payslip). */
+export async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read blob"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /** Loads a bundled asset (imported via `@/assets/...`) as a data URL, so a print/capture document never depends on a live network fetch. Returns "" (graceful no-image) if the asset is missing. */
 export async function loadAssetDataUrl(importFn: () => Promise<{ default: string }>): Promise<string> {
   try {

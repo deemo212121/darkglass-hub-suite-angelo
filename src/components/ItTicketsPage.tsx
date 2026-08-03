@@ -1,0 +1,450 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { ChevronLeft, Ticket, Trash2, Save } from "lucide-react";
+import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { useAuth } from "@/lib/auth";
+import { getMyRoles, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { hasDashboardAccess } from "@/lib/dashboardAccess";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import {
+  getItTickets,
+  updateItTicket,
+  deleteItTicket,
+  notifyTicketStatusChange,
+  type ItTicketRow,
+  type ItTicketPriority,
+  type ItTicketStatus,
+} from "@/lib/supabase/itTickets";
+
+const IT_ADMIN_ROLES = ["IT", "ADMIN"];
+
+const STATUS_LABELS: Record<ItTicketStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+const STATUS_CLASSES: Record<ItTicketStatus, string> = {
+  open: "bg-blue-500/20 text-blue-300",
+  in_progress: "bg-amber-500/20 text-amber-300",
+  resolved: "bg-emerald-500/20 text-emerald-300",
+  closed: "bg-slate-500/20 text-slate-300",
+};
+
+const PRIORITY_CLASSES: Record<ItTicketPriority, string> = {
+  low: "bg-slate-500/20 text-slate-300",
+  normal: "bg-blue-500/20 text-blue-300",
+  high: "bg-orange-500/20 text-orange-300",
+  urgent: "bg-red-500/20 text-red-300",
+};
+
+export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { uid, role, displayName, email } = useAuth();
+  const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
+  // IT/Admin/Superadmin get full edit/assign/delete — everyone else who made
+  // it past the page-level gate (Senior Managers) is read-only. Enforced
+  // again server-side by the it_tickets_update/delete RLS policies either way.
+  const canEdit = extraRoles !== null && hasDashboardAccess(IT_ADMIN_ROLES, role, extraRoles);
+
+  const [tickets, setTickets] = useState<ItTicketRow[]>([]);
+  const [itAdmins, setItAdmins] = useState<ProfileRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [statusFilter, setStatusFilter] = useState<ItTicketStatus | "all">("all");
+  const [priorityFilter, setPriorityFilter] = useState<ItTicketPriority | "all">("all");
+  const [search, setSearch] = useState("");
+
+  const [selected, setSelected] = useState<ItTicketRow | null>(null);
+  const [editStatus, setEditStatus] = useState<ItTicketStatus>("open");
+  const [editAssignedTo, setEditAssignedTo] = useState<string>("");
+  const [editResolutionNotes, setEditResolutionNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyRoles(uid).then(({ extraRoles }) => {
+      if (!cancelled) setExtraRoles(extraRoles);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  const loadTickets = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const rows = await getItTickets();
+      setTickets(rows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load tickets.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTickets();
+  }, []);
+
+  // Only needed for the Assign dropdown, and only IT/Admin can assign anyway.
+  useEffect(() => {
+    if (!canEdit) return;
+    getCompanyUsers()
+      .then((users) =>
+        setItAdmins(
+          users.filter((u) => hasDashboardAccess(IT_ADMIN_ROLES, u.role, u.extra_roles))
+        )
+      )
+      .catch((err) => console.error("Failed to load IT/Admin roster:", err));
+  }, [canEdit]);
+
+  const filteredTickets = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tickets.filter((t) => {
+      if (statusFilter !== "all" && t.status !== statusFilter) return false;
+      if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+      if (q && !`${t.subject} ${t.description} ${t.createdByName}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [tickets, statusFilter, priorityFilter, search]);
+
+  const openTicket = (t: ItTicketRow) => {
+    setSelected(t);
+    setEditStatus(t.status);
+    setEditAssignedTo(t.assignedTo || "");
+    setEditResolutionNotes(t.resolutionNotes || "");
+  };
+
+  const closeModal = () => {
+    setSelected(null);
+    setSaving(false);
+  };
+
+  const saveTicket = async () => {
+    if (!selected || !canEdit) return;
+    setSaving(true);
+    try {
+      const assignedProfile = itAdmins.find((u) => u.id === editAssignedTo) || null;
+      const statusChanged = editStatus !== selected.status;
+      await updateItTicket(selected.id, {
+        status: editStatus,
+        assignedTo: editAssignedTo || null,
+        assignedToName: assignedProfile ? assignedProfile.display_name : null,
+        resolutionNotes: editResolutionNotes.trim() ? editResolutionNotes.trim() : null,
+      });
+      // Best-effort — the submitter's bell notification should never block
+      // the save itself if it fails.
+      if (statusChanged) {
+        notifyTicketStatusChange(selected, editStatus, displayName || email || "IT").catch((err) =>
+          console.error("Failed to notify ticket submitter:", err)
+        );
+        void logModuleActivity({
+          module: "it-tickets",
+          actorName: displayName || email || "IT",
+          action: "it_ticket_status_changed",
+          targetType: "it_ticket",
+          targetId: selected.id,
+          targetLabel: selected.subject,
+          details: { from: selected.status, to: editStatus },
+        });
+      }
+      closeModal();
+      await loadTickets();
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setSaving(false);
+    }
+  };
+
+  const removeTicket = async (t: ItTicketRow) => {
+    if (!canEdit) return;
+    if (!confirm(`Delete ticket "${t.subject}"? This cannot be undone.`)) return;
+    try {
+      await deleteItTicket(t.id);
+      void logModuleActivity({
+        module: "it-tickets",
+        actorName: displayName || email || "IT",
+        action: "it_ticket_deleted",
+        targetType: "it_ticket",
+        targetId: t.id,
+        targetLabel: t.subject,
+      });
+      if (selected?.id === t.id) closeModal();
+      await loadTickets();
+    } catch (err) {
+      alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
+              <ChevronLeft className="h-4 w-4" /> {mod.label}
+            </Link>
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+              {sub.title}
+            </h1>
+            <p className="text-sm text-muted-foreground">{sub.description}</p>
+            {extraRoles !== null && !canEdit && (
+              <p className="mt-2 text-xs text-amber-300/90">
+                View-only — only IT and Admins can edit, assign, or delete tickets.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <ActivityLogPanel module="it-tickets" title="IT Tickets Activity Log" />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <input
+            type="text"
+            placeholder="Search subject, description, submitter…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500 min-w-[240px]"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as ItTicketStatus | "all")}
+            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="all">All statuses</option>
+            {(Object.keys(STATUS_LABELS) as ItTicketStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABELS[s]}
+              </option>
+            ))}
+          </select>
+          <select
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value as ItTicketPriority | "all")}
+            className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="all">All priorities</option>
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+          <span className="text-xs text-slate-500">{filteredTickets.length} ticket{filteredTickets.length === 1 ? "" : "s"}</span>
+        </div>
+
+        {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+
+        <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm min-w-[900px]">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Subject</th>
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Submitted By</th>
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Priority</th>
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Assigned To</th>
+                <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Submitted</th>
+                <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
+                    Loading…
+                  </td>
+                </tr>
+              ) : filteredTickets.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
+                    No tickets found.
+                  </td>
+                </tr>
+              ) : (
+                filteredTickets.map((t) => (
+                  <tr key={t.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-4 py-3 font-medium">
+                      <button
+                        type="button"
+                        onClick={() => openTicket(t)}
+                        className="text-blue-400 hover:text-blue-300 hover:underline text-left"
+                      >
+                        {t.subject}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300">{t.createdByName}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${PRIORITY_CLASSES[t.priority]}`}>
+                        {t.priority}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${STATUS_CLASSES[t.status]}`}>
+                        {STATUS_LABELS[t.status]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300">{t.assignedToName || "—"}</td>
+                    <td className="px-4 py-3 text-slate-400 text-xs">{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openTicket(t)}
+                          className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-medium transition"
+                        >
+                          {canEdit ? "Manage" : "View"}
+                        </button>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => removeTicket(t)}
+                            title="Delete ticket"
+                            className="p-1.5 bg-slate-700 hover:bg-red-600 text-white rounded transition"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </main>
+
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Ticket className="h-4 w-4 text-blue-400" /> {selected.subject}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Submitted by {selected.createdByName} on {new Date(selected.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <button onClick={closeModal} className="text-slate-400 hover:text-white transition p-1">✕</button>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">Description</label>
+              <p className="text-sm text-slate-200 whitespace-pre-wrap bg-slate-800/50 border border-white/10 rounded-lg p-3">
+                {selected.description}
+              </p>
+            </div>
+
+            {!canEdit ? (
+              <>
+                <div className="grid grid-cols-2 gap-3 mb-2">
+                  <div>
+                    <span className="block text-xs font-semibold text-slate-400 uppercase mb-1">Priority</span>
+                    <span className={`inline-block text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${PRIORITY_CLASSES[selected.priority]}`}>
+                      {selected.priority}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-xs font-semibold text-slate-400 uppercase mb-1">Status</span>
+                    <span className={`inline-block text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${STATUS_CLASSES[selected.status]}`}>
+                      {STATUS_LABELS[selected.status]}
+                    </span>
+                  </div>
+                </div>
+                {selected.assignedToName && (
+                  <p className="text-xs text-slate-400 mb-2">Assigned to: {selected.assignedToName}</p>
+                )}
+                {selected.resolutionNotes && (
+                  <div className="mb-2">
+                    <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">IT Notes</label>
+                    <p className="text-sm text-emerald-300/90 whitespace-pre-wrap">{selected.resolutionNotes}</p>
+                  </div>
+                )}
+                <button onClick={closeModal} className="w-full mt-4 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">
+                  Close
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-slate-400">Status</span>
+                    <select
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value as ItTicketStatus)}
+                      className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    >
+                      {(Object.keys(STATUS_LABELS) as ItTicketStatus[]).map((s) => (
+                        <option key={s} value={s}>
+                          {STATUS_LABELS[s]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-slate-400">Assign to</span>
+                    <select
+                      value={editAssignedTo}
+                      onChange={(e) => setEditAssignedTo(e.target.value)}
+                      className="px-3 py-2 bg-slate-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="">Unassigned</option>
+                      {itAdmins.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.display_name || u.email}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="mb-4">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-slate-400">Resolution / IT notes</span>
+                    <textarea
+                      value={editResolutionNotes}
+                      onChange={(e) => setEditResolutionNotes(e.target.value)}
+                      rows={4}
+                      placeholder="What was done to resolve this..."
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-3 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none"
+                    />
+                  </label>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={saveTicket}
+                    disabled={saving}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm"
+                  >
+                    <Save className="h-4 w-4" />
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => removeTicket(selected)}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition font-semibold text-sm"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                  <button onClick={closeModal} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

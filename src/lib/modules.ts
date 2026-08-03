@@ -1437,6 +1437,15 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "it-tickets",
+      title: "IT Tickets",
+      description: "View and manage IT support tickets submitted by employees. IT and Admins can edit/assign/delete; Senior Managers can view.",
+      custom: "it-tickets" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "company-settings",
       title: "Company Settings",
       description: "Edit this company's own record — name, address, subscription plan, login alias. Only available to this company's SuperAdmin.",

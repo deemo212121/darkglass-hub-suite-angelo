@@ -1,11 +1,11 @@
 import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
-import { ROLE_LABELS, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
   getCompanyTimecardEntries,
@@ -16,6 +16,8 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -251,40 +253,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     loadAll();
   }, [loadAll]);
 
-  // Daily Attendance Tracker date — defaults to today, but HR/managers can
-  // pick any earlier date to review that day instead.
-  const [dailyDate, setDailyDate] = useState<string>(todayISO);
-  const [dailyDateEntries, setDailyDateEntries] = useState<CompanyTimecardEntry[]>([]);
-  const [dailyDateLoading, setDailyDateLoading] = useState(false);
-
-  // The main `entries` fetch above already covers [rangeStart, rangeEnd]
-  // (this week/month through today), so viewing today or any other day
-  // already in that window is free — only fetch separately when a date
-  // outside it (e.g. last month) is picked.
-  useEffect(() => {
-    if (dailyDate >= rangeStart && dailyDate <= rangeEnd) {
-      setDailyDateEntries([]);
-      return;
-    }
-    if (!ready || !uid) return;
-    let cancelled = false;
-    setDailyDateLoading(true);
-    getCompanyTimecardEntries(dailyDate, dailyDate)
-      .then((rows) => { if (!cancelled) setDailyDateEntries(rows); })
-      .finally(() => { if (!cancelled) setDailyDateLoading(false); });
-    return () => { cancelled = true; };
-  }, [dailyDate, rangeStart, rangeEnd, ready, uid]);
-
-  const dailyEntryByProfileId = useMemo(() => {
-    const map = new Map<string, CompanyTimecardEntry>();
-    if (dailyDate >= rangeStart && dailyDate <= rangeEnd) {
-      for (const e of entries) if (e.workDate === dailyDate) map.set(e.profileId, e);
-    } else {
-      for (const e of dailyDateEntries) map.set(e.profileId, e);
-    }
-    return map;
-  }, [dailyDate, rangeStart, rangeEnd, entries, dailyDateEntries]);
-
   // PTO eligibility for whoever is selected in the New PTO Request form —
   // hire date lives in profiles.employee_info, fetched on demand per
   // selection rather than bulk-loaded for the whole roster.
@@ -356,13 +324,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return map;
   }, [entries]);
 
-  const isDailyDateToday = dailyDate === todayISO;
-  const dailyDateLabel = isDailyDateToday ? "Today" : dailyDate;
-
   const dailyRecords: DailyRecord[] = useMemo(() => {
-    const dow = new Date(dailyDate + "T00:00:00").getDay();
+    const dow = new Date(todayISO + "T00:00:00").getDay();
     return visibleProfiles.map((p) => {
-      const entry = dailyEntryByProfileId.get(p.id);
+      const entry = entriesByKey.get(`${p.id}|${todayISO}`);
       const offDays = new Set<number>(p.off_days ?? []);
       const isOffDay = offDays.has(dow);
       const checkIn = entry?.checkIn || "";
@@ -370,10 +335,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const mealIn = entry?.mealStart || "";
       const mealOut = entry?.mealEnd || "";
       const branchTz = timezoneForBranch(p.assigned_branch);
-      // Grace-period/"not due yet" logic only makes sense for today — a
-      // past day is already fully over, so anything still missing there is
-      // definitively missing (see computeAlerts' nowHHMM=null doc comment).
-      const rowNowHHMM = isDailyDateToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
+      const rowNowHHMM = nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm;
       const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
@@ -381,7 +343,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         name: p.display_name || p.email,
         email: p.email,
         location: p.assigned_branch || "",
-        department: p.department || ROLE_LABELS[p.role] || p.role || "",
+        department: getRoleDepartmentBreakdown(p.role).department,
         manager: p.manager_name || "",
         role: normalizeRole(p.role),
         checkIn: checkIn || "—",
@@ -393,7 +355,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         clockedInBy: clockedInByName,
       };
     });
-  }, [visibleProfiles, dailyEntryByProfileId, dailyDate, isDailyDateToday, nowByTimezone, allProfileById]);
+  }, [visibleProfiles, entriesByKey, todayISO, nowByTimezone, allProfileById]);
 
   const totalEmployees = visibleProfiles.length;
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
@@ -417,7 +379,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const profileDepartment = (p: ProfileRow) => p.department || ROLE_LABELS[p.role] || p.role || "";
+  // Grouped by department, both the department groups and each group's
+  // employees sorted alphabetically — same treatment as the Payroll pages.
+  const dailyDataByDepartment = (() => {
+    const groups = new Map<string, DailyRecord[]>();
+    for (const record of filteredAndSortedData) {
+      const dept = record.department || "—";
+      if (!groups.has(dept)) groups.set(dept, []);
+      groups.get(dept)!.push(record);
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([department, records]) => ({ department, records }));
+  })();
+
+  const profileDepartment = (p: ProfileRow) => getRoleDepartmentBreakdown(p.role).department;
 
   const departments = Array.from(
     new Set(visibleProfiles.map(profileDepartment).filter(Boolean))
@@ -517,6 +493,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         note: warnText.trim(),
       });
       setConductNotes(await getAllAgentNotes().catch(() => conductNotes));
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: "conduct_warning_submitted",
+        targetType: "profile",
+        targetId: warnTarget.profileId,
+        targetLabel: warnTarget.name,
+        details: { note: warnText.trim() },
+      });
       setWarnTarget(null);
       setWarnText("");
     } catch (error) {
@@ -527,14 +512,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   const handleDownloadSummary = () => {
-    const today = dailyDate;
+    const today = todayISO;
     let csvContent = "Attendance Summary Report\n";
     csvContent += `Date: ${today}\n\n`;
     csvContent += "Key Metrics\n";
     csvContent += `Total Employees,${totalEmployees}\n`;
-    csvContent += `Present ${dailyDateLabel},${presentToday}\n`;
-    csvContent += `Absent ${dailyDateLabel},${absentToday}\n`;
-    csvContent += `Late ${dailyDateLabel},${lateToday}\n\n`;
+    csvContent += `Present Today,${presentToday}\n`;
+    csvContent += `Absent Today,${absentToday}\n`;
+    csvContent += `Late Today,${lateToday}\n\n`;
     csvContent += "Daily Attendance Tracker\n";
     csvContent += "Employee Name,Location,Department,Manager,Check In,Meal In,Meal Out,Check Out,Alerts,Notes\n";
     dailyRecords.forEach((record) => {
@@ -565,6 +550,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         createdBy: myProfileId,
       });
       setNotesData({ ...notesData, [selectedNote]: { content: newNote, notifyIndividual, notifyTeamLead } });
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: "attendance_note_saved",
+        targetType: "profile",
+        targetId: selectedNote,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { note: newNote.trim() },
+      });
 
       const warnings: string[] = [];
       const noteBody = newNote.trim();
@@ -672,6 +666,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     try {
       await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Admin");
       setPtoRequests(await getCompanyPtoRequests());
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: decision === "approved" ? "pto_request_approved" : "pto_request_rejected",
+        targetType: "pto_request",
+        targetId: request.id,
+        targetLabel: `${profileName(request.profileId)} (${request.startDate} – ${request.endDate})`,
+        details: { stage, ptoType: request.ptoType },
+      });
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
@@ -735,6 +738,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       );
       await refreshCorrections();
       setEntries(await getCompanyTimecardEntries(rangeStart, rangeEnd));
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Reviewer",
+        action: decision === "approved" ? "timecard_correction_approved" : "timecard_correction_rejected",
+        targetType: "timecard_correction",
+        targetId: selectedCorrection.id,
+        targetLabel: `${profileName(selectedCorrection.profileId)} (${selectedCorrection.workDate})`,
+        details: { stage },
+      });
       setSelectedCorrection(null);
     } catch (error) {
       alert(`Failed to update correction: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -774,7 +786,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">Present {dailyDateLabel}</p>
+                  <p className="text-xs text-slate-400 uppercase">Present Today</p>
                   <p className="text-2xl font-bold text-green-400 mt-2">{loading ? "…" : presentToday}</p>
                 </div>
                 <UserCheck className="h-8 w-8 text-green-400 opacity-50" />
@@ -783,7 +795,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">Absent {dailyDateLabel}</p>
+                  <p className="text-xs text-slate-400 uppercase">Absent Today</p>
                   <p className="text-2xl font-bold text-red-400 mt-2">{loading ? "…" : absentToday}</p>
                 </div>
                 <UserX className="h-8 w-8 text-red-400 opacity-50" />
@@ -792,7 +804,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">Late {dailyDateLabel}</p>
+                  <p className="text-xs text-slate-400 uppercase">Late Today</p>
                   <p className="text-2xl font-bold text-yellow-400 mt-2">{loading ? "…" : lateToday}</p>
                 </div>
                 <Clock className="h-8 w-8 text-yellow-400 opacity-50" />
@@ -896,6 +908,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </button>
               </div>
 
+              <ActivityLogPanel module="attendance-monitoring" title="Attendance Activity Log" />
+
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -932,33 +946,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Daily Attendance Table */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <h2 className="text-lg font-bold text-white">Daily Attendance Tracker — {dailyDate}</h2>
-                  <div className="flex items-center gap-2">
-                    {!isDailyDateToday && (
-                      <button
-                        type="button"
-                        onClick={() => setDailyDate(todayISO)}
-                        className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
-                      >
-                        Jump to Today
-                      </button>
-                    )}
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      max={todayISO}
-                      onChange={(e) => e.target.value && setDailyDate(e.target.value)}
-                      className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-                </div>
+                <h2 className="text-lg font-bold text-white mb-4">Daily Attendance Tracker — {todayISO}</h2>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Check In</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Check Out</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Alerts</th>
@@ -966,11 +961,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </tr>
                   </thead>
                   <tbody>
-                    {loading || dailyDateLoading ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
+                    {loading ? (
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
                     ) : filteredAndSortedData.length === 0 ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
-                    ) : filteredAndSortedData.map((record) => (
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                    ) : dailyDataByDepartment.map((group) => (
+                      <Fragment key={group.department}>
+                        <tr className="bg-white/[0.03]">
+                          <td colSpan={8} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                            {group.department} <span className="text-slate-500 font-normal normal-case">({group.records.length})</span>
+                          </td>
+                        </tr>
+                        {group.records.map((record) => (
                       <tr key={record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
@@ -979,6 +981,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>
+                        <td className="px-3 py-3 text-slate-300">{getRoleDepartmentBreakdown(record.role).roleLabel || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">
                           {record.checkIn}
                           {record.clockedInBy && (
@@ -986,7 +989,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               (by {record.clockedInBy})
                             </span>
                           )}
-                          {isDailyDateToday && record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
+                          {record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
@@ -1022,6 +1025,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           )}
                         </td>
                       </tr>
+                        ))}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
