@@ -46,6 +46,7 @@ import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { ROLE_LABELS } from "@/lib/roleLabels";
+import { formatClockTime, type PayslipDailyRow } from "@/lib/payslipTemplate";
 
 interface AttendanceRecord {
   date: string;
@@ -77,27 +78,6 @@ const PTO_TYPE_LABEL: Record<PtoType, string> = {
   unpaid: "Unpaid",
   bereavement: "Bereavement",
 };
-
-interface PayslipDailyRow {
-  date: string;
-  clockIn: string;
-  clockOut: string;
-  mealStart: string;
-  mealEnd: string;
-  hours: number;
-  rate: number;
-  amount: number;
-}
-
-// Renders a raw "HH:MM" or "HH:MM:SS" capture time as "h:mm AM/PM" for the payslip.
-function formatClockTime(t: string): string {
-  if (!t) return "—";
-  const [h, m, s = 0] = t.split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return "—";
-  const period = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")} ${period}`;
-}
 
 // Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
 // strings, so this catches the classic native <input type="time"> mistake

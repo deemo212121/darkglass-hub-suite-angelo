@@ -1,11 +1,11 @@
 import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
-import { ROLE_LABELS, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
   getCompanyTimecardEntries,
@@ -16,6 +16,8 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -381,7 +383,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         name: p.display_name || p.email,
         email: p.email,
         location: p.assigned_branch || "",
-        department: p.department || ROLE_LABELS[p.role] || p.role || "",
+        department: getRoleDepartmentBreakdown(p.role).department,
         manager: p.manager_name || "",
         role: normalizeRole(p.role),
         checkIn: checkIn || "—",
@@ -417,7 +419,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const profileDepartment = (p: ProfileRow) => p.department || ROLE_LABELS[p.role] || p.role || "";
+  // Grouped by department, both the department groups and each group's
+  // employees sorted alphabetically — same treatment as the Payroll pages.
+  const dailyDataByDepartment = (() => {
+    const groups = new Map<string, DailyRecord[]>();
+    for (const record of filteredAndSortedData) {
+      const dept = record.department || "—";
+      if (!groups.has(dept)) groups.set(dept, []);
+      groups.get(dept)!.push(record);
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([department, records]) => ({ department, records }));
+  })();
+
+  const profileDepartment = (p: ProfileRow) => getRoleDepartmentBreakdown(p.role).department;
 
   const departments = Array.from(
     new Set(visibleProfiles.map(profileDepartment).filter(Boolean))
@@ -517,6 +533,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         note: warnText.trim(),
       });
       setConductNotes(await getAllAgentNotes().catch(() => conductNotes));
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: "conduct_warning_submitted",
+        targetType: "profile",
+        targetId: warnTarget.profileId,
+        targetLabel: warnTarget.name,
+        details: { note: warnText.trim() },
+      });
       setWarnTarget(null);
       setWarnText("");
     } catch (error) {
@@ -565,6 +590,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         createdBy: myProfileId,
       });
       setNotesData({ ...notesData, [selectedNote]: { content: newNote, notifyIndividual, notifyTeamLead } });
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: "attendance_note_saved",
+        targetType: "profile",
+        targetId: selectedNote,
+        targetLabel: employee?.display_name || employee?.email || undefined,
+        details: { note: newNote.trim() },
+      });
 
       const warnings: string[] = [];
       const noteBody = newNote.trim();
@@ -672,6 +706,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     try {
       await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Admin");
       setPtoRequests(await getCompanyPtoRequests());
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: decision === "approved" ? "pto_request_approved" : "pto_request_rejected",
+        targetType: "pto_request",
+        targetId: request.id,
+        targetLabel: `${profileName(request.profileId)} (${request.startDate} – ${request.endDate})`,
+        details: { stage, ptoType: request.ptoType },
+      });
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
@@ -735,6 +778,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       );
       await refreshCorrections();
       setEntries(await getCompanyTimecardEntries(rangeStart, rangeEnd));
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Reviewer",
+        action: decision === "approved" ? "timecard_correction_approved" : "timecard_correction_rejected",
+        targetType: "timecard_correction",
+        targetId: selectedCorrection.id,
+        targetLabel: `${profileName(selectedCorrection.profileId)} (${selectedCorrection.workDate})`,
+        details: { stage },
+      });
       setSelectedCorrection(null);
     } catch (error) {
       alert(`Failed to update correction: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -896,6 +948,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </button>
               </div>
 
+              <ActivityLogPanel module="attendance-monitoring" title="Attendance Activity Log" />
+
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -959,6 +1013,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Check In</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Check Out</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Alerts</th>
@@ -967,10 +1022,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </thead>
                   <tbody>
                     {loading || dailyDateLoading ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
                     ) : filteredAndSortedData.length === 0 ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
-                    ) : filteredAndSortedData.map((record) => (
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                    ) : dailyDataByDepartment.map((group) => (
+                      <Fragment key={group.department}>
+                        <tr className="bg-white/[0.03]">
+                          <td colSpan={8} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                            {group.department} <span className="text-slate-500 font-normal normal-case">({group.records.length})</span>
+                          </td>
+                        </tr>
+                        {group.records.map((record) => (
                       <tr key={record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
@@ -979,6 +1041,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>
+                        <td className="px-3 py-3 text-slate-300">{getRoleDepartmentBreakdown(record.role).roleLabel || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">
                           {record.checkIn}
                           {record.clockedInBy && (
@@ -1022,6 +1085,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           )}
                         </td>
                       </tr>
+                        ))}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

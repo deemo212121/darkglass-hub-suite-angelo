@@ -25,6 +25,13 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
+  // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
+  // reuses this same list via getDashboardRoleGate("it-tickets") to carve
+  // an exception into the Admin-module's Admin/SuperAdmin-only gate) — IT
+  // and Admin get full edit/delete, Senior-tier managers are view-only,
+  // both enforced again inside ItTicketsPage.tsx and by the it_tickets RLS
+  // policies (migration 0112), not just this list.
+  "it-tickets": ["IT", "ADMIN", "SENIOR_MANAGER", "SENIOR_BRANCH_MANAGER", "BIZOPS_SENIOR_MANAGER"],
 };
 
 export function getDashboardRoleGate(subSlug: string): string[] | null {

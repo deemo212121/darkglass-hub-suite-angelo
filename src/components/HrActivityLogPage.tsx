@@ -20,7 +20,10 @@ const ACTION_BADGE_COLOR = (action: string): string => {
   return "bg-blue-500/20 text-blue-300 border-blue-500/30";
 };
 
-export function HrActivityLogPage() {
+/** The log's actual content (filters + table) — reused as-is by both the
+ * standalone route below and the modal popup opened from ReportHRDaily.tsx,
+ * which don't navigate away from the HR Dashboard for this anymore. */
+export function HrActivityLogPanel() {
   const { ready, companyId } = useAuth();
   const [entries, setEntries] = useState<HrActivityLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,13 +81,6 @@ export function HrActivityLogPage() {
   }, [entries, search, actionFilter, actorFilter]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
-      <main className="max-w-6xl mx-auto p-4">
-        <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
-          <ChevronLeft className="h-3.5 w-3.5" /> Home
-        </Link>
-
         <div className="panel p-0 overflow-hidden">
           <div className="px-4 py-4 border-b border-white/10">
             <h2 className="font-semibold text-sm">HR Activity Log</h2>
@@ -169,6 +165,21 @@ export function HrActivityLogPage() {
             </table>
           </div>
         </div>
+  );
+}
+
+/** Standalone route wrapper (`/hr-activity-log`) — kept for anyone with the
+ * URL bookmarked; ReportHRDaily.tsx no longer navigates here, it pops
+ * HrActivityLogPanel in a modal instead. */
+export function HrActivityLogPage() {
+  return (
+    <div className="min-h-screen bg-background">
+      <AppHeader />
+      <main className="max-w-6xl mx-auto p-4">
+        <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
+          <ChevronLeft className="h-3.5 w-3.5" /> Home
+        </Link>
+        <HrActivityLogPanel />
       </main>
     </div>
   );

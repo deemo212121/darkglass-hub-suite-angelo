@@ -1,12 +1,15 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, currentRate, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 
 const REGULAR_HOURS_PER_DAY = 8;
 const OT_MULTIPLIER = 1.5;
@@ -15,14 +18,17 @@ function fmtMoney(n: number) {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function profileDepartment(p: ProfileRow): string {
-  return p.department || ROLE_LABELS[p.role] || p.role || "";
+// Same US/PH split as AccountingDashboard.tsx — assigned_branch === "Philippines" is the only PH signal.
+function profileCountry(p: ProfileRow): "US" | "PH" {
+  return p.assigned_branch === "Philippines" ? "PH" : "US";
 }
 
 interface PayrollRow {
   profileId: string;
   name: string;
   department: string;
+  roleLabel: string;
+  country: "US" | "PH";
   rate: number;
   regularHours: number;
   overtimeHours: number;
@@ -30,6 +36,7 @@ interface PayrollRow {
 }
 
 export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+  const { displayName, email } = useAuth();
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
@@ -37,6 +44,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
 
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [selectedCountry, setSelectedCountry] = useState<"US" | "PH">("US");
   const [detailProfile, setDetailProfile] = useState<ProfileRow | null>(null);
 
   const [startDate, setStartDate] = useState(() => {
@@ -109,10 +117,13 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         overtimeHours += ot;
         grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
       }
+      const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
       return {
         profileId: p.id,
         name: p.display_name || p.email,
-        department: profileDepartment(p),
+        department,
+        roleLabel,
+        country: profileCountry(p),
         rate: currentRate(history),
         regularHours,
         overtimeHours,
@@ -121,9 +132,10 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     });
   }, [profiles, entriesByProfile, historyByProfile]);
 
-  const departments = Array.from(new Set(rows.map((r) => r.department).filter(Boolean)));
+  const countryRows = rows.filter((r) => r.country === selectedCountry);
+  const departments = Array.from(new Set(countryRows.map((r) => r.department).filter(Boolean)));
 
-  const filteredRows = rows.filter((r) => {
+  const filteredRows = countryRows.filter((r) => {
     if (departmentFilter !== "all" && r.department !== departmentFilter) return false;
     if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -133,10 +145,27 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const totalRegular = filteredRows.reduce((s, r) => s + r.regularHours, 0);
   const totalOvertime = filteredRows.reduce((s, r) => s + r.overtimeHours, 0);
 
+  // Grouped by department, both the department groups and each group's
+  // employees sorted alphabetically — same treatment as AccountingDashboard.tsx's Payroll tab.
+  const filteredRowsByDepartment = (() => {
+    const groups = new Map<string, PayrollRow[]>();
+    for (const row of filteredRows) {
+      const dept = row.department || "—";
+      if (!groups.has(dept)) groups.set(dept, []);
+      groups.get(dept)!.push(row);
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([department, deptRows]) => ({
+        department,
+        rows: [...deptRows].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+  })();
+
   const handleDownload = () => {
-    let csv = "Employee,Department,Regular Hours,Overtime Hours,Rate,Gross Pay\n";
+    let csv = "Employee,Department,Role,Regular Hours,Overtime Hours,Rate,Gross Pay\n";
     filteredRows.forEach((r) => {
-      csv += `"${r.name}","${r.department}",${r.regularHours.toFixed(2)},${r.overtimeHours.toFixed(2)},${r.rate.toFixed(2)},${r.grossPay.toFixed(2)}\n`;
+      csv += `"${r.name}","${r.department}","${r.roleLabel}",${r.regularHours.toFixed(2)},${r.overtimeHours.toFixed(2)},${r.rate.toFixed(2)},${r.grossPay.toFixed(2)}\n`;
     });
     const el = document.createElement("a");
     el.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(csv));
@@ -145,6 +174,14 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     document.body.appendChild(el);
     el.click();
     document.body.removeChild(el);
+
+    void logModuleActivity({
+      module: "payroll",
+      actorName: displayName || email || "Unknown",
+      action: "payroll_csv_exported",
+      targetLabel: `${selectedCountry} · ${startDate} – ${endDate}`,
+      details: { country: selectedCountry, department: departmentFilter, startDate, endDate, rows: filteredRows.length },
+    });
   };
 
   return (
@@ -166,6 +203,25 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         </div>
 
         <div className="space-y-6">
+          {/* US/PH toggle */}
+          <div className="flex gap-2">
+            {(["US", "PH"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => {
+                  setSelectedCountry(c);
+                  setDepartmentFilter("all");
+                }}
+                className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                  selectedCountry === c ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                {c === "US" ? "US Payroll" : "PH Payroll"}
+              </button>
+            ))}
+          </div>
+
           {/* KPI Cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -239,6 +295,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             </div>
           </div>
 
+          <ActivityLogPanel module="payroll" title="Payroll Activity Log" />
+
           {/* Table */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
             <h2 className="text-lg font-bold text-white mb-4">Payroll — {startDate} to {endDate}</h2>
@@ -247,6 +305,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                 <tr className="border-b border-white/10">
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Role</th>
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Reg. Hours</th>
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">OT Hours</th>
                   <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Rate</th>
@@ -255,32 +314,42 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading payroll…</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading payroll…</td></tr>
                 ) : filteredRows.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
-                ) : filteredRows.map((row) => (
-                  <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
-                    <td className="px-3 py-3 text-white font-medium">
-                      <button
-                        type="button"
-                        onClick={() => setDetailProfile(profiles.find((p) => p.id === row.profileId) ?? null)}
-                        className="text-blue-400 hover:text-blue-300 hover:underline"
-                      >
-                        {row.name}
-                      </button>
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">{row.department || "—"}</td>
-                    <td className="px-3 py-3 text-right text-slate-200">{row.regularHours.toFixed(1)}</td>
-                    <td className="px-3 py-3 text-right text-orange-300">{row.overtimeHours.toFixed(1)}</td>
-                    <td className="px-3 py-3 text-right text-slate-200">${row.rate.toFixed(2)}/hr</td>
-                    <td className="px-3 py-3 text-right font-semibold text-green-300">{fmtMoney(row.grossPay)}</td>
-                  </tr>
+                  <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                ) : filteredRowsByDepartment.map((group) => (
+                  <Fragment key={group.department}>
+                    <tr className="bg-white/[0.03]">
+                      <td colSpan={7} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                        {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
+                      </td>
+                    </tr>
+                    {group.rows.map((row) => (
+                      <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
+                        <td className="px-3 py-3 text-white font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setDetailProfile(profiles.find((p) => p.id === row.profileId) ?? null)}
+                            className="text-blue-400 hover:text-blue-300 hover:underline"
+                          >
+                            {row.name}
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">{row.department || "—"}</td>
+                        <td className="px-3 py-3 text-slate-300">{row.roleLabel || "—"}</td>
+                        <td className="px-3 py-3 text-right text-slate-200">{row.regularHours.toFixed(1)}</td>
+                        <td className="px-3 py-3 text-right text-orange-300">{row.overtimeHours.toFixed(1)}</td>
+                        <td className="px-3 py-3 text-right text-slate-200">${row.rate.toFixed(2)}/hr</td>
+                        <td className="px-3 py-3 text-right font-semibold text-green-300">{fmtMoney(row.grossPay)}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
               {filteredRows.length > 0 && (
                 <tfoot>
                   <tr className="border-t border-white/20 bg-white/5">
-                    <td colSpan={5} className="px-3 py-3 text-sm font-semibold text-slate-300">Total</td>
+                    <td colSpan={6} className="px-3 py-3 text-sm font-semibold text-slate-300">Total</td>
                     <td className="px-3 py-3 text-right font-bold text-green-300">{fmtMoney(totalGross)}</td>
                   </tr>
                 </tfoot>
@@ -294,7 +363,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         <EmployeePayrollDetailModal
           profileId={detailProfile.id}
           employeeName={detailProfile.display_name || detailProfile.email}
-          department={profileDepartment(detailProfile)}
+          department={getRoleDepartmentBreakdown(detailProfile.role).department}
           requiredCheckIn={detailProfile.required_check_in || undefined}
           requiredCheckOut={detailProfile.required_check_out || undefined}
           workingHours={detailProfile.working_hours}
