@@ -85,7 +85,13 @@ export interface TechRepairCount {
  * technician's own completed work). Dated by schedule_date — the day the
  * work actually happened, same convention getCsrVisitDatesByTicketIds uses.
  *
- * visits has no branch of its own (only its parent ticket does), so this
+ * Redo tickets (tickets.redo — a manager-flagged re-dispatch of a prior
+ * failed repair) don't count toward the technician's paid completed total,
+ * same as the legacy per-tech payroll report's "Redo Reduction" line —
+ * excluded outright here rather than counted then subtracted, since this
+ * model pays per repair_type bucket rather than one flat completed-count rate.
+ *
+ * visits has no branch/redo of its own (only its parent ticket does), so this
  * does the same two-step "fetch, then join by ticket_id via a Map" pattern
  * as getLatestVisitTechnicianByTicketIds/getVisitsByTicketIds instead of a
  * PostgREST embed (no embed pattern is used anywhere else in this file for
@@ -114,13 +120,15 @@ export async function getTechCompletedRepairCounts(
   const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
   const { data: ticketRows, error: tErr } = await supabase
     .from("tickets")
-    .select("id, location")
+    .select("id, location, redo")
     .in("id", ticketIds);
   if (tErr) console.error("getTechCompletedRepairCounts (ticket location) error:", tErr.message);
   const locationByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, t.location || ""]));
+  const redoByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, !!t.redo]));
 
   const counts = new Map<string, TechRepairCount>();
   for (const r of completed as any[]) {
+    if (redoByTicket.get(r.ticket_id)) continue;
     const technician = String(r.technician).trim();
     const repairType = String(r.repair_type || "").trim() || DEFAULT_REPAIR_TYPE;
     const branch = locationByTicket.get(r.ticket_id) || "";

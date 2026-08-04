@@ -178,6 +178,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
   const [filterLocation, setFilterLocation] = useState<string>("all");
+  // Daily Attendance Tracker only — hides everyone still missing either
+  // punch (absent, or clocked in but not out yet) so the table only shows
+  // employees whose attendance for the day is actually complete.
+  const [completeOnly, setCompleteOnly] = useState(false);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
@@ -421,6 +425,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
       if (filterLocation !== "all" && record.location !== filterLocation) return false;
+      if (completeOnly && (record.checkIn === "—" || record.checkOut === "—")) return false;
       return true;
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -823,12 +828,35 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {sub.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {sub.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+            </div>
+            {/* Drives every "daily" scoped view on this page — the KPI
+                cards above and the Daily Attendance Tracker table below —
+                so HR/managers can review any earlier date from one control. */}
+            <div className="flex items-center gap-2">
+              {!isDailyDateToday && (
+                <button
+                  type="button"
+                  onClick={() => setDailyDate(todayISO)}
+                  className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
+                >
+                  Jump to Today
+                </button>
+              )}
+              <input
+                type="date"
+                value={dailyDate}
+                max={todayISO}
+                onChange={(e) => e.target.value && setDailyDate(e.target.value)}
+                className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+              />
+            </div>
           </div>
         </div>
 
@@ -973,7 +1001,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-4">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -1002,6 +1030,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       ))}
                     </select>
                   </div>
+                  <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={completeOnly}
+                        onChange={(e) => setCompleteOnly(e.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-slate-800/50 accent-blue-500"
+                      />
+                      Complete only (Clock In &amp; Out)
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -1009,24 +1048,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <h2 className="text-lg font-bold text-white">Daily Attendance Tracker — {dailyDate}</h2>
-                  <div className="flex items-center gap-2">
-                    {!isDailyDateToday && (
-                      <button
-                        type="button"
-                        onClick={() => setDailyDate(todayISO)}
-                        className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
-                      >
-                        Jump to Today
-                      </button>
-                    )}
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      max={todayISO}
-                      onChange={(e) => e.target.value && setDailyDate(e.target.value)}
-                      className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>

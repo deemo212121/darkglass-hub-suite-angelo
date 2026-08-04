@@ -17,6 +17,7 @@ import {
   Download,
   Mail,
   Send,
+  Wrench,
 } from "lucide-react";
 import {
   BarChart,
@@ -373,9 +374,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const { uid, role, displayName, email } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "reports">(
+  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "reports">(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "reports"],
+    ["overview", "payroll", "techPayroll", "reports"],
     "overview",
   );
   // Overview KPI cards default to the live current-period preview, but can
@@ -383,8 +384,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [selectedRunId, setSelectedRunId] = useState<string>("current");
   const [selectedCurrency, setSelectedCurrency] = useState<"USD" | "PHP">("USD");
   // Under US Payroll only — technicians are paid per completed repair ticket
-  // (Tech Payroll) instead of hourly (Office Payroll, the pre-existing view).
-  const [payrollView, setPayrollView] = useState<"office" | "tech">("office");
+  // (Tech Payroll) instead of hourly (Office Payroll). Driven by which tab is
+  // active rather than its own toggle, now that Tech Payroll is a full tab.
+  const payrollView: "office" | "tech" = activeTab === "techPayroll" ? "tech" : "office";
+  // Tech Payroll only exists under US, regardless of whatever the Payroll
+  // tab's own US/PH toggle was last left on — every currency-scoped
+  // computation below reads this instead of selectedCurrency directly, so
+  // switching to Tech Payroll doesn't require (or wait on) mutating that
+  // toggle's state, and switching back to Payroll leaves it untouched.
+  const effectiveCurrency: "USD" | "PHP" = activeTab === "techPayroll" ? "USD" : selectedCurrency;
   // Funnel-style column filters (Ticket List convention) — empty set = no filter.
   const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -421,7 +429,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [sendingPayslipId, setSendingPayslipId] = useState<string | null>(null);
   // The Payroll table's currency toggle already reads as "which region" —
   // reuse it directly rather than a second, easy-to-desync piece of state.
-  const activeGmailRegion: GmailRegion = selectedCurrency === "USD" ? "US" : "PH";
+  const activeGmailRegion: GmailRegion = effectiveCurrency === "USD" ? "US" : "PH";
   const gmailStatus = gmailStatusByRegion[activeGmailRegion];
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
@@ -694,12 +702,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // by exclusion) is used to scope which existing line items get cleared
   // on a regenerate; nationIncludedPayrollRows is what actually gets
   // (re)inserted.
-  const nationPayrollRows = selectedCurrency === "USD" ? usRows : phRows;
-  const nationIncludedPayrollRows = selectedCurrency === "USD" ? includedUsRows : includedPhRows;
+  const nationPayrollRows = effectiveCurrency === "USD" ? usRows : phRows;
+  const nationIncludedPayrollRows = effectiveCurrency === "USD" ? includedUsRows : includedPhRows;
 
   // grossPayUSD is already plain USD (see payrollRows above) — no conversion here.
   const totalUSPayroll = usRows.reduce((s, r) => s + r.grossPayUSD, 0);
   const totalPHPayroll = phRows.reduce((s, r) => s + r.grossPayUSD, 0);
+  // Scoped versions for the Payroll/Tech Payroll tabs' own summary cards —
+  // totalUSPayroll above stays the combined US figure for the Overview tab.
+  const totalUSOfficePayroll = usOfficeRows.reduce((s, r) => s + r.grossPayUSD, 0);
+  const totalUSTechPayroll = usTechRows.reduce((s, r) => s + r.grossPayUSD, 0);
   const totalPayrollUSD = totalUSPayroll + totalPHPayroll;
   const avgPayPerEmployee =
     payrollRows.length > 0 ? totalPayrollUSD / payrollRows.length : 0;
@@ -916,7 +928,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (lineErr) throw new Error(lineErr.message);
 
       const nationTotalUSD = nationIncludedPayrollRows.reduce((s, r) => s + r.grossPayUSD, 0);
-      const nationLabel = selectedCurrency === "USD" ? "US" : "PH";
+      const nationLabel = effectiveCurrency === "USD" ? "US" : "PH";
 
       // Insert audit log entry
       await supabase.from("payroll_audit_log").insert({
@@ -1221,13 +1233,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }
 
   // ── Render helpers ───────────────────────────────────────────────────────────
-  // selectedCurrency is really a "which team" filter (US vs PH employees) —
+  // effectiveCurrency is really a "which team" filter (US vs PH employees) —
   // every amount is always shown in USD regardless of which team is active.
-  const displayRows = selectedCurrency === "USD" ? (payrollView === "tech" ? usTechRows : usOfficeRows) : phRows;
-  const isTechView = selectedCurrency === "USD" && payrollView === "tech";
+  const displayRows = effectiveCurrency === "USD" ? (payrollView === "tech" ? usTechRows : usOfficeRows) : phRows;
+  const isTechView = effectiveCurrency === "USD" && payrollView === "tech";
   // checkbox, Name, Department, Role, Gross Pay, Payslip (6) + Branch (US
   // only) + either Tickets Completed (Tech) or Reg/Duty/OT Hours + Rate (Office/PH).
-  const payrollColCount = 6 + (selectedCurrency === "USD" ? 1 : 0) + (isTechView ? 1 : 4);
+  const payrollColCount = 6 + (effectiveCurrency === "USD" ? 1 : 0) + (isTechView ? 1 : 4);
 
   // Excel-autofilter convention (matches TicketColumnFilter/TicketList): a
   // column's own option list reflects every OTHER active filter, so opening
@@ -1343,13 +1355,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           {[
             { id: "overview", label: "Overview", Icon: PieChartIcon },
             { id: "payroll", label: "Payroll", Icon: DollarSign },
+            { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
             { id: "reports", label: "Reports", Icon: FileText },
           ].map((tab) => {
             const Icon = tab.Icon;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "reports")}
+                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "reports")}
                 className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
                   activeTab === tab.id
                     ? "border-blue-500 text-blue-300"
@@ -1443,7 +1456,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
         {/* ── Payroll Tab ──────────────────────────────────────────────────── */}
-        {activeTab === "payroll" && (
+        {(activeTab === "payroll" || activeTab === "techPayroll") && (
           <div className="space-y-6">
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
@@ -1490,56 +1503,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 Audit Log ({auditLog.length})
               </button>
               <ActivityLogPanel module="accounting" title="Accounting Activity Log" />
-              {/* Currency toggle */}
-              <div className="ml-auto flex gap-2">
-                {(["USD", "PHP"] as const).map((cur) => (
-                  <button
-                    key={cur}
-                    onClick={() => {
-                      setSelectedCurrency(cur);
-                      setDepartmentFilter(new Set());
-                      setRoleFilter(new Set());
-                      setRegHoursFilter(new Set());
-                      setRateFilter(new Set());
-                    }}
-                    className={`px-4 py-2 rounded text-sm font-semibold transition ${
-                      selectedCurrency === cur
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                    }`}
-                  >
-                    {cur === "USD" ? "US Payroll" : "PH Payroll"}
-                  </button>
-                ))}
-              </div>
+              {/* Currency toggle — Office Payroll only; Tech Payroll is
+                  always US (forced by the effect above), so there's no PH
+                  option to toggle to there. */}
+              {activeTab === "payroll" && (
+                <div className="ml-auto flex gap-2">
+                  {(["USD", "PHP"] as const).map((cur) => (
+                    <button
+                      key={cur}
+                      onClick={() => {
+                        setSelectedCurrency(cur);
+                        setDepartmentFilter(new Set());
+                        setRoleFilter(new Set());
+                        setRegHoursFilter(new Set());
+                        setRateFilter(new Set());
+                      }}
+                      className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                        selectedCurrency === cur
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                      }`}
+                    >
+                      {cur === "USD" ? "US Payroll" : "PH Payroll"}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-
-            {/* Office/Tech sub-toggle — US Payroll only. Technicians are
-                paid per completed repair ticket (Tech Payroll) instead of
-                hourly (Office Payroll, everyone else). */}
-            {selectedCurrency === "USD" && (
-              <div className="flex gap-2">
-                {(["office", "tech"] as const).map((view) => (
-                  <button
-                    key={view}
-                    onClick={() => {
-                      setPayrollView(view);
-                      setDepartmentFilter(new Set());
-                      setRoleFilter(new Set());
-                      setRegHoursFilter(new Set());
-                      setRateFilter(new Set());
-                    }}
-                    className={`px-3 py-1.5 rounded text-xs font-semibold transition ${
-                      payrollView === view
-                        ? "bg-blue-500/30 text-white border border-blue-400/40"
-                        : "bg-slate-800/50 text-slate-400 border border-white/10 hover:text-white"
-                    }`}
-                  >
-                    {view === "office" ? "Office Payroll" : "Tech Payroll"}
-                  </button>
-                ))}
-              </div>
-            )}
 
             {/* Connect Gmail — one connection per region; payslip sends
                 automatically use whichever region the recipient employee
@@ -1585,36 +1575,39 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               })}
             </div>
 
-            {/* Summary cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Total Payroll (Period)</p>
-                <p className="text-2xl font-bold text-green-300">
-                  {fmt(selectedCurrency === "USD" ? totalUSPayroll : totalPHPayroll)}
-                </p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Employees</p>
-                <p className="text-2xl font-bold text-blue-300">{displayRows.length}</p>
-                <p className="text-xs text-slate-500 mt-1">Active in {selectedCurrency === "USD" ? "US" : "PH"}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">{isTechView ? "Tickets Completed" : "Overtime Pay"}</p>
-                <p className="text-2xl font-bold text-orange-300">
-                  {isTechView
-                    ? displayRows.reduce((s, r) => s + r.ticketsCompleted, 0)
-                    : fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
-                </p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Avg per Employee</p>
-                <p className="text-2xl font-bold text-purple-300">
-                  {fmt(displayRows.length > 0
-                    ? (selectedCurrency === "USD" ? totalUSPayroll : totalPHPayroll) / displayRows.length
-                    : 0)}
-                </p>
-              </div>
-            </div>
+            {/* Summary cards — scoped to whichever tab/view is showing
+                (Office, Tech, or PH), not the combined US total. */}
+            {(() => {
+              const displayTotal =
+                effectiveCurrency === "USD" ? (payrollView === "tech" ? totalUSTechPayroll : totalUSOfficePayroll) : totalPHPayroll;
+              return (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                    <p className="text-xs text-slate-400 mb-1">Total Payroll (Period)</p>
+                    <p className="text-2xl font-bold text-green-300">{fmt(displayTotal)}</p>
+                  </div>
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                    <p className="text-xs text-slate-400 mb-1">Employees</p>
+                    <p className="text-2xl font-bold text-blue-300">{displayRows.length}</p>
+                    <p className="text-xs text-slate-500 mt-1">Active in {effectiveCurrency === "USD" ? "US" : "PH"}</p>
+                  </div>
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                    <p className="text-xs text-slate-400 mb-1">{isTechView ? "Tickets Completed" : "Overtime Pay"}</p>
+                    <p className="text-2xl font-bold text-orange-300">
+                      {isTechView
+                        ? displayRows.reduce((s, r) => s + r.ticketsCompleted, 0)
+                        : fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
+                    </p>
+                  </div>
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                    <p className="text-xs text-slate-400 mb-1">Avg per Employee</p>
+                    <p className="text-2xl font-bold text-purple-300">
+                      {fmt(displayRows.length > 0 ? displayTotal / displayRows.length : 0)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Audit Log */}
             {showAuditLog && (
@@ -1660,7 +1653,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
-                  {selectedCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} Employee Payroll — Current Period
+                  {effectiveCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} Employee Payroll — Current Period
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
@@ -1704,7 +1697,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         <span className="text-[10px]">{nameSort === "asc" ? "▲" : nameSort === "desc" ? "▼" : "⇅"}</span>
                       </button>
                     </th>
-                    {selectedCurrency === "USD" && (
+                    {effectiveCurrency === "USD" && (
                       <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Branch</th>
                     )}
                     <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
@@ -1767,7 +1760,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   {visibleRows.length === 0 ? (
                     <tr>
                       <td colSpan={payrollColCount} className="px-4 py-8 text-center text-slate-500 text-sm">
-                        No {selectedCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} employees found.
+                        No {effectiveCurrency === "USD" ? (payrollView === "tech" ? "Tech" : "Office") : "PH"} employees found.
                       </td>
                     </tr>
                   ) : (
@@ -1802,7 +1795,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.employee.full_name}
                               </button>
                             </td>
-                            {selectedCurrency === "USD" && (
+                            {effectiveCurrency === "USD" && (
                               <td className="px-4 py-3 text-slate-300">
                                 {row.employee.assigned_branch || "—"}
                               </td>
