@@ -231,6 +231,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Set up Firebase Auth listener
         console.log("🔐 Setting up Firebase Auth listener...");
+        // Guards against out-of-order onAuthStateChanged firings — e.g. a
+        // kickout's firebaseSignOut() is async, so its delayed "signed out"
+        // notification can arrive AFTER a fresh login's "signed in" one if
+        // the user logs back in quickly. Each firing captures its own
+        // generation number; if a NEWER firing has already landed by the
+        // time an older one finishes its awaits, the older one bails out
+        // instead of clobbering state a later event already established.
+        let authGeneration = 0;
+        // Coalesces overlapping session checks for the SAME Firebase uid —
+        // if a stray/duplicate auth event (or the periodic/tab-focus/
+        // realtime paths below) races another in-flight check for the same
+        // uid, the second one reuses the first's in-flight result instead
+        // of running its own comparison against not-yet-committed data.
+        const sessionCheckInFlight = new Map<string, Promise<boolean>>();
+        const runSessionCheck = (
+          firebaseUser: FirebaseUser,
+          isInteractiveLogin: boolean,
+          onSuperseded: () => void
+        ): Promise<boolean> => {
+          const existing = sessionCheckInFlight.get(firebaseUser.uid);
+          if (existing) return existing;
+          const promise = checkAndHandleSession(firebaseUser, isInteractiveLogin, onSuperseded).finally(() => {
+            sessionCheckInFlight.delete(firebaseUser.uid);
+          });
+          sessionCheckInFlight.set(firebaseUser.uid, promise);
+          return promise;
+        };
         // Periodically re-mint the Supabase JWT before it expires. The minted
         // token has a 1h TTL; refresh every 45 min so long-open tabs never hit
         // "JWT expired" (which silently breaks all Supabase reads/writes).
@@ -241,7 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             () => {
               const u = auth?.currentUser;
               if (u) {
-                checkAndHandleSession(u, false, () => setKickedOut(true)).catch((e) =>
+                runSessionCheck(u, false, () => setKickedOut(true)).catch((e) =>
                   console.warn("Periodic Supabase token refresh failed:", e)
                 );
               }
@@ -265,7 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             "profiles",
             () => {
               const u = auth?.currentUser;
-              if (u) checkAndHandleSession(u, false, () => setKickedOut(true)).catch(() => {});
+              if (u) runSessionCheck(u, false, () => setKickedOut(true)).catch(() => {});
             },
             `firebase_uid=eq.${targetFirebaseUid}`
           );
@@ -279,11 +306,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const onVisible = () => {
           if (document.visibilityState === "visible") {
             const u = auth?.currentUser;
-            if (u) checkAndHandleSession(u, false, () => setKickedOut(true)).catch(() => {});
+            if (u) runSessionCheck(u, false, () => setKickedOut(true)).catch(() => {});
           }
         };
         document.addEventListener("visibilitychange", onVisible);
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+          const myGeneration = ++authGeneration;
+          const isStale = () => myGeneration !== authGeneration;
+
           if (firebaseUser) {
             console.log("✅ Firebase user authenticated:", firebaseUser.email);
 
@@ -303,8 +333,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (justClaimedUidRef.current === firebaseUser.uid) {
               justClaimedUidRef.current = null;
             } else {
-              wasKickedOut = await checkAndHandleSession(firebaseUser, false, () => setKickedOut(true));
+              wasKickedOut = await runSessionCheck(firebaseUser, false, () => setKickedOut(true));
             }
+            // A newer auth event already landed while we were awaiting (e.g.
+            // this was a stale duplicate firing) — let that one own the
+            // outcome instead of this one potentially undoing it.
+            if (isStale()) return;
             if (wasKickedOut) {
               // Superseded by a login elsewhere before this device even
               // finished loading — bail out now, the "else" branch below
@@ -321,6 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               // Get user profile from Supabase (source of truth). Fall back to
               // Firestore for legacy users not yet migrated.
               const sbProfile = await getProfileForLogin(firebaseUser.uid);
+              if (isStale()) return;
 
               if (sbProfile) {
                 console.log("✅ User profile loaded (Supabase):", {
@@ -420,6 +455,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               console.error("❌ Error loading user profile:", error);
               await firebaseSignOut();
             }
+          } else if (auth?.currentUser) {
+            // A "signed out" notification can arrive after the fact — e.g. a
+            // kickout's firebaseSignOut() finishing its async cleanup AFTER
+            // the user already logged back in on this same device.
+            // Firebase's own current user is the ground truth here: if it's
+            // already someone again, this notification is stale — skip it
+            // instead of wiping out the fresh login it raced.
+            console.log("🔓 Ignoring stale sign-out notification — already signed in again");
           } else {
             console.log("🔓 No Firebase user authenticated");
             stopTokenRefresh();
