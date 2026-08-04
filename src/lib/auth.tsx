@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
@@ -157,14 +157,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [mustChangePassword, setMustChangePasswordState] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Set by login() right before signing in, consumed by the very next
-  // onAuthStateChanged firing — so only that one Supabase-token exchange
-  // (the actual login page submit) gets recorded to login_events, not the
-  // 45-min background refresh, the tab-focus refresh, or the initial
-  // onAuthStateChanged firing from an already-persisted Firebase session on
-  // page load (none of those are "at the login page").
-  const pendingInteractiveLoginRef = useRef(false);
-
   useEffect(() => {
     // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
@@ -218,9 +210,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            const isInteractiveLogin = pendingInteractiveLoginRef.current;
-            pendingInteractiveLoginRef.current = false;
-            await refreshSupabaseSession(firebaseUser, { recordLogin: isInteractiveLogin });
+            // recordLogin is deliberately omitted here (falls back to the
+            // server's onlyIfFirstToday behavior) — an actual interactive
+            // login is recorded directly by login() below instead of via a
+            // "next onAuthStateChanged firing" flag, which proved unreliable
+            // under rapid logout/login cycling (a stray background refresh
+            // or an out-of-order firing could consume the flag before the
+            // real login's own callback ran, silently dropping that login's
+            // IP from login_events — see the login() call for the actual fix).
+            await refreshSupabaseSession(firebaseUser);
             startTokenRefresh();
             
             try {
@@ -368,7 +366,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
-    pendingInteractiveLoginRef.current = true;
     try {
       // Server-enforced lockout check — 5 failed attempts locks the account
       // for 30s regardless of browser/device (see loginLockoutBridge.ts).
@@ -392,7 +389,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         companyId: authUser.companyId
       });
 
-      // State will be updated by onAuthStateChanged listener
+      // Record this interactive login to login_events (IP, geolocation,
+      // browser/device) directly, right here — rather than via a flag for
+      // the next onAuthStateChanged firing to pick up. That flag-based
+      // approach could lose the login under rapid logout/login cycling: a
+      // stray background refresh (45-min interval, tab-focus) firing
+      // between setting the flag and this login's own onAuthStateChanged
+      // callback would consume it first, silently recording this real login
+      // as a routine refresh instead (no login_events row, no IP update).
+      // This call is independent of that listener, so it can't race with it.
+      if (auth?.currentUser) {
+        void refreshSupabaseSession(auth.currentUser, { recordLogin: true }).catch((e) =>
+          console.warn("Failed to record login event:", e)
+        );
+      }
+
+      // Remaining state (role, companyId, etc.) will be updated by the
+      // onAuthStateChanged listener.
     } catch (error: any) {
       // Only a real Firebase credential failure should count against the
       // lockout — not our own "already locked" error thrown just above.
@@ -410,11 +423,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       console.error("❌ Login failed:", error.message);
-      // Sign-in never went through, so onAuthStateChanged won't fire to
-      // consume this — clear it now or it'd wrongly tag some later,
-      // unrelated auth event (e.g. a background token refresh) as an
-      // interactive login.
-      pendingInteractiveLoginRef.current = false;
       throw error;
     } finally {
       setLoading(false);
