@@ -46,6 +46,8 @@ import {
 
 interface DailyRecord {
   profileId: string;
+  /** Only set in date-range mode (Daily Attendance Tracker's From/To filter) — the single-day view already carries its date in the section heading instead. */
+  date?: string;
   name: string;
   email: string;
   location: string;
@@ -177,6 +179,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
+  // Weekly Attendance Summary: narrow the roster to who checked in (or was
+  // absent) on one specific day of the current week, instead of always
+  // showing everyone's full Mon-Fri row.
+  const [weeklyDayFilter, setWeeklyDayFilter] = useState<number | "all">("all");
+  const [weeklyStatusFilter, setWeeklyStatusFilter] = useState<"all" | "present" | "absent">("all");
   const [filterLocation, setFilterLocation] = useState<string>("all");
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
@@ -283,6 +290,28 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return () => { cancelled = true; };
   }, [dailyDate, rangeStart, rangeEnd, ready, uid]);
 
+  // Daily Attendance Tracker date-RANGE filter — separate from `dailyDate`
+  // above (the single-day picker next to the table heading). When both
+  // From/To are set, the tracker table switches to showing one row per
+  // employee per date in the range instead of the single selected day.
+  const [filterDateFrom, setFilterDateFrom] = useState<string>("");
+  const [filterDateTo, setFilterDateTo] = useState<string>("");
+  const dateRangeActive = Boolean(filterDateFrom && filterDateTo && filterDateFrom <= filterDateTo);
+  const clearDateRange = () => { setFilterDateFrom(""); setFilterDateTo(""); };
+
+  const [rangeFilterEntries, setRangeFilterEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [rangeFilterLoading, setRangeFilterLoading] = useState(false);
+  useEffect(() => {
+    if (!dateRangeActive) { setRangeFilterEntries([]); return; }
+    if (!ready || !uid) return;
+    let cancelled = false;
+    setRangeFilterLoading(true);
+    getCompanyTimecardEntries(filterDateFrom, filterDateTo)
+      .then((rows) => { if (!cancelled) setRangeFilterEntries(rows); })
+      .finally(() => { if (!cancelled) setRangeFilterLoading(false); });
+    return () => { cancelled = true; };
+  }, [dateRangeActive, filterDateFrom, filterDateTo, ready, uid]);
+
   const dailyEntryByProfileId = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     if (dailyDate >= rangeStart && dailyDate <= rangeEnd) {
@@ -367,10 +396,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const isDailyDateToday = dailyDate === todayISO;
   const dailyDateLabel = isDailyDateToday ? "Today" : dailyDate;
 
-  const dailyRecords: DailyRecord[] = useMemo(() => {
-    const dow = new Date(dailyDate + "T00:00:00").getDay();
-    return visibleProfiles.map((p) => {
-      const entry = dailyEntryByProfileId.get(p.id);
+  // Shared by the single-day tracker and the date-range filter below — same
+  // per-employee-per-date computation either way, just called once per date
+  // in range mode instead of once for `dailyDate`.
+  const buildDailyRecord = useCallback(
+    (p: ProfileRow, dateISO: string, entry: CompanyTimecardEntry | undefined, isToday: boolean): DailyRecord => {
+      const dow = new Date(dateISO + "T00:00:00").getDay();
       const offDays = new Set<number>(p.off_days ?? []);
       const isOffDay = offDays.has(dow);
       const checkIn = entry?.checkIn || "";
@@ -381,11 +412,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // Grace-period/"not due yet" logic only makes sense for today — a
       // past day is already fully over, so anything still missing there is
       // definitively missing (see computeAlerts' nowHHMM=null doc comment).
-      const rowNowHHMM = isDailyDateToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
+      const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
       const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
+        date: dateISO,
         name: p.display_name || p.email,
         email: p.email,
         location: p.assigned_branch || "",
@@ -400,8 +432,35 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         isOffDay,
         clockedInBy: clockedInByName,
       };
-    });
-  }, [visibleProfiles, dailyEntryByProfileId, dailyDate, isDailyDateToday, nowByTimezone, allProfileById]);
+    },
+    [nowByTimezone, allProfileById]
+  );
+
+  const dailyRecords: DailyRecord[] = useMemo(
+    () => visibleProfiles.map((p) => buildDailyRecord(p, dailyDate, dailyEntryByProfileId.get(p.id), isDailyDateToday)),
+    [visibleProfiles, dailyEntryByProfileId, dailyDate, isDailyDateToday, buildDailyRecord]
+  );
+
+  const rangeEntryByKey = useMemo(() => {
+    const map = new Map<string, CompanyTimecardEntry>();
+    for (const e of rangeFilterEntries) map.set(`${e.profileId}|${e.workDate}`, e);
+    return map;
+  }, [rangeFilterEntries]);
+
+  // One record per employee per date in [filterDateFrom, filterDateTo], inclusive.
+  const rangeRecords: DailyRecord[] = useMemo(() => {
+    if (!dateRangeActive) return [];
+    const records: DailyRecord[] = [];
+    const end = new Date(`${filterDateTo}T00:00:00`);
+    for (let d = new Date(`${filterDateFrom}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = toISODate(d);
+      const isToday = iso === todayISO;
+      for (const p of visibleProfiles) {
+        records.push(buildDailyRecord(p, iso, rangeEntryByKey.get(`${p.id}|${iso}`), isToday));
+      }
+    }
+    return records;
+  }, [dateRangeActive, filterDateFrom, filterDateTo, visibleProfiles, rangeEntryByKey, todayISO, buildDailyRecord]);
 
   const totalEmployees = visibleProfiles.length;
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
@@ -416,14 +475,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return "bg-red-500/20 text-red-300 border-red-500/30";
   };
 
-  const filteredAndSortedData = dailyRecords
+  const filteredAndSortedData = (dateRangeActive ? rangeRecords : dailyRecords)
     .filter((record) => {
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
       if (filterLocation !== "all" && record.location !== filterLocation) return false;
       return true;
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
 
   // Grouped by department, both the department groups and each group's
   // employees sorted alphabetically — same treatment as the Payroll pages.
@@ -484,6 +543,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
   }, [summaryProfiles, weekDates, entriesByKey, todayISO]);
+
+  // Narrows weeklySummary to rows matching the selected day + status (e.g.
+  // "who was absent on Wednesday") — "all" for either just shows everyone,
+  // same as before this filter existed.
+  const filteredWeeklySummary = useMemo(() => {
+    if (weeklyDayFilter === "all" || weeklyStatusFilter === "all") return weeklySummary;
+    return weeklySummary.filter((row) => row.cells[weeklyDayFilter] === weeklyStatusFilter);
+  }, [weeklySummary, weeklyDayFilter, weeklyStatusFilter]);
 
   // ---- Monthly summary (month-to-date) ----
   const monthlySummary = useMemo(() => {
@@ -973,7 +1040,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-4">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -1002,35 +1069,69 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">
+                      Filter by Date Range
+                      {dateRangeActive && (
+                        <button type="button" onClick={clearDateRange} className="ml-2 text-blue-400 hover:text-blue-300 normal-case">
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={filterDateFrom}
+                        max={filterDateTo || undefined}
+                        onChange={(e) => setFilterDateFrom(e.target.value)}
+                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <span className="text-slate-500 text-xs shrink-0">to</span>
+                      <input
+                        type="date"
+                        value={filterDateTo}
+                        min={filterDateFrom || undefined}
+                        onChange={(e) => setFilterDateTo(e.target.value)}
+                        className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
               {/* Daily Attendance Table */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <h2 className="text-lg font-bold text-white">Daily Attendance Tracker — {dailyDate}</h2>
-                  <div className="flex items-center gap-2">
-                    {!isDailyDateToday && (
-                      <button
-                        type="button"
-                        onClick={() => setDailyDate(todayISO)}
-                        className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
-                      >
-                        Jump to Today
-                      </button>
-                    )}
-                    <input
-                      type="date"
-                      value={dailyDate}
-                      max={todayISO}
-                      onChange={(e) => e.target.value && setDailyDate(e.target.value)}
-                      className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
+                  <h2 className="text-lg font-bold text-white">
+                    {dateRangeActive
+                      ? `Attendance — ${filterDateFrom} to ${filterDateTo}`
+                      : `Daily Attendance Tracker — ${dailyDate}`}
+                  </h2>
+                  {!dateRangeActive && (
+                    <div className="flex items-center gap-2">
+                      {!isDailyDateToday && (
+                        <button
+                          type="button"
+                          onClick={() => setDailyDate(todayISO)}
+                          className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
+                        >
+                          Jump to Today
+                        </button>
+                      )}
+                      <input
+                        type="date"
+                        value={dailyDate}
+                        max={todayISO}
+                        onChange={(e) => e.target.value && setDailyDate(e.target.value)}
+                        className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  )}
                 </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
+                      {dateRangeActive && <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Date</th>}
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Location</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
@@ -1042,19 +1143,20 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </tr>
                   </thead>
                   <tbody>
-                    {loading || dailyDateLoading ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
+                    {loading || dailyDateLoading || (dateRangeActive && rangeFilterLoading) ? (
+                      <tr><td colSpan={dateRangeActive ? 9 : 8} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
                     ) : filteredAndSortedData.length === 0 ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                      <tr><td colSpan={dateRangeActive ? 9 : 8} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
                     ) : dailyDataByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
-                          <td colSpan={8} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                          <td colSpan={dateRangeActive ? 9 : 8} className="px-3 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
                             {group.department} <span className="text-slate-500 font-normal normal-case">({group.records.length})</span>
                           </td>
                         </tr>
                         {group.records.map((record) => (
-                      <tr key={record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
+                      <tr key={dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
+                        {dateRangeActive && <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{record.date}</td>}
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
                             {record.name}
@@ -1070,7 +1172,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               (by {record.clockedInBy})
                             </span>
                           )}
-                          {isDailyDateToday && record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
+                          {(record.date ?? dailyDate) === todayISO && record.role === "TECHNICIAN" && record.checkIn === "—" && !record.isOffDay && (
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
@@ -1131,7 +1233,33 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       Monthly
                     </button>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {summaryView === "weekly" && (
+                      <>
+                        <span className="text-xs text-slate-400 uppercase">Day</span>
+                        <select
+                          value={weeklyDayFilter}
+                          onChange={(e) => setWeeklyDayFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                          className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="all">All Days</option>
+                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((label, i) => (
+                            <option key={label} value={i}>{label}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={weeklyStatusFilter}
+                          onChange={(e) => setWeeklyStatusFilter(e.target.value as "all" | "present" | "absent")}
+                          disabled={weeklyDayFilter === "all"}
+                          title={weeklyDayFilter === "all" ? "Pick a day first" : undefined}
+                          className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                        >
+                          <option value="all">Present or Absent</option>
+                          <option value="present">Checked In</option>
+                          <option value="absent">Absent</option>
+                        </select>
+                      </>
+                    )}
                     <span className="text-xs text-slate-400 uppercase">Department</span>
                     <select
                       value={summaryDepartmentFilter}
@@ -1150,22 +1278,40 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               {/* Weekly Attendance */}
               {summaryView === "weekly" && (
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <h2 className="text-lg font-bold text-white mb-4">Weekly Attendance Summary</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-white">Weekly Attendance Summary</h2>
+                  {weeklyDayFilter !== "all" && weeklyStatusFilter !== "all" && (
+                    <span className="text-xs text-slate-400">
+                      {filteredWeeklySummary.length} {weeklyStatusFilter === "present" ? "checked in" : "absent"} on{" "}
+                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][weeklyDayFilter]}
+                    </span>
+                  )}
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Mon</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Tue</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Wed</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Thu</th>
-                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Fri</th>
+                      {["Mon", "Tue", "Wed", "Thu", "Fri"].map((label, i) => (
+                        <th
+                          key={label}
+                          className={`px-3 py-3 text-center text-xs font-semibold uppercase ${weeklyDayFilter === i ? "text-blue-300" : "text-slate-400"}`}
+                        >
+                          {label}
+                        </th>
+                      ))}
                       <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Total Days</th>
                       <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Attendance %</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {weeklySummary.map((row) => (
+                    {filteredWeeklySummary.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-3 py-8 text-center text-slate-500">
+                          No employees match this filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredWeeklySummary.map((row) => (
                       <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${row.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
@@ -1173,7 +1319,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </a>
                         </td>
                         {row.cells.map((cell, i) => (
-                          <td key={i} className="px-3 py-3 text-center text-xs">
+                          <td key={i} className={`px-3 py-3 text-center text-xs ${weeklyDayFilter === i ? "bg-blue-500/5" : ""}`}>
                             {cell === "off" ? (
                               <span className="inline-block px-2 py-1 rounded bg-slate-700/50 text-slate-400">OFF</span>
                             ) : cell === "future" ? (
@@ -1188,7 +1334,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <td className="px-3 py-3 text-center text-white font-semibold">{row.presentCount} / {row.workingDays}</td>
                         <td className="px-3 py-3 text-center text-white font-semibold">{row.pct}%</td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
