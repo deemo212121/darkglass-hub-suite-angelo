@@ -582,7 +582,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             {dailyTrend.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No part lines logged yet.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
+              <ResponsiveContainer width="100%" height={200} debounce={200}>
                 <BarChart data={dailyTrend} margin={{ left: -10 }}>
                   <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -613,7 +613,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               // and every slice gets its own row (name + count + %) on the
               // right, same pattern as Status Summary's Pie Breakdown.
               <div className="flex gap-3 items-center">
-                <ResponsiveContainer width="50%" height={200}>
+                <ResponsiveContainer width="50%" height={200} debounce={200}>
                   <PieChart>
                     <Pie data={distBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={false} labelLine={false}>
                       {distBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
@@ -645,7 +645,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Lines by Location</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={locationBreakdown} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={52} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -657,7 +657,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Truck Stock — Top Branches by On-Hand Units</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={truckStockByBranch} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={52} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -672,7 +672,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Lines by Status</p>
-            <ResponsiveContainer width="100%" height={Math.max(180, statusBreakdown.length * 24)}>
+            <ResponsiveContainer width="100%" height={Math.max(180, statusBreakdown.length * 24)} debounce={200}>
               <BarChart data={statusBreakdown} layout="vertical" margin={{ left: 20 }}>
                 <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                 <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={110} />

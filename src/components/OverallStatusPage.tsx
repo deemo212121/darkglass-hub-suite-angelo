@@ -70,7 +70,7 @@ function Donut({ data, title }: { data: DonutSlice[]; title: string }) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-2">
       <p className="mb-0.5 text-center text-sm font-semibold">{title}</p>
-      <ResponsiveContainer width="100%" height={170}>
+      <ResponsiveContainer width="100%" height={170} debounce={200}>
         <PieChart>
           <Pie
             data={data}
@@ -503,7 +503,7 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
           {statData.length === 0 ? (
             <p className="text-xs text-slate-400 py-5 text-center">No ticket activity recorded for this range.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={190}>
+            <ResponsiveContainer width="100%" height={190} debounce={200}>
               <LineChart data={statData} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#cbd5e1" }} />

@@ -193,7 +193,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             {branchChartData.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={branchChartData} margin={{ left: -10 }}>
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -208,7 +208,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           </div>
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Collections Trend — Last 10 Days</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={trendData} margin={{ left: -10 }}>
                 <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

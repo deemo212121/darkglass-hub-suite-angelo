@@ -335,7 +335,7 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
             {companyBreakdown.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No claim tickets yet — this fills in as in-warranty tickets come in.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={companyBreakdown} margin={{ left: -10 }}>
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-25} textAnchor="end" height={50} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -365,7 +365,7 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
               // every slice gets its own row (name + count + %) on the
               // right, same pattern as Parts Dashboard's Lines by Distributor.
               <div className="flex gap-3 items-center">
-                <ResponsiveContainer width="45%" height={220}>
+                <ResponsiveContainer width="45%" height={220} debounce={200}>
                   <PieChart>
                     <Pie data={statusBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={false} labelLine={false}>
                       {statusBreakdown.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}

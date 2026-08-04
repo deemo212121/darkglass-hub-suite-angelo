@@ -197,7 +197,7 @@ export function ReportClaimsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
             {companyChartData.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No claims completed on this date.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={companyChartData} margin={{ left: -10 }}>
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-25} textAnchor="end" height={50} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -212,7 +212,7 @@ export function ReportClaimsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
             {stageChartData.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No claims currently pending.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <PieChart>
                   <Pie data={stageChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, value }) => `${name}: ${value}`} labelLine={false}>
                     {stageChartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
@@ -226,7 +226,7 @@ export function ReportClaimsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-4">Completed — Last 10 Days</p>
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={180} debounce={200}>
             <BarChart data={trendData} margin={{ left: -10 }}>
               <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

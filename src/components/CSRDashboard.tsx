@@ -657,7 +657,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
           <div className="panel p-3 lg:col-span-2">
             <p className="text-sm font-semibold mb-2">Team Performance</p>
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={180} debounce={200}>
               <BarChart data={teamData} margin={{ left: -10 }}>
                 {/* Team names move to the legend row below instead of
                     crowding the axis as tick labels. */}
@@ -712,7 +712,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
                 itself once the legend wraps to that many rows, so it keeps
                 more room (and a denser legend line-height) than its
                 neighbors when expanded. */}
-            <ResponsiveContainer width="100%" height={showPieLabels ? 320 : 170}>
+            <ResponsiveContainer width="100%" height={showPieLabels ? 320 : 170} debounce={200}>
               <PieChart>
                 <Pie
                   data={statusBreakdown}

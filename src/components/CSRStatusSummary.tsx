@@ -582,7 +582,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Status Distribution</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={barData} margin={{ left: -10 }}>
                 <XAxis
                   dataKey="name"
@@ -616,7 +616,7 @@ export function CSRStatusSummary({ sub }: { mod: ModuleDef; sub: SubModuleDef })
                 every slice gets its own compact row (name + %) on the right,
                 sized to fit all of them in one view without scrolling. */}
             <div className="flex gap-3 items-center">
-              <ResponsiveContainer width="55%" height={260}>
+              <ResponsiveContainer width="55%" height={260} debounce={200}>
                 <PieChart>
                   <Pie
                     data={pieData}

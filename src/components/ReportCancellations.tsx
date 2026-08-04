@@ -30,7 +30,7 @@ function PieWithLegend({ title, data, emptyLabel }: { title: string; data: Slice
         <p className="text-xs text-muted-foreground py-16 text-center">{emptyLabel}</p>
       ) : (
         <div className="flex gap-3 items-center">
-          <ResponsiveContainer width="45%" height={200}>
+          <ResponsiveContainer width="45%" height={200} debounce={200}>
             <PieChart>
               <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={false} labelLine={false}>
                 {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}

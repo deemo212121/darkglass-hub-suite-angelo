@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
@@ -40,6 +40,13 @@ async function checkAndHandleSession(
   }
   const claimed = localStorage.getItem(CLAIMED_SESSION_KEY);
   if (claimed && claimed !== serverSessionId) {
+    // Clear this device's own stale claim — otherwise a later interactive
+    // login on this same device would overwrite it correctly anyway (the
+    // isInteractiveLogin branch above always writes fresh), but leaving a
+    // superseded id sitting in localStorage in the meantime is misleading
+    // and worth cleaning up rather than trusting every future code path to
+    // unconditionally stomp over it.
+    localStorage.removeItem(CLAIMED_SESSION_KEY);
     onSuperseded();
     await firebaseSignOut();
     return true;
@@ -198,6 +205,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [kickedOut, setKickedOut] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Set by login() right after it fully claims the session for this uid
+  // (fully awaited, including the server round-trip), consumed by the very
+  // next onAuthStateChanged firing for that SAME uid to skip its own
+  // redundant read-only session check. Without this, that firing's GET
+  // (checking current_session_id) can race login()'s own PATCH — if the GET
+  // lands first and reads the pre-login session id, it looks exactly like
+  // this brand-new login was itself instantly superseded, signing the user
+  // right back out. login() already fully claimed the session directly, so
+  // this firing has nothing left to do anyway.
+  const justClaimedUidRef = useRef<string | null>(null);
   useEffect(() => {
     // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
@@ -272,17 +289,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            // isInteractiveLogin is always false here — an actual interactive
-            // login claims the session (and records to login_events)
-            // directly from login() below, fully awaited before login()
-            // returns, rather than via a "next onAuthStateChanged firing"
-            // flag. That flag-based approach proved unreliable under rapid
-            // logout/login cycling and could silently drop the claim/IP
-            // record for a real login — see the login() call for the fix.
-            // Every onAuthStateChanged firing (including the one right
-            // after a fresh login) is therefore just the read-only
-            // supersession check, which is exactly what's needed here too.
-            const wasKickedOut = await checkAndHandleSession(firebaseUser, false, () => setKickedOut(true));
+            // An actual interactive login claims the session (and records to
+            // login_events) directly from login() below, fully awaited
+            // before login() returns. This firing — which follows right
+            // behind that same login — skips its own check entirely when
+            // justClaimedUidRef says login() just handled this exact uid, to
+            // avoid a read-after-write race against login()'s own claim (see
+            // the ref's declaration above for what that race looks like).
+            // Every OTHER firing (background refresh, tab-focus, a
+            // persisted session restoring on page load, or genuinely being
+            // superseded by another device) still does the real check.
+            let wasKickedOut = false;
+            if (justClaimedUidRef.current === firebaseUser.uid) {
+              justClaimedUidRef.current = null;
+            } else {
+              wasKickedOut = await checkAndHandleSession(firebaseUser, false, () => setKickedOut(true));
+            }
             if (wasKickedOut) {
               // Superseded by a login elsewhere before this device even
               // finished loading — bail out now, the "else" branch below
@@ -478,15 +500,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // setting the flag and this login's own onAuthStateChanged callback
       // would consume it first, silently recording this real login as a
       // routine refresh instead (no login_events row, no IP update, and no
-      // session claimed — see checkAndHandleSession above). Every
-      // onAuthStateChanged firing now always does the read-only check, so
-      // this is the one and only place that ever claims a session as
-      // "true" interactive, and it's fully awaited before login() returns —
-      // no race with that listener's own (read-only) call.
+      // session claimed). This is the one and only place that ever claims a
+      // session as "true" interactive, fully awaited before login() returns.
       if (auth?.currentUser) {
-        await checkAndHandleSession(auth.currentUser, true, () => setKickedOut(true)).catch((e) => {
+        const claimedUid = auth.currentUser.uid;
+        try {
+          await checkAndHandleSession(auth.currentUser, true, () => setKickedOut(true));
+          // Tell the onAuthStateChanged firing that's about to follow this
+          // same login to skip its own read-only check entirely — see
+          // justClaimedUidRef's declaration for why that matters (a GET
+          // there could otherwise race this claim's own PATCH and read
+          // stale data, making this brand-new login look instantly
+          // superseded by itself). Only set on success — if the claim
+          // itself failed, there's nothing to skip; let the normal check run.
+          justClaimedUidRef.current = claimedUid;
+        } catch (e) {
           console.warn("Failed to claim session / record login event:", e);
-        });
+        }
       }
 
       // Remaining state (role, companyId, etc.) will be updated by the
