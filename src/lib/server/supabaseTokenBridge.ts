@@ -480,6 +480,63 @@ async function recordLoginEvent(
 }
 
 /**
+ * One active session per account (migration 0124) — mints a fresh
+ * current_session_id on a real interactive login (recordLogin=true),
+ * claiming this device as the one true session. Every other call (the
+ * 45-min background refresh, tab-focus, or a persisted session restoring on
+ * page load) just reads back whatever is currently stored, so the caller
+ * (auth.tsx) can compare it against what it locally remembers claiming and
+ * detect a later login elsewhere. Returns null (never throws) on any
+ * failure — a broken session-lock check must never block login itself.
+ */
+async function mintOrReadSessionId(
+  firebaseUid: string,
+  recordLogin: boolean,
+  supabaseUrl: string | undefined,
+  serviceKey: string | undefined
+): Promise<string | null> {
+  if (!supabaseUrl || !serviceKey) return null;
+  const sbHeaders = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json",
+  };
+  try {
+    if (recordLogin) {
+      const sessionId = crypto.randomUUID();
+      const res = await fetch(`${supabaseUrl}/rest/v1/profiles?firebase_uid=eq.${encodeURIComponent(firebaseUid)}`, {
+        method: "PATCH",
+        headers: sbHeaders,
+        body: JSON.stringify({ current_session_id: sessionId }),
+      });
+      return res.ok ? sessionId : null;
+    }
+
+    const lookupRes = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?firebase_uid=eq.${encodeURIComponent(firebaseUid)}&select=current_session_id`,
+      { headers: sbHeaders }
+    );
+    if (!lookupRes.ok) return null;
+    const rows: Array<{ current_session_id: string | null }> = await lookupRes.json();
+    const existing = rows[0]?.current_session_id;
+    if (existing) return existing;
+
+    // Bootstrap: a session from before this feature shipped has no id yet —
+    // mint one now so it's never compared against null.
+    const bootstrapId = crypto.randomUUID();
+    const patchRes = await fetch(`${supabaseUrl}/rest/v1/profiles?firebase_uid=eq.${encodeURIComponent(firebaseUid)}`, {
+      method: "PATCH",
+      headers: sbHeaders,
+      body: JSON.stringify({ current_session_id: bootstrapId }),
+    });
+    return patchRes.ok ? bootstrapId : null;
+  } catch (error) {
+    console.warn("[supabase-token] mintOrReadSessionId failed:", error);
+    return null;
+  }
+}
+
+/**
  * Handle a POST /api/supabase-token request. Returns a standard Response.
  * `env` lets callers pass platform-provided secrets (Cloudflare bindings);
  * falls back to process.env for Node/dev.
@@ -551,7 +608,14 @@ export async function handleSupabaseTokenRequest(
       });
     }
 
-    return json({ token, expiresAt, uid: claims.sub });
+    const sessionId = await mintOrReadSessionId(
+      claims.sub,
+      !!recordLogin,
+      getEnv("VITE_SUPABASE_URL"),
+      getEnv("SUPABASE_SERVICE_KEY")
+    );
+
+    return json({ token, expiresAt, uid: claims.sub, sessionId });
   } catch (error) {
     console.error("[supabase-token] error:", error);
     return json({ error: error instanceof Error ? error.message : "Token exchange failed" }, 401);

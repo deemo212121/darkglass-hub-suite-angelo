@@ -2,13 +2,50 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
-import { refreshSupabaseSession, clearSupabaseSession } from "./supabase/client";
+import { refreshSupabaseSession, clearSupabaseSession, getCurrentSessionId } from "./supabase/client";
 import { getProfileForLogin, touchLastLogin } from "./supabase/users";
 import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
+import { subscribeTableChanges } from "./supabase/realtime";
+
+// One active session per account (migration 0124) — see checkAndHandleSession below.
+const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
+
+/**
+ * Refreshes the Supabase session as normal, then compares the server's
+ * current_session_id (see supabaseTokenBridge.ts's mintOrReadSessionId)
+ * against whatever this device last claimed in localStorage. A real
+ * interactive login claims the session as this device's own; any other
+ * check (background refresh, tab-focus, realtime-triggered, or a persisted
+ * session restoring on page load) that finds a MISMATCH means a later
+ * login elsewhere has superseded this device — signs it out and calls
+ * `onSuperseded` so the caller can show a banner. Fails open (never
+ * signs anyone out) if the session id is missing for any reason — a
+ * broken check must never itself break normal login.
+ */
+async function checkAndHandleSession(
+  firebaseUser: FirebaseUser,
+  isInteractiveLogin: boolean,
+  onSuperseded: () => void
+): Promise<boolean> {
+  await refreshSupabaseSession(firebaseUser, { recordLogin: isInteractiveLogin });
+  const serverSessionId = getCurrentSessionId();
+  if (!serverSessionId || typeof window === "undefined") return false;
+  if (isInteractiveLogin) {
+    localStorage.setItem(CLAIMED_SESSION_KEY, serverSessionId);
+    return false;
+  }
+  const claimed = localStorage.getItem(CLAIMED_SESSION_KEY);
+  if (claimed && claimed !== serverSessionId) {
+    onSuperseded();
+    await firebaseSignOut();
+    return true;
+  }
+  return false;
+}
 
 type AuthState = {
   email: string | null;
@@ -32,6 +69,9 @@ type AuthState = {
   mustChangePassword: boolean;
   /** Flips the in-memory flag off immediately after a successful self-service password change, so the /profile redirect gate stops right away instead of waiting for a re-login. */
   clearMustChangePasswordFlag: () => void;
+  /** True once this device has been signed out because the account logged in somewhere else (one active session per account — migration 0124). Shown by SessionKickedOutBanner.tsx. */
+  kickedOut: boolean;
+  dismissKickedOut: () => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   ready: boolean;
@@ -155,6 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isActive, setIsActive] = useState<boolean>(false);
   const [allowedLocations, setAllowedLocations] = useState<string[] | null>(null);
   const [mustChangePassword, setMustChangePasswordState] = useState(false);
+  const [kickedOut, setKickedOut] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -183,7 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             () => {
               const u = auth?.currentUser;
               if (u) {
-                refreshSupabaseSession(u).catch((e) =>
+                checkAndHandleSession(u, false, () => setKickedOut(true)).catch((e) =>
                   console.warn("Periodic Supabase token refresh failed:", e)
                 );
               }
@@ -195,12 +236,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (refreshTimer) clearInterval(refreshTimer);
           refreshTimer = null;
         };
+        // One active session per account (migration 0124) — the realtime fast
+        // path. Fires almost immediately when another device's login
+        // overwrites this account's current_session_id, instead of waiting
+        // for the 45-min interval or a tab-focus refresh (both above/below
+        // remain as a redundant fallback if the websocket ever drops).
+        let stopSessionWatch: (() => void) | null = null;
+        const startSessionWatch = (targetFirebaseUid: string) => {
+          if (stopSessionWatch) stopSessionWatch();
+          stopSessionWatch = subscribeTableChanges(
+            "profiles",
+            () => {
+              const u = auth?.currentUser;
+              if (u) checkAndHandleSession(u, false, () => setKickedOut(true)).catch(() => {});
+            },
+            `firebase_uid=eq.${targetFirebaseUid}`
+          );
+        };
+        const stopSessionWatchIfAny = () => {
+          if (stopSessionWatch) stopSessionWatch();
+          stopSessionWatch = null;
+        };
         // Also refresh when the tab regains focus — covers laptop sleep / long
         // idle where the interval may not have fired in time.
         const onVisible = () => {
           if (document.visibilityState === "visible") {
             const u = auth?.currentUser;
-            if (u) refreshSupabaseSession(u).catch(() => {});
+            if (u) checkAndHandleSession(u, false, () => setKickedOut(true)).catch(() => {});
           }
         };
         document.addEventListener("visibilitychange", onVisible);
@@ -210,17 +272,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            // recordLogin is deliberately omitted here (falls back to the
-            // server's onlyIfFirstToday behavior) — an actual interactive
-            // login is recorded directly by login() below instead of via a
-            // "next onAuthStateChanged firing" flag, which proved unreliable
-            // under rapid logout/login cycling (a stray background refresh
-            // or an out-of-order firing could consume the flag before the
-            // real login's own callback ran, silently dropping that login's
-            // IP from login_events — see the login() call for the actual fix).
-            await refreshSupabaseSession(firebaseUser);
+            // isInteractiveLogin is always false here — an actual interactive
+            // login claims the session (and records to login_events)
+            // directly from login() below, fully awaited before login()
+            // returns, rather than via a "next onAuthStateChanged firing"
+            // flag. That flag-based approach proved unreliable under rapid
+            // logout/login cycling and could silently drop the claim/IP
+            // record for a real login — see the login() call for the fix.
+            // Every onAuthStateChanged firing (including the one right
+            // after a fresh login) is therefore just the read-only
+            // supersession check, which is exactly what's needed here too.
+            const wasKickedOut = await checkAndHandleSession(firebaseUser, false, () => setKickedOut(true));
+            if (wasKickedOut) {
+              // Superseded by a login elsewhere before this device even
+              // finished loading — bail out now, the "else" branch below
+              // will fire from the firebaseSignOut() we just triggered and
+              // handle the rest of the cleanup.
+              setReady(true);
+              setLoading(false);
+              return;
+            }
             startTokenRefresh();
-            
+            startSessionWatch(firebaseUser.uid);
+
             try {
               // Get user profile from Supabase (source of truth). Fall back to
               // Firestore for legacy users not yet migrated.
@@ -327,6 +401,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             console.log("🔓 No Firebase user authenticated");
             stopTokenRefresh();
+            stopSessionWatchIfAny();
             // Clear Supabase session
             clearSupabaseSession();
             // Clear auth state
@@ -350,6 +425,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return () => {
           console.log("🔒 Cleaning up Firebase Auth listener");
           stopTokenRefresh();
+          stopSessionWatchIfAny();
           document.removeEventListener("visibilitychange", onVisible);
           unsubscribe();
         };
@@ -388,20 +464,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: authUser.role,
         companyId: authUser.companyId
       });
+      // A fresh successful login always reclaims the session (see
+      // onAuthStateChanged's checkAndHandleSession call below) — clear any
+      // stale "kicked out elsewhere" banner from a previous session.
+      setKickedOut(false);
 
-      // Record this interactive login to login_events (IP, geolocation,
-      // browser/device) directly, right here — rather than via a flag for
-      // the next onAuthStateChanged firing to pick up. That flag-based
-      // approach could lose the login under rapid logout/login cycling: a
-      // stray background refresh (45-min interval, tab-focus) firing
-      // between setting the flag and this login's own onAuthStateChanged
-      // callback would consume it first, silently recording this real login
-      // as a routine refresh instead (no login_events row, no IP update).
-      // This call is independent of that listener, so it can't race with it.
+      // Claim the session (one active session per account) and record this
+      // interactive login to login_events (IP, geolocation, browser/device)
+      // directly, right here — awaited, rather than via a flag for the next
+      // onAuthStateChanged firing to pick up. That flag-based approach could
+      // lose the claim/login under rapid logout/login cycling: a stray
+      // background refresh (45-min interval, tab-focus) firing between
+      // setting the flag and this login's own onAuthStateChanged callback
+      // would consume it first, silently recording this real login as a
+      // routine refresh instead (no login_events row, no IP update, and no
+      // session claimed — see checkAndHandleSession above). Every
+      // onAuthStateChanged firing now always does the read-only check, so
+      // this is the one and only place that ever claims a session as
+      // "true" interactive, and it's fully awaited before login() returns —
+      // no race with that listener's own (read-only) call.
       if (auth?.currentUser) {
-        void refreshSupabaseSession(auth.currentUser, { recordLogin: true }).catch((e) =>
-          console.warn("Failed to record login event:", e)
-        );
+        await checkAndHandleSession(auth.currentUser, true, () => setKickedOut(true)).catch((e) => {
+          console.warn("Failed to claim session / record login event:", e);
+        });
       }
 
       // Remaining state (role, companyId, etc.) will be updated by the
@@ -477,6 +562,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       allowedLocations,
       mustChangePassword,
       clearMustChangePasswordFlag: () => setMustChangePasswordState(false),
+      kickedOut,
+      dismissKickedOut: () => setKickedOut(false),
       login,
       logout,
       ready,

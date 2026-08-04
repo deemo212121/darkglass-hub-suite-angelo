@@ -31,6 +31,8 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   user_deactivated: "Deactivated user",
   user_password_reset: "Reset user password",
   working_hours_template_saved: "Saved branch/role working-hours template",
+  profile_self_updated: "Updated own profile",
+  password_self_changed: "Changed own password",
 };
 
 export function moduleActivityActionLabel(action: string): string {
@@ -109,6 +111,37 @@ export async function getModuleActivityLog(module: ActivityLogModule, limit = 20
     .from("module_activity_log")
     .select(SELECT)
     .eq("module", module)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw new Error(error.message);
+  }
+  return (data ?? []).map(mapRow);
+}
+
+/**
+ * Same table, narrowed to one action against one target — e.g. My Profile's
+ * "Recent password changes" list beside the Update Password button, which
+ * (unlike ActivityLogPanel) is reachable by every employee, not just an
+ * already role-gated admin dashboard. RLS on module_activity_log is
+ * company-wide read (see 0115's comment — role isolation is normally left
+ * to "only admin pages embed the viewer"), so this function is what keeps a
+ * regular employee's own query scoped to just their own entries instead of
+ * the whole company's.
+ */
+export async function getModuleActivityLogForTarget(
+  module: ActivityLogModule,
+  action: string,
+  targetId: string,
+  limit = 10
+): Promise<ModuleActivityLogEntry[]> {
+  const { data, error } = await supabase
+    .from("module_activity_log")
+    .select(SELECT)
+    .eq("module", module)
+    .eq("action", action)
+    .eq("target_id", targetId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) {

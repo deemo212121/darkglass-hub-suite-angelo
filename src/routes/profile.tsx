@@ -7,6 +7,7 @@ import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
+import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
 const SCHEDULE_EDIT_ROLES = new Set([
@@ -66,7 +67,7 @@ const DAYS_OF_WEEK_INDEX = [1, 2, 3, 4, 5, 6, 0];
 const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function ProfilePage() {
-  const { email, uid, role, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
+  const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
   const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -81,6 +82,18 @@ function ProfilePage() {
   const [password, setPassword] = useState({ current: "", next: "", confirm: "" });
   const [showPassword, setShowPassword] = useState({ current: false, next: false, confirm: false });
   const [saved, setSaved] = useState<string>("");
+  // Shown beside the Update Password button — this user's own past
+  // password-change entries, kept separate from the general
+  // "profile_self_updated" log (see save()/changePassword() below).
+  const [lastPasswordChange, setLastPasswordChange] = useState<ModuleActivityLogEntry | null>(null);
+  const loadPasswordChangeLog = async (pid: string) => {
+    try {
+      const entries = await getModuleActivityLogForTarget("user-management", "password_self_changed", pid, 1);
+      setLastPasswordChange(entries[0] ?? null);
+    } catch {
+      // Best-effort — the log is a convenience next to the button, never worth blocking on.
+    }
+  };
   const [changingPassword, setChangingPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [currentWeekDays, setCurrentWeekDays] = useState<WeekDay[]>([]);
@@ -123,6 +136,7 @@ function ProfilePage() {
         const p = await getMyFullProfile(uid);
         if (cancelled || !p) return;
         setProfileId(p.profileId);
+        void loadPasswordChangeLog(p.profileId);
         const [firstName, ...rest] = p.displayName.trim().split(/\s+/);
         setProfile({
           firstName: p.displayName ? firstName : "",
@@ -175,6 +189,14 @@ function ProfilePage() {
           : {}),
       });
       setSaved("Profile saved.");
+      void logModuleActivity({
+        module: "user-management",
+        actorName: displayName || email || "Employee",
+        action: "profile_self_updated",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: displayName || email || undefined,
+      });
     } catch (err) {
       setSaved(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -210,6 +232,15 @@ function ProfilePage() {
       // A regular employee just used their one-time edit — lock it from here on.
       if (!canEditSchedule) setScheduleFieldsAlreadySet(true);
       setSaved("Working Hours / Meal Time saved.");
+      void logModuleActivity({
+        module: "user-management",
+        actorName: displayName || email || "Employee",
+        action: "profile_self_updated",
+        targetType: "profile",
+        targetId: profileId,
+        targetLabel: displayName || email || undefined,
+        details: { section: "Working Hours / Meal Time" },
+      });
     } catch (err) {
       setSaved(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -253,6 +284,18 @@ function ProfilePage() {
       setPassword({ current: "", next: "", confirm: "" });
       setSaved("Password updated.");
       setTimeout(() => setSaved(""), 3000);
+      // Logged separately from profile_self_updated (see save()/
+      // saveWorkingHoursMeal() above) so admins reviewing the User
+      // Management activity log can tell a self-service password change
+      // apart from a profile-field edit at a glance.
+      void logModuleActivity({
+        module: "user-management",
+        actorName: displayName || email || "Employee",
+        action: "password_self_changed",
+        targetType: "profile",
+        targetId: profileId || undefined,
+        targetLabel: displayName || email || undefined,
+      }).then(() => { if (profileId) void loadPasswordChangeLog(profileId); });
       // Clear an admin-triggered "must change password" flag, if set (see
       // migration 0103) — both server-side and in-memory, so the /profile
       // redirect gate in __root.tsx stops immediately.
@@ -534,10 +577,17 @@ function ProfilePage() {
             </div>
           </label>
         </div>
-        <button className="btn btn-primary disabled:opacity-50" onClick={changePassword} disabled={changingPassword}>
-          {changingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {changingPassword ? "Updating…" : "Update password"}
-        </button>
+        <div className="flex flex-wrap items-start gap-4">
+          <button className="btn btn-primary disabled:opacity-50" onClick={changePassword} disabled={changingPassword}>
+            {changingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {changingPassword ? "Updating…" : "Update password"}
+          </button>
+          <p className="text-xs text-muted-foreground self-center">
+            {lastPasswordChange
+              ? `Last changed ${new Date(lastPasswordChange.createdAt).toLocaleString()}`
+              : "No password changes yet."}
+          </p>
+        </div>
       </section>
     </AccountPageShell>
   );

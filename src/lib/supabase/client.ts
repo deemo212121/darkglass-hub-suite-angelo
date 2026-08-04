@@ -24,6 +24,11 @@ export function isSupabaseConfigured(): boolean {
 // The minted Supabase JWT is held here and injected into every request.
 let supabaseAccessToken: string | null = null;
 let tokenExpiresAt = 0; // unix seconds
+// One-active-session-per-account (migration 0124) — whatever /api/supabase-token
+// last reported as this account's current_session_id. auth.tsx compares this
+// against what it locally claimed to detect a login elsewhere superseding
+// this device. See supabaseTokenBridge.ts's mintOrReadSessionId.
+let currentSessionId: string | null = null;
 
 // Single shared client. We override the Authorization header per request via
 // the global fetch wrapper so we always send the freshest minted token.
@@ -87,9 +92,10 @@ export async function refreshSupabaseSession(
       return false;
     }
 
-    const { token, expiresAt } = (await res.json()) as { token: string; expiresAt: number };
+    const { token, expiresAt, sessionId } = (await res.json()) as { token: string; expiresAt: number; sessionId?: string | null };
     supabaseAccessToken = token;
     tokenExpiresAt = expiresAt;
+    if (sessionId) currentSessionId = sessionId;
     console.log("✅ Supabase session established (expires", new Date(expiresAt * 1000).toLocaleTimeString(), ")");
     return true;
   } catch (error) {
@@ -115,8 +121,14 @@ export async function ensureSupabaseSession(firebaseUser: FirebaseUser | null): 
 export function clearSupabaseSession(): void {
   supabaseAccessToken = null;
   tokenExpiresAt = 0;
+  currentSessionId = null;
 }
 
 export function hasSupabaseSession(): boolean {
   return Boolean(supabaseAccessToken);
+}
+
+/** Whatever /api/supabase-token last reported as this account's current_session_id — see the module comment above. */
+export function getCurrentSessionId(): string | null {
+  return currentSessionId;
 }
