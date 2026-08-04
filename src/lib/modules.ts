@@ -1437,6 +1437,14 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "accessibility-management",
+      title: "Accessibility Management",
+      description: "Bulk-grant secondary roles across every user via a checkbox grid — stacks additional role-based access on top of each person's primary role without changing it.",
+      custom: "accessibility-management" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "it-tickets",
       title: "IT Tickets",
       description: "View and manage IT support tickets submitted by employees. IT and Admins can edit/assign/delete; Senior Managers can view.",

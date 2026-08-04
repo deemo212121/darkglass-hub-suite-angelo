@@ -53,6 +53,7 @@ import { ReturnPickupPage } from "@/components/ReturnPickupPage";
 import { RepairStatusesPage } from "@/components/RepairStatusesPage";
 import { DataMigrationPage } from "@/components/DataMigrationPage";
 import { LoginSecurityPage } from "@/components/LoginSecurityPage";
+import { AccessibilityManagementPage } from "@/components/AccessibilityManagementPage";
 // Richer parts components pulled from the upstream usapp repo. Where they
 // overlap with the existing *Page wrappers above we prefer the upstream
 // component because it has the full UI; the wrappers remain available as
@@ -504,6 +505,8 @@ function SubModule() {
         ? <DataMigrationPage mod={mod} sub={sub} />
         : (sub as any).custom === "login-security"
         ? <LoginSecurityPage mod={mod} sub={sub} />
+        : (sub as any).custom === "accessibility-management"
+        ? <AccessibilityManagementPage mod={mod} sub={sub} />
         : (sub as any).custom === "company-settings"
         ? <CompanySettingsPage mod={mod} sub={sub} />
         : (sub as any).custom === "parts-dashboard"
