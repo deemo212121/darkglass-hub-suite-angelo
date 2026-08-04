@@ -147,6 +147,18 @@ const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
 ]);
 
 /**
+ * Admin-module submodules that are open to every role regardless of the CSR
+ * restriction — mirrors ALL_ROLES_ADMIN_SUBMODULES in
+ * m.$module.$submodule.tsx (the admin-gate carve-out for company-wide
+ * utilities, e.g. the internal team messenger). Without this, the CSR gate
+ * below still blocks it since "admin" isn't in CSR_ALLOWED_MODULES, even
+ * though the admin-role gate itself already treats it as open to everyone —
+ * MessagesMenu.tsx links straight to this submodule from the header, so a
+ * CSR Manager clicking it hits this check directly, never the module tile list.
+ */
+const CSR_EXEMPT_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
+
+/**
  * Restricted only if EVERY role this person holds is CSR-restricted — a
  * secondary role outside the CSR department (e.g. also holding ADMIN, or
  * CLAIMS_MANAGER) lifts the restriction entirely, same "any unrestricted
@@ -165,6 +177,7 @@ export function isModuleAllowed(role: string | null | undefined, moduleSlug: str
 /** Whether a CSR department role may open this submodule. Non-CSR roles always pass. */
 export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: string, submoduleSlug: string, extraRoles?: string[] | null): boolean {
   if (!isCsrRestrictedRole(role, extraRoles)) return true;
+  if (moduleSlug === "admin" && CSR_EXEMPT_ADMIN_SUBMODULES.has(submoduleSlug)) return true;
   if (!isModuleAllowed(role, moduleSlug, extraRoles)) return false;
   if (moduleSlug === "dashboard") return CSR_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
   return true; // tickets: fully open once the module itself is allowed
