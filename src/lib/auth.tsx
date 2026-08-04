@@ -15,6 +15,12 @@ type AuthState = {
   companyId: string | null;
   companyLoginAlias: string | null;
   role: string | null;
+  /** Secondary roles this user also holds, beyond `role` (the primary). Empty
+   *  for the Firestore-fallback login path, which has no equivalent concept.
+   *  Any permission/restriction check that only looks at `role` misses these
+   *  — pass both to the roleLabels.ts/pto.ts/timecardCorrections.ts helpers
+   *  that accept an extraRoles argument. */
+  extraRoles: string[];
   uid: string | null;
   displayName: string | null;
   isActive: boolean;
@@ -143,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [companyLoginAlias, setCompanyLoginAlias] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [extraRoles, setExtraRoles] = useState<string[]>([]);
   const [uid, setUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [isActive, setIsActive] = useState<boolean>(false);
@@ -242,6 +249,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setCompanyId(sbProfile.companyId);
                   setCompanyLoginAlias(sbProfile.companyLoginAlias);
                   setRole(sbProfile.role);
+                  setExtraRoles(sbProfile.extraRoles);
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
@@ -305,6 +313,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setCompanyId(userProfile.companyId);
                   setCompanyLoginAlias(loginAlias);
                   setRole(userProfile.role);
+                  setExtraRoles([]); // Firestore-fallback profiles have no extra_roles concept
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
                   if (userProfile.email) initializeUserData(userProfile.email);
@@ -328,6 +337,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setCompanyId(null);
             setCompanyLoginAlias(null);
             setRole(null);
+            setExtraRoles([]);
             setDisplayName(null);
             setIsActive(false);
             setAllowedLocations(null);
@@ -452,6 +462,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       companyId,
       companyLoginAlias,
       role,
+      extraRoles,
       uid,
       displayName,
       isActive,

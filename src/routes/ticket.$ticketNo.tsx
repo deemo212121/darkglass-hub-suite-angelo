@@ -1124,7 +1124,7 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, companyId: currentCompanyId, uid } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
   // tech app) must fill Cause of Failure + Service Performed before saving a
   // visit. On desktop / web for other roles these stay optional.
@@ -1622,7 +1622,7 @@ function TicketDetailsPage() {
     }
   };
 
-  const canFlagMisdiagnosed = canManageMisdiagnosed(currentUserRole);
+  const canFlagMisdiagnosed = canManageMisdiagnosed(currentUserRole, currentUserExtraRoles);
 
   const toggleMisdiagnosed = async () => {
     if (!ticket || !canFlagMisdiagnosed) return;
@@ -4073,30 +4073,9 @@ function TicketDetailsPage() {
     ]),
     [],
   );
-  // Track the caller's extra_roles separately so we can do multi-role
-  // checks without coupling to the auth provider shape. Loaded once on
-  // mount.
-  const [currentUserExtraRoles, setCurrentUserExtraRoles] = useState<string[]>([]);
-  useEffect(() => {
-    if (!authReady || !uid) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { supabase } = await import("@/lib/supabase/client");
-        const { data } = await supabase
-          .from("profiles")
-          .select("extra_roles")
-          .eq("firebase_uid", uid)
-          .maybeSingle();
-        if (cancelled) return;
-        const extras = (data?.extra_roles as string[] | null) ?? [];
-        setCurrentUserExtraRoles(Array.isArray(extras) ? extras : []);
-      } catch {
-        if (!cancelled) setCurrentUserExtraRoles([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [authReady, uid]);
+  // currentUserExtraRoles comes from useAuth() (destructured above) — every
+  // multi-role check below piles up the caller's primary role and their
+  // extra_roles the same way.
 
   // Merged technician list for the Add Visit / Edit Schedule
   // dropdowns. Combines the canonical ALL_TECHNICIANS constant with

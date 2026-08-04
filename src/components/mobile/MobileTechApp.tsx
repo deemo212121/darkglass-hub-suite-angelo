@@ -172,7 +172,7 @@ function getInitials(value: string | null | undefined): string {
 }
 
 export function MobileTechApp() {
-  const { email, displayName, role, companyId, allowedLocations, logout, uid } = useAuth();
+  const { email, displayName, role, extraRoles, companyId, allowedLocations, logout, uid } = useAuth();
   const navigate = useNavigate();
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -460,7 +460,7 @@ export function MobileTechApp() {
         showBack={showTopBack}
         onBack={handleTopBack}
         onOpenTimecard={() => setView("timecard")}
-        showClockInTeam={isAttendanceManagerTierRole(role)}
+        showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
         onOpenClockInTeam={() => setView("clockinteam")}
         onSwitchToDesktop={() => {
           setDesktopOverride(true);

@@ -10,8 +10,13 @@ import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
-function isCsrRole(role: string): boolean {
+function isCsrRoleValue(role: string): boolean {
   return CSR_ROLES.has(role) || role.startsWith("CSR");
+}
+
+/** True if the profile's primary role OR any held extra_roles entry is CSR-flavored. */
+function isCsrRole(profile: Pick<ProfileRow, "role" | "extra_roles">): boolean {
+  return [profile.role, ...(profile.extra_roles ?? [])].some((r) => isCsrRoleValue(r || ""));
 }
 
 /**
@@ -22,7 +27,7 @@ export async function resolveTeamLeadOrManager(
   profile: ProfileRow,
   allProfiles: ProfileRow[]
 ): Promise<ProfileRow | null> {
-  if (isCsrRole(profile.role)) {
+  if (isCsrRole(profile)) {
     try {
       const { members } = await getCsrTeamComposition();
       const mine = members.find((m) => m.profileId === profile.id);
@@ -53,7 +58,7 @@ export function visibleAttendanceProfileIds(
   allProfiles: ProfileRow[],
   csrComposition: CsrTeamComposition | null
 ): Set<string> | null {
-  if (!isAttendanceManagerTierRole(viewer.role)) return null;
+  if (!isAttendanceManagerTierRole(viewer.role, viewer.extra_roles)) return null;
 
   const ids = new Set<string>([viewer.id]);
   const viewerName = (viewer.display_name || "").trim().toLowerCase();
@@ -62,7 +67,7 @@ export function visibleAttendanceProfileIds(
       if ((p.manager_name || "").trim().toLowerCase() === viewerName) ids.add(p.id);
     });
   }
-  if (csrComposition && isCsrRole(viewer.role)) {
+  if (csrComposition && isCsrRole(viewer)) {
     const myLeaderTeamIds = new Set(
       csrComposition.members.filter((m) => m.profileId === viewer.id && m.isLeader).map((m) => m.teamId)
     );

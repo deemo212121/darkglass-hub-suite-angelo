@@ -15,7 +15,7 @@ export const Route = createFileRoute("/home")({
 });
 
 function Home() {
-  const { ready, email, role } = useAuth();
+  const { ready, email, role, extraRoles } = useAuth();
   const navigate = useNavigate();
   
   useEffect(() => {
@@ -54,8 +54,8 @@ function Home() {
           <p className="text-muted-foreground">Choose a module to get started.</p>
         </div>
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {MODULES.filter((m) => isModuleAllowed(role, m.slug)).map((m) => {
-            const visibleSubmodules = m.submodules.filter((s) => isSubmoduleAllowed(role, m.slug, s.slug));
+          {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles)).map((m) => {
+            const visibleSubmodules = m.submodules.filter((s) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles));
             return (
             <Link key={m.slug} to="/m/$module" params={{ module: m.slug }} className="module-card group">
               <div className="flex items-center gap-3 mb-3">

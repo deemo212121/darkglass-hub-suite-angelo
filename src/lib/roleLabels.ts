@@ -96,6 +96,35 @@ export function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 }
 
+/** `role` (primary) plus every entry in `extraRoles`, normalized, deduped. */
+function allHeldRoles(role: string | null | undefined, extraRoles?: string[] | null): string[] {
+  const all = [role, ...(extraRoles ?? [])].map((r) => normalizeRole(r)).filter(Boolean);
+  return Array.from(new Set(all));
+}
+
+/**
+ * True if ANY role this person holds (primary or extra) is in `roleSet` —
+ * "pile up" semantics for a permission grant: a secondary role that
+ * qualifies is just as good as a primary one, so holding multiple roles can
+ * only ever widen what someone can do, never narrow it.
+ */
+function anyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return allHeldRoles(role, extraRoles).some((r) => roleSet.has(r));
+}
+
+/**
+ * True only if EVERY role this person holds (primary and extra) is in
+ * `roleSet` — "pile up" semantics for a restriction: someone who also holds
+ * even one role outside the restricted set gets that role's fuller access,
+ * so the restriction only applies when none of their roles escapes it.
+ * A person with no role at all is not considered restricted (matches the
+ * prior single-role behavior, where an empty/unknown role never matched).
+ */
+function everyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  const held = allHeldRoles(role, extraRoles);
+  return held.length > 0 && held.every((r) => roleSet.has(r));
+}
+
 /**
  * The whole Customer Service department (Agent, Team Leader, and Manager)
  * gets a narrow slice of the app — their own Dashboard tools and Tickets,
@@ -117,20 +146,26 @@ const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([
   "live-chat-support",
 ]);
 
-export function isCsrRestrictedRole(role: string | null | undefined): boolean {
-  return CSR_RESTRICTED_ROLES.has(normalizeRole(role));
+/**
+ * Restricted only if EVERY role this person holds is CSR-restricted — a
+ * secondary role outside the CSR department (e.g. also holding ADMIN, or
+ * CLAIMS_MANAGER) lifts the restriction entirely, same "any unrestricted
+ * role wins" pile-up logic as everywhere else in this file.
+ */
+export function isCsrRestrictedRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return everyHeldRoleIn(CSR_RESTRICTED_ROLES, role, extraRoles);
 }
 
 /** Whether a CSR department role may open this module at all. Non-CSR roles always pass. */
-export function isModuleAllowed(role: string | null | undefined, moduleSlug: string): boolean {
-  if (!isCsrRestrictedRole(role)) return true;
+export function isModuleAllowed(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
+  if (!isCsrRestrictedRole(role, extraRoles)) return true;
   return CSR_ALLOWED_MODULES.has(moduleSlug);
 }
 
 /** Whether a CSR department role may open this submodule. Non-CSR roles always pass. */
-export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: string, submoduleSlug: string): boolean {
-  if (!isCsrRestrictedRole(role)) return true;
-  if (!isModuleAllowed(role, moduleSlug)) return false;
+export function isSubmoduleAllowed(role: string | null | undefined, moduleSlug: string, submoduleSlug: string, extraRoles?: string[] | null): boolean {
+  if (!isCsrRestrictedRole(role, extraRoles)) return true;
+  if (!isModuleAllowed(role, moduleSlug, extraRoles)) return false;
   if (moduleSlug === "dashboard") return CSR_ALLOWED_DASHBOARD_SUBMODULES.has(submoduleSlug);
   return true; // tickets: fully open once the module itself is allowed
 }
@@ -156,8 +191,8 @@ const MISDIAGNOSED_ROLES = new Set([
   "CLAIMS_MANAGER",
 ]);
 
-export function canManageMisdiagnosed(role: string | null | undefined): boolean {
-  return MISDIAGNOSED_ROLES.has(normalizeRole(role));
+export function canManageMisdiagnosed(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(MISDIAGNOSED_ROLES, role, extraRoles);
 }
 
 /**
@@ -188,8 +223,8 @@ const CONDUCT_NOTE_SUBMITTER_ROLES = new Set([
   "CLAIMS_MANAGER", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
 ]);
 
-export function canSubmitConductNote(role: string | null | undefined): boolean {
-  return CONDUCT_NOTE_SUBMITTER_ROLES.has(normalizeRole(role));
+export function canSubmitConductNote(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(CONDUCT_NOTE_SUBMITTER_ROLES, role, extraRoles);
 }
 
 /**
@@ -199,8 +234,8 @@ export function canSubmitConductNote(role: string | null | undefined): boolean {
  */
 const CONDUCT_NOTE_FAST_TRACK_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN"]);
 
-export function canFastTrackConductNote(role: string | null | undefined): boolean {
-  return CONDUCT_NOTE_FAST_TRACK_ROLES.has(normalizeRole(role));
+export function canFastTrackConductNote(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(CONDUCT_NOTE_FAST_TRACK_ROLES, role, extraRoles);
 }
 
 /**
@@ -213,8 +248,8 @@ const DATA_CLOSE_FILTER_ROLES = new Set([
   "ADMIN", "SUPERADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CLAIMS", "CLAIMS_MANAGER",
 ]);
 
-export function canFilterDataClosedTickets(role: string | null | undefined): boolean {
-  return DATA_CLOSE_FILTER_ROLES.has(normalizeRole(role));
+export function canFilterDataClosedTickets(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(DATA_CLOSE_FILTER_ROLES, role, extraRoles);
 }
 
 /**
@@ -229,8 +264,8 @@ export function canFilterDataClosedTickets(role: string | null | undefined): boo
  */
 const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 
-export function isJotformHrRole(role: string | null | undefined): boolean {
-  return JOTFORM_HR_ROLES.has(normalizeRole(role));
+export function isJotformHrRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(JOTFORM_HR_ROLES, role, extraRoles);
 }
 
 /**
@@ -255,8 +290,8 @@ const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "BIZOPS_SENIOR_MANAGER",
 ]);
 
-export function isAttendanceManagerTierRole(role: string | null | undefined): boolean {
-  return ATTENDANCE_MANAGER_TIER_ROLES.has(normalizeRole(role));
+export function isAttendanceManagerTierRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(ATTENDANCE_MANAGER_TIER_ROLES, role, extraRoles);
 }
 
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */

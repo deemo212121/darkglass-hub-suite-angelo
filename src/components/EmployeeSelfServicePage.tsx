@@ -529,7 +529,7 @@ function generatePayslipHTML(employee: EmployeePayslipData): string {
 }
 
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
-  const { email, uid, role, displayName } = useAuth();
+  const { email, uid, role, extraRoles, displayName } = useAuth();
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   const employee = getEmployeeFromEmail(email);
 
@@ -749,7 +749,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     [myRequests, requestTypeFilter]
   );
 
-  const canManageRequests = ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((role || "").toUpperCase());
+  const canManageRequests = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
 
   // PTO eligibility: 1 year of tenure from hire date (falls back to account
   // creation date if HR hasn't set a hire date yet).
@@ -1780,9 +1780,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               ) : (
                 <div className="space-y-3">
                   {pendingPto.map((r) => {
-                    const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, role);
-                    const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, role);
-                    const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, role);
+                    const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, role, extraRoles);
+                    const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, role, extraRoles);
+                    const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, role, extraRoles);
                     return (
                       <div key={r.id} className="border border-white/10 rounded-lg p-3">
                         <div className="flex items-start justify-between gap-3">
@@ -1870,9 +1870,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               ) : (
                 <div className="space-y-3">
                   {pendingCorrections.map((r) => {
-                    const canManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, role);
-                    const canHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, role);
-                    const canAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, role);
+                    const canManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, role, extraRoles);
+                    const canHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, role, extraRoles);
+                    const canAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, role, extraRoles);
                     return (
                       <div key={r.id} className="border border-white/10 rounded-lg p-3">
                         <div className="flex items-start justify-between gap-3">

@@ -69,11 +69,12 @@ interface RecentEntry {
 }
 
 export function CsrAgentDetailPage({ agentId }: { agentId: string }) {
-  const { role: myRole, ready } = useAuth();
+  const { role: myRole, extraRoles: myExtraRoles, ready } = useAuth();
   const normalizedMyRole = normalizeRole(myRole);
-  const canManage = ready && canSubmitConductNote(normalizedMyRole);
-  const canStage1Review = ready && STAGE1_ROLES.has(normalizedMyRole);
-  const canStage2Review = ready && canFastTrackConductNote(normalizedMyRole);
+  const normalizedMyExtraRoles = myExtraRoles.map(normalizeRole);
+  const canManage = ready && canSubmitConductNote(normalizedMyRole, normalizedMyExtraRoles);
+  const canStage1Review = ready && [normalizedMyRole, ...normalizedMyExtraRoles].some((r) => STAGE1_ROLES.has(r));
+  const canStage2Review = ready && canFastTrackConductNote(normalizedMyRole, normalizedMyExtraRoles);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

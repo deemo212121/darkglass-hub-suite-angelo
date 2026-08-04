@@ -772,9 +772,22 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [filtered]);
 
+  // Roots with actual direct reports (real department heads) sort first,
+  // alphabetically among themselves; roots with no one under them at all
+  // (disconnected/unused accounts, e.g. an inactive placeholder like
+  // "Dummy.csr") sink to the bottom instead of interleaving alphabetically
+  // with the real org chart.
   const hierarchyRoots = useMemo(
-    () => filtered.filter((record) => !record.manager || !usersByName.has(record.manager)).sort((a, b) => a.userName.localeCompare(b.userName)),
-    [filtered, usersByName],
+    () =>
+      filtered
+        .filter((record) => !record.manager || !usersByName.has(record.manager))
+        .sort((a, b) => {
+          const aHasChildren = (childrenByManagerName.get(a.userName)?.length ?? 0) > 0;
+          const bHasChildren = (childrenByManagerName.get(b.userName)?.length ?? 0) > 0;
+          if (aHasChildren !== bHasChildren) return aHasChildren ? -1 : 1;
+          return a.userName.localeCompare(b.userName);
+        }),
+    [filtered, usersByName, childrenByManagerName],
   );
 
   // Manager dropdown candidates: real users with a manager-ish or admin

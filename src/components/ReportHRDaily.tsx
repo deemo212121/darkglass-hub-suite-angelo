@@ -6,7 +6,7 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyRoles, getMyProfileId, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
 import {
@@ -235,29 +235,19 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
 };
 
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { role: myRole, ready, uid, displayName, companyId } = useAuth();
+  const { role: myRole, extraRoles: myExtraRoles, ready, uid, displayName, companyId } = useAuth();
   const normalizedMyRole = normalizeRole(myRole);
-  const isHrOrAdmin = ready && HR_ADMIN_ROLES.has(normalizedMyRole);
-  const isBranchManager = ready && BRANCH_MANAGER_ROLES.has(normalizedMyRole);
-  const isAdmin = ["ADMIN", "SUPERADMIN"].includes(normalizedMyRole);
+  const normalizedMyExtraRoles = myExtraRoles.map(normalizeRole);
+  const heldRoles = [normalizedMyRole, ...normalizedMyExtraRoles];
+  const isHrOrAdmin = ready && heldRoles.some((r) => HR_ADMIN_ROLES.has(r));
+  const isBranchManager = ready && heldRoles.some((r) => BRANCH_MANAGER_ROLES.has(r));
+  const isAdmin = heldRoles.some((r) => ["ADMIN", "SUPERADMIN"].includes(r));
 
-  // HR can also be held as a sub-role (extra_roles) rather than the primary
-  // role — useAuth().role only carries the primary, so resolve extra_roles
-  // separately to decide who can see the Jotform Submissions tab below.
-  const [hasHrSubRole, setHasHrSubRole] = useState(false);
-  useEffect(() => {
-    if (!ready || !uid) return;
-    let cancelled = false;
-    getMyRoles(uid).then(({ extraRoles }) => {
-      if (!cancelled) setHasHrSubRole(extraRoles.some((r) => normalizeRole(r) === "HR"));
-    });
-    return () => { cancelled = true; };
-  }, [ready, uid]);
   // isJotformHrRole (not the broader isHrOrAdmin) so this stays in exact
   // sync with findHrFirebaseUids() in jotformBridge.ts — otherwise this tab
   // is visible to roles the webhook never actually notifies, and it just
   // sits empty forever for them regardless of how many submissions come in.
-  const canViewJotformTab = isJotformHrRole(normalizedMyRole) || hasHrSubRole;
+  const canViewJotformTab = isJotformHrRole(normalizedMyRole, normalizedMyExtraRoles);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -4673,9 +4663,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           ) : (
             <div className="space-y-3">
               {pendingPtoRequests.map((r) => {
-                const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole);
-                const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole);
-                const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, myRole);
+                const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, myRole, myExtraRoles);
+                const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, myRole, myExtraRoles);
+                const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, myRole, myExtraRoles);
                 return (
                   <div key={r.id} className="border border-white/10 rounded-lg p-3">
                     <div className="flex items-start justify-between gap-3">
@@ -4751,9 +4741,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           ) : (
             <div className="space-y-3">
               {pendingCorrections.map((r) => {
-                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole);
-                const canCorrHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole);
-                const canCorrAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, myRole);
+                const canCorrManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, myRole, myExtraRoles);
+                const canCorrHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, myRole, myExtraRoles);
+                const canCorrAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, myRole, myExtraRoles);
                 return (
                 <div key={r.id} className="border border-white/10 rounded-lg p-3">
                   <div className="flex items-start justify-between gap-3">
