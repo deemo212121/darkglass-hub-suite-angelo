@@ -156,10 +156,17 @@ export function TechActivityReportModal({
   const twoTechPayment = twoTechCount * twoTechRate;
   const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
 
+  // ticketsCompleted (from the parent row) is already net of Redo Reduction
+  // (getTechCompletedRepairCounts excludes redo'd tickets outright) — grossCompleted
+  // is derived back out just so this row can show the "gross − redo = net" arithmetic.
+  const grossCompleted = ticketsCompleted + redoTickets.length;
+  const completedTicketsRate = techRateFor("Completed Tickets");
+  const completedTicketsPayment = ticketsCompleted * completedTicketsRate;
+
   const subtotal =
     categoryPayments.reduce((s, c) => s + c.payment, 0) +
     techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
-    twoTechPayment + mcaPayment + customLinesTotal;
+    twoTechPayment + mcaPayment + completedTicketsPayment + customLinesTotal;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
 
@@ -205,11 +212,25 @@ export function TechActivityReportModal({
                     <td className="px-3 py-2 text-right text-slate-600">—</td>
                     <td className="px-3 py-2 text-right text-slate-600">—</td>
                   </tr>
-                  <tr title="Net of Redo Reduction. Paid out per repair type below, not as one flat total.">
+                  <tr title="Completed tickets minus Redo Reduction. This rate is paid flat on every one of them, in addition to each ticket's own repair-type rate below.">
                     <td className="px-3 py-2 text-slate-300">Completed Tickets</td>
-                    <td className="px-3 py-2 text-right text-slate-300">{ticketsCompleted}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">—</td>
-                    <td className="px-3 py-2 text-right text-slate-600">—</td>
+                    <td className="px-3 py-2 text-right text-slate-300">
+                      {grossCompleted} − {redoTickets.length} = {ticketsCompleted}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {savingRateKey === "Completed Tickets" && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                        <input
+                          key={`Completed Tickets:${completedTicketsRate}`}
+                          type="number" min={0} step={0.01}
+                          defaultValue={completedTicketsRate}
+                          disabled={savingRateKey === "Completed Tickets"}
+                          onBlur={(e) => handleRateBlur("Completed Tickets", e.target.value)}
+                          className={rateCellClass}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-200">{fmt(completedTicketsPayment)}</td>
                   </tr>
 
                   {categoryPayments.map(({ type, count, rate, payment }) => (

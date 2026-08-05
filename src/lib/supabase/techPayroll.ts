@@ -38,6 +38,14 @@ export const REPAIR_TYPES = [
   "Seal with Trainee", "Sealed System", "Sealed System Follow Up",
   "Sealed System(R600)", "Stacked Unit(Washer Only)", "Wall Oven",
 ];
+/**
+ * A flat per-ticket rate paid on EVERY completed (redo-excluded) ticket, on
+ * top of whatever its own repair_type category already pays — distinct from
+ * DEFAULT_REPAIR_TYPE, which only applies to a completed visit with no
+ * repair_type set at all. Shown as its own editable-rate line ("Completed
+ * Tickets") on the Tech Activity Report modal.
+ */
+export const BASE_RATE_TYPES = ["Completed Tickets"];
 /** Entered by Finance directly per technician per period (migration 0125) — not auto-counted from a completed visit's repair_type. */
 export const MANUAL_PAY_TYPES = ["LDT", "Mileage", "Training Paid"];
 /** Auto-counted like REPAIR_TYPES, but keyed off visits.second_technician (migration 0126) rather than repair_type. */

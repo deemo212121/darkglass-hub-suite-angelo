@@ -806,8 +806,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const mcaBonus = isTechRole(emp) && mcaThreshold > 0 && (tech?.ticketsCompleted ?? 0) >= mcaThreshold
       ? techRateFor("MCA Bonus", techBranch)
       : 0;
+    // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
+    // on top of that ticket's own repair-type rate already in tech.grossPay.
+    const completedTicketsPay = isTechRole(emp) ? (tech?.ticketsCompleted ?? 0) * techRateFor("Completed Tickets", techBranch) : 0;
     const grossPay = tech
-      ? tech.grossPay + manualTotal + twoTechPay + mcaBonus
+      ? tech.grossPay + manualTotal + twoTechPay + mcaBonus + completedTicketsPay
       : isFixed && annualSalary
         ? perCutoffSalary(annualSalary)
         : hours.regular * hourlyRate + hours.overtime * hourlyRate * 1.5;
