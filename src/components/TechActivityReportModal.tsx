@@ -4,6 +4,7 @@ import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import {
   REPAIR_TYPES,
+  DEFAULT_REPAIR_TYPE,
   getTechRedoTickets,
   getTechAssistedTickets,
   getTechCustomPayItems,
@@ -148,10 +149,15 @@ export function TechActivityReportModal({
   const mcaMet = mcaThreshold > 0 && ticketsCompleted >= mcaThreshold;
   const mcaPayment = mcaMet ? mcaBonusRate : 0;
 
+  // Includes DEFAULT_REPAIR_TYPE so its $ still counts toward the totals below
+  // (it was already part of Total Net before this report existed) — just not
+  // rendered as its own row, since almost every completed ticket falls into
+  // it and it isn't part of the legacy report this is modeled on.
   const categoryPayments = useMemo(
     () => REPAIR_TYPES.map((type) => ({ type, count: techCategoryCounts[type] ?? 0, rate: techRateFor(type), payment: (techCategoryCounts[type] ?? 0) * techRateFor(type) })),
     [techCategoryCounts, techRepairRates, branch]
   );
+  const visibleCategoryPayments = categoryPayments.filter((c) => c.type !== DEFAULT_REPAIR_TYPE);
   const twoTechRate = techRateFor("Two Tech");
   const twoTechPayment = twoTechCount * twoTechRate;
   const customLinesTotal = customItems.reduce((s, i) => s + i.value * i.rate, 0);
@@ -233,7 +239,7 @@ export function TechActivityReportModal({
                     <td className="px-3 py-2 text-right text-slate-200">{fmt(completedTicketsPayment)}</td>
                   </tr>
 
-                  {categoryPayments.map(({ type, count, rate, payment }) => (
+                  {visibleCategoryPayments.map(({ type, count, rate, payment }) => (
                     <tr key={type}>
                       <td className="px-3 py-2 text-slate-300">{type}</td>
                       <td className="px-3 py-2 text-right text-slate-300">{count}</td>
