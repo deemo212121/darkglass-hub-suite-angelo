@@ -23,6 +23,8 @@ export interface ExpenseRow {
   receiptUrl: string | null;
   /** Full Firebase Storage path for the receipt (needed to delete it if replaced/removed). */
   receiptPath: string | null;
+  /** The Official Receipt / transaction number printed on the receipt itself — see migration 0132. */
+  orNumber: string | null;
   createdAt: string;
 }
 
@@ -40,6 +42,7 @@ function mapRow(row: any): ExpenseRow {
     reviewedAt: row.reviewed_at ?? null,
     receiptUrl: row.receipt_url ?? null,
     receiptPath: row.receipt_path ?? null,
+    orNumber: row.or_number ?? null,
     createdAt: row.created_at,
   };
 }
@@ -48,7 +51,7 @@ function mapRow(row: any): ExpenseRow {
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
   const { data, error } = await supabase
     .from("expenses")
-    .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, created_at")
+    .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, created_at")
     .not("profile_id", "is", null)
     .order("expense_date", { ascending: false });
   if (error) {
@@ -68,22 +71,34 @@ export async function createExpense(input: {
   createdBy: string | null;
   receiptUrl?: string | null;
   receiptPath?: string | null;
-}): Promise<void> {
-  const { error } = await supabase.from("expenses").insert({
-    profile_id: input.profileId,
-    category: input.category,
-    expense_date: input.expenseDate,
-    amount: input.amount,
-    description: input.description || null,
-    status: "Pending",
-    created_by: input.createdBy,
-    receipt_url: input.receiptUrl ?? null,
-    receipt_path: input.receiptPath ?? null,
-  });
+  orNumber?: string | null;
+  /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130/flashTechTrips.ts. Never set from the ordinary Expense Tracking "Add Expense" form. */
+  flashTechTripId?: string | null;
+  expenseSubtype?: "hotel" | "transportation" | null;
+}): Promise<string> {
+  const { data, error } = await supabase
+    .from("expenses")
+    .insert({
+      profile_id: input.profileId,
+      category: input.category,
+      expense_date: input.expenseDate,
+      amount: input.amount,
+      description: input.description || null,
+      status: "Pending",
+      created_by: input.createdBy,
+      receipt_url: input.receiptUrl ?? null,
+      receipt_path: input.receiptPath ?? null,
+      or_number: input.orNumber || null,
+      flash_tech_trip_id: input.flashTechTripId ?? null,
+      expense_subtype: input.expenseSubtype ?? null,
+    })
+    .select("id")
+    .single();
   if (error) {
     console.error("createExpense error:", error.message);
     throw new Error(error.message);
   }
+  return data.id as string;
 }
 
 /** Edit an expense's fields (only sensible while still Pending). */
@@ -96,6 +111,7 @@ export async function updateExpense(
     description: string;
     receiptUrl?: string | null;
     receiptPath?: string | null;
+    orNumber?: string | null;
   }
 ): Promise<void> {
   const { error } = await supabase
@@ -107,6 +123,7 @@ export async function updateExpense(
       description: fields.description || null,
       receipt_url: fields.receiptUrl ?? null,
       receipt_path: fields.receiptPath ?? null,
+      or_number: fields.orNumber || null,
     })
     .eq("id", id);
   if (error) {

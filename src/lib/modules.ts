@@ -205,6 +205,14 @@ const dashboardMod: ModuleDef = {
       },
     },
     {
+      slug: "flash-tech-calendar",
+      title: "Flash Tech Calendar",
+      description: "Plot flash tech travel schedules and track Hotel/Transportation costs through Expense Tracking.",
+      custom: "flash-tech-calendar" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "csr-dashboard",
       title: "CSR Dashboard",
       description: "CSR team performance metrics and real-time monitoring.",

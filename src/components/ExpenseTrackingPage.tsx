@@ -27,6 +27,7 @@ const emptyForm = {
   description: "",
   receiptUrl: null as string | null,
   receiptPath: null as string | null,
+  orNumber: "",
 };
 
 function statusColor(status: ExpenseStatus): string {
@@ -157,6 +158,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       description: e.description,
       receiptUrl: e.receiptUrl,
       receiptPath: e.receiptPath,
+      orNumber: e.orNumber || "",
     });
     setEditingId(e.id);
     setOriginalReceiptPath(e.receiptPath);
@@ -196,6 +198,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           description: form.description,
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
+          orNumber: form.orNumber,
         });
       } else {
         await createExpense({
@@ -207,6 +210,7 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           createdBy: myProfileId,
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
+          orNumber: form.orNumber,
         });
       }
       // Best-effort: if a receipt was replaced or removed during this edit,
@@ -580,6 +584,10 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Amount ($)</label>
                 <input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 uppercase mb-1">OR/Transaction Number</label>
+                <input type="text" value={form.orNumber} onChange={(e) => setForm({ ...form, orNumber: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Description</label>
