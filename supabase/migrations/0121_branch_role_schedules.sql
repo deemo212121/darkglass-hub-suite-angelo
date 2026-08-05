@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0117 — Branch/Role Working-Hours templates
+-- 0121 — Branch/Role Working-Hours templates
 --
 -- Lets an Admin set a Required Schedule (Check-In/Check-Out) once per
 -- branch + role (e.g. "CSR Manager at Nashville") instead of re-entering it
@@ -13,7 +13,7 @@
 -- Postdates the one-time tenant_tables RLS loop in 0001_init.sql, so RLS is
 -- set up from scratch here — same shape as 0114_it_tickets.sql.
 --
--- Run once in the Supabase SQL Editor, after 0116.
+-- Run once in the Supabase SQL Editor, after 0120.
 -- =====================================================================
 
 create table if not exists branch_role_schedules (

@@ -5,7 +5,7 @@ import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Footer } from "@/components/Footer";
 import { LiveChatWidget } from "@/components/LiveChatWidget";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 
 export const Route = createFileRoute("/landing")({
   head: () => ({ meta: [{ title: "Sign in — Admin Hub Solutions" }] }),
@@ -24,6 +24,7 @@ function Landing() {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   // The company ID the user typed at login, validated reactively once the auth
   // context finishes loading the profile (avoids the race of re-querying with a
   // fixed delay). Cleared after a successful validation.
@@ -227,15 +228,26 @@ function Landing() {
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs font-semibold uppercase">Password</span>
-              <input 
-                className="glass-input mt-1 w-full" 
-                type="password" 
-                autoComplete="current-password"
-                value={form.password} 
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="••••••••"
-                disabled={submitting}
-              />
+              <div className="relative mt-1">
+                <input
+                  className="glass-input w-full pr-10"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="••••••••"
+                  disabled={submitting}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  title={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </label>
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs font-semibold uppercase">Company ID</span>

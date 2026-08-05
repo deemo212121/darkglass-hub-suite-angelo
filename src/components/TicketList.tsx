@@ -511,9 +511,9 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
 
   const SAMPLE_TICKETS: TicketItem[] = tickets;
-  const { email, role, allowedLocations } = useAuth();
-  const canViewMisdiagnosed = canManageMisdiagnosed(role);
-  const canViewDataCloseFilter = canFilterDataClosedTickets(role);
+  const { email, role, extraRoles, allowedLocations } = useAuth();
+  const canViewMisdiagnosed = canManageMisdiagnosed(role, extraRoles);
+  const canViewDataCloseFilter = canFilterDataClosedTickets(role, extraRoles);
   const [searchQuery, setSearchQuery] = useState("");
   const [repairStatusFilter, setRepairStatusFilter] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");

@@ -18,6 +18,17 @@
   isolation: isolate;
 }
 
+/* Password fields have their own custom show/hide eye button (see
+   landing.tsx/profile.tsx) — Chromium Edge still renders its own native
+   reveal icon on top via ::-ms-reveal (a legacy EdgeHTML pseudo-element
+   Edge keeps for compatibility), which then shows two eye icons stacked in
+   the same field. Suppressing the native one everywhere avoids that
+   without needing a fix per input. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
 @layer utilities {
   .animate-spin-reverse {
     animation: spin 1s linear infinite reverse;

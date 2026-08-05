@@ -34,7 +34,7 @@ export type UserRole =
   | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
   | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
   | "PARTS_MANAGER" | "PARTS_TEAM_LEADER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
-  | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR";
+  | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR" | "TECHNICAL_ASSISTANT_DIRECTOR" | "CLAIMS_TEAM_LEADER";
 
 export interface ProfileRow {
   id: string;
@@ -66,7 +66,7 @@ export interface ProfileRow {
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
-  /** Consecutive failed sign-in attempts — see migration 0118 / loginLockoutBridge.ts. Resets to 0 on a successful login. */
+  /** Consecutive failed sign-in attempts — see migration 0122 / loginLockoutBridge.ts. Resets to 0 on a successful login. */
   failed_login_count: number;
   /** Set once failed_login_count reaches 5; the account can't sign in again until this passes (or an admin clicks "Unlock Now" on LoginLockoutsPage.tsx). */
   locked_until: string | null;
@@ -98,6 +98,8 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
    *  platform SUPERSUPERADMIN, who isn't subject to company freezes. */
   companyIsActive: boolean;
   role: string;
+  /** Secondary roles this profile also holds, beyond the primary `role` — see getMyRoles(). Selected in the same row fetch as everything else here, so this is free (no extra round trip). */
+  extraRoles: string[];
   displayName: string;
   isActive: boolean;
   workPlan: Record<string, any> | null;
@@ -106,7 +108,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
 } | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("email, role, display_name, is_active, work_plan, branch_access, must_change_password, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -125,6 +127,7 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     companyLoginAlias: loginAlias,
     companyIsActive,
     role: data.role,
+    extraRoles: ((data as any).extra_roles as string[] | null) ?? [],
     displayName: data.display_name ?? data.email,
     isActive: data.is_active,
     workPlan: (data as any).work_plan ?? null,
@@ -354,6 +357,8 @@ export interface EmployeeInfo {
   bankName?: string;
   routingNumber?: string;
   accountNumber?: string;
+  /** Name on the bank account — not always the employee's own name (e.g. a joint account). */
+  accountName?: string;
   photoName?: string;
   photoDataUrl?: string;
   address1?: string;

@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { X, Plus } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, type AttendanceRow } from "@/lib/supabase/timecards";
 import {
   getSalaryHistory,
   addSalaryEntry,
   rateEffectiveOn,
+  entryEffectiveOn,
   currentRate,
+  perCutoffSalary,
+  monthlySalary,
   type SalaryEntryRow,
   type SalaryChangeReason,
+  type CompensationType,
 } from "@/lib/supabase/salary";
 
 interface Props {
@@ -22,8 +27,6 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
-  /** Display name (or email) of the currently logged-in user — recorded as "Changed By" on any rate change made from this modal. */
-  changedByName?: string;
 }
 
 function monthBounds(monthStr: string): { start: string; end: string } {
@@ -67,8 +70,9 @@ export function EmployeePayrollDetailModal({
   offDays,
   onClose,
   onRateChanged,
-  changedByName,
 }: Props) {
+  const { displayName, email } = useAuth();
+  const actorName = displayName || email || "Unknown";
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
@@ -76,7 +80,9 @@ export function EmployeePayrollDetailModal({
   const [showRateForm, setShowRateForm] = useState(false);
   const [rateForm, setRateForm] = useState({
     effectiveDate: new Date().toISOString().slice(0, 10),
+    compensationType: "hourly" as CompensationType,
     hourlyRate: "",
+    annualSalary: "",
     reason: "adjustment" as SalaryChangeReason,
     notes: "",
   });
@@ -86,7 +92,7 @@ export function EmployeePayrollDetailModal({
   const [rateEdits, setRateEdits] = useState<Record<string, string>>({});
   const [savingRates, setSavingRates] = useState(false);
 
-  const load = async () => {
+  const load = async (cancelledRef: { current: boolean }) => {
     setLoading(true);
     setRateEdits({});
     try {
@@ -95,35 +101,51 @@ export function EmployeePayrollDetailModal({
         getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays }),
         getSalaryHistory(profileId),
       ]);
+      if (cancelledRef.current) return;
       setAttendance(attRows);
       setHistory(hist);
     } catch (err) {
       console.error("Failed to load employee payroll detail:", err);
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    const cancelledRef = { current: false };
+    load(cancelledRef);
+    return () => { cancelledRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId, month]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
   const warnings = useMemo(() => attendance.filter((r) => r.status !== "present"), [attendance]);
-  // Each day's hours are paid at whichever rate was effective ON that day —
-  // so a mid-month raise/promotion is handled automatically instead of
-  // needing one flat rate for the whole period.
-  const computedPay = useMemo(
-    () => attendance.reduce((s, r) => s + r.hoursWorked * rateEffectiveOn(history, r.date), 0),
-    [attendance, history]
-  );
+  // The entry effective as of the end of the viewed month — used to decide
+  // whether this employee is currently paid hourly or a fixed salary, and
+  // to show the right numbers for whichever it is.
+  const currentEntry = useMemo(() => entryEffectiveOn(history, monthBounds(month).end), [history, month]);
+  const isCurrentlyFixed = currentEntry?.compensationType === "fixed";
+  // Fixed-salary pay doesn't depend on hours worked at all (see migration
+  // 0118) — shows the monthly amount for this calendar-month estimate.
+  // Hourly pay is still each day's hours at whichever rate was effective ON
+  // that day, so a mid-month raise/promotion is handled automatically
+  // instead of needing one flat rate for the whole period.
+  const computedPay = useMemo(() => {
+    if (isCurrentlyFixed && currentEntry?.annualSalary) return monthlySalary(currentEntry.annualSalary);
+    return attendance.reduce((s, r) => s + r.hoursWorked * rateEffectiveOn(history, r.date), 0);
+  }, [attendance, history, isCurrentlyFixed, currentEntry]);
   const rateNow = useMemo(() => currentRate(history), [history]);
 
   const submitRateChange = async () => {
+    if (!rateForm.effectiveDate) {
+      alert("Please enter a valid effective date.");
+      return;
+    }
+    const isFixed = rateForm.compensationType === "fixed";
     const rate = Number(rateForm.hourlyRate);
-    if (!rateForm.effectiveDate || !Number.isFinite(rate) || rate <= 0) {
-      alert("Please enter a valid effective date and hourly rate.");
+    const annual = Number(rateForm.annualSalary);
+    if (isFixed ? !Number.isFinite(annual) || annual <= 0 : !Number.isFinite(rate) || rate <= 0) {
+      alert(isFixed ? "Please enter a valid annual salary." : "Please enter a valid hourly rate.");
       return;
     }
     setSaving(true);
@@ -131,14 +153,16 @@ export function EmployeePayrollDetailModal({
       await addSalaryEntry({
         profileId,
         effectiveDate: rateForm.effectiveDate,
+        compensationType: rateForm.compensationType,
         hourlyRate: rate,
+        annualSalary: annual,
         reason: rateForm.reason,
         notes: rateForm.notes,
-        changedBy: changedByName,
+        createdByName: actorName,
       });
       setHistory(await getSalaryHistory(profileId));
       setShowRateForm(false);
-      setRateForm({ effectiveDate: new Date().toISOString().slice(0, 10), hourlyRate: "", reason: "adjustment", notes: "" });
+      setRateForm({ effectiveDate: new Date().toISOString().slice(0, 10), compensationType: "hourly", hourlyRate: "", annualSalary: "", reason: "adjustment", notes: "" });
       onRateChanged?.();
     } catch (err) {
       alert(`Failed to save rate change: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -152,10 +176,14 @@ export function EmployeePayrollDetailModal({
   };
 
   // Only edits that actually differ from the currently-effective rate count
-  // as pending — so the Save button doesn't light up for a no-op edit.
+  // as pending — so the Save button doesn't light up for a no-op edit. Days
+  // whose effective entry is a fixed salary aren't editable here at all (see
+  // the Attendance table's Rate column below) since there's no per-day
+  // hourly rate to set for them.
   const pendingRateChanges = useMemo(() => {
     const changes: Array<{ date: string; rate: number }> = [];
     for (const [date, value] of Object.entries(rateEdits)) {
+      if (entryEffectiveOn(history, date)?.compensationType === "fixed") continue;
       const parsed = Number(value);
       if (!Number.isFinite(parsed) || parsed < 0) continue;
       if (parsed !== rateEffectiveOn(history, date)) changes.push({ date, rate: parsed });
@@ -180,7 +208,7 @@ export function EmployeePayrollDetailModal({
           hourlyRate: change.rate,
           reason: "adjustment",
           notes: "Edited from Attendance table",
-          changedBy: changedByName,
+          createdByName: actorName,
         });
       }
       setHistory(await getSalaryHistory(profileId));
@@ -230,7 +258,13 @@ export function EmployeePayrollDetailModal({
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Current Rate</p>
-              <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
+              {isCurrentlyFixed && currentEntry?.annualSalary ? (
+                <p className="text-xl font-bold text-white mt-1">
+                  ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary).toFixed(2)}/cutoff)</span>
+                </p>
+              ) : (
+                <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
+              )}
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Est. Pay ({month})</p>
@@ -250,48 +284,82 @@ export function EmployeePayrollDetailModal({
               </button>
             </div>
             {showRateForm && (
-              <div className="mb-4 grid gap-2 md:grid-cols-4 items-end bg-slate-900/60 border border-white/10 rounded-lg p-3">
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Effective Date</label>
-                  <input
-                    type="date"
-                    value={rateForm.effectiveDate}
-                    onChange={(e) => setRateForm({ ...rateForm, effectiveDate: e.target.value })}
-                    className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
-                  />
+              <div className="mb-4 space-y-2 bg-slate-900/60 border border-white/10 rounded-lg p-3">
+                <div className="grid gap-2 md:grid-cols-4 items-end">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 uppercase mb-1">Effective Date</label>
+                    <input
+                      type="date"
+                      value={rateForm.effectiveDate}
+                      onChange={(e) => setRateForm({ ...rateForm, effectiveDate: e.target.value })}
+                      className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 uppercase mb-1">Compensation Type</label>
+                    <select
+                      value={rateForm.compensationType}
+                      onChange={(e) => setRateForm({ ...rateForm, compensationType: e.target.value as CompensationType })}
+                      className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                    >
+                      <option value="hourly">Hourly</option>
+                      <option value="fixed">Fixed Salary</option>
+                    </select>
+                  </div>
+                  {rateForm.compensationType === "fixed" ? (
+                    <div>
+                      <label className="block text-[10px] text-slate-400 uppercase mb-1">Annual Salary ($)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={rateForm.annualSalary}
+                        onChange={(e) => setRateForm({ ...rateForm, annualSalary: e.target.value })}
+                        className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[10px] text-slate-400 uppercase mb-1">New Rate ($/hr)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={rateForm.hourlyRate}
+                        onChange={(e) => setRateForm({ ...rateForm, hourlyRate: e.target.value })}
+                        className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[10px] text-slate-400 uppercase mb-1">Reason</label>
+                    <select
+                      value={rateForm.reason}
+                      onChange={(e) => setRateForm({ ...rateForm, reason: e.target.value as SalaryChangeReason })}
+                      className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                    >
+                      <option value="promotion">Promotion</option>
+                      <option value="adjustment">Adjustment</option>
+                      <option value="demotion">Demotion</option>
+                      <option value="initial">Initial</option>
+                      <option value="training_rate">Training Rate</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase mb-1">New Rate ($/hr)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={rateForm.hourlyRate}
-                    onChange={(e) => setRateForm({ ...rateForm, hourlyRate: e.target.value })}
-                    className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase mb-1">Reason</label>
-                  <select
-                    value={rateForm.reason}
-                    onChange={(e) => setRateForm({ ...rateForm, reason: e.target.value as SalaryChangeReason })}
-                    className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+                {rateForm.compensationType === "fixed" && Number(rateForm.annualSalary) > 0 && (
+                  <p className="text-[11px] text-slate-400">
+                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary)).toFixed(2)}/cutoff (semi-monthly)
+                  </p>
+                )}
+                <div className="flex justify-end">
+                  <button
+                    onClick={submitRateChange}
+                    disabled={saving}
+                    className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold"
                   >
-                    <option value="promotion">Promotion</option>
-                    <option value="adjustment">Adjustment</option>
-                    <option value="demotion">Demotion</option>
-                    <option value="initial">Initial</option>
-                    <option value="training_rate">Training Rate</option>
-                  </select>
+                    {saving ? "Saving…" : "Save"}
+                  </button>
                 </div>
-                <button
-                  onClick={submitRateChange}
-                  disabled={saving}
-                  className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold"
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
               </div>
             )}
             {history.length === 0 ? (
@@ -301,9 +369,10 @@ export function EmployeePayrollDetailModal({
                 <thead>
                   <tr className="text-slate-400 border-b border-white/10">
                     <th className="text-left py-1.5">Effective</th>
+                    <th className="text-left py-1.5">Type</th>
                     <th className="text-left py-1.5">Reason</th>
                     <th className="text-left py-1.5">Changed By</th>
-                    <th className="text-left py-1.5">Changed At</th>
+                    <th className="text-left py-1.5">Date Changed</th>
                     <th className="text-right py-1.5">Rate</th>
                   </tr>
                 </thead>
@@ -311,15 +380,17 @@ export function EmployeePayrollDetailModal({
                   {history.map((h) => (
                     <tr key={h.id} className="border-b border-white/5">
                       <td className="py-1.5 text-slate-200">{h.effectiveDate}</td>
+                      <td className="py-1.5 text-slate-300">{h.compensationType === "fixed" ? "Fixed Salary" : "Hourly"}</td>
                       <td className="py-1.5 text-slate-300">{SALARY_REASON_LABELS[h.reason] ?? h.reason}</td>
-                      <td className="py-1.5 text-slate-300">{h.changedBy || "—"}</td>
-                      <td className="py-1.5 text-slate-300">
-                        {new Date(h.createdAt).toLocaleString(undefined, {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
+                      <td className="py-1.5 text-slate-300">{h.createdByName || "—"}</td>
+                      <td className="py-1.5 text-slate-300" title="When this entry was actually recorded, as opposed to the date it takes effect from">
+                        {new Date(h.createdAt).toLocaleString()}
                       </td>
-                      <td className="py-1.5 text-right text-white font-semibold">${h.hourlyRate.toFixed(2)}/hr</td>
+                      <td className="py-1.5 text-right text-white font-semibold">
+                        {h.compensationType === "fixed" && h.annualSalary
+                          ? <>${h.annualSalary.toLocaleString()}/yr <span className="font-normal text-slate-400">(${perCutoffSalary(h.annualSalary).toFixed(2)}/cutoff)</span></>
+                          : `$${h.hourlyRate.toFixed(2)}/hr`}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -363,29 +434,36 @@ export function EmployeePayrollDetailModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {attendance.map((row) => (
+                    {attendance.map((row) => {
+                      const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
+                      return (
                       <tr key={row.date} className="border-b border-white/5">
                         <td className="py-1.5 text-slate-200">{row.date}</td>
                         <td className="py-1.5 text-slate-300">{row.clockIn || "—"}</td>
                         <td className="py-1.5 text-slate-300">{row.clockOut || "—"}</td>
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? row.hoursWorked.toFixed(1) : "—"}</td>
                         <td className="py-1.5 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-slate-500">$</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              title={`Rate effective ${row.date}`}
-                              value={rateEdits[row.date] ?? rateEffectiveOn(history, row.date).toFixed(2)}
-                              onChange={(e) => handleRateEdit(row.date, e.target.value)}
-                              className="w-16 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-right text-slate-100 focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
+                          {dayIsFixed ? (
+                            <span className="text-slate-500" title="Fixed-salary pay doesn't vary by day — edit it from Salary History above instead">Fixed Salary</span>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-slate-500">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                title={`Rate effective ${row.date}`}
+                                value={rateEdits[row.date] ?? rateEffectiveOn(history, row.date).toFixed(2)}
+                                onChange={(e) => handleRateEdit(row.date, e.target.value)}
+                                className="w-16 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-right text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
+                            </div>
+                          )}
                         </td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

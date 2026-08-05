@@ -1,5 +1,5 @@
 /**
- * Branch/Role working-hours templates (migration 0117) — lets an Admin set a
+ * Branch/Role working-hours templates (migration 0121) — lets an Admin set a
  * Required Schedule (Check-In/Check-Out) once per branch + role instead of
  * per employee. This module only reads/writes the template row itself;
  * applying it to employees' actual profiles.required_check_in/out is a

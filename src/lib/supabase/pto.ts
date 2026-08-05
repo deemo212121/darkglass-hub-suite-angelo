@@ -223,17 +223,21 @@ export function canReviewPtoStage(
   request: Pick<PtoRequestRow, "managerId" | "managerStatus">,
   stage: PtoStage,
   viewerProfileId: string | null,
-  viewerRole: string | null | undefined
+  viewerRole: string | null | undefined,
+  viewerExtraRoles?: string[] | null
 ): boolean {
-  const role = (viewerRole || "").toUpperCase();
-  if (role === "SUPERADMIN" || role === "SUPERSUPERADMIN") return true;
+  // Held roles pile up: a secondary HR/FINANCE/MANAGER role grants that
+  // stage's authority just as well as holding it as the primary role.
+  const heldRoles = [viewerRole, ...(viewerExtraRoles ?? [])].map((r) => (r || "").toUpperCase()).filter(Boolean);
+  const has = (r: string) => heldRoles.includes(r);
+  if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
     if (request.managerId) return request.managerId === viewerProfileId;
-    return role === "MANAGER";
+    return has("MANAGER");
   }
   if (request.managerStatus !== "approved") return false;
-  if (stage === "hr") return role === "HR";
-  return role === "FINANCE";
+  if (stage === "hr") return has("HR");
+  return has("FINANCE");
 }
 
 /** Count weekdays (Mon–Fri) in an inclusive date range — used for the default hours estimate. */

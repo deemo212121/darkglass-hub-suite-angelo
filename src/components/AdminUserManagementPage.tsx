@@ -369,12 +369,15 @@ function RoleMultiSelect({
 
 // Map a Supabase profile row to the table's UserManagementRecord shape.
 // Row shape for the table: UserManagementRecord plus the Supabase profile id
-// (needed for the delete action and for forcing a password change).
-type UserRow = UserManagementRecord & { profileId: string };
+// (needed for the delete action and for forcing a password change) and the
+// Firebase Auth uid (needed to target a specific account for the "reset to
+// default password" bridge — see handleConfirmResetToDefault below).
+type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string };
 
 function mapProfilesToRecords(profiles: ProfileRow[]): UserRow[] {
   return profiles.map((p, index) => ({
     profileId: p.id,
+    firebaseUid: p.firebase_uid,
     id: String(index + 1), // sequential display id: 1, 2, 3...
     loginName: p.username || p.email.split("@")[0],
     userName: p.display_name || p.email,
@@ -643,10 +646,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   useEffect(() => {
     getBranchRoleSchedules().then(setBranchSchedules).catch(() => {});
   }, []);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
+  const [togglingActive, setTogglingActive] = useState(false);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
-  const [creatingUser, setCreatingUser] = useState(false);
+  // "Locked out" recovery — distinct from resetModal above (which only
+  // forces a change on next login using the user's CURRENT password): this
+  // one actually resets the Firebase Auth password right now, for someone
+  // who can't log in at all. See handleConfirmResetToDefault.
+  const [resetToDefaultTarget, setResetToDefaultTarget] = useState<UserRow | null>(null);
+  const [resettingToDefault, setResettingToDefault] = useState(false);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [newUserForm, setNewUserForm] = useState<NewUserFormData>({
@@ -762,9 +772,22 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [filtered]);
 
+  // Roots with actual direct reports (real department heads) sort first,
+  // alphabetically among themselves; roots with no one under them at all
+  // (disconnected/unused accounts, e.g. an inactive placeholder like
+  // "Dummy.csr") sink to the bottom instead of interleaving alphabetically
+  // with the real org chart.
   const hierarchyRoots = useMemo(
-    () => filtered.filter((record) => !record.manager || !usersByName.has(record.manager)).sort((a, b) => a.userName.localeCompare(b.userName)),
-    [filtered, usersByName],
+    () =>
+      filtered
+        .filter((record) => !record.manager || !usersByName.has(record.manager))
+        .sort((a, b) => {
+          const aHasChildren = (childrenByManagerName.get(a.userName)?.length ?? 0) > 0;
+          const bHasChildren = (childrenByManagerName.get(b.userName)?.length ?? 0) > 0;
+          if (aHasChildren !== bHasChildren) return aHasChildren ? -1 : 1;
+          return a.userName.localeCompare(b.userName);
+        }),
+    [filtered, usersByName, childrenByManagerName],
   );
 
   // Manager dropdown candidates: real users with a manager-ish or admin
@@ -810,6 +833,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   const handleToggleUserActive = async (row: UserRow) => {
     const reactivating = row.isActive === false;
+    setTogglingActive(true);
     try {
       await updateCompanyUser(row.profileId, { isActive: reactivating });
       const profiles = await getCompanyUsers();
@@ -826,6 +850,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       console.error("Toggle active error:", error);
       alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
+      setTogglingActive(false);
       setDeactivateTarget(null);
     }
   };
@@ -859,6 +884,46 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       alert(`Error: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setResettingPassword(false);
+    }
+  };
+
+  /**
+   * "Locked out" recovery — actually resets the target's Firebase Auth
+   * password to the same default used at account creation (see
+   * handleCreateUser below), no old password needed, via
+   * src/lib/server/adminPasswordBridge.ts. Immediately followed by
+   * setMustChangePassword so the known default is only ever valid for
+   * exactly one login before the user is forced to set a real password.
+   */
+  const handleConfirmResetToDefault = async () => {
+    if (!resetToDefaultTarget) return;
+    setResettingToDefault(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) throw new Error("Not authenticated.");
+      const res = await fetch("/api/admin-reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, targetProfileId: resetToDefaultTarget.profileId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Password reset failed.");
+
+      await setMustChangePassword([resetToDefaultTarget.profileId], true);
+      void logModuleActivity({
+        module: "user-management",
+        actorName: auth.displayName || auth.email || "Admin",
+        action: "user_password_reset_to_default",
+        targetLabel: resetToDefaultTarget.userName,
+      });
+      alert(
+        `${resetToDefaultTarget.userName}'s password has been reset to "Welcome2024!". They can log in with that now, but will be required to set a new password immediately.`
+      );
+      setResetToDefaultTarget(null);
+    } catch (error) {
+      alert(`Error resetting password: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setResettingToDefault(false);
     }
   };
 
@@ -990,7 +1055,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 disabled={users.length === 0}
                 className="btn whitespace-nowrap border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40"
               >
-                Reset All Passwords
+                Force All Password Changes
               </button>
               <button
                 type="button"
@@ -1137,7 +1202,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                             onClick={() => setResetModal({ mode: "single", row: record })}
                             className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
                           >
-                            Reset Password
+                            Force Password Change
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setResetToDefaultTarget(record)}
+                            title="For a user who's locked out and can't log in at all"
+                            className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
+                          >
+                            Reset to Default
                           </button>
                           <button
                             type="button"
@@ -1187,7 +1260,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="mt-1 text-sm text-slate-300">Create a new user account (Default password: Welcome2024!)</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
-                <button type="button" onClick={() => setShowAddUserModal(false)} className="btn hover:bg-slate-800">Cancel</button>
+                <button type="button" onClick={() => setShowAddUserModal(false)} disabled={creatingUser} className="btn hover:bg-slate-800">Cancel</button>
                 <button type="button" onClick={handleCreateUser} disabled={creatingUser} className="btn btn-primary disabled:opacity-50">
                   {creatingUser && <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />}
                   {creatingUser ? "Creating…" : "Create User"}
@@ -1391,7 +1464,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           <div className="relative w-full max-w-md rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60">
             <div className="border-b border-white/10 px-5 py-4">
               <h2 className="text-xl font-bold tracking-tight">
-                {resetModal.mode === "single" ? `Reset Password — ${resetModal.row.userName}` : `Reset ALL Passwords (${users.length} users)`}
+                {resetModal.mode === "single" ? `Force Password Change — ${resetModal.row.userName}` : `Force ALL Password Changes (${users.length} users)`}
               </h2>
               <p className="mt-1 text-sm text-slate-300">
                 {resetModal.mode === "single"
@@ -1411,6 +1484,30 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         </div>
       )}
 
+      {resetToDefaultTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60">
+            <div className="border-b border-white/10 px-5 py-4">
+              <h2 className="text-xl font-bold tracking-tight">Reset to Default — {resetToDefaultTarget.userName}</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Use this when {resetToDefaultTarget.userName} is locked out and can't log in at all (forgot their password). This
+                immediately sets their password to <span className="font-mono text-amber-300">Welcome2024!</span> — no old password
+                needed — so they can log back in right now. They'll then be required to set a new password of their own before
+                reaching any dashboard.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4">
+              <button type="button" onClick={() => setResetToDefaultTarget(null)} className="btn hover:bg-slate-800" disabled={resettingToDefault}>
+                Cancel
+              </button>
+              <button type="button" onClick={handleConfirmResetToDefault} className="btn btn-primary" disabled={resettingToDefault}>
+                {resettingToDefault ? "Resetting…" : "Reset Password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deactivateTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
           <div className="relative w-full max-w-sm rounded-xl border border-white/15 bg-slate-950/95 p-5 shadow-2xl shadow-black/60">
@@ -1423,15 +1520,18 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 : `Deactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They won't be able to log in, but their records stay intact.`}
             </p>
             <div className="mt-5 flex justify-end gap-3">
-              <button type="button" onClick={() => setDeactivateTarget(null)} className="btn hover:bg-slate-800">
+              <button type="button" onClick={() => setDeactivateTarget(null)} disabled={togglingActive} className="btn hover:bg-slate-800">
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => handleToggleUserActive(deactivateTarget)}
+                disabled={togglingActive}
                 className={deactivateTarget.isActive === false ? "btn btn-primary" : "btn btn-danger"}
               >
-                {deactivateTarget.isActive === false ? "Reactivate" : "Deactivate"}
+                {togglingActive
+                  ? (deactivateTarget.isActive === false ? "Reactivating…" : "Deactivating…")
+                  : (deactivateTarget.isActive === false ? "Reactivate" : "Deactivate")}
               </button>
             </div>
           </div>

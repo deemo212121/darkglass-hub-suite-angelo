@@ -28,7 +28,7 @@ function mapEventRow(row: any): LoginLockoutEventRow {
   };
 }
 
-/** Every recorded lockout event for the caller's company, newest first (migration 0119). */
+/** Every recorded lockout event for the caller's company, newest first (migration 0123). */
 export async function getLoginLockoutHistory(): Promise<LoginLockoutEventRow[]> {
   const { data, error } = await supabase
     .from("login_lockout_events")

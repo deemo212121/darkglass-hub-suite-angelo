@@ -15,6 +15,7 @@ import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
+import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 
 type ServerEntry = {
@@ -169,6 +170,10 @@ export default {
     if (url.pathname === "/api/admin-update-email") {
       const merged = await resolveServerEnv(env);
       return await handleAdminUpdateEmailRequest(request, merged);
+    }
+    if (url.pathname === "/api/admin-reset-password") {
+      const merged = await resolveServerEnv(env);
+      return await handleAdminPasswordRequest(request, merged);
     }
 
     try {

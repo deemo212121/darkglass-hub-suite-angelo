@@ -55,7 +55,7 @@ function ModuleIndex() {
   const { ready, email, role, uid } = useAuth();
   const { module: m } = Route.useLoaderData();
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
-  const isAdmin = ["ADMIN", "SUPERADMIN"].includes((role || "").toUpperCase());
+  const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
 
   // Company-wide map provider (see migration 0050) — every map-bearing page
   // in the system (Ticket Map, Work Planner, Work Map, Location Management
@@ -211,7 +211,7 @@ function ModuleIndex() {
     return <Outlet />;
   }
 
-  if (!isModuleAllowed(role, m.slug)) {
+  if (!isModuleAllowed(role, m.slug, extraRoles)) {
     return (
       <>
         <AppHeader />
@@ -415,7 +415,7 @@ function ModuleIndex() {
                 const allowed = getDashboardRoleGate(s.slug);
                 return !allowed || hasDashboardAccess(allowed, role, extraRoles);
               })
-              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug))
+              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
@@ -434,7 +434,7 @@ function ModuleIndex() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
-              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug))
+              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}

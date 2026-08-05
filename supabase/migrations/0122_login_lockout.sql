@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0118 — Login lockout after repeated failed attempts
+-- 0122 — Login lockout after repeated failed attempts
 --
 -- Tracks failed sign-in attempts per account so a real (server-enforced,
 -- not just client-side) lock can kick in after 5 fails — see
@@ -13,7 +13,7 @@
 -- admin-facing "Unlock Now" action goes through the normal authenticated
 -- client and existing profiles RLS, so it needs no special policy either.
 --
--- Run once in the Supabase SQL Editor, after 0117.
+-- Run once in the Supabase SQL Editor, after 0121.
 -- =====================================================================
 
 alter table profiles add column if not exists failed_login_count int not null default 0;

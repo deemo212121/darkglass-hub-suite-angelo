@@ -71,7 +71,7 @@ import { AccountManagementPage } from "@/components/AccountManagementPage";
 import { LocationManagementPage } from "@/components/LocationManagementPage";
 import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
-import { isSubmoduleAllowed, isCompanySuperAdminRole } from "@/lib/roleLabels";
+import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 
@@ -162,10 +162,14 @@ function SubModule() {
   const roleGrantsQuick = !dashboardAllowedRoles || hasDashboardAccess(dashboardAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
+  // CSR restriction is the mirror case — restricted based on primary role
+  // alone (quick, no extraRoles) means a secondary non-CSR role could still
+  // lift it, so that also needs extraRoles resolved before deciding.
+  const csrGrantsQuick = !isCsrRestrictedRole(role);
   // company-settings is a RESTRICTION relative to the general admin-module
   // gate (plain ADMIN must NOT get in, only the per-company SUPERADMIN role)
   // so it always needs extraRoles resolved, not just when the quick check fails.
-  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || sub.custom === "company-settings";
+  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || !csrGrantsQuick || sub.custom === "company-settings";
   const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
   useEffect(() => {
     if (!needsExtraRoles || !ready || !uid) return;
@@ -177,10 +181,17 @@ function SubModule() {
   if (!ready) return null;
   if (!email) return <Navigate to="/landing" replace />;
 
+  // Wait for the extra_roles fetch before deciding any gate that needs it
+  // (dashboard/admin/user-management/CSR restriction) when the primary role
+  // alone doesn't already settle it — avoids a flash of the denied panel for
+  // someone who only qualifies (or is only exempted from a restriction) via
+  // a secondary role.
+  if (needsExtraRoles && extraRoles === null) return null;
+
   // CSR Agents/Team Leaders get a narrow allow-list (their own Dashboard
   // tools + Tickets) — this is what actually stops someone from bypassing
   // the hidden tiles by typing the URL directly.
-  if (!isSubmoduleAllowed(role, mod.slug, sub.slug)) {
+  if (!isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
     return (
       <>
         <AppHeader />
@@ -204,12 +215,6 @@ function SubModule() {
       </>
     );
   }
-
-  // Wait for the extra_roles fetch before deciding any of the three gates
-  // (dashboard/admin/user-management) when the primary role alone doesn't
-  // already pass — avoids a flash of the denied panel for someone who only
-  // qualifies via a secondary role.
-  if (needsExtraRoles && extraRoles === null) return null;
 
   // Check admin access using Firebase role — primary role OR a secondary
   // role (extra_roles) of Admin/SuperAdmin both grant access.

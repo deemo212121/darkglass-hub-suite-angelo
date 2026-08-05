@@ -145,7 +145,7 @@ function computeAlerts(
 }
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { uid, ready, allowedLocations, displayName, role } = useAuth();
+  const { uid, ready, allowedLocations, displayName, role, extraRoles } = useAuth();
   // Attendance notes (the quick "Add Note" / Notify Individual / Notify Team
   // Lead flow) are open to HR/Finance/Admin for the whole roster, and to
   // manager-tier roles for their own direct reports — the row itself is
@@ -153,13 +153,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // so this flag just needs to admit manager-tier roles at all, not re-scope
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
-  const canManageNotes = ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(role)) || isAttendanceManagerTierRole(role);
+  const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
   // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
   // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
   // any manager-flavored role can submit one here for a tardy employee, but
   // unlike CsrAgentDetailPage it never fast-tracks to approved: every
   // submission from this tab always waits on HR review.
-  const canWarn = ready && canSubmitConductNote(role);
+  const canWarn = ready && canSubmitConductNote(role, extraRoles);
 
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -185,6 +185,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [weeklyDayFilter, setWeeklyDayFilter] = useState<number | "all">("all");
   const [weeklyStatusFilter, setWeeklyStatusFilter] = useState<"all" | "present" | "absent">("all");
   const [filterLocation, setFilterLocation] = useState<string>("all");
+  // Daily Attendance Tracker only — hides everyone still missing either
+  // punch (absent, or clocked in but not out yet) so the table only shows
+  // employees whose attendance for the day is actually complete.
+  const [completeOnly, setCompleteOnly] = useState(false);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
@@ -480,6 +484,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
       if (filterLocation !== "all" && record.location !== filterLocation) return false;
+      if (completeOnly && (record.checkIn === "—" || record.checkOut === "—")) return false;
       return true;
     })
     .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
@@ -890,12 +895,35 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {sub.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {sub.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+            </div>
+            {/* Drives every "daily" scoped view on this page — the KPI
+                cards above and the Daily Attendance Tracker table below —
+                so HR/managers can review any earlier date from one control. */}
+            <div className="flex items-center gap-2">
+              {!isDailyDateToday && (
+                <button
+                  type="button"
+                  onClick={() => setDailyDate(todayISO)}
+                  className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
+                >
+                  Jump to Today
+                </button>
+              )}
+              <input
+                type="date"
+                value={dailyDate}
+                max={todayISO}
+                onChange={(e) => e.target.value && setDailyDate(e.target.value)}
+                className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+              />
+            </div>
           </div>
         </div>
 
@@ -1095,6 +1123,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                       />
                     </div>
+                  </div>
+                  <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={completeOnly}
+                        onChange={(e) => setCompleteOnly(e.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-slate-800/50 accent-blue-500"
+                      />
+                      Complete only (Clock In &amp; Out)
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1444,7 +1483,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-col gap-1.5">
-                            {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role) && (
+                            {request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Mgr:</span>
                                 <button type="button" title="Approve as manager" onClick={() => handlePtoStageAction(request, "manager", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1455,7 +1494,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role) && (
+                            {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">HR:</span>
                                 <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1466,7 +1505,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role) && (
+                            {request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">Acct:</span>
                                 <button type="button" title="Approve as Accounting" onClick={() => handlePtoStageAction(request, "accounting", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
@@ -1477,9 +1516,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {!(request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role)) &&
-                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role)) &&
-                             !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role)) && (
+                            {!(request.managerStatus === "pending" && canReviewPtoStage(request, "manager", myProfileId, role, extraRoles)) &&
+                             !(request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles)) &&
+                             !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles)) && (
                               <span className="text-xs text-slate-500">{request.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                             )}
                           </div>
@@ -2032,7 +2071,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   unlock once the manager has approved, and either one alone
                   is enough for final approval. */}
               <div className="space-y-2 mb-6">
-                {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role) && (
+                {selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles) && (
                   <div className="grid gap-3 md:grid-cols-2">
                     <button onClick={() => handleCorrectionStageAction("manager", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
@@ -2044,7 +2083,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </button>
                   </div>
                 )}
-                {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role) && (
+                {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
                   <div className="grid gap-3 md:grid-cols-2">
                     <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
@@ -2056,7 +2095,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </button>
                   </div>
                 )}
-                {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role) && (
+                {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles) && (
                   <div className="grid gap-3 md:grid-cols-2">
                     <button onClick={() => handleCorrectionStageAction("accounting", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                       {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
@@ -2068,9 +2107,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </button>
                   </div>
                 )}
-                {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role)) &&
-                 !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role)) &&
-                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role)) && (
+                {!(selectedCorrection.managerStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "manager", myProfileId, role, extraRoles)) &&
+                 !(selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles)) &&
+                 !(selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles)) && (
                   <p className="text-xs text-slate-500">
                     {selectedCorrection.managerStatus === "pending" ? "Awaiting manager review." : "Awaiting HR or Accounting review."}
                   </p>

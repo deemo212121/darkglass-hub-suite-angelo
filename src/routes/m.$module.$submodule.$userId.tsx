@@ -683,6 +683,7 @@ function UserDetailsPage() {
                       <h3 className="text-sm font-semibold text-blue-300 mb-3">Bank Information</h3>
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         {empField("Bank Name", "bankName")}
+                        {empField("Account Name", "accountName")}
                         {empField("Routing Number", "routingNumber")}
                         {empField("Account Number", "accountNumber")}
                       </div>

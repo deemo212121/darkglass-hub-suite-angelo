@@ -119,8 +119,8 @@ export function TicketListMap() {
   const [startDate, setStartDate] = useState(search.startDate ?? week.start);
   const [endDate, setEndDate] = useState(search.endDate ?? week.end);
 
-  const { ready, email, role } = useAuth();
-  const isAdmin = ["ADMIN", "SUPERADMIN"].includes((role || "").toUpperCase());
+  const { ready, email, role, extraRoles } = useAuth();
+  const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
   const [tickets, setTickets] = useState<AnyTicket[]>([]);
   const [loading, setLoading] = useState(true);
 

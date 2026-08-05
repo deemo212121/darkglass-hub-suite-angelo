@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0119 — Login Lockout history
+-- 0123 — Login Lockout history
 --
 -- Every time an account actually crosses into a locked state (see
 -- loginLockoutBridge.ts's recordFailure — fail count reaches 5, or any
@@ -12,10 +12,10 @@
 -- renamed or deactivated.
 --
 -- Written by loginLockoutBridge.ts using the service-role key (pre-auth, no
--- session yet — same reasoning as 0118), so no insert policy is needed here;
+-- session yet — same reasoning as 0122), so no insert policy is needed here;
 -- only a select policy for the admin-facing history view.
 --
--- Run once in the Supabase SQL Editor, after 0118.
+-- Run once in the Supabase SQL Editor, after 0122.
 -- =====================================================================
 
 create table if not exists login_lockout_events (
@@ -33,7 +33,7 @@ create index if not exists idx_login_lockout_events_company on login_lockout_eve
 alter table login_lockout_events enable row level security;
 alter table login_lockout_events force row level security;
 
--- is_branch_schedule_admin() already exists (migration 0117) — same
+-- is_branch_schedule_admin() already exists (migration 0121) — same
 -- ADMIN/SUPERADMIN gate, reused as-is rather than redefining it.
 drop policy if exists login_lockout_events_select on login_lockout_events;
 create policy login_lockout_events_select on login_lockout_events

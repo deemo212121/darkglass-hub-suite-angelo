@@ -91,13 +91,45 @@ export function TimeClockButtons() {
     return () => { cancelled = true; };
   }, [ready, uid]);
 
+  // Which calendar day `entry` was loaded for — tracked separately from
+  // `entry` itself so a stale in-memory entry can never get persisted under
+  // a NEW day's work_date. Without this, a tab left open across midnight
+  // would still hold yesterday's checkIn in state; clicking Time Out the
+  // next morning would then save {yesterday's checkIn, today's checkOut}
+  // under TODAY's row (todayKey() is recomputed fresh at click time, but
+  // `entry` wasn't) — producing a checkOut-before-checkIn row with no
+  // warning. persist() below re-checks this immediately before every save.
+  const loadedDateKeyRef = useRef<string>(todayKey());
+
+  const loadToday = (pid: string) => {
+    const dateKey = todayKey();
+    loadedDateKeyRef.current = dateKey;
+    getEntryForDate(pid, dateKey)
+      .then((e) => setEntry(e ?? EMPTY_ENTRY))
+      .catch((err) => console.error("Failed to load today's timecard entry:", err));
+  };
+
   useEffect(() => {
     if (!profileId) return;
-    let cancelled = false;
-    getEntryForDate(profileId, todayKey())
-      .then((e) => { if (!cancelled) setEntry(e ?? EMPTY_ENTRY); })
-      .catch((err) => console.error("Failed to load today's timecard entry:", err));
-    return () => { cancelled = true; };
+    loadToday(profileId);
+  }, [profileId]);
+
+  // Re-sync whenever the tab regains attention or on a slow poll, so a tab
+  // left open overnight reflects the new day's (empty) state on its own,
+  // not just when the persist() guard below happens to catch a stale save.
+  useEffect(() => {
+    if (!profileId) return;
+    const check = () => {
+      if (todayKey() !== loadedDateKeyRef.current) loadToday(profileId);
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    const interval = setInterval(check, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+      clearInterval(interval);
+    };
   }, [profileId]);
 
   // An approved PTO day needs no punches at all — block Time In outright so
@@ -126,6 +158,14 @@ export function TimeClockButtons() {
 
   const persist = async (next: UITimeEntry) => {
     if (!profileId) return;
+    // Belt-and-suspenders against the visibilitychange/focus/interval resync
+    // above missing a same-second day rollover: refuse to write a punch
+    // computed from a stale day's entry under the new day's work_date.
+    if (todayKey() !== loadedDateKeyRef.current) {
+      loadToday(profileId);
+      alert("It's now a new day — your punch state was refreshed. Please try again.");
+      return;
+    }
     setSaving(true);
     setEntry(next);
     try {
