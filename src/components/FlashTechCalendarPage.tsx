@@ -278,9 +278,9 @@ export function FlashTechCalendarPage({ mod, sub }: Props) {
     <main className="flex-1 bg-slate-950 py-6">
       <div className="max-w-[1600px] mx-auto px-6">
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
-          <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
+          <Link to="/m/$module/$submodule" params={{ module: mod.slug, submodule: "expense-tracking" }} className="btn">
             <ChevronLeft className="h-4 w-4" />
-            {mod.label}
+            Expense Tracking
           </Link>
           <div>
             <h1 className="text-2xl font-semibold leading-tight">{sub.title}</h1>

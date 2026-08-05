@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2 } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2, CalendarDays } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { randomId } from "@/lib/utils";
@@ -278,12 +278,23 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {sub.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
+          <div className="flex items-start gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {sub.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+            </div>
+            <Link
+              to="/m/$module/$submodule"
+              params={{ module: mod.slug, submodule: "flash-tech-calendar" }}
+              className="ml-auto btn hover:bg-white/15 shrink-0 inline-flex items-center gap-2"
+              title="Flash Tech Calendar"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Flash Tech
+            </Link>
           </div>
         </div>
 
