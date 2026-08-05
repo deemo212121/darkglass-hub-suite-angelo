@@ -1562,7 +1562,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         <div className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
           {[
             { id: "overview", label: "Overview", Icon: PieChartIcon },
-            { id: "payroll", label: "Payroll", Icon: DollarSign },
+            { id: "payroll", label: "Office Payroll", Icon: DollarSign },
             { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
             { id: "reports", label: "Reports", Icon: FileText },
           ].map((tab) => {
@@ -1955,7 +1955,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             <td className="px-4 py-3 font-medium">
                               <button
                                 type="button"
-                                onClick={() => setDetailEmployee(row.employee)}
+                                onClick={() => setActivityEmployeeId(row.employee.id)}
                                 title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
                                 className="text-blue-400 hover:text-blue-300 hover:underline"
                               >
