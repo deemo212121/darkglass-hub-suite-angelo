@@ -239,27 +239,6 @@ export function TechActivityReportModal({
                     <td className="px-3 py-2 text-right text-slate-200">{fmt(completedTicketsPayment)}</td>
                   </tr>
 
-                  {visibleCategoryPayments.map(({ type, count, rate, payment }) => (
-                    <tr key={type}>
-                      <td className="px-3 py-2 text-slate-300">{type}</td>
-                      <td className="px-3 py-2 text-right text-slate-300">{count}</td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {savingRateKey === type && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-                          <input
-                            key={`${type}:${rate}`}
-                            type="number" min={0} step={0.01}
-                            defaultValue={rate}
-                            disabled={savingRateKey === type}
-                            onBlur={(e) => handleRateBlur(type, e.target.value)}
-                            className={rateCellClass}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-200">{fmt(payment)}</td>
-                    </tr>
-                  ))}
-
                   {(["ldtCount", "mileage", "trainingValue"] as const).map((field) => {
                     const meta = {
                       ldtCount: { label: "LDT", rateKey: "LDT", value: techManual.ldtCount, pay: techManual.ldtPay },
@@ -302,6 +281,27 @@ export function TechActivityReportModal({
                       </tr>
                     );
                   })}
+
+                  {visibleCategoryPayments.map(({ type, count, rate, payment }) => (
+                    <tr key={type}>
+                      <td className="px-3 py-2 text-slate-300">{type}</td>
+                      <td className="px-3 py-2 text-right text-slate-300">{count}</td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {savingRateKey === type && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                          <input
+                            key={`${type}:${rate}`}
+                            type="number" min={0} step={0.01}
+                            defaultValue={rate}
+                            disabled={savingRateKey === type}
+                            onBlur={(e) => handleRateBlur(type, e.target.value)}
+                            className={rateCellClass}
+                          />
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(payment)}</td>
+                    </tr>
+                  ))}
 
                   <tr title="Completed visits this period where this technician was the assisting (2nd) technician on someone else's ticket.">
                     <td className="px-3 py-2 text-slate-300">Two Tech</td>
