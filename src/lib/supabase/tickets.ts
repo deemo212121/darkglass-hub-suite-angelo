@@ -657,6 +657,7 @@ function rowToVisit(row: any): UIVisit {
     by: row.created_by ?? "",
     scheduleDate: row.schedule_date ?? "",
     technician: row.technician ?? "",
+    secondTechnician: row.second_technician ?? "",
     timeSlot: row.time_slot ?? "",
     activity: row.activity ?? "",
     actionType: row.action_type ?? "",
@@ -981,6 +982,7 @@ export async function addTicketVisit(ticketNo: string, visit: Partial<UIVisit>):
       ticket_id: ticketId,
       visit_no: visit.visitNo ?? null,
       technician: visit.technician ?? null,
+      second_technician: visit.secondTechnician ?? null,
       schedule_date: visit.scheduleDate || null,
       time_slot: visit.timeSlot ?? null,
       activity: visit.activity ?? null,
@@ -1013,6 +1015,7 @@ export async function updateTicketVisit(visitId: string, visit: Partial<UIVisit>
     .from("visits")
     .update({
       technician: visit.technician ?? null,
+      second_technician: visit.secondTechnician ?? null,
       schedule_date: visit.scheduleDate || null,
       time_slot: visit.timeSlot ?? null,
       activity: visit.activity ?? null,

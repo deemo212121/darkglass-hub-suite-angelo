@@ -303,6 +303,8 @@ interface VisitLogEntry {
   by: string;
   scheduleDate: string;
   technician: string;
+  /** Optional assisting technician on a "Two Tech" job (Tech Payroll's per-visit second-tech count). */
+  secondTechnician?: string;
   timeSlot: string;
   activity: string;
   actionType: string;
@@ -1148,6 +1150,9 @@ function TicketDetailsPage() {
   const [newVisitNote, setNewVisitNote] = useState("");
   const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
   const [newVisitTechnician, setNewVisitTechnician] = useState("Memphis Admin");
+  // Optional assisting technician on a "Two Tech" job — feeds Tech Payroll's
+  // per-visit second-technician count, distinct from the "2 Man Job" repair_type.
+  const [newVisitSecondTechnician, setNewVisitSecondTechnician] = useState("");
   const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
   const [newVisitActivity, setNewVisitActivity] = useState("");
   const [newVisitActionType, setNewVisitActionType] = useState("SCHEDULE");
@@ -2757,6 +2762,7 @@ function TicketDetailsPage() {
         by: currentEditor,
         scheduleDate: newVisitScheduleDate,
         technician: newVisitTechnician,
+        secondTechnician: newVisitSecondTechnician || undefined,
         timeSlot: newVisitTimeSlot,
         activity: newVisitActivity,
         actionType: newVisitActionType,
@@ -2779,6 +2785,7 @@ function TicketDetailsPage() {
       by: currentEditor,
       scheduleDate: newVisitScheduleDate,
       technician: newVisitTechnician,
+      secondTechnician: newVisitSecondTechnician || undefined,
       timeSlot: newVisitTimeSlot,
       activity: newVisitActivity,
       actionType: newVisitActionType,
@@ -2905,6 +2912,7 @@ function TicketDetailsPage() {
     setNewVisitStatus("Visited");
     setNewVisitScheduleDate("");
     setNewVisitTechnician(defaultTechnicianForLocation(ticket?.location));
+    setNewVisitSecondTechnician("");
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
     setNewVisitActionType("SCHEDULE");
@@ -3162,6 +3170,7 @@ function TicketDetailsPage() {
     setNewVisitNote(entry.note || "");
     setNewVisitScheduleDate(entry.scheduleDate || "");
     setNewVisitTechnician(entry.technician || "");
+    setNewVisitSecondTechnician(entry.secondTechnician || "");
     setNewVisitTimeSlot(entry.timeSlot || "");
     setNewVisitActivity(entry.activity || "");
     setNewVisitActionType(entry.actionType || "");
@@ -6920,6 +6929,9 @@ function TicketDetailsPage() {
                                 <div><span className="font-semibold text-amber-200">Schedule:</span> <span className="font-semibold text-white">{entry.scheduleDate || "—"}</span></div>
                                 <div><span className="font-semibold text-amber-200">Technician:</span> <span className="font-semibold text-white">{entry.technician || "—"}</span></div>
                                 <div><span className="font-semibold text-amber-200">Time Slot:</span> <span className="font-semibold text-white">{entry.timeSlot || "—"}</span></div>
+                                {entry.secondTechnician ? (
+                                  <div><span className="font-semibold text-amber-200">2nd Technician:</span> <span className="font-semibold text-white">{entry.secondTechnician}</span></div>
+                                ) : null}
                               </div>
                             </div>
                           ) : (
@@ -6928,6 +6940,9 @@ function TicketDetailsPage() {
                               <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
                               <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
                               <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
+                              {entry.secondTechnician ? (
+                                <div><span className="font-semibold text-slate-400">2nd Technician:</span> {entry.secondTechnician}</div>
+                              ) : null}
                             </div>
                           )}
 
@@ -7040,6 +7055,17 @@ function TicketDetailsPage() {
                           </label>
                           <select id="visit-technician-modal" disabled={editingLockedVisit} value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
                             <option value="">— select —</option>
+                            {technicianOptions.map((technician) => (
+                              <option key={technician} value={technician}>{technician}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-second-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                            2nd Technician{editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
+                          </label>
+                          <select id="visit-second-technician-modal" disabled={editingLockedVisit} value={newVisitSecondTechnician} onChange={(event) => setNewVisitSecondTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <option value="">— none —</option>
                             {technicianOptions.map((technician) => (
                               <option key={technician} value={technician}>{technician}</option>
                             ))}
@@ -7380,6 +7406,9 @@ function TicketDetailsPage() {
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
+                      {viewingVisitEntry.secondTechnician ? (
+                        <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">2nd Technician:</span> {viewingVisitEntry.secondTechnician}</div>
+                      ) : null}
                     </div>
                   </div>
 

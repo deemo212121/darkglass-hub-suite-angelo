@@ -145,6 +145,8 @@ export interface Ticket {
     by: string;
     scheduleDate: string;
     technician: string;
+    /** Optional assisting technician on a "Two Tech" job (Tech Payroll's per-visit second-tech count). */
+    secondTechnician?: string;
     timeSlot: string;
     activity: string;
     actionType: string;
