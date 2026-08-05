@@ -580,6 +580,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Targeted refresh for TechActivityReportModal's inline rate edits — NOT
+  // fetchData(), which flips `loading` and unmounts/remounts this whole
+  // component (including the open modal) behind a full-page spinner on
+  // every single edit. This just re-reads tech_repair_rates.
+  const refreshTechRepairRates = useCallback(async () => {
+    try {
+      setTechRepairRates(await getTechRepairRates());
+    } catch (err) {
+      console.error("Failed to refresh tech repair rates:", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -2495,7 +2507,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             periodStart={genStart}
             periodEnd={genEnd}
             techRepairRates={techRepairRates}
-            onRatesChanged={fetchData}
+            onRatesChanged={refreshTechRepairRates}
             onManualPayBlur={handleManualPayBlur}
             savingManualKey={savingManualKey}
             onClose={() => setActivityEmployeeId(null)}
