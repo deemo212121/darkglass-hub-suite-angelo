@@ -554,3 +554,57 @@ export async function deleteTechCustomPayItem(id: string): Promise<void> {
   const { error } = await supabase.from("tech_custom_pay_items").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Finance's manual correction of an auto-counted category (a REPAIR_TYPES
+ * entry or "Two Tech") for one technician/period, when the live count from
+ * visits data is wrong or incomplete — migration 0133. When present, this
+ * takes precedence over the live count everywhere that category's pay is
+ * computed, both on the Tech Activity Report and the main Tech Payroll
+ * table's Total Net.
+ */
+export interface TechCategoryOverride {
+  id: string;
+  profileId: string;
+  periodStart: string;
+  periodEnd: string;
+  category: string;
+  count: number;
+}
+
+/** All category overrides for the caller's company within a period (RLS-scoped) — bulk fetch for the main Tech Payroll table. */
+export async function getTechCategoryOverrides(periodStart: string, periodEnd: string): Promise<TechCategoryOverride[]> {
+  if (!periodStart || !periodEnd) return [];
+  const { data, error } = await supabase
+    .from("tech_category_overrides")
+    .select("id, profile_id, period_start, period_end, category, count")
+    .eq("period_start", periodStart)
+    .eq("period_end", periodEnd);
+  if (error) {
+    console.error("getTechCategoryOverrides error:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    profileId: r.profile_id,
+    periodStart: r.period_start,
+    periodEnd: r.period_end,
+    category: r.category,
+    count: Number(r.count) || 0,
+  }));
+}
+
+/** Create or update one technician's category-count override for a period (upsert on the profile_id+period+category unique key). */
+export async function upsertTechCategoryOverride(
+  profileId: string,
+  periodStart: string,
+  periodEnd: string,
+  category: string,
+  count: number
+): Promise<void> {
+  const { error } = await supabase.from("tech_category_overrides").upsert(
+    { profile_id: profileId, period_start: periodStart, period_end: periodEnd, category, count },
+    { onConflict: "profile_id,period_start,period_end,category" }
+  );
+  if (error) throw new Error(error.message);
+}

@@ -49,10 +49,13 @@ import {
   getTechManualPayItems,
   upsertTechManualPayItem,
   deleteTechManualPayItem,
+  getTechCategoryOverrides,
+  upsertTechCategoryOverride,
   techRateFor as techRateForRates,
   type TechRepairRate,
   type TechRepairCount,
   type TechManualPayItem,
+  type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
 import { perCutoffSalary } from "@/lib/supabase/salary";
@@ -453,6 +456,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [techAssignedCounts, setTechAssignedCounts] = useState<Map<string, number>>(new Map());
   const [techSecondCounts, setTechSecondCounts] = useState<Map<string, number>>(new Map());
   const [techManualPayItems, setTechManualPayItems] = useState<TechManualPayItem[]>([]);
+  const [techCategoryOverrides, setTechCategoryOverrides] = useState<TechCategoryOverride[]>([]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -692,6 +696,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return () => { cancelled = true; };
   }, [genStart, genEnd]);
 
+  // Finance's manual corrections to auto-counted categories (Tech Activity
+  // Report's editable Value cells) — take precedence over the live count
+  // wherever that category's pay is computed.
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setTechCategoryOverrides([]);
+      return;
+    }
+    let cancelled = false;
+    getTechCategoryOverrides(genStart, genEnd)
+      .then((overrides) => { if (!cancelled) setTechCategoryOverrides(overrides); })
+      .catch((err) => {
+        console.error("Failed to load tech category overrides:", err);
+        if (!cancelled) setTechCategoryOverrides([]);
+      });
+    return () => { cancelled = true; };
+  }, [genStart, genEnd]);
+
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Latest salary entry per employee (salaryEntries is already ordered by
   // effective_date desc, so the first hit per profile is the current one).
@@ -764,6 +786,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       categoryCounts: { ...prev.categoryCounts, [rc.repairType]: (prev.categoryCounts[rc.repairType] ?? 0) + rc.count },
     });
   }
+  // Finance's manual category-count corrections replace the live count for
+  // that one category (not add to it) — applied as a second pass so the
+  // delta vs. whatever was already accumulated above gets folded into
+  // grossPay/ticketsCompleted/the 4 named fields correctly.
+  for (const ov of techCategoryOverrides) {
+    if (ov.category === "Two Tech") continue; // applied separately below — not part of techGrossByProfile
+    const emp = employees.find((e) => e.id === ov.profileId);
+    if (!emp) continue;
+    const rate = techRateFor(ov.category, emp.assigned_branch || "");
+    const prev = techGrossByProfile.get(emp.id) ?? {
+      ticketsCompleted: 0, grossPay: 0, twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0, categoryCounts: {},
+    };
+    const liveCount = prev.categoryCounts[ov.category] ?? 0;
+    const countDelta = ov.count - liveCount;
+    const amountDelta = countDelta * rate;
+    techGrossByProfile.set(emp.id, {
+      ticketsCompleted: prev.ticketsCompleted + countDelta,
+      grossPay: prev.grossPay + amountDelta,
+      twoManJob: prev.twoManJob + (ov.category === "2 Man Job" ? amountDelta : 0),
+      backTub: prev.backTub + (ov.category === "Back Tub" ? amountDelta : 0),
+      sealedSystem: prev.sealedSystem + (ov.category === "Sealed System" ? amountDelta : 0),
+      sealedSystemR600: prev.sealedSystemR600 + (ov.category === "Sealed System(R600)" ? amountDelta : 0),
+      categoryCounts: { ...prev.categoryCounts, [ov.category]: ov.count },
+    });
+  }
+  // "Two Tech" isn't part of techGrossByProfile (no repair_type row backs it),
+  // so its override is looked up separately wherever twoTechCount/twoTechPay
+  // get computed below.
+  const twoTechOverrideByProfile = new Map(
+    techCategoryOverrides.filter((o) => o.category === "Two Tech").map((o) => [o.profileId, o.count])
+  );
 
   // Finance's manually entered LDT/Mileage/Training values for this period,
   // times the corresponding rate from TechPayrollSetup (tech_repair_rates
@@ -813,7 +866,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Incentive are ad-hoc/manual-per-open — those live on the Tech Activity
     // Report modal only and are NOT included here (see TechActivityReportModal.tsx).
     const techBranch = emp.assigned_branch || "";
-    const twoTechPay = isTechRole(emp) ? (techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0) * techRateFor("Two Tech", techBranch) : 0;
+    const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
+    const twoTechPay = isTechRole(emp) ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
     const mcaThreshold = isTechRole(emp) ? techRateFor("MCA Threshold", techBranch) : 0;
     const mcaBonus = isTechRole(emp) && mcaThreshold > 0 && (tech?.ticketsCompleted ?? 0) >= mcaThreshold
       ? techRateFor("MCA Bonus", techBranch)
@@ -844,7 +898,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       },
       techCategoryCounts: tech?.categoryCounts ?? {},
       workingDays: workingDaysCountByProfile.get(emp.id) ?? 0,
-      twoTechCount: isTechRole(emp) ? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0 : 0,
+      twoTechCount: isTechRole(emp) ? twoTechCountForEmp : 0,
       techManual: {
         ldtCount: manual?.ldtCount ?? 0,
         ldtPay: manual?.ldtPay ?? 0,
@@ -1029,6 +1083,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingManualKey(null);
+    }
+  };
+
+  // Tech Activity Report's editable Value cells (repair-type categories +
+  // Two Tech) — saves a correction to the live auto-counted value. Targeted
+  // refetch only, same reasoning as refreshTechRepairRates: fetchData()
+  // would unmount/remount the whole dashboard (including the open modal)
+  // behind a full-page spinner on every edit.
+  const [savingCategoryOverrideKey, setSavingCategoryOverrideKey] = useState<string | null>(null);
+  const handleCategoryOverrideBlur = async (profileId: string, category: string, value: string) => {
+    const count = Number(value) || 0;
+    const key = `${profileId}:${category}`;
+    setSavingCategoryOverrideKey(key);
+    try {
+      await upsertTechCategoryOverride(profileId, genStart, genEnd, category, count);
+      setTechCategoryOverrides(await getTechCategoryOverrides(genStart, genEnd));
+    } catch (err) {
+      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingCategoryOverrideKey(null);
     }
   };
 
@@ -2510,6 +2584,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             onRatesChanged={refreshTechRepairRates}
             onManualPayBlur={handleManualPayBlur}
             savingManualKey={savingManualKey}
+            onCategoryOverrideBlur={handleCategoryOverrideBlur}
+            savingCategoryOverrideKey={savingCategoryOverrideKey}
             onClose={() => setActivityEmployeeId(null)}
           />
         );

@@ -31,6 +31,9 @@ interface Props {
     value: string
   ) => Promise<void>;
   savingManualKey: string | null;
+  /** Corrects an auto-counted category's Value (a REPAIR_TYPES entry or "Two Tech") — see tech_category_overrides, migration 0133. */
+  onCategoryOverrideBlur: (profileId: string, category: string, value: string) => Promise<void>;
+  savingCategoryOverrideKey: string | null;
   onClose: () => void;
 }
 
@@ -61,6 +64,8 @@ export function TechActivityReportModal({
   onRatesChanged,
   onManualPayBlur,
   savingManualKey,
+  onCategoryOverrideBlur,
+  savingCategoryOverrideKey,
   onClose,
 }: Props) {
   const { employee, techManual, techCategoryCounts, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount } = row;
@@ -282,30 +287,59 @@ export function TechActivityReportModal({
                     );
                   })}
 
-                  {visibleCategoryPayments.map(({ type, count, rate, payment }) => (
-                    <tr key={type}>
-                      <td className="px-3 py-2 text-slate-300">{type}</td>
-                      <td className="px-3 py-2 text-right text-slate-300">{count}</td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {savingRateKey === type && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-                          <input
-                            key={`${type}:${rate}`}
-                            type="number" min={0} step={0.01}
-                            defaultValue={rate}
-                            disabled={savingRateKey === type}
-                            onBlur={(e) => handleRateBlur(type, e.target.value)}
-                            className={rateCellClass}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-200">{fmt(payment)}</td>
-                    </tr>
-                  ))}
+                  {visibleCategoryPayments.map(({ type, count, rate, payment }) => {
+                    const savingValue = savingCategoryOverrideKey === `${employee.id}:${type}`;
+                    return (
+                      <tr key={type}>
+                        <td className="px-3 py-2 text-slate-300">{type}</td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {savingValue && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                            <input
+                              key={`${type}:count:${count}`}
+                              type="number" min={0}
+                              defaultValue={count || ""}
+                              placeholder="0"
+                              disabled={savingValue}
+                              onBlur={(e) => onCategoryOverrideBlur(employee.id, type, e.target.value)}
+                              className={rateCellClass}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {savingRateKey === type && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                            <input
+                              key={`${type}:${rate}`}
+                              type="number" min={0} step={0.01}
+                              defaultValue={rate}
+                              disabled={savingRateKey === type}
+                              onBlur={(e) => handleRateBlur(type, e.target.value)}
+                              className={rateCellClass}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-200">{fmt(payment)}</td>
+                      </tr>
+                    );
+                  })}
 
                   <tr title="Completed visits this period where this technician was the assisting (2nd) technician on someone else's ticket.">
                     <td className="px-3 py-2 text-slate-300">Two Tech</td>
-                    <td className="px-3 py-2 text-right text-slate-300">{twoTechCount}</td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {savingCategoryOverrideKey === `${employee.id}:Two Tech` && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                        <input
+                          key={`Two Tech:count:${twoTechCount}`}
+                          type="number" min={0}
+                          defaultValue={twoTechCount || ""}
+                          placeholder="0"
+                          disabled={savingCategoryOverrideKey === `${employee.id}:Two Tech`}
+                          onBlur={(e) => onCategoryOverrideBlur(employee.id, "Two Tech", e.target.value)}
+                          className={rateCellClass}
+                        />
+                      </div>
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         {savingRateKey === "Two Tech" && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
