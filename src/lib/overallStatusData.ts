@@ -395,22 +395,26 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
   // still counted and shown in its own Cancelled column, and its reason (if
   // recorded) is kept and shown rather than discarded.
   // Some tickets get stamped with a manager or office/admin account (e.g.
-  // "Daven Hodge" — primary role Senior Branch Manager, "Memphis Admin" — no
-  // profile at all) as a fallback when no field tech is assigned yet. Those
-  // aren't real techs and skew the ranking with 0%/100% rows from a handful
-  // of tickets, so exclude them — but NOT everyone lacking a profile match:
-  // some real field techs (e.g. "Erick Guzman Juarez") have no User
-  // Management account yet and would be wrongly dropped by a strict
-  // "must match a TECHNICIAN profile" allow-list. A role that merely
-  // *contains* "TECHNICIAN" (e.g. TECHNICIAN_MANAGER) still personally
-  // works tickets and counts as a real tech — only exclude roles with no
-  // technician component at all (Senior Branch Manager, BIZOPS_MANAGER, ...).
-  const nonTechRoleByName = new Map<string, string>(); // lowercased display/username → primary role
+  // "Memphis Admin" — no profile at all) as a fallback when no field tech is
+  // assigned yet. Those aren't real techs and skew the ranking with
+  // 0%/100% rows from a handful of tickets, so exclude them — but NOT
+  // everyone lacking a profile match: some real field techs (e.g. "Erick
+  // Guzman Juarez") have no User Management account yet and would be
+  // wrongly dropped by a strict "must match a TECHNICIAN profile"
+  // allow-list. A role that merely *contains* "TECHNICIAN" (e.g.
+  // TECHNICIAN_MANAGER) still personally works tickets and counts as a real
+  // tech — only exclude someone with no technician component in EITHER
+  // their primary role or any of their extra_roles (e.g. "Daven Hodge" —
+  // primary Technical Director — is kept if Technician is one of his extra
+  // roles, even though he'll show near-zero tickets/completion rate).
+  const nonTechRoleByName = new Map<string, string>(); // lowercased display/username → primary role (for display only)
   for (const p of profiles) {
     const display = ((p as any).display_name || (p as any).username || "").trim();
     if (!display) continue;
     const primary = String((p as any).role || "").toUpperCase();
-    if (primary && !primary.includes("TECHNICIAN")) nonTechRoleByName.set(display.toLowerCase(), primary);
+    const extras = ((p as any).extra_roles as string[] | null) ?? [];
+    const hasTechComponent = primary.includes("TECHNICIAN") || extras.some((r) => String(r || "").toUpperCase().includes("TECHNICIAN"));
+    if (primary && !hasTechComponent) nonTechRoleByName.set(display.toLowerCase(), primary);
   }
   const isNonTechName = (tech: string) =>
     nonTechRoleByName.has(tech.toLowerCase()) || /\badmin\b/i.test(tech);

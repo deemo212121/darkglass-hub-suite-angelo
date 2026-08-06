@@ -56,6 +56,9 @@ function mapExpenseRow(row: any): ExpenseRow {
     receiptUrl: row.receipt_url ?? null,
     receiptPath: row.receipt_path ?? null,
     orNumber: row.or_number ?? null,
+    fromLocation: row.from_location ?? null,
+    toLocation: row.to_location ?? null,
+    flashTechTripId: row.flash_tech_trip_id ?? null,
     createdAt: row.created_at,
   };
 }
@@ -79,7 +82,7 @@ export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
   const { data: expenseRows, error: expError } = await supabase
     .from("expenses")
     .select(
-      "id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, created_at, flash_tech_trip_id, expense_subtype"
+      "id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, created_at, flash_tech_trip_id, expense_subtype"
     )
     .in("flash_tech_trip_id", tripIds);
   if (expError) console.error("getCompanyFlashTechTrips (expenses) error:", expError.message);
@@ -160,6 +163,8 @@ export async function createFlashTechTrip(input: {
         amount: 0,
         description,
         createdBy: input.createdBy,
+        fromLocation: input.originLocation,
+        toLocation: input.destinationLocation,
         flashTechTripId: tripId,
         expenseSubtype: subtype,
       });

@@ -28,6 +28,8 @@ const emptyForm = {
   receiptUrl: null as string | null,
   receiptPath: null as string | null,
   orNumber: "",
+  fromLocation: "",
+  toLocation: "",
 };
 
 function statusColor(status: ExpenseStatus): string {
@@ -159,6 +161,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       receiptUrl: e.receiptUrl,
       receiptPath: e.receiptPath,
       orNumber: e.orNumber || "",
+      fromLocation: e.fromLocation || "",
+      toLocation: e.toLocation || "",
     });
     setEditingId(e.id);
     setOriginalReceiptPath(e.receiptPath);
@@ -199,6 +203,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
           orNumber: form.orNumber,
+          fromLocation: form.fromLocation,
+          toLocation: form.toLocation,
         });
       } else {
         await createExpense({
@@ -211,6 +217,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
           orNumber: form.orNumber,
+          fromLocation: form.fromLocation,
+          toLocation: form.toLocation,
         });
       }
       // Best-effort: if a receipt was replaced or removed during this edit,
@@ -442,7 +450,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             </button>
                           </>
                         )}
-                        {e.status === "Approved" && (
+                        {/* Flash Tech-linked expenses stop at Approved/Rejected — no Reimbursed stage. */}
+                        {e.status === "Approved" && !e.flashTechTripId && (
                           <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                             {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
                           </button>
@@ -599,6 +608,16 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">OR/Transaction Number</label>
                 <input type="text" value={form.orNumber} onChange={(e) => setForm({ ...form, orNumber: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">From</label>
+                  <input type="text" value={form.fromLocation} onChange={(e) => setForm({ ...form, fromLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">To</label>
+                  <input type="text" value={form.toLocation} onChange={(e) => setForm({ ...form, toLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
               </div>
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Description</label>
