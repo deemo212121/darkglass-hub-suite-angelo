@@ -114,6 +114,7 @@ interface SalaryEntry {
   compensation_type: "hourly" | "fixed";
   hourly_rate: number;
   annual_salary: number | null;
+  created_at: string;
 }
 
 interface TimecardEntry {
@@ -559,7 +560,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         mileageRes,
       ] = await Promise.all([
         supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
-        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
+        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
@@ -773,11 +774,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
-  // Latest salary entry per employee (salaryEntries is already ordered by
-  // effective_date desc, so the first hit per profile is the current one).
+  // Latest salary entry per employee. salaryEntries is ordered by
+  // effective_date desc then created_at desc, but re-compared explicitly
+  // here rather than just taking the first hit per profile — editing a
+  // day's rate (Attendance table inline edit, or Add Rate Change) always
+  // INSERTS a new row instead of updating one in place, so the same
+  // effective_date can end up with several rows (e.g. corrected twice in
+  // one sitting). Ties on effective_date are broken by created_at (the
+  // most recently entered correction wins) so a stale duplicate can never
+  // outrank a fresh edit — same tie-break as entryEffectiveOn (salary.ts).
   const latestCompMap = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
-    if (!latestCompMap.has(se.profile_id)) {
+    const existing = latestCompMap.get(se.profile_id);
+    if (
+      !existing ||
+      se.effective_date > existing.effective_date ||
+      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+    ) {
       latestCompMap.set(se.profile_id, se);
     }
   }
