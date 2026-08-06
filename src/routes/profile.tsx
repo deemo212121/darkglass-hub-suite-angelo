@@ -11,7 +11,7 @@ import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLo
 
 // Canonical department list for the Department dropdown (admin-tier
 // self-edit only — see ACCOUNT_FIELD_EDIT_ROLES below).
-const DEPARTMENT_OPTIONS = ["Admin", "BizOps", "Branch Manager", "Claims", "Parts", "Technician", "Triage", "Executives"];
+const DEPARTMENT_OPTIONS = ["Admin", "BizOps", "Branch Manager", "Claims", "IT", "Parts", "Technician", "Triage", "Executives"];
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
 const SCHEDULE_EDIT_ROLES = new Set([
