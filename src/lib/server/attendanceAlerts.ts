@@ -1,7 +1,8 @@
 /**
  * Every-5-minutes Cron Trigger job (see scheduled() in src/server.ts): flag
- * any active employee who has blown through the 5-minute grace period on
- * their scheduled clock-in or clock-out — never clocked in past
+ * any active employee who has blown through their grace period (PH 5 min,
+ * US office 15 min, Technicians none — see payGraceMinutesFor in
+ * attendanceGrace.ts) on their scheduled clock-in or clock-out — never clocked in past
  * required_check_in, or clocked in but never clocked out past
  * required_check_out — and hasn't already been notified about this exact
  * gap today, then ping HR/Finance plus their resolved manager (Admin/
@@ -42,11 +43,11 @@
  */
 
 import {
-  ATTENDANCE_GRACE_MINUTES,
   addMinutesToHHMM,
   nowInTimezone,
   timezoneForBranch,
   DEFAULT_ATTENDANCE_TIMEZONE,
+  payGraceMinutesFor,
 } from "../attendanceGrace";
 
 type AlertType = "missing_clock_in" | "missing_clock_out";
@@ -136,6 +137,13 @@ function normalizeRole(role: string | null | undefined): string {
 function isCsrRole(role: string | null | undefined): boolean {
   const n = normalizeRole(role);
   return n === "CSR" || n.startsWith("CSR");
+}
+
+// Technicians are commission/piece-rate (paid per completed repair ticket),
+// not hourly — no pay-affecting grace period applies to them. Same
+// role === TECHNICIAN convention as AccountingDashboard.tsx's isTechRole.
+function isTechRole(role: string | null | undefined): boolean {
+  return normalizeRole(role) === "TECHNICIAN";
 }
 
 function resolveCreds(env: Record<string, string | undefined>) {
@@ -287,8 +295,10 @@ export async function runAttendanceAlertCheck(
     const checkOut = entry?.check_out || "";
 
     const nowHHMM = nowHHMMByTimezone.get(timezoneForBranch(p.assigned_branch))!;
-    const graceIn = p.required_check_in ? addMinutesToHHMM(p.required_check_in, ATTENDANCE_GRACE_MINUTES) : null;
-    const graceOut = p.required_check_out ? addMinutesToHHMM(p.required_check_out, ATTENDANCE_GRACE_MINUTES) : null;
+    const country = p.assigned_branch === "Philippines" ? "PH" : "US";
+    const graceMinutes = payGraceMinutesFor(country, isTechRole(p.role));
+    const graceIn = p.required_check_in ? addMinutesToHHMM(p.required_check_in, graceMinutes) : null;
+    const graceOut = p.required_check_out ? addMinutesToHHMM(p.required_check_out, graceMinutes) : null;
 
     const flags: AlertType[] = [];
     if (!checkIn && graceIn && nowHHMM > graceIn) flags.push("missing_clock_in");

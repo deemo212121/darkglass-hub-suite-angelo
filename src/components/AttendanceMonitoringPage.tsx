@@ -21,7 +21,7 @@ import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
+import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
@@ -104,9 +104,24 @@ function fmtHoursMinutes(hours: number): string {
  * zone) when scoring today live, or `null` when scoring a day that's
  * already over (e.g. past days in the monthly summary) — grace never
  * applies then, since anything still missing at that point is definitively
- * missing, not "not due yet." A 5-minute grace period applies uniformly to
- * both clock-in and clock-out (and softens "Late Check In" — arriving a
- * couple minutes late no longer gets flagged).
+ * missing, not "not due yet."
+ *
+ * `graceMinutes` is the caller-computed per-region/role grace window (see
+ * payGraceMinutesFor in attendanceGrace.ts — PH 5 min, US office 15 min,
+ * Technicians 0), applied to both clock-in and clock-out detection timing.
+ * A late-but-within-grace clock-in still shows a flag (so it isn't silently
+ * invisible) but distinguished from a real (beyond-grace) late arrival —
+ * and the same grace-adjusted check-in/rounded check-out feeds the
+ * Over/Under Time worked-hours calc, so a fully-forgiven late arrival
+ * doesn't also throw a false "Under Time" flag.
+ *
+ * Real punches carry seconds ("08:00:45"); schedules are plain "HH:MM".
+ * Lateness/grace comparisons below go through toSeconds() rather than raw
+ * string comparison (which is unsound across that precision mismatch — see
+ * attendanceGrace.ts). A punch within ON_TIME_BUFFER_SECONDS (60s) of the
+ * scheduled check-in is rounded to exactly on time before lateness is even
+ * considered, same clock-precision courtesy applied to pay in
+ * applyGraceToCheckIn/roundCheckOutToSchedule.
  */
 function computeAlerts(
   checkIn: string,
@@ -116,12 +131,13 @@ function computeAlerts(
   requiredCheckIn: string,
   requiredCheckOut: string,
   isOffDay: boolean,
-  nowHHMM: string | null
+  nowHHMM: string | null,
+  graceMinutes: number = ATTENDANCE_GRACE_MINUTES
 ): string[] {
   if (isOffDay) return [];
 
-  const graceIn = requiredCheckIn ? addMinutesToHHMM(requiredCheckIn, ATTENDANCE_GRACE_MINUTES) : null;
-  const graceOut = requiredCheckOut ? addMinutesToHHMM(requiredCheckOut, ATTENDANCE_GRACE_MINUTES) : null;
+  const graceIn = requiredCheckIn ? addMinutesToHHMM(requiredCheckIn, graceMinutes) : null;
+  const graceOut = requiredCheckOut ? addMinutesToHHMM(requiredCheckOut, graceMinutes) : null;
   const pastInGrace = !graceIn || nowHHMM === null || nowHHMM > graceIn;
   const pastOutGrace = !graceOut || nowHHMM === null || nowHHMM > graceOut;
 
@@ -131,17 +147,28 @@ function computeAlerts(
   const alerts: string[] = [];
   if (!checkIn) {
     if (pastInGrace) alerts.push("No Clock In");
-  } else if (graceIn && checkIn > graceIn) {
-    alerts.push("Late Check In");
+  } else if (requiredCheckIn) {
+    const lateInSeconds = toSeconds(checkIn) - toSeconds(requiredCheckIn);
+    if (lateInSeconds > ON_TIME_BUFFER_SECONDS) {
+      if (lateInSeconds <= graceMinutes * 60) alerts.push("Late Check In (Covered by Grace)");
+      else alerts.push("Late Check In");
+    }
   }
   if (checkIn && !checkOut && pastOutGrace) alerts.push("No Clock Out");
   if (checkIn && checkOut) {
-    const worked = calcWorkedHours({ checkIn, checkOut, mealStart, mealEnd, notes: "" });
+    const paidCheckIn = requiredCheckIn ? applyGraceToCheckIn(checkIn, requiredCheckIn, graceMinutes) : checkIn;
+    const paidCheckOut = requiredCheckOut ? roundCheckOutToSchedule(checkOut, requiredCheckOut) : checkOut;
+    const worked = calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart, mealEnd, notes: "" });
     const requiredHours = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
     if (worked - requiredHours > 0.25) alerts.push(`Over Time (${fmtHoursMinutes(worked)})`);
     else if (requiredHours - worked > 0.25) alerts.push(`Under Time (${fmtHoursMinutes(worked)})`);
   }
   return alerts;
+}
+
+/** "Late Check In" counts toward late-arrival stats/filters; the grace-covered variant is still shown as a flag on the day itself but doesn't count as an actual lateness incident. */
+function isPenalizedLateAlert(alert: string): boolean {
+  return alert.includes("Late") && !alert.includes("Covered by Grace");
 }
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -417,7 +444,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // past day is already fully over, so anything still missing there is
       // definitively missing (see computeAlerts' nowHHMM=null doc comment).
       const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM);
+      const country = p.assigned_branch === "Philippines" ? "PH" : "US";
+      const graceMinutes = payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -469,7 +498,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const totalEmployees = visibleProfiles.length;
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
   const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay).length;
-  const lateToday = dailyRecords.filter((r) => r.alerts.some((a) => a.includes("Late"))).length;
+  const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
   const ptoPendingApproval = ptoRequests.filter((r) => r.status === "pending").length;
 
   const getAlertColor = (alert: string) => {
@@ -575,8 +604,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkIn = entry?.checkIn || "";
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null);
-        if (alerts.some((a) => a.includes("Late"))) late++;
+        const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
+        const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry, normalizeRole(p.role) === "TECHNICIAN");
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes);
+        if (alerts.some(isPenalizedLateAlert)) late++;
       }
       const absent = Math.max(0, workingDays - present);
       const pct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 100;
@@ -1051,7 +1082,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-xs font-semibold text-orange-300 truncate">Late Arrival</p>
                           <div className="flex items-center gap-1">
                             <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                            <span className="text-xs font-bold text-orange-300">{dailyRecords.filter(r => r.alerts.some(a => a.includes("Late"))).length}</span>
+                            <span className="text-xs font-bold text-orange-300">{dailyRecords.filter(r => r.alerts.some(isPenalizedLateAlert)).length}</span>
                           </div>
                         </div>
                       </div>
@@ -2195,7 +2226,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </div>
                   ))}
 
-                  {selectedAlertType === "late-arrival" && dailyRecords.filter(r => r.alerts.some(a => a.includes("Late"))).map(record => (
+                  {selectedAlertType === "late-arrival" && dailyRecords.filter(r => r.alerts.some(isPenalizedLateAlert)).map(record => (
                     <div key={record.profileId} className="bg-slate-800/50 border border-orange-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">

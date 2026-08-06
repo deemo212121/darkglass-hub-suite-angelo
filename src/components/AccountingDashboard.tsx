@@ -18,6 +18,8 @@ import {
   Mail,
   Send,
   Wrench,
+  MapPin,
+  Trash2,
 } from "lucide-react";
 import {
   BarChart,
@@ -35,11 +37,13 @@ import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailMo
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
+import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getEmployeeInfoByProfileIds, type EmployeeInfo } from "@/lib/supabase/users";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getTechRepairRates, getTechCompletedRepairCounts, DEFAULT_REPAIR_TYPE, type TechRepairRate, type TechRepairCount } from "@/lib/supabase/techPayroll";
+import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, type MileageEntry } from "@/lib/supabase/mileage";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -189,6 +193,11 @@ function rollBackToWeekday(d: Date): Date {
 // period and skipped on the employee's own off days or on any date they
 // already have a real punch for (a real punch always wins over a PTO
 // request that happens to overlap it).
+//
+// Late clock-ins get a per-region grace period applied to the check-in used
+// for PAID hours (not the raw punch — see attendanceGrace.ts): PH 5 min, US
+// office 15 min, Technicians none (commission-based). Clock-out is never
+// grace-adjusted — only lateness at the start of a shift is forgiven.
 function computeHoursMap(
   entries: TimecardEntry[],
   employees: SupabaseEmployee[],
@@ -198,15 +207,26 @@ function computeHoursMap(
 ): Map<string, { regular: number; overtime: number }> {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
   const punchedDates = new Map<string, Set<string>>();
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
   for (const tc of entries) {
     const key = tc.profile_id || tc.employee_id;
     if (!key || !tc.check_in || !tc.check_out) continue;
     const dates = punchedDates.get(key) ?? new Set<string>();
     dates.add(tc.work_date);
     punchedDates.set(key, dates);
+    const emp = employeeById.get(key);
+    const graceMinutes = emp
+      ? payGraceMinutesFor(emp.country, normalizeRole(emp.role) === "TECHNICIAN")
+      : 0;
+    const paidCheckIn = emp?.requiredCheckIn
+      ? applyGraceToCheckIn(tc.check_in, emp.requiredCheckIn, graceMinutes)
+      : tc.check_in;
+    const paidCheckOut = emp?.requiredCheckOut
+      ? roundCheckOutToSchedule(tc.check_out, emp.requiredCheckOut)
+      : tc.check_out;
     const hours = calcWorkedHours({
-      checkIn: tc.check_in,
-      checkOut: tc.check_out,
+      checkIn: paidCheckIn,
+      checkOut: paidCheckOut,
       mealStart: tc.meal_start || "",
       mealEnd: tc.meal_end || "",
       notes: "",
@@ -218,7 +238,6 @@ function computeHoursMap(
   }
 
   if (!periodStart || !periodEnd) return hoursMap;
-  const employeeById = new Map(employees.map((e) => [e.id, e]));
   for (const pto of ptoRequests) {
     if (pto.status !== "approved" || pto.ptoType === "unpaid") continue;
     const emp = employeeById.get(pto.profileId);
@@ -374,9 +393,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const { uid, role, displayName, email } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "reports">(
+  const [activeTab, setActiveTab] = usePersistedTab<"overview" | "payroll" | "techPayroll" | "mileage" | "reports">(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "techPayroll", "reports"],
+    ["overview", "payroll", "techPayroll", "mileage", "reports"],
     "overview",
   );
   // Overview KPI cards default to the live current-period preview, but can
@@ -414,6 +433,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [techRepairRates, setTechRepairRates] = useState<TechRepairRate[]>([]);
   const [techRepairCounts, setTechRepairCounts] = useState<TechRepairCount[]>([]);
+  const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -439,6 +459,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // JSON blob the Employee Information tab edits), not duplicated anywhere.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
+  // ── Mileage tab: manual log form state ──────────────────────────────────
+  const [mileageForm, setMileageForm] = useState({
+    workDate: new Date().toISOString().slice(0, 10),
+    profileId: "",
+    address: "",
+    contactNumber: "",
+    email: "",
+    totalMileage: "",
+    googleMapLink: "",
+  });
+  const [savingMileageEntry, setSavingMileageEntry] = useState(false);
+  const [deletingMileageEntryId, setDeletingMileageEntryId] = useState<string | null>(null);
+  const [mileageBranchFilter, setMileageBranchFilter] = useState("");
+  const [mileageNameFilter, setMileageNameFilter] = useState("");
+
+  // ── Mileage tab: auto-sync-from-completed-tickets state ─────────────────
+  const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
+  const [mileageSyncFrom, setMileageSyncFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [mileageSyncTo, setMileageSyncTo] = useState(new Date().toISOString().slice(0, 10));
+  const [syncingMileage, setSyncingMileage] = useState(false);
+  const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
+
   // Payroll generation period — Finance picks this via the date inputs on
   // the Payroll tab. Seeded once (see fetchData) from the auto "day after
   // the last run's end, through yesterday" default, same range this used
@@ -459,6 +505,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         auditRes,
         ptoRes,
         techRatesRes,
+        mileageRes,
       ] = await Promise.all([
         supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
@@ -468,6 +515,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
         // Best-effort — Tech Payroll just computes $0 for everyone if this fails.
         getTechRepairRates().catch((err) => { console.error("Failed to load tech repair rates:", err); return [] as TechRepairRate[]; }),
+        // Best-effort — Mileage tab just shows empty tables if this fails.
+        getMileageEntries().catch((err) => { console.error("Failed to load mileage entries:", err); return [] as MileageEntry[]; }),
       ]);
 
       for (const res of [empRes, salRes, runsRes, lineRes, auditRes]) {
@@ -475,6 +524,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }
       setPtoRequests(ptoRes);
       setTechRepairRates(techRatesRes);
+      setMileageEntries(mileageRes);
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
@@ -1072,7 +1122,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // daily rows entirely for them (the template already shows "No daily
     // attendance recorded" when dailyRows is empty).
     const dailyRows: PayslipDailyRow[] = row.compensationType === "fixed" ? [] : await (async () => {
-      const attendanceRows = await getAttendanceForRange(row.employee.id, genStart, genEnd, {});
+      const emp = row.employee;
+      const graceMinutes = payGraceMinutesFor(emp.country, normalizeRole(emp.role) === "TECHNICIAN");
+      const attendanceRows = await getAttendanceForRange(emp.id, genStart, genEnd, {
+        requiredCheckIn: emp.requiredCheckIn,
+        requiredCheckOut: emp.requiredCheckOut,
+        workingHours: emp.workingHours,
+        mealMinutes: emp.mealMinutes,
+        graceMinutes,
+      });
       const rate = row.hourlyRateUSD;
       return attendanceRows
         .filter((r) => r.hoursWorked > 0)
@@ -1297,6 +1355,104 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }));
   })();
 
+  // ── Mileage tab ──────────────────────────────────────────────────────────
+  const mileageTechnicians = [...employees]
+    .filter((e) => normalizeRole(e.role) === "TECHNICIAN")
+    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const employeeNameById = new Map(employees.map((e) => [e.id, e.full_name]));
+  const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
+  const mileageEntriesByBranch = (() => {
+    const nameFilter = mileageNameFilter.trim().toLowerCase();
+    const filtered = mileageEntries.filter((entry) => {
+      if (mileageBranchFilter && entry.branch !== mileageBranchFilter) return false;
+      if (nameFilter && !(employeeNameById.get(entry.profileId) || "").toLowerCase().includes(nameFilter)) return false;
+      return true;
+    });
+    const byBranch = new Map<string, MileageEntry[]>();
+    for (const entry of filtered) {
+      const list = byBranch.get(entry.branch) ?? [];
+      list.push(entry);
+      byBranch.set(entry.branch, list);
+    }
+    return Array.from(byBranch.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([branch, entries]) => ({
+        branch,
+        entries: [...entries].sort((a, b) => (a.workDate < b.workDate ? 1 : a.workDate > b.workDate ? -1 : 0)),
+      }));
+  })();
+
+  const handleAddMileageEntry = async () => {
+    const technician = employees.find((e) => e.id === mileageForm.profileId);
+    if (!technician || !mileageForm.workDate || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()) return;
+    setSavingMileageEntry(true);
+    try {
+      await addMileageEntry({
+        profileId: technician.id,
+        branch: technician.assigned_branch || "Unassigned",
+        workDate: mileageForm.workDate,
+        address: mileageForm.address.trim(),
+        contactNumber: mileageForm.contactNumber.trim(),
+        email: mileageForm.email.trim(),
+        totalMileage: Number(mileageForm.totalMileage) || 0,
+        googleMapLink: mileageForm.googleMapLink.trim(),
+        createdByName: displayName || email || "Unknown",
+      });
+      setMileageForm({
+        workDate: new Date().toISOString().slice(0, 10),
+        profileId: "",
+        address: "",
+        contactNumber: "",
+        email: "",
+        totalMileage: "",
+        googleMapLink: "",
+      });
+      setMileageEntries(await getMileageEntries());
+    } catch (err) {
+      alert(`Failed to save mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingMileageEntry(false);
+    }
+  };
+
+  const handleSyncMileage = async () => {
+    const technician = employees.find((e) => e.id === mileageSyncProfileId);
+    if (!technician || !mileageSyncFrom || !mileageSyncTo) return;
+    setSyncingMileage(true);
+    setMileageSyncMessage(null);
+    try {
+      const result = await syncMileageFromTickets({
+        profileId: technician.id,
+        technicianName: technician.full_name,
+        branch: technician.assigned_branch || "Unassigned",
+        startDate: mileageSyncFrom,
+        endDate: mileageSyncTo,
+      });
+      const parts = [`${result.created} new ${result.created === 1 ? "entry" : "entries"} created`];
+      if (result.skipped > 0) parts.push(`${result.skipped} already synced`);
+      if (result.errors.length > 0) parts.push(`${result.errors.length} skipped (${result.errors[0]}${result.errors.length > 1 ? `, +${result.errors.length - 1} more` : ""})`);
+      setMileageSyncMessage(parts.join(" — "));
+      if (result.created > 0) setMileageEntries(await getMileageEntries());
+    } catch (err) {
+      setMileageSyncMessage(`Sync failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSyncingMileage(false);
+    }
+  };
+
+  const handleDeleteMileageEntry = async (entry: MileageEntry) => {
+    if (!window.confirm(`Remove this mileage entry for ${employeeNameById.get(entry.profileId) || "this technician"} on ${entry.workDate}?`)) return;
+    setDeletingMileageEntryId(entry.id);
+    try {
+      await deleteMileageEntry(entry.id);
+      setMileageEntries((prev) => prev.filter((e) => e.id !== entry.id));
+    } catch (err) {
+      alert(`Failed to remove mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingMileageEntryId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -1356,13 +1512,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             { id: "overview", label: "Overview", Icon: PieChartIcon },
             { id: "payroll", label: "Payroll", Icon: DollarSign },
             { id: "techPayroll", label: "Tech Payroll", Icon: Wrench },
+            { id: "mileage", label: "Mileage", Icon: MapPin },
             { id: "reports", label: "Reports", Icon: FileText },
           ].map((tab) => {
             const Icon = tab.Icon;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "reports")}
+                onClick={() => setActiveTab(tab.id as "overview" | "payroll" | "techPayroll" | "mileage" | "reports")}
                 className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
                   activeTab === tab.id
                     ? "border-blue-500 text-blue-300"
@@ -1869,6 +2026,267 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           </div>
         )}
 
+        {/* ── Mileage Tab ──────────────────────────────────────────────────── */}
+        {activeTab === "mileage" && (
+          <div className="space-y-6">
+            <h2 className="text-lg font-bold text-white">Total Mileage</h2>
+
+            {/* Entry form */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Date</span>
+                  <input
+                    type="date"
+                    value={mileageForm.workDate}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, workDate: e.target.value }))}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
+                  <select
+                    value={mileageForm.profileId}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, profileId: e.target.value }))}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  >
+                    <option value="">Select technician…</option>
+                    {mileageTechnicians.map((t) => (
+                      <option key={t.id} value={t.id}>{t.full_name} — {t.assigned_branch || "Unassigned"}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address</span>
+                  <input
+                    type="text"
+                    value={mileageForm.address}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, address: e.target.value }))}
+                    placeholder="Customer/site address"
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Contact Number</span>
+                  <input
+                    type="text"
+                    value={mileageForm.contactNumber}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, contactNumber: e.target.value }))}
+                    placeholder="Contact number"
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
+                  <input
+                    type="email"
+                    value={mileageForm.email}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, email: e.target.value }))}
+                    placeholder="Contact email"
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Total Mileage</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    value={mileageForm.totalMileage}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, totalMileage: e.target.value }))}
+                    placeholder="0.0"
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200 sm:col-span-2">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Google Map Link</span>
+                  <input
+                    type="text"
+                    value={mileageForm.googleMapLink}
+                    onChange={(e) => setMileageForm((f) => ({ ...f, googleMapLink: e.target.value }))}
+                    placeholder="https://maps.app.goo.gl/…"
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={handleAddMileageEntry}
+                  disabled={savingMileageEntry || !mileageForm.profileId || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center gap-2"
+                >
+                  {savingMileageEntry && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Add Entry
+                </button>
+              </div>
+            </div>
+
+            {/* Auto-sync from completed tickets */}
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <p className="text-sm font-semibold text-white mb-1">Sync from Completed Tickets</p>
+              <p className="text-xs text-slate-400 mb-3">
+                Automatically logs one mileage entry per completed ticket for the selected technician and date range, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are skipped, so it's safe to re-run.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
+                  <select
+                    value={mileageSyncProfileId}
+                    onChange={(e) => setMileageSyncProfileId(e.target.value)}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  >
+                    <option value="">Select technician…</option>
+                    {mileageTechnicians.map((t) => (
+                      <option key={t.id} value={t.id}>{t.full_name} — {t.assigned_branch || "Unassigned"}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">From</span>
+                  <input
+                    type="date"
+                    value={mileageSyncFrom}
+                    max={mileageSyncTo || undefined}
+                    onChange={(e) => setMileageSyncFrom(e.target.value)}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">To</span>
+                  <input
+                    type="date"
+                    value={mileageSyncTo}
+                    min={mileageSyncFrom || undefined}
+                    onChange={(e) => setMileageSyncTo(e.target.value)}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <button
+                  onClick={handleSyncMileage}
+                  disabled={syncingMileage || !mileageSyncProfileId}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+                >
+                  {syncingMileage && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Sync
+                </button>
+              </div>
+              {mileageSyncMessage && (
+                <p className="mt-3 text-xs text-slate-300">{mileageSyncMessage}</p>
+              )}
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1.5 text-sm text-slate-200">
+                <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch</span>
+                <select
+                  value={mileageBranchFilter}
+                  onChange={(e) => setMileageBranchFilter(e.target.value)}
+                  className="glass-input text-sm px-2 py-1.5 w-56"
+                >
+                  <option value="">All Branches</option>
+                  {mileageBranchOptions.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm text-slate-200">
+                <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Name</span>
+                <input
+                  type="text"
+                  value={mileageNameFilter}
+                  onChange={(e) => setMileageNameFilter(e.target.value)}
+                  placeholder="Search technician name…"
+                  className="glass-input text-sm px-2 py-1.5 w-56"
+                />
+              </label>
+              {(mileageBranchFilter || mileageNameFilter) && (
+                <button
+                  onClick={() => { setMileageBranchFilter(""); setMileageNameFilter(""); }}
+                  className="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+
+            {/* Per-branch tables */}
+            {mileageEntriesByBranch.length === 0 ? (
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-8 text-center text-slate-400 text-sm">
+                {mileageEntries.length === 0 ? "No mileage entries logged yet." : "No entries match the current filters."}
+              </div>
+            ) : (
+              mileageEntriesByBranch.map(({ branch, entries }) => (
+                <div key={branch} className="bg-slate-900/50 border border-white/10 rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-blue-400" />
+                    <h3 className="text-sm font-semibold text-white">{branch}</h3>
+                    <span className="text-xs text-slate-400">({entries.length} {entries.length === 1 ? "entry" : "entries"})</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-700/80">
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Date</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Technician</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Address</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Google Map Link</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {entries.map((entry) => (
+                          <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-3 py-2.5 text-slate-300">
+                              <div className="flex items-center gap-2">
+                                {entry.workDate}
+                                <span
+                                  title={entry.source === "auto" ? "Auto-synced from a completed ticket" : "Manually entered"}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide ${
+                                    entry.source === "auto" ? "bg-blue-500/20 text-blue-300" : "bg-slate-500/20 text-slate-400"
+                                  }`}
+                                >
+                                  {entry.source === "auto" ? "Auto" : "Manual"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-300">{employeeNameById.get(entry.profileId) || "—"}</td>
+                            <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>
+                            <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>
+                            <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>
+                            <td className="px-3 py-2.5 text-slate-300">{entry.totalMileage}</td>
+                            <td className="px-3 py-2.5">
+                              {entry.googleMapLink ? (
+                                <a href={entry.googleMapLink} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                                  Map link
+                                </a>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <button
+                                onClick={() => handleDeleteMileageEntry(entry)}
+                                disabled={deletingMileageEntryId === entry.id}
+                                className="text-red-400 hover:text-red-300 disabled:opacity-40"
+                              >
+                                {deletingMileageEntryId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
         {/* ── Reports Tab ──────────────────────────────────────────────────── */}
         {activeTab === "reports" && (
           <div className="space-y-6">
@@ -2108,6 +2526,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           workingHours={detailEmployee.workingHours}
           mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
+          graceMinutes={payGraceMinutesFor(detailEmployee.country, normalizeRole(detailEmployee.role) === "TECHNICIAN")}
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}
         />

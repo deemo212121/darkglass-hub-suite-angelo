@@ -9,7 +9,8 @@ import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
-import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
+import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 
 const REGULAR_HOURS_PER_DAY = 8;
 const OT_MULTIPLIER = 1.5;
@@ -117,11 +118,18 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       let regularHours = 0;
       let overtimeHours = 0;
       let grossPay = 0;
+      const graceMinutes = payGraceMinutesFor(profileCountry(p), normalizeRole(p.role) === "TECHNICIAN");
       for (const day of dayEntries) {
         if (!day.checkIn || !day.checkOut) continue;
+        const paidCheckIn = p.required_check_in
+          ? applyGraceToCheckIn(day.checkIn, p.required_check_in, graceMinutes)
+          : day.checkIn;
+        const paidCheckOut = p.required_check_out
+          ? roundCheckOutToSchedule(day.checkOut, p.required_check_out)
+          : day.checkOut;
         const hours = calcWorkedHours({
-          checkIn: day.checkIn,
-          checkOut: day.checkOut,
+          checkIn: paidCheckIn,
+          checkOut: paidCheckOut,
           mealStart: day.mealStart,
           mealEnd: day.mealEnd,
           notes: "",
@@ -390,6 +398,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           workingHours={detailProfile.working_hours}
           mealMinutes={detailProfile.meal_minutes}
           offDays={detailProfile.off_days || undefined}
+          graceMinutes={payGraceMinutesFor(profileCountry(detailProfile), normalizeRole(detailProfile.role) === "TECHNICIAN")}
           onClose={() => setDetailProfile(null)}
           onRateChanged={load}
         />
