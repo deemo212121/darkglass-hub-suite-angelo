@@ -137,10 +137,20 @@ function ProfilePage() {
         if (cancelled || !p) return;
         setProfileId(p.profileId);
         void loadPasswordChangeLog(p.profileId);
-        const [firstName, ...rest] = p.displayName.trim().split(/\s+/);
+        // profiles has no separate first/last name columns — just one
+        // displayName string — so this split is inherently a guess. Last
+        // word = last name (everything before it = first name) rather than
+        // the reverse: a multi-word FIRST/given name ("Jhon Norban") is far
+        // more common than a multi-word surname, so this direction loses
+        // less information on the far more common case. Guessing the other
+        // way meant every save-then-reload round-trip silently moved words
+        // from First into Last.
+        const nameParts = p.displayName.trim().split(/\s+/).filter(Boolean);
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
+        const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(" ") : (nameParts[0] || "");
         setProfile({
-          firstName: p.displayName ? firstName : "",
-          lastName: rest.join(" "),
+          firstName,
+          lastName,
           phone: p.phoneNumber,
           department: p.department,
           officeLocation: p.assignedBranch,
