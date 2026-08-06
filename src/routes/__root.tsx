@@ -135,7 +135,7 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const location = useLocation();
   const isLandingPage = location.pathname === "/landing" || location.pathname === "/announcements";
-  const isSuperAdminPage = location.pathname === "/superadmin";
+  const isSuperAdminPage = location.pathname === "/superadmin" || location.pathname.startsWith("/superadmin/company/");
   const isMobilePage = location.pathname === "/mobile";
   // Public custom-form fill page — no AHS account, so none of the
   // authenticated chrome below (announcement banner, ticket search, module
