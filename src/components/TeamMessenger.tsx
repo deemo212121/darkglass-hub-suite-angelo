@@ -118,11 +118,13 @@ export function TeamMessenger({ mod, sub }: Props) {
   const [newChannelTitle, setNewChannelTitle] = useState("");
   const [newChannelSubtitle, setNewChannelSubtitle] = useState("");
   const [newChannelMemberIds, setNewChannelMemberIds] = useState<Set<string>>(new Set());
+  const [newChannelDeptFilter, setNewChannelDeptFilter] = useState("");
   const [creatingChannel, setCreatingChannel] = useState(false);
 
   // Add Employee (to the currently-open channel) modal
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [addMemberIds, setAddMemberIds] = useState<Set<string>>(new Set());
+  const [addMemberDeptFilter, setAddMemberDeptFilter] = useState("");
   const [savingMembers, setSavingMembers] = useState(false);
 
   // "@" mention autocomplete in the composer.
@@ -302,6 +304,13 @@ export function TeamMessenger({ mod, sub }: Props) {
       return haystack.includes(term);
     });
   }, [contacts, search]);
+
+  // Every distinct department among company employees — narrows the long
+  // employee-picker checkbox lists in Create Channel / Add Employee.
+  const departmentOptions = useMemo(
+    () => Array.from(new Set(contacts.map((c) => c.department).filter((d): d is string => Boolean(d)))).sort((a, b) => a.localeCompare(b)),
+    [contacts]
+  );
 
   const openDm = async (other: ProfileRow) => {
     if (!profileId) return;
@@ -532,7 +541,7 @@ export function TeamMessenger({ mod, sub }: Props) {
               {canManageChannels && (
                 <button
                   type="button"
-                  onClick={() => setIsCreateChannelOpen(true)}
+                  onClick={() => { setNewChannelDeptFilter(""); setIsCreateChannelOpen(true); }}
                   className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:bg-white/10 hover:text-white"
                   title="Create a new channel"
                 >
@@ -767,7 +776,7 @@ export function TeamMessenger({ mod, sub }: Props) {
                     {canManageChannels && (
                       <button
                         type="button"
-                        onClick={() => { setAddMemberIds(new Set()); setIsAddMemberOpen(true); }}
+                        onClick={() => { setAddMemberIds(new Set()); setAddMemberDeptFilter(""); setIsAddMemberOpen(true); }}
                         className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:bg-white/10 hover:text-white"
                       >
                         <UserPlus className="h-3 w-3" /> Add
@@ -846,11 +855,21 @@ export function TeamMessenger({ mod, sub }: Props) {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Add employees ({newChannelMemberIds.size} selected)
-                </label>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Add employees ({newChannelMemberIds.size} selected)
+                  </label>
+                  <select
+                    value={newChannelDeptFilter}
+                    onChange={(e) => setNewChannelDeptFilter(e.target.value)}
+                    className="glass-input w-40 bg-slate-800/50 py-1 text-xs text-white"
+                  >
+                    <option value="">All Departments</option>
+                    {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
                 <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-2">
-                  {contacts.map((c) => {
+                  {contacts.filter((c) => !newChannelDeptFilter || c.department === newChannelDeptFilter).map((c) => {
                     const checked = newChannelMemberIds.has(c.id);
                     return (
                       <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5">
@@ -868,6 +887,9 @@ export function TeamMessenger({ mod, sub }: Props) {
                       </label>
                     );
                   })}
+                  {contacts.filter((c) => !newChannelDeptFilter || c.department === newChannelDeptFilter).length === 0 && (
+                    <div className="px-2 py-4 text-center text-xs text-slate-500">No employees in this department.</div>
+                  )}
                 </div>
                 <p className="mt-1 text-xs text-slate-500">You're added automatically. This channel is private — only added employees (plus Admin/SuperAdmin) can see it.</p>
               </div>
@@ -906,8 +928,18 @@ export function TeamMessenger({ mod, sub }: Props) {
               </button>
             </div>
             <div className="mt-4">
+              <div className="mb-1 flex items-center justify-end">
+                <select
+                  value={addMemberDeptFilter}
+                  onChange={(e) => setAddMemberDeptFilter(e.target.value)}
+                  className="glass-input w-40 bg-slate-800/50 py-1 text-xs text-white"
+                >
+                  <option value="">All Departments</option>
+                  {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
               <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-2">
-                {contacts.filter((c) => !channelMemberIds.includes(c.id)).map((c) => {
+                {contacts.filter((c) => !channelMemberIds.includes(c.id) && (!addMemberDeptFilter || c.department === addMemberDeptFilter)).map((c) => {
                   const checked = addMemberIds.has(c.id);
                   return (
                     <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5">
@@ -925,8 +957,8 @@ export function TeamMessenger({ mod, sub }: Props) {
                     </label>
                   );
                 })}
-                {contacts.filter((c) => !channelMemberIds.includes(c.id)).length === 0 && (
-                  <div className="px-2 py-4 text-center text-xs text-slate-500">Everyone is already in this channel.</div>
+                {contacts.filter((c) => !channelMemberIds.includes(c.id) && (!addMemberDeptFilter || c.department === addMemberDeptFilter)).length === 0 && (
+                  <div className="px-2 py-4 text-center text-xs text-slate-500">No matching employees to add.</div>
                 )}
               </div>
             </div>
