@@ -19,6 +19,7 @@ import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companyS
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 import { getCompanyTicketClaimDetails, upsertTicketClaimDetails, type TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import { PreClaimModal } from "@/components/PreClaimModal";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
   mod: ModuleDef;
@@ -202,6 +203,7 @@ export function NeedClaimList({ mod, sub }: Props) {
 
   const locDropdown = usePortalPosition(locOpen);
   const locListRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   // Close location dropdown on outside click
   useEffect(() => {
@@ -497,7 +499,7 @@ export function NeedClaimList({ mod, sub }: Props) {
   };
 
   return (
-    <main className="max-w-[1800px] mx-auto px-4 py-6">
+    <main className="max-w-[1800px] mx-auto px-4 py-6 overflow-x-hidden">
       <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
         <Link to="/home" className="hover:text-foreground">🏠</Link>
         <span>›</span>
@@ -686,7 +688,8 @@ export function NeedClaimList({ mod, sub }: Props) {
       </div>
 
       {/* Table */}
-      <div className="panel overflow-x-auto p-0">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-white/10 bg-white/5">
