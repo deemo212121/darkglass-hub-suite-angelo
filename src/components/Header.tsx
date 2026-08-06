@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy } from "lucide-react";
+import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy, Smartphone } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +16,7 @@ import { MessagesMenu } from "@/components/MessagesMenu";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
+import { setDesktopOverride, setMobileMode } from "@/lib/device";
 
 /**
  * Live Central Time clock in the header — this app's operations run across
@@ -185,6 +186,20 @@ export function AppHeader() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => navigate({ to: "/it-tickets" })} className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer">
                   <LifeBuoy className="h-4 w-4 text-muted-foreground" /> IT Support
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    // Phone detection (src/lib/device.ts) is best-effort and some
+                    // devices never trip it — this is the manual escape hatch.
+                    // Clear any prior "use desktop site" override too, so the
+                    // switch sticks across reloads instead of bouncing back.
+                    setDesktopOverride(false);
+                    setMobileMode(true);
+                    navigate({ to: "/mobile" });
+                  }}
+                  className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer"
+                >
+                  <Smartphone className="h-4 w-4 text-muted-foreground" /> Mobile View
                 </DropdownMenuItem>
                 <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
                 <DropdownMenuItem
