@@ -499,7 +499,8 @@ export function NeedClaimList({ mod, sub }: Props) {
   };
 
   return (
-    <main className="max-w-[1800px] mx-auto px-4 py-6 overflow-x-hidden" style={{ overflowX: "hidden" }}>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1800px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
         <Link to="/home" className="hover:text-foreground">🏠</Link>
         <span>›</span>
@@ -689,8 +690,8 @@ export function NeedClaimList({ mod, sub }: Props) {
 
       {/* Table */}
       <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
-      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
-        <table className="w-full text-xs">
+      <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg">
+        <table className="w-full min-w-max text-xs">
           <thead>
             <tr className="border-b border-white/10 bg-white/5">
               <th className="px-2 py-3 w-8">
@@ -884,5 +885,6 @@ export function NeedClaimList({ mod, sub }: Props) {
         );
       })()}
     </main>
+    </div>
   );
 }
