@@ -179,6 +179,63 @@ export async function getSupabaseCompanyLoginAlias(legacyCode: string): Promise<
   return (data as any)?.login_alias ?? null;
 }
 
+export interface CompanyAdminAccount {
+  id: string;
+  firebaseUid: string | null;
+  email: string;
+  username: string;
+  displayName: string;
+  role: string;
+  extraRoles: string[];
+  isActive: boolean;
+  phoneNumber: string | null;
+  department: string | null;
+  createdAt: string;
+}
+
+/**
+ * Every ADMIN/SUPERADMIN-tier account for one company, by its canonical
+ * legacy_code — the source of truth for the SuperAdmin console's per-company
+ * account list. Supabase profiles, NOT the Firestore `users` collection
+ * (src/lib/firebase/users.ts's getAllUsers()) — that collection has gone
+ * stale for a while (accounts created/edited straight in Supabase never
+ * synced back to it), so filtering it by companyId silently misses real
+ * admins and can surface unrelated leftover records. Callable cross-company
+ * because profiles_select allows is_superadmin() (see 0001_init.sql) —
+ * ordinary company-scoped RLS would otherwise return nothing here.
+ */
+export async function getCompanyAdminAccounts(legacyCode: string): Promise<CompanyAdminAccount[]> {
+  const { data: company, error: companyErr } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("legacy_code", legacyCode)
+    .maybeSingle();
+  if (companyErr) throw new Error(companyErr.message);
+  if (!company) return [];
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, firebase_uid, email, username, display_name, role, extra_roles, is_active, phone_number, department, created_at")
+    .eq("company_id", (company as any).id)
+    .in("role", ["ADMIN", "SUPERADMIN"])
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return ((data ?? []) as any[]).map((p) => ({
+    id: p.id,
+    firebaseUid: p.firebase_uid ?? null,
+    email: p.email,
+    username: p.username ?? "",
+    displayName: p.display_name || p.email,
+    role: p.role,
+    extraRoles: (p.extra_roles as string[] | null) ?? [],
+    isActive: p.is_active,
+    createdAt: p.created_at,
+    phoneNumber: p.phone_number ?? null,
+    department: p.department ?? null,
+  }));
+}
+
 /** Set (or clear, with null) a company's login alias by its canonical legacy_code. */
 export async function updateSupabaseCompanyLoginAlias(
   legacyCode: string,

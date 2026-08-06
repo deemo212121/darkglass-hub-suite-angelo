@@ -1,8 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import {
-  getAllUsers,
   getAllCompanies,
   updateUserAccount,
   deactivateUserAccount,
@@ -12,8 +11,21 @@ import {
   type Company,
   type UserRole,
 } from "@/lib/firebase/users";
-import { setCompanyActiveStatus, getSupabaseCompanyLoginAlias, updateCompanyDetails } from "@/lib/supabase/companies";
-import { getMyProfileId, updateCompanyUser } from "@/lib/supabase/users";
+import {
+  setCompanyActiveStatus,
+  getSupabaseCompanyLoginAlias,
+  updateCompanyDetails,
+  getCompanyAdminAccounts,
+} from "@/lib/supabase/companies";
+import { updateCompanyUser } from "@/lib/supabase/users";
+
+// Supabase profiles is the real source of truth for who's an admin of this
+// company (see getCompanyAdminAccounts) — uid is only populated when a
+// Firebase Auth counterpart actually exists, since a growing share of
+// accounts are created straight in Supabase now and have no Firestore doc
+// to fall back to. supabaseProfileId is always present and is what every
+// action below actually writes through.
+type CompanyAccountRow = UserAccount & { supabaseProfileId: string };
 
 export const Route = createFileRoute("/superadmin/company/$companyId")({
   component: CompanyDetailPage,
@@ -47,11 +59,11 @@ function CompanyDetailPage() {
 
   const [company, setCompany] = useState<Company | null>(null);
   const [loginAlias, setLoginAlias] = useState<string | null>(null);
-  const [users, setUsers] = useState<UserAccount[]>([]);
+  const [accounts, setAccounts] = useState<CompanyAccountRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [editingAdmin, setEditingAdmin] = useState<UserAccount | null>(null);
+  const [editingAdmin, setEditingAdmin] = useState<CompanyAccountRow | null>(null);
   const [editingCompanyInfo, setEditingCompanyInfo] = useState(false);
   const [companyForm, setCompanyForm] = useState({
     companyName: "",
@@ -90,12 +102,31 @@ function CompanyDetailPage() {
     try {
       setLoading(true);
       setError(null);
-      const [allUsers, allCompanies, alias] = await Promise.all([
-        getAllUsers(),
+      const [adminAccounts, allCompanies, alias] = await Promise.all([
+        getCompanyAdminAccounts(companyId),
         getAllCompanies(),
         getSupabaseCompanyLoginAlias(companyId),
       ]);
-      setUsers(allUsers);
+      setAccounts(
+        adminAccounts.map((a) => ({
+          uid: a.firebaseUid || "",
+          email: a.email,
+          username: a.username,
+          displayName: a.displayName,
+          companyId,
+          role: a.role as UserRole,
+          isActive: a.isActive,
+          phoneNumber: a.phoneNumber || undefined,
+          department: a.department || undefined,
+          // UserAccount's Firestore-doc bookkeeping fields — not meaningful
+          // for a Supabase-sourced row, and not displayed anywhere on this
+          // page, but required by the shared type.
+          createdAt: new Date(a.createdAt),
+          createdBy: "supabase",
+          updatedAt: new Date(a.createdAt),
+          supabaseProfileId: a.id,
+        }))
+      );
       setCompany(allCompanies.find((c) => c.companyId === companyId) ?? null);
       setLoginAlias(alias);
     } catch (err: any) {
@@ -161,11 +192,6 @@ function CompanyDetailPage() {
     }
   };
 
-  const accounts = useMemo(
-    () => users.filter((u) => u.companyId === companyId && u.role !== "SUPERSUPERADMIN"),
-    [users, companyId]
-  );
-
   const handleToggleCompanyStatus = async () => {
     if (!company) return;
     const verb = company.isActive ? "freeze" : "unfreeze";
@@ -183,7 +209,7 @@ function CompanyDetailPage() {
     }
   };
 
-  const startEditAdmin = (user: UserAccount) => {
+  const startEditAdmin = (user: CompanyAccountRow) => {
     setEditingAdmin(user);
     setEditForm({
       displayName: user.displayName,
@@ -199,29 +225,30 @@ function CompanyDetailPage() {
       setError(null);
       const fullPhoneNumber = editForm.phoneNumber ? `${editForm.phoneCountry} ${editForm.phoneNumber}` : "";
 
-      await updateUserAccount(editingAdmin.uid, {
+      // Supabase is the real source of truth (RLS and everything else in the
+      // app reads profiles.role) — always write there directly via the
+      // profile id we already have, no Firebase round-trip needed to find it.
+      await updateCompanyUser(editingAdmin.supabaseProfileId, {
         displayName: editForm.displayName,
         phoneNumber: fullPhoneNumber,
-        role: editForm.userType,
+        role: editForm.userType as any,
         isActive: editingAdmin.isActive,
       });
 
-      // Also sync to Supabase — RLS and everything else in the app reads
-      // profiles.role, not the Firestore doc above.
-      try {
-        const profileId = await getMyProfileId(editingAdmin.uid);
-        if (profileId) {
-          await updateCompanyUser(profileId, {
+      // Best-effort: also keep the legacy Firestore doc in sync, when this
+      // account actually has one — a growing share of accounts are created
+      // straight in Supabase now and have no Firebase counterpart at all.
+      if (editingAdmin.uid) {
+        try {
+          await updateUserAccount(editingAdmin.uid, {
             displayName: editForm.displayName,
             phoneNumber: fullPhoneNumber,
-            role: editForm.userType as any,
+            role: editForm.userType,
             isActive: editingAdmin.isActive,
           });
-        } else {
-          console.warn(`No Supabase profile found for ${editingAdmin.uid} — role change only applied in Firebase.`);
+        } catch (firebaseErr) {
+          console.error("Error syncing admin update to Firebase:", firebaseErr);
         }
-      } catch (supabaseErr) {
-        console.error("Error syncing admin update to Supabase:", supabaseErr);
       }
 
       setSuccess("✅ Admin updated successfully");
@@ -234,17 +261,23 @@ function CompanyDetailPage() {
     }
   };
 
-  const handleToggleAdminStatus = async (user: UserAccount) => {
+  const handleToggleAdminStatus = async (user: CompanyAccountRow) => {
+    const nextActive = !user.isActive;
+    if (!nextActive && !confirm(`Are you sure you want to deactivate ${user.displayName}?`)) return;
     try {
       setError(null);
-      if (user.isActive) {
-        if (!confirm(`Are you sure you want to deactivate ${user.displayName}?`)) return;
-        await deactivateUserAccount(user.uid);
-        setSuccess(`✅ ${user.displayName} has been deactivated`);
-      } else {
-        await activateUserAccount(user.uid);
-        setSuccess(`✅ ${user.displayName} has been activated`);
+      // Supabase is what RLS/login actually check — always write there
+      // directly, not just best-effort through the Firebase side.
+      await updateCompanyUser(user.supabaseProfileId, { isActive: nextActive });
+      if (user.uid) {
+        try {
+          if (nextActive) await activateUserAccount(user.uid);
+          else await deactivateUserAccount(user.uid);
+        } catch (firebaseErr) {
+          console.error("Error syncing status to Firebase:", firebaseErr);
+        }
       }
+      setSuccess(`✅ ${user.displayName} has been ${nextActive ? "activated" : "deactivated"}`);
       setTimeout(() => setSuccess(null), 5000);
       loadData();
     } catch (err: any) {
@@ -378,7 +411,7 @@ function CompanyDetailPage() {
                   </tr>
                 ) : (
                   accounts.map((admin) => (
-                    <tr key={admin.uid} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <tr key={admin.supabaseProfileId} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3 text-slate-300">{admin.email}</td>
                       <td className="px-4 py-3 text-white font-semibold">{admin.displayName}</td>
                       <td className="px-4 py-3">
