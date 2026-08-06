@@ -499,7 +499,7 @@ export function NeedClaimList({ mod, sub }: Props) {
   };
 
   return (
-    <main className="max-w-[1800px] mx-auto px-4 py-6 overflow-x-hidden">
+    <main className="max-w-[1800px] mx-auto px-4 py-6 overflow-x-hidden" style={{ overflowX: "hidden" }}>
       <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
         <Link to="/home" className="hover:text-foreground">🏠</Link>
         <span>›</span>
