@@ -403,7 +403,7 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
 // but every amount is converted (see EXCHANGE_RATE) before it reaches this
 // formatter so nothing in the UI shows ₱.
 function fmt(amount: number) {
-  return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // Older payroll_line_items rows may have been recorded with currency: "PHP"
