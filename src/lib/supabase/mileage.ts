@@ -16,7 +16,13 @@ import { statusGroupOf } from "@/lib/ticketData";
 
 export interface MileageEntry {
   id: string;
-  profileId: string;
+  /** Null when this entry was auto-synced for a technician name that
+   *  matched no real profile — see technicianName and migration 0134. */
+  profileId: string | null;
+  /** Raw ticket technician text, set only when profileId is null — the
+   *  display fallback for an unmatched auto-synced entry. Manual entries
+   *  (which always require picking a real profile) never set this. */
+  technicianName: string | null;
   branch: string;
   workDate: string;
   address: string;
@@ -33,7 +39,8 @@ export interface MileageEntry {
 function mapRow(r: any): MileageEntry {
   return {
     id: r.id,
-    profileId: r.profile_id,
+    profileId: r.profile_id ?? null,
+    technicianName: r.technician_name ?? null,
     branch: r.branch,
     workDate: r.work_date,
     address: r.address,
@@ -52,7 +59,7 @@ function mapRow(r: any): MileageEntry {
 export async function getMileageEntries(): Promise<MileageEntry[]> {
   const { data, error } = await supabase
     .from("mileage_entries")
-    .select("id, profile_id, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, source")
+    .select("id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, source")
     .order("work_date", { ascending: false });
   if (error) {
     console.error("getMileageEntries error:", error.message);
@@ -95,15 +102,38 @@ export interface MileageSyncResult {
   created: number;
   skipped: number;
   errors: string[];
+  /** Completed tickets whose technician text didn't match ANY technician
+   *  passed in — even after trim/lowercase. These still get synced (as
+   *  profile_id: null, technician_name: the raw ticket text — see
+   *  migration 0134), just surfaced separately so a real name mismatch is
+   *  visible and fixable (e.g. fix that person's Display Name, or their
+   *  role, so a future sync links their tickets to a real profile)
+   *  instead of looking identical to any other synced entry. */
+  unmatchedTechnicians: { name: string; count: number }[];
 }
 
 /**
- * Auto-generates mileage entries from a technician's COMPLETED tickets in a
- * date range — one row per ticket (not a combined daily total), each priced
- * with the same office-to-customer distance calculator already used on the
- * ticket detail page. Safe to re-run for an overlapping range: tickets that
- * already produced a row (tracked via mileage_entries.ticket_id, enforced
- * unique by migration 0128) are skipped rather than duplicated.
+ * Auto-generates mileage entries from COMPLETED tickets — one row per
+ * ticket (not a combined daily total), each priced with the same
+ * office-to-customer distance calculator already used on the ticket detail
+ * page. Always all-time, no date range — every completed ticket this
+ * company has ever logged. Safe to re-run: tickets that already produced a
+ * row (tracked via mileage_entries.ticket_id, enforced unique by migration
+ * 0128) are skipped rather than duplicated.
+ *
+ * Matches tickets to technicians by NAME, case/whitespace-insensitive — same
+ * convention as every other free-text technician match in this app (e.g.
+ * AccountingDashboard.tsx's own Tech Payroll employeeByName resolution,
+ * resolveTeamLeadOrManager's manager_name match). A ticket whose technician
+ * text matches no known technician (wrong/legacy Display Name, or no User
+ * Management account at all) still gets synced — profile_id: null,
+ * technician_name: the raw ticket text (migration 0134) — rather than
+ * silently dropped, so mileage isn't lost just because nobody's fixed that
+ * person's profile yet. It's surfaced via unmatchedTechnicians either way.
+ *
+ * Takes every technician at once and does ONE ticket fetch for all of them,
+ * rather than one fetch per technician — both fixes the matching bug above
+ * and avoids N separate round-trips for N technicians.
  *
  * "Completed" is deliberately the exact same definition Overall Status's
  * Tech Completion Rate table uses (overallStatusData.ts's techMap
@@ -116,22 +146,19 @@ export interface MileageSyncResult {
  * piece-rate concern, not a mileage one.
  */
 export async function syncMileageFromTickets(input: {
-  profileId: string;
-  technicianName: string;
-  branch: string;
-  startDate: string;
-  endDate: string;
+  technicians: { profileId: string; fullName: string; branch: string }[];
 }): Promise<MileageSyncResult> {
-  const result: MileageSyncResult = { created: 0, skipped: 0, errors: [] };
-  if (!input.technicianName.trim()) return result;
+  const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [] };
+  const techByNormalizedName = new Map(
+    input.technicians.filter((t) => t.fullName.trim()).map((t) => [t.fullName.trim().toLowerCase(), t])
+  );
+  if (techByNormalizedName.size === 0) return result;
 
   const [{ data: ticketRows, error: ticketsErr }, { data: syncedRows, error: syncedErr }, mapProvider] = await Promise.all([
     supabase
       .from("tickets")
       .select("id, ticket_no, technician, status, schedule_date, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
-      .eq("technician", input.technicianName)
-      .gte("schedule_date", input.startDate)
-      .lte("schedule_date", input.endDate),
+      .not("technician", "is", null),
     supabase.from("mileage_entries").select("ticket_id").not("ticket_id", "is", null),
     getCompanyMapProvider(),
   ]);
@@ -142,12 +169,35 @@ export async function syncMileageFromTickets(input: {
   if (syncedErr) console.error("syncMileageFromTickets (existing sync check) error:", syncedErr.message);
   const alreadySynced = new Set((syncedRows ?? []).map((r: any) => r.ticket_id));
 
-  const completedTickets = (ticketRows ?? []).filter((t: any) => statusGroupOf(t.status || "") === "completed");
-  const pending = completedTickets.filter((t: any) => !alreadySynced.has(t.id));
-  result.skipped = completedTickets.length - pending.length;
+  const allCompletedTickets = (ticketRows ?? []).filter(
+    (t: any) => String(t.technician || "").trim() && statusGroupOf(t.status || "") === "completed"
+  );
+
+  // Anyone whose completed tickets carry a technician name that isn't a
+  // known technician, even after trim/lowercase — still synced below (as an
+  // unlinked, profile_id: null entry), just surfaced separately so a real
+  // name mismatch is visible and fixable rather than looking like any other
+  // synced entry.
+  const unmatchedCounts = new Map<string, number>();
+  for (const t of allCompletedTickets as any[]) {
+    const name = String(t.technician).trim();
+    if (!techByNormalizedName.has(name.toLowerCase())) {
+      unmatchedCounts.set(name, (unmatchedCounts.get(name) ?? 0) + 1);
+    }
+  }
+  result.unmatchedTechnicians = Array.from(unmatchedCounts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const pending = allCompletedTickets.filter((t: any) => !alreadySynced.has(t.id));
+  result.skipped = allCompletedTickets.length - pending.length;
   if (pending.length === 0) return result;
 
   for (const ticket of pending as any[]) {
+    const rawName = String(ticket.technician).trim();
+    // undefined = no known technician list was even passed in (shouldn't
+    // happen, guarded above); null (via ?? null below) = a real "no match".
+    const technician = techByNormalizedName.get(rawName.toLowerCase()) ?? null;
     const customer = ticket.customer ?? {};
     const mileageInput: MileageTicketInput = {
       location: ticket.location,
@@ -177,8 +227,9 @@ export async function syncMileageFromTickets(input: {
       : "";
 
     const { error: insertErr } = await supabase.from("mileage_entries").insert({
-      profile_id: input.profileId,
-      branch: ticket.location || input.branch,
+      profile_id: technician?.profileId ?? null,
+      technician_name: technician ? null : rawName,
+      branch: ticket.location || technician?.branch || "Unassigned",
       work_date: ticket.schedule_date,
       address: fullAddress || "(no address on file)",
       contact_number: customer.phone || null,

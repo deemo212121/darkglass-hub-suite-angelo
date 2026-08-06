@@ -106,6 +106,18 @@ function RoleMultiSelect({
         : [...values, val]
     );
   };
+  // Reorders `values` so this already-held role becomes index 0 (the
+  // primary) without touching which roles are held — a no-op if it's not
+  // checked or is already primary.
+  const promote = (val: string) => {
+    const norm = normalizeRole(val);
+    const idx = values.findIndex((v) => normalizeRole(v) === norm);
+    if (idx <= 0) return;
+    const next = [...values];
+    const [item] = next.splice(idx, 1);
+    next.unshift(item);
+    onChange(next);
+  };
   const summary = values.length
     ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
     : placeholder;
@@ -125,20 +137,29 @@ function RoleMultiSelect({
             const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
             const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => toggle(opt.value)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-white/10"
-              >
-                <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
-                  {checked && <Check className="h-3 w-3 text-white" />}
-                </span>
-                <span className="text-slate-200 flex-1 truncate">{opt.label}</span>
-                {isPrimary && (
-                  <span className="text-[9px] font-semibold uppercase text-blue-300">primary</span>
-                )}
-              </button>
+              <div key={opt.value} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10">
+                <button
+                  type="button"
+                  onClick={() => toggle(opt.value)}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                >
+                  <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-blue-500 border-blue-500" : "border-white/30"}`}>
+                    {checked && <Check className="h-3 w-3 text-white" />}
+                  </span>
+                  <span className="text-slate-200 flex-1 truncate">{opt.label}</span>
+                </button>
+                {isPrimary ? (
+                  <span className="text-[9px] font-semibold uppercase text-blue-300 shrink-0">primary</span>
+                ) : checked ? (
+                  <button
+                    type="button"
+                    onClick={() => promote(opt.value)}
+                    className="text-[9px] font-semibold uppercase text-slate-400 hover:text-blue-300 shrink-0"
+                  >
+                    Set primary
+                  </button>
+                ) : null}
+              </div>
             );
           })}
         </div>

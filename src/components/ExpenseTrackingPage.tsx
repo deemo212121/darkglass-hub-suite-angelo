@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2 } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, X, Loader2, CalendarDays } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { randomId } from "@/lib/utils";
@@ -27,6 +27,9 @@ const emptyForm = {
   description: "",
   receiptUrl: null as string | null,
   receiptPath: null as string | null,
+  orNumber: "",
+  fromLocation: "",
+  toLocation: "",
 };
 
 function statusColor(status: ExpenseStatus): string {
@@ -157,6 +160,9 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
       description: e.description,
       receiptUrl: e.receiptUrl,
       receiptPath: e.receiptPath,
+      orNumber: e.orNumber || "",
+      fromLocation: e.fromLocation || "",
+      toLocation: e.toLocation || "",
     });
     setEditingId(e.id);
     setOriginalReceiptPath(e.receiptPath);
@@ -196,6 +202,9 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           description: form.description,
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
+          orNumber: form.orNumber,
+          fromLocation: form.fromLocation,
+          toLocation: form.toLocation,
         });
       } else {
         await createExpense({
@@ -207,6 +216,9 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
           createdBy: myProfileId,
           receiptUrl: form.receiptUrl,
           receiptPath: form.receiptPath,
+          orNumber: form.orNumber,
+          fromLocation: form.fromLocation,
+          toLocation: form.toLocation,
         });
       }
       // Best-effort: if a receipt was replaced or removed during this edit,
@@ -274,12 +286,23 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {sub.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
+          <div className="flex items-start gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {sub.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+            </div>
+            <Link
+              to="/m/$module/$submodule"
+              params={{ module: mod.slug, submodule: "flash-tech-calendar" }}
+              className="ml-auto btn hover:bg-white/15 shrink-0 inline-flex items-center gap-2"
+              title="Flash Tech Calendar"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Flash Tech
+            </Link>
           </div>
         </div>
 
@@ -427,7 +450,8 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             </button>
                           </>
                         )}
-                        {e.status === "Approved" && (
+                        {/* Flash Tech-linked expenses stop at Approved/Rejected — no Reimbursed stage. */}
+                        {e.status === "Approved" && !e.flashTechTripId && (
                           <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                             {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
                           </button>
@@ -580,6 +604,20 @@ export function ExpenseTrackingPage({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Amount ($)</label>
                 <input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 uppercase mb-1">OR/Transaction Number</label>
+                <input type="text" value={form.orNumber} onChange={(e) => setForm({ ...form, orNumber: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">From</label>
+                  <input type="text" value={form.fromLocation} onChange={(e) => setForm({ ...form, fromLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">To</label>
+                  <input type="text" value={form.toLocation} onChange={(e) => setForm({ ...form, toLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
               </div>
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Description</label>

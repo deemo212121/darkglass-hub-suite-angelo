@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { Link } from "@tanstack/react-router";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import {
@@ -20,6 +20,7 @@ import {
   Wrench,
   MapPin,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   BarChart,
@@ -76,6 +77,7 @@ interface SupabaseEmployee {
   display_name?: string;
   username?: string;
   role?: string;
+  extraRoles?: string[] | null;
   assigned_branch?: string;
   offDays?: number[];
   requiredCheckIn?: string;
@@ -475,15 +477,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageNameFilter, setMileageNameFilter] = useState("");
 
   // ── Mileage tab: auto-sync-from-completed-tickets state ─────────────────
+  // No date range — always all-time, matching Overall Status's Tech
+  // Completion Rate table with its date pickers left empty. Every completed
+  // ticket this company has ever logged gets pulled, full stop.
   const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
-  const [mileageSyncFrom, setMileageSyncFrom] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 7);
-    return d.toISOString().slice(0, 10);
-  });
-  const [mileageSyncTo, setMileageSyncTo] = useState(new Date().toISOString().slice(0, 10));
   const [syncingMileage, setSyncingMileage] = useState(false);
   const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
+  // Completed tickets whose technician text matched no known technician —
+  // even after trim/lowercase, so a real name mismatch (not just a date
+  // range or role issue) shows up as something fixable instead of just
+  // silently not syncing.
+  const [mileageUnmatched, setMileageUnmatched] = useState<{ name: string; count: number }[]>([]);
+  // Clicking a technician's name in the mileage table pops a per-technician
+  // breakdown modal — same "click a name to see the ticket-by-ticket detail"
+  // convention as Overall Status's Tech Completion Rate table.
+  const [mileageTechDetailId, setMileageTechDetailId] = useState<string | null>(null);
 
   // Payroll generation period — Finance picks this via the date inputs on
   // the Payroll tab. Seeded once (see fetchData) from the auto "day after
@@ -507,7 +515,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         techRatesRes,
         mileageRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
@@ -561,6 +569,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         display_name: p.display_name,
         username: p.username,
         role: p.role,
+        extraRoles: p.extra_roles ?? null,
         assigned_branch: p.assigned_branch,
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
@@ -1356,16 +1365,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   })();
 
   // ── Mileage tab ──────────────────────────────────────────────────────────
+  // Anyone with TECHNICIAN or TECHNICIAN_MANAGER as their primary role OR as
+  // a 2nd/3rd (extra_roles) role — a Parts Manager who's also a Technician
+  // (or a Tech Manager who still drives to jobs) should show up here, not
+  // just people whose primary role is plain Technician.
+  const MILEAGE_TECH_ROLES = new Set(["TECHNICIAN", "TECHNICIAN_MANAGER"]);
   const mileageTechnicians = [...employees]
-    .filter((e) => normalizeRole(e.role) === "TECHNICIAN")
+    .filter(
+      (e) =>
+        MILEAGE_TECH_ROLES.has(normalizeRole(e.role)) ||
+        (e.extraRoles ?? []).some((r) => MILEAGE_TECH_ROLES.has(normalizeRole(r)))
+    )
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const employeeNameById = new Map(employees.map((e) => [e.id, e.full_name]));
+  // A synced entry with no matching profile (profileId: null) falls back to
+  // the raw ticket technician_name text — still filterable/displayable/
+  // clickable, just with no real profile behind it. Also doubles as the key
+  // for the detail modal (mileageTechDetailId), since profileId alone can't
+  // identify these rows.
+  const mileageRowName = (entry: MileageEntry) =>
+    (entry.profileId ? employeeNameById.get(entry.profileId) : entry.technicianName) || "—";
+  const mileageRowKey = (entry: MileageEntry) => entry.profileId ?? `name:${entry.technicianName ?? ""}`;
   const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
   const mileageEntriesByBranch = (() => {
     const nameFilter = mileageNameFilter.trim().toLowerCase();
     const filtered = mileageEntries.filter((entry) => {
       if (mileageBranchFilter && entry.branch !== mileageBranchFilter) return false;
-      if (nameFilter && !(employeeNameById.get(entry.profileId) || "").toLowerCase().includes(nameFilter)) return false;
+      if (nameFilter && !mileageRowName(entry).toLowerCase().includes(nameFilter)) return false;
       return true;
     });
     const byBranch = new Map<string, MileageEntry[]>();
@@ -1415,23 +1441,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
+  // Empty mileageSyncProfileId means "All Technicians". Always all-time —
+  // no date range is ever passed to syncMileageFromTickets. One call
+  // covering every target technician at once (that function fetches all
+  // company tickets a single time and matches them by normalized name,
+  // rather than a separate ticket query per technician) — already-synced
+  // tickets are skipped via mileage_entries.ticket_id either way.
   const handleSyncMileage = async () => {
-    const technician = employees.find((e) => e.id === mileageSyncProfileId);
-    if (!technician || !mileageSyncFrom || !mileageSyncTo) return;
+    const targets = mileageSyncProfileId
+      ? mileageTechnicians.filter((t) => t.id === mileageSyncProfileId)
+      : mileageTechnicians;
+    if (targets.length === 0) return;
     setSyncingMileage(true);
     setMileageSyncMessage(null);
+    setMileageUnmatched([]);
     try {
       const result = await syncMileageFromTickets({
-        profileId: technician.id,
-        technicianName: technician.full_name,
-        branch: technician.assigned_branch || "Unassigned",
-        startDate: mileageSyncFrom,
-        endDate: mileageSyncTo,
+        technicians: targets.map((t) => ({
+          profileId: t.id,
+          fullName: t.full_name,
+          branch: t.assigned_branch || "Unassigned",
+        })),
       });
       const parts = [`${result.created} new ${result.created === 1 ? "entry" : "entries"} created`];
       if (result.skipped > 0) parts.push(`${result.skipped} already synced`);
       if (result.errors.length > 0) parts.push(`${result.errors.length} skipped (${result.errors[0]}${result.errors.length > 1 ? `, +${result.errors.length - 1} more` : ""})`);
+      if (targets.length > 1) parts.push(`across ${targets.length} technicians`);
       setMileageSyncMessage(parts.join(" — "));
+      setMileageUnmatched(result.unmatchedTechnicians);
       if (result.created > 0) setMileageEntries(await getMileageEntries());
     } catch (err) {
       setMileageSyncMessage(`Sync failed: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -1440,8 +1477,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
+  // Auto-runs the sync (all technicians, all-time — no date bound by
+  // default) the first time the Mileage tab is actually opened — so every
+  // completed ticket's mileage just shows up without anyone having to press
+  // Sync. Only fires once per page load (via the ref) and waits for
+  // mileageTechnicians to actually be populated, rather than running on
+  // every tab switch or racing the initial fetch.
+  const autoSyncedMileageRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== "mileage" || autoSyncedMileageRef.current || mileageTechnicians.length === 0) return;
+    autoSyncedMileageRef.current = true;
+    void handleSyncMileage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, mileageTechnicians.length]);
+
   const handleDeleteMileageEntry = async (entry: MileageEntry) => {
-    if (!window.confirm(`Remove this mileage entry for ${employeeNameById.get(entry.profileId) || "this technician"} on ${entry.workDate}?`)) return;
+    if (!window.confirm(`Remove this mileage entry for ${mileageRowName(entry)} on ${entry.workDate}?`)) return;
     setDeletingMileageEntryId(entry.id);
     try {
       await deleteMileageEntry(entry.id);
@@ -2125,9 +2176,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <p className="text-sm font-semibold text-white mb-1">Sync from Completed Tickets</p>
               <p className="text-xs text-slate-400 mb-3">
-                Automatically logs one mileage entry per completed ticket for the selected technician and date range, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are skipped, so it's safe to re-run.
+                Runs automatically for all technicians (including anyone with Technician as a 2nd or 3rd role), pulling every completed ticket ever logged for this company — no date range, always all-time — as soon as you open this tab. Same "completed" definition as Overall Status's Tech Completion Rate table. One mileage entry per completed ticket, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are always skipped, so it's safe to re-run.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                 <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
                   <select
@@ -2135,43 +2186,40 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     onChange={(e) => setMileageSyncProfileId(e.target.value)}
                     className="glass-input w-full text-sm px-2 py-1.5"
                   >
-                    <option value="">Select technician…</option>
+                    <option value="">All Technicians ({mileageTechnicians.length})</option>
                     {mileageTechnicians.map((t) => (
                       <option key={t.id} value={t.id}>{t.full_name} — {t.assigned_branch || "Unassigned"}</option>
                     ))}
                   </select>
                 </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">From</span>
-                  <input
-                    type="date"
-                    value={mileageSyncFrom}
-                    max={mileageSyncTo || undefined}
-                    onChange={(e) => setMileageSyncFrom(e.target.value)}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">To</span>
-                  <input
-                    type="date"
-                    value={mileageSyncTo}
-                    min={mileageSyncFrom || undefined}
-                    onChange={(e) => setMileageSyncTo(e.target.value)}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
                 <button
                   onClick={handleSyncMileage}
-                  disabled={syncingMileage || !mileageSyncProfileId}
+                  disabled={syncingMileage || mileageTechnicians.length === 0}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
                 >
                   {syncingMileage && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Sync
+                  {mileageSyncProfileId ? "Sync" : "Sync All"}
                 </button>
               </div>
               {mileageSyncMessage && (
                 <p className="mt-3 text-xs text-slate-300">{mileageSyncMessage}</p>
+              )}
+              {mileageUnmatched.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                  <p className="text-xs font-semibold text-amber-300">
+                    {mileageUnmatched.length} technician name{mileageUnmatched.length === 1 ? "" : "s"} on completed tickets don't match any technician's profile — still synced below under their raw ticket name, just not linked to a real account:
+                  </p>
+                  <ul className="mt-1.5 text-xs text-amber-200/90 space-y-0.5">
+                    {mileageUnmatched.map((u) => (
+                      <li key={u.name}>
+                        "{u.name}" — {u.count} completed ticket{u.count === 1 ? "" : "s"}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1.5 text-[11px] text-amber-200/70">
+                    To link these to a real account instead, update that person's Display Name in User Management to match exactly what's on the ticket, or check they have Technician (or Tech Manager) set as a role — new entries after that will sync under their profile.
+                  </p>
+                </div>
               )}
             </div>
 
@@ -2253,7 +2301,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 </span>
                               </div>
                             </td>
-                            <td className="px-3 py-2.5 text-slate-300">{employeeNameById.get(entry.profileId) || "—"}</td>
+                            <td className="px-3 py-2.5 text-slate-300">
+                              <button
+                                type="button"
+                                onClick={() => setMileageTechDetailId(mileageRowKey(entry))}
+                                className="text-blue-400 hover:text-blue-300 hover:underline text-left inline-flex items-center gap-1"
+                                title="See this person's tickets"
+                              >
+                                {mileageRowName(entry)}
+                                {!entry.profileId && (
+                                  <span className="text-[9px] px-1 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300" title="No matching profile — this name comes straight from the ticket">
+                                    unlinked
+                                  </span>
+                                )}
+                              </button>
+                            </td>
                             <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>
                             <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>
                             <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>
@@ -2530,6 +2592,98 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}
         />
+      )}
+
+      {mileageTechDetailId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setMileageTechDetailId(null)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const techEntries = mileageEntries
+                .filter((e) => mileageRowKey(e) === mileageTechDetailId)
+                .sort((a, b) => b.workDate.localeCompare(a.workDate));
+              const totalMiles = techEntries.reduce((s, e) => s + e.totalMileage, 0);
+              const detailName = techEntries[0] ? mileageRowName(techEntries[0]) : "Technician";
+              return (
+                <>
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                        {detailName}
+                        {techEntries[0] && !techEntries[0].profileId && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-amber-500/20 text-amber-300">
+                            unlinked
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        {techEntries.length} ticket{techEntries.length === 1 ? "" : "s"} with logged mileage, {totalMiles.toFixed(1)} mi total
+                      </p>
+                    </div>
+                    <button
+                      className="rounded-md border border-white/15 bg-slate-800/70 p-1.5 text-slate-300 hover:bg-slate-700"
+                      onClick={() => setMileageTechDetailId(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {techEntries.length === 0 ? (
+                    <p className="text-xs text-slate-500 py-1">No mileage entries yet.</p>
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-white/10">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-white/5 border-b border-white/10">
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Date</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Branch</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Address</th>
+                            <th className="px-2 py-1.5 text-right font-semibold text-slate-400">Mileage</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Source</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Map</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {techEntries.map((entry) => (
+                            <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5">
+                              <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{entry.workDate}</td>
+                              <td className="px-2 py-1.5 text-slate-300">{entry.branch}</td>
+                              <td className="px-2 py-1.5 text-slate-300">{entry.address}</td>
+                              <td className="px-2 py-1.5 text-right text-slate-300">{entry.totalMileage}</td>
+                              <td className="px-2 py-1.5">
+                                <span
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide ${
+                                    entry.source === "auto" ? "bg-blue-500/20 text-blue-300" : "bg-slate-500/20 text-slate-400"
+                                  }`}
+                                >
+                                  {entry.source === "auto" ? "Auto" : "Manual"}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5">
+                                {entry.googleMapLink ? (
+                                  <a href={entry.googleMapLink} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                                    Map link
+                                  </a>
+                                ) : (
+                                  <span className="text-slate-500">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </div>
       )}
     </div>
   );

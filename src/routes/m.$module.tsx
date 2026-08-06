@@ -270,7 +270,7 @@ function ModuleIndex() {
     "tech-work-overview",
   ];
 
-  const submodules =
+  const submodules = (
     m.slug === "parts" || m.slug === "tickets" || m.slug === "report"
       ? [...m.submodules].sort((left, right) => {
           const order = m.slug === "parts" ? partsLandingOrder : m.slug === "tickets" ? ticketsLandingOrder : reportsLandingOrder;
@@ -278,7 +278,8 @@ function ModuleIndex() {
           const rightIndex = order.indexOf(right.slug);
           return (leftIndex === -1 ? order.length : leftIndex) - (rightIndex === -1 ? order.length : rightIndex);
         })
-      : m.submodules;
+      : m.submodules
+  ).filter((s) => !s.hiddenFromGrid);
 
   return (
     <>
