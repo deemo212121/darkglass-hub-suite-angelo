@@ -627,6 +627,15 @@ function isNearAnyTimestamp(entryTimestamp: string, anchors: string[]): boolean 
   });
 }
 
+// Pulls one "Label: value" field back out of a summarizePartRow()-style
+// snapshot string (e.g. a deleted part's audit-log `before` value) — used
+// to show a deleted part's number/description without re-parsing the
+// whole snapshot.
+function snapshotField(summary: string, label: string): string {
+  const match = summary.match(new RegExp(`(?:^|\\| )${label}: ([^|]*)`));
+  return match ? match[1].trim() : "";
+}
+
 function renderVisitSummary(summary: string, comparedSummary?: string) {
   const summaryParts = summary.split(" | ");
   const comparedParts = comparedSummary?.split(" | ") ?? [];
@@ -1206,6 +1215,9 @@ function TicketDetailsPage() {
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
   const [isPartListModalOpen, setIsPartListModalOpen] = useState(false);
+  // Which deleted-part audit entry (by entry.id) currently has its full
+  // before-deletion snapshot expanded in the Part Transaction Log modal.
+  const [expandedDeletedPartLogId, setExpandedDeletedPartLogId] = useState<string | null>(null);
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [auditEntriesLoaded, setAuditEntriesLoaded] = useState(false);
@@ -1916,6 +1928,14 @@ function TicketDetailsPage() {
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
     [auditEntries],
+  );
+  // deletePartRow already logs a full before-deletion snapshot (via
+  // summarizePartRow) on every delete — this just surfaces those entries in
+  // the Part Transaction Log modal so a deleted part (and who deleted it)
+  // stays visible instead of silently vanishing once it's gone from partRows.
+  const deletedPartAuditEntries = useMemo(
+    () => partAuditEntries.filter((entry) => entry.action === "Deleted part transaction"),
+    [partAuditEntries],
   );
   // Who has flagged/unflagged this ticket as misdiagnosed, most recent
   // first — shown inline next to the checkbox itself rather than folded
@@ -7551,7 +7571,7 @@ function TicketDetailsPage() {
                   <button 
                     type="button"
                     onClick={() => {
-                      if (partRows.length === 0) {
+                      if (partRows.length === 0 && deletedPartAuditEntries.length === 0) {
                         alert('No parts to view');
                         return;
                       }
@@ -8417,6 +8437,62 @@ function TicketDetailsPage() {
                       ))
                     )}
                   </div>
+
+                  {/* Deleted parts — same audit trail deletePartRow already
+                      writes on every delete, just surfaced here so a removed
+                      part (and who removed it) doesn't just vanish. */}
+                  {deletedPartAuditEntries.length > 0 && (
+                    <div className="mt-6 border-t border-white/10 pt-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                        Deleted Parts
+                      </p>
+                      <p className="text-sm text-slate-400 mt-1 mb-3">
+                        {deletedPartAuditEntries.length} deleted part{deletedPartAuditEntries.length === 1 ? '' : 's'}
+                      </p>
+                      <div className="space-y-3">
+                        {deletedPartAuditEntries.map((entry) => {
+                          const expanded = expandedDeletedPartLogId === entry.id;
+                          const partNo = snapshotField(entry.before, "Part No") || "(no part #)";
+                          const partDesc = snapshotField(entry.before, "Part Desc");
+                          return (
+                            <div key={entry.id} className="border border-red-500/20 rounded-lg bg-red-950/10">
+                              <div className="px-4 py-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h4 className="text-base font-semibold text-slate-400 line-through decoration-2">{partNo}</h4>
+                                      <span className="rounded border border-red-400/30 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-300">
+                                        Deleted
+                                      </span>
+                                    </div>
+                                    {partDesc ? <div className="text-sm text-slate-400 mb-1">{partDesc}</div> : null}
+                                    <div className="text-xs text-slate-500">
+                                      Deleted by <span className="text-slate-300">{entry.by}</span> on {new Date(entry.timestamp).toLocaleString()}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="rounded border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-white/10"
+                                    onClick={() => setExpandedDeletedPartLogId(expanded ? null : entry.id)}
+                                  >
+                                    {expanded ? "Hide Snapshot" : "View Snapshot"}
+                                  </button>
+                                </div>
+                                {expanded && (
+                                  <div className="mt-3 border-t border-white/10 pt-3">
+                                    <div className="text-xs text-slate-400 font-semibold mb-2">
+                                      Full record at time of deletion
+                                    </div>
+                                    {renderVisitSummary(entry.before)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}
