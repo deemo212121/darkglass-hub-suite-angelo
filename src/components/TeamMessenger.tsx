@@ -12,19 +12,25 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Hash, Home, MessageCircle, Search, Send, Users2 } from "lucide-react";
+import { ChevronLeft, Hash, Home, Lock, MessageCircle, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { MessageBody } from "@/components/MessageBody";
 import {
   type ChannelRow,
   type MessageRow,
+  addChannelMembers,
+  createChannel,
+  getChannelMembers,
   getChannelMessages,
   getDmMessages,
   getOrCreateDmThread,
   listChannels,
   markThreadRead,
+  notifyChannelMention,
+  removeChannelMember,
   sendMessage as sendMessageRow,
   subscribeToMessages,
 } from "@/lib/supabase/messaging";
@@ -33,6 +39,8 @@ import {
   getMyProfileId,
   type ProfileRow,
 } from "@/lib/supabase/users";
+
+const CHANNEL_ADMIN_ROLES = ["ADMIN", "SUPERADMIN"];
 
 interface Props {
   mod: ModuleDef;
@@ -81,7 +89,7 @@ function initials(name: string) {
 }
 
 export function TeamMessenger({ mod, sub }: Props) {
-  const { email, ready, uid, displayName, role } = useAuth();
+  const { email, ready, uid, displayName, role, extraRoles } = useAuth();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [contacts, setContacts] = useState<ProfileRow[]>([]);
@@ -92,9 +100,34 @@ export function TeamMessenger({ mod, sub }: Props) {
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
 
   const currentUserName = displayName || email || "Current User";
   const canPostAnnouncement = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
+  // Who can create channels and add/remove employees from them (server-side
+  // enforced too — RLS's can_manage_channels(), migration 0137).
+  const canManageChannels = hasDashboardAccess(CHANNEL_ADMIN_ROLES, role, extraRoles);
+
+  // Members of the currently-open channel (channel_members rows) — empty
+  // for every pre-0137 open channel, since membership was never populated
+  // for those; mention/member-list UI falls back to "everyone" in that case.
+  const [channelMemberIds, setChannelMemberIds] = useState<string[]>([]);
+
+  // Create Channel modal
+  const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
+  const [newChannelTitle, setNewChannelTitle] = useState("");
+  const [newChannelSubtitle, setNewChannelSubtitle] = useState("");
+  const [newChannelMemberIds, setNewChannelMemberIds] = useState<Set<string>>(new Set());
+  const [creatingChannel, setCreatingChannel] = useState(false);
+
+  // Add Employee (to the currently-open channel) modal
+  const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
+  const [addMemberIds, setAddMemberIds] = useState<Set<string>>(new Set());
+  const [savingMembers, setSavingMembers] = useState(false);
+
+  // "@" mention autocomplete in the composer.
+  const [mentionTrigger, setMentionTrigger] = useState<{ start: number; query: string } | null>(null);
+  const [mentionedIds, setMentionedIds] = useState<Set<string>>(new Set());
 
   // 1. Resolve my Supabase profile id from my Firebase uid (once).
   useEffect(() => {
@@ -236,6 +269,19 @@ export function TeamMessenger({ mod, sub }: Props) {
     };
   }, [active?.id, active?.kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Membership list for the open channel — drives the Thread Details member
+  // list, "Add Employee", and who can be @mentioned.
+  useEffect(() => {
+    setMentionTrigger(null);
+    setMentionedIds(new Set());
+    if (active?.kind !== "channel") { setChannelMemberIds([]); return; }
+    let cancelled = false;
+    getChannelMembers(active.id)
+      .then((ids) => { if (!cancelled) setChannelMemberIds(ids); })
+      .catch((err) => console.error("Failed to load channel members:", err));
+    return () => { cancelled = true; };
+  }, [active?.id, active?.kind]);
+
   // Scroll to bottom whenever new messages arrive.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -267,6 +313,68 @@ export function TeamMessenger({ mod, sub }: Props) {
     }
   };
 
+  // Everyone eligible to be @mentioned in the open channel — restricted to
+  // channel_members when the channel actually has any recorded, otherwise
+  // every company contact (covers every pre-0137 open channel, which never
+  // had channel_members populated, so an empty list there means "nobody's
+  // membership was ever tracked", not "nobody's in it").
+  const mentionCandidates = useMemo<ProfileRow[]>(() => {
+    if (active?.kind !== "channel" || !profileId) return [];
+    const self = { id: profileId, display_name: currentUserName, email: email || "" } as ProfileRow;
+    const pool = [self, ...contacts];
+    if (channelMemberIds.length > 0) {
+      const memberSet = new Set(channelMemberIds);
+      return pool.filter((p) => memberSet.has(p.id));
+    }
+    return pool;
+  }, [active?.kind, active?.id, contacts, channelMemberIds, profileId, currentUserName, email]);
+
+  const mentionNames = useMemo(
+    () => mentionCandidates.map((p) => p.display_name || p.email).filter((n): n is string => Boolean(n)),
+    [mentionCandidates]
+  );
+
+  const mentionSuggestions = useMemo(() => {
+    if (!mentionTrigger) return [];
+    const q = mentionTrigger.query.trim().toLowerCase();
+    const list = q
+      ? mentionCandidates.filter((p) => (p.display_name || p.email || "").toLowerCase().includes(q))
+      : mentionCandidates;
+    return list.slice(0, 8);
+  }, [mentionTrigger, mentionCandidates]);
+
+  // Detects an in-progress "@partial name" trigger ending at the cursor —
+  // names can contain spaces, so this looks back from the cursor to the
+  // nearest "@" rather than splitting on whitespace.
+  const handleDraftChange = (value: string, cursorPos: number) => {
+    setDraft(value);
+    const uptoCursor = value.slice(0, cursorPos);
+    const atIndex = uptoCursor.lastIndexOf("@");
+    if (atIndex === -1) { setMentionTrigger(null); return; }
+    const between = uptoCursor.slice(atIndex + 1);
+    if (between.includes("\n") || between.length > 40) { setMentionTrigger(null); return; }
+    const charBefore = atIndex > 0 ? value[atIndex - 1] : "";
+    if (charBefore && !/\s/.test(charBefore)) { setMentionTrigger(null); return; }
+    setMentionTrigger({ start: atIndex, query: between });
+  };
+
+  const selectMention = (p: ProfileRow) => {
+    if (!mentionTrigger) return;
+    const name = p.display_name || p.email;
+    const cursorPos = draftRef.current?.selectionStart ?? draft.length;
+    const before = draft.slice(0, mentionTrigger.start);
+    const after = draft.slice(cursorPos);
+    const next = `${before}@${name} ${after}`;
+    setDraft(next);
+    setMentionedIds((prev) => new Set(prev).add(p.id));
+    setMentionTrigger(null);
+    const newCursor = before.length + name.length + 2;
+    requestAnimationFrame(() => {
+      draftRef.current?.focus();
+      draftRef.current?.setSelectionRange(newCursor, newCursor);
+    });
+  };
+
   const send = async () => {
     if (!active || !profileId) return;
     const body = draft.trim();
@@ -285,7 +393,76 @@ export function TeamMessenger({ mod, sub }: Props) {
       });
       // Optimistically append; the realtime subscription will dedupe by id.
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+
+      // Notify anyone @mentioned via the autocomplete AND still present in
+      // the sent text (covers a mention that got backspaced out afterward).
+      if (active.kind === "channel" && mentionedIds.size > 0) {
+        const stillMentioned = mentionCandidates
+          .filter((p) => mentionedIds.has(p.id) && body.includes(`@${p.display_name || p.email}`))
+          .map((p) => p.id);
+        if (stillMentioned.length > 0) {
+          void notifyChannelMention({
+            mentionedProfileIds: stillMentioned,
+            senderId: profileId,
+            senderName: currentUserName,
+            channelId: active.id,
+            channelTitle: active.channel.title,
+            messageBody: body,
+          });
+        }
+      }
+
       setDraft("");
+      setMentionedIds(new Set());
+      setMentionTrigger(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleCreateChannel = async () => {
+    if (!profileId || !newChannelTitle.trim()) return;
+    setCreatingChannel(true);
+    try {
+      const channel = await createChannel({
+        title: newChannelTitle,
+        subtitle: newChannelSubtitle,
+        createdBy: profileId,
+        memberProfileIds: Array.from(newChannelMemberIds),
+      });
+      setChannels((prev) => [...prev, channel]);
+      setActive({ kind: "channel", id: channel.id, channel });
+      setIsCreateChannelOpen(false);
+      setNewChannelTitle("");
+      setNewChannelSubtitle("");
+      setNewChannelMemberIds(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingChannel(false);
+    }
+  };
+
+  const handleAddMembers = async () => {
+    if (active?.kind !== "channel" || addMemberIds.size === 0) return;
+    setSavingMembers(true);
+    try {
+      await addChannelMembers(active.id, Array.from(addMemberIds));
+      setChannelMemberIds((prev) => Array.from(new Set([...prev, ...addMemberIds])));
+      setIsAddMemberOpen(false);
+      setAddMemberIds(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingMembers(false);
+    }
+  };
+
+  const handleRemoveMember = async (memberProfileId: string) => {
+    if (active?.kind !== "channel") return;
+    try {
+      await removeChannelMember(active.id, memberProfileId);
+      setChannelMemberIds((prev) => prev.filter((id) => id !== memberProfileId));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -347,9 +524,21 @@ export function TeamMessenger({ mod, sub }: Props) {
           </div>
 
           <div className="mt-4">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              <Hash className="h-3.5 w-3.5" />
-              Channels
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                <Hash className="h-3.5 w-3.5" />
+                Channels
+              </div>
+              {canManageChannels && (
+                <button
+                  type="button"
+                  onClick={() => setIsCreateChannelOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:bg-white/10 hover:text-white"
+                  title="Create a new channel"
+                >
+                  <Plus className="h-3 w-3" /> New
+                </button>
+              )}
             </div>
             <div className="space-y-2">
               {channels.map((ch) => {
@@ -365,7 +554,7 @@ export function TeamMessenger({ mod, sub }: Props) {
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      <Hash className="h-4 w-4 text-slate-400" />
+                      {ch.is_private ? <Lock className="h-4 w-4 text-slate-400" /> : <Hash className="h-4 w-4 text-slate-400" />}
                       <span className="font-semibold">{ch.title}</span>
                       {ch.is_announcement && (
                         <span className="ml-auto rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-300">
@@ -470,7 +659,11 @@ export function TeamMessenger({ mod, sub }: Props) {
                     <span>{m.sender_name || (isMe ? currentUserName : "—")}</span>
                     <span>{formatTimestamp(m.created_at)}</span>
                   </div>
-                  <MessageBody text={m.body} className="whitespace-pre-wrap leading-6" />
+                  <MessageBody
+                    text={m.body}
+                    className="whitespace-pre-wrap leading-6"
+                    mentionNames={active?.kind === "channel" ? mentionNames : undefined}
+                  />
                 </div>
               );
             })}
@@ -479,24 +672,50 @@ export function TeamMessenger({ mod, sub }: Props) {
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/80 p-3">
             <label htmlFor="team-messenger-draft" className="sr-only">Message composer</label>
-            <textarea
-              id="team-messenger-draft"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
+            <div className="relative">
+              {mentionTrigger && mentionSuggestions.length > 0 && (
+                <div className="absolute bottom-full left-0 z-20 mb-2 w-72 overflow-hidden rounded-xl border border-white/15 bg-slate-900 shadow-2xl">
+                  {mentionSuggestions.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); selectMention(p); }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-white/10"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white">
+                        {initials(p.display_name || p.email)}
+                      </span>
+                      <span className="truncate">{p.display_name || p.email}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <textarea
+                id="team-messenger-draft"
+                ref={draftRef}
+                value={draft}
+                onChange={(e) => handleDraftChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && mentionTrigger) {
+                    setMentionTrigger(null);
+                    return;
+                  }
+                  if (e.key === "Enter" && !e.shiftKey && !mentionTrigger) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                disabled={!active || (isAnnouncementsChannel && !canPostAnnouncement)}
+                placeholder={
+                  !active
+                    ? "Select a channel or teammate to start chatting…"
+                    : active.kind === "channel"
+                      ? `Message ${activeTitle}… (type @ to mention someone)`
+                      : `Message ${activeTitle}…`
                 }
-              }}
-              disabled={!active || (isAnnouncementsChannel && !canPostAnnouncement)}
-              placeholder={
-                !active
-                  ? "Select a channel or teammate to start chatting…"
-                  : `Message ${activeTitle}…`
-              }
-              className="glass-input min-h-28 w-full resize-none rounded-xl bg-slate-900 text-white placeholder:text-slate-500"
-            />
+                className="glass-input min-h-28 w-full resize-none rounded-xl bg-slate-900 text-white placeholder:text-slate-500"
+              />
+            </div>
             <div className="mt-3 flex items-center justify-between gap-3">
               <div className="text-xs text-slate-400">
                 {isAnnouncementsChannel && !canPostAnnouncement
@@ -524,15 +743,58 @@ export function TeamMessenger({ mod, sub }: Props) {
           {active?.kind === "channel" ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm">
               <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Channel</div>
-              <div className="mt-2 text-white">{active.channel.title}</div>
+              <div className="mt-2 flex items-center gap-2 text-white">
+                {active.channel.is_private && <Lock className="h-3.5 w-3.5 text-slate-400" />}
+                {active.channel.title}
+              </div>
               {active.channel.subtitle && (
                 <div className="mt-1 text-slate-300">{active.channel.subtitle}</div>
               )}
               <div className="mt-3 text-xs text-slate-400">
                 {active.channel.is_announcement
                   ? "Broadcast channel — only leadership can post."
-                  : "Open to all employees in this company."}
+                  : active.channel.is_private
+                    ? "Private — only added employees can see and post here."
+                    : "Open to all employees in this company."}
               </div>
+
+              {active.channel.is_private && (
+                <div className="mt-4 border-t border-white/10 pt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
+                      Members ({mentionCandidates.length})
+                    </span>
+                    {canManageChannels && (
+                      <button
+                        type="button"
+                        onClick={() => { setAddMemberIds(new Set()); setIsAddMemberOpen(true); }}
+                        className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:bg-white/10 hover:text-white"
+                      >
+                        <UserPlus className="h-3 w-3" /> Add
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 space-y-1.5">
+                    {mentionCandidates.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-white/5 px-2 py-1.5">
+                        <span className="truncate text-slate-200">
+                          {p.display_name || p.email}{p.id === profileId ? " (you)" : ""}
+                        </span>
+                        {canManageChannels && p.id !== active.channel.created_by && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(p.id)}
+                            title="Remove from channel"
+                            className="shrink-0 text-slate-500 transition hover:text-red-300"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : active?.kind === "dm" ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm">
@@ -551,6 +813,143 @@ export function TeamMessenger({ mod, sub }: Props) {
           )}
         </aside>
       </div>
+
+      {isCreateChannelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setIsCreateChannelOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-lg font-bold">Create Channel</h3>
+              <button type="button" onClick={() => setIsCreateChannelOpen(false)} className="text-white/40 hover:text-white/80">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Name</label>
+                <input
+                  value={newChannelTitle}
+                  onChange={(e) => setNewChannelTitle(e.target.value)}
+                  placeholder="e.g. project-launch"
+                  className="glass-input w-full bg-slate-800/50 text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Description (optional)</label>
+                <input
+                  value={newChannelSubtitle}
+                  onChange={(e) => setNewChannelSubtitle(e.target.value)}
+                  placeholder="What's this channel for?"
+                  className="glass-input w-full bg-slate-800/50 text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Add employees ({newChannelMemberIds.size} selected)
+                </label>
+                <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-2">
+                  {contacts.map((c) => {
+                    const checked = newChannelMemberIds.has(c.id);
+                    return (
+                      <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setNewChannelMemberIds((prev) => {
+                            const next = new Set(prev);
+                            if (checked) next.delete(c.id); else next.add(c.id);
+                            return next;
+                          })}
+                          className="accent-blue-500"
+                        />
+                        <span className="truncate text-slate-200">{c.display_name || c.email}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">You're added automatically. This channel is private — only added employees (plus Admin/SuperAdmin) can see it.</p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsCreateChannelOpen(false)}
+                className="rounded-md border border-white/15 bg-slate-950/90 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-200/40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateChannel}
+                disabled={creatingChannel || !newChannelTitle.trim()}
+                className="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creatingChannel ? "Creating…" : "Create Channel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAddMemberOpen && active?.kind === "channel" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setIsAddMemberOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-lg font-bold">Add Employees to {active.channel.title}</h3>
+              <button type="button" onClick={() => setIsAddMemberOpen(false)} className="text-white/40 hover:text-white/80">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-4">
+              <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/60 p-2">
+                {contacts.filter((c) => !channelMemberIds.includes(c.id)).map((c) => {
+                  const checked = addMemberIds.has(c.id);
+                  return (
+                    <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setAddMemberIds((prev) => {
+                          const next = new Set(prev);
+                          if (checked) next.delete(c.id); else next.add(c.id);
+                          return next;
+                        })}
+                        className="accent-blue-500"
+                      />
+                      <span className="truncate text-slate-200">{c.display_name || c.email}</span>
+                    </label>
+                  );
+                })}
+                {contacts.filter((c) => !channelMemberIds.includes(c.id)).length === 0 && (
+                  <div className="px-2 py-4 text-center text-xs text-slate-500">Everyone is already in this channel.</div>
+                )}
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAddMemberOpen(false)}
+                className="rounded-md border border-white/15 bg-slate-950/90 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-slate-200/40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddMembers}
+                disabled={savingMembers || addMemberIds.size === 0}
+                className="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingMembers ? "Adding…" : `Add ${addMemberIds.size || ""}`.trim()}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -30,8 +30,13 @@ export interface ChannelRow {
   kind: "channel" | "dm";
   is_announcement: boolean;
   is_system: boolean;
+  /** Membership-restricted (see migration 0137) — only channel_members/creator/Admin-SuperAdmin can read or post. Defaults false: every pre-existing channel stays open to the whole company. */
+  is_private: boolean;
+  created_by: string | null;
   created_at: string;
 }
+
+const CHANNEL_COLUMNS = "id, slug, title, subtitle, kind, is_announcement, is_system, is_private, created_by, created_at";
 
 export interface DmThreadRow {
   id: string;
@@ -54,8 +59,8 @@ export interface MessageRow {
   deleted_at: string | null;
 }
 
-/** Seed-of-the-truth default channels every company should have. */
-export const DEFAULT_CHANNELS: Array<Omit<ChannelRow, "id" | "created_at">> = [
+/** Seed-of-the-truth default channels every company should have — all open (is_private defaults to false at the DB level). */
+export const DEFAULT_CHANNELS: Array<Omit<ChannelRow, "id" | "created_at" | "is_private" | "created_by">> = [
   {
     slug: "announcements",
     title: "#announcements",
@@ -113,25 +118,108 @@ export const DEFAULT_CHANNELS: Array<Omit<ChannelRow, "id" | "created_at">> = [
 export async function listChannels(): Promise<ChannelRow[]> {
   const { data, error } = await supabase
     .from("message_channels")
-    .select("id, slug, title, subtitle, kind, is_announcement, is_system, created_at")
+    .select(CHANNEL_COLUMNS)
     .eq("kind", "channel")
     .order("is_announcement", { ascending: false })
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   const existing = (data as ChannelRow[]) ?? [];
 
-  // Bootstrap default channels for empty tenants.
+  // Bootstrap default channels for empty tenants. (Never re-triggers just
+  // because the caller isn't a member of some private channel — the
+  // defaults are always is_private=false, so once seeded they stay visible
+  // to everyone and `existing` is never empty again for this company.)
   if (existing.length === 0) {
     const inserts = DEFAULT_CHANNELS.map((c) => ({ ...c }));
     const { data: created, error: insErr } = await supabase
       .from("message_channels")
       .insert(inserts)
-      .select("id, slug, title, subtitle, kind, is_announcement, is_system, created_at");
+      .select(CHANNEL_COLUMNS);
     if (insErr) throw new Error(insErr.message);
     return (created as ChannelRow[]) ?? [];
   }
 
   return existing;
+}
+
+/**
+ * Create a new private channel (Admin/SuperAdmin only — RLS enforces this
+ * server-side via can_manage_channels(), migration 0137). The creator is
+ * always added as a member alongside whoever else is passed in, so they
+ * can immediately post/see it without a separate "add myself" step.
+ */
+export async function createChannel(input: {
+  title: string;
+  subtitle?: string;
+  createdBy: string;
+  memberProfileIds: string[];
+}): Promise<ChannelRow> {
+  const title = input.title.trim();
+  if (!title) throw new Error("Channel name is required");
+  const displayTitle = title.startsWith("#") ? title : `#${title}`;
+  // (company_id, slug) is unique — the random suffix avoids a collision if
+  // two channels would otherwise slugify to the same thing (e.g. "General"
+  // and "general!").
+  const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "channel"}-${Date.now().toString(36)}`;
+
+  const { data, error } = await supabase
+    .from("message_channels")
+    .insert({
+      slug,
+      title: displayTitle,
+      subtitle: input.subtitle?.trim() || null,
+      kind: "channel",
+      is_announcement: false,
+      is_system: false,
+      is_private: true,
+      created_by: input.createdBy,
+    })
+    .select(CHANNEL_COLUMNS)
+    .single();
+  if (error) throw new Error(error.message);
+  const channel = data as ChannelRow;
+
+  const memberIds = Array.from(new Set([input.createdBy, ...input.memberProfileIds].filter(Boolean)));
+  if (memberIds.length > 0) {
+    const { error: memberErr } = await supabase
+      .from("channel_members")
+      .insert(memberIds.map((profileId) => ({ channel_id: channel.id, profile_id: profileId })));
+    if (memberErr) throw new Error(memberErr.message);
+  }
+  return channel;
+}
+
+/** Every member's profile id for one channel. */
+export async function getChannelMembers(channelId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("channel_members")
+    .select("profile_id")
+    .eq("channel_id", channelId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => r.profile_id as string);
+}
+
+/** Add one or more employees to a channel (Admin/SuperAdmin or the channel's own creator — RLS enforces it). Silently no-ops for anyone already a member. */
+export async function addChannelMembers(channelId: string, profileIds: string[]): Promise<void> {
+  const ids = profileIds.filter(Boolean);
+  if (ids.length === 0) return;
+  const { error } = await supabase
+    .from("channel_members")
+    .upsert(
+      ids.map((profileId) => ({ channel_id: channelId, profile_id: profileId })),
+      { onConflict: "channel_id,profile_id", ignoreDuplicates: true }
+    );
+  if (error) throw new Error(error.message);
+}
+
+/** Remove one employee from a channel (Admin/SuperAdmin, the channel's creator, or the member removing themselves). */
+export async function removeChannelMember(channelId: string, profileId: string): Promise<void> {
+  const { error } = await supabase
+    .from("channel_members")
+    .delete()
+    .eq("channel_id", channelId)
+    .eq("profile_id", profileId);
+  if (error) throw new Error(error.message);
 }
 
 /** Resolve (or create) the dm thread between two profile ids. */
@@ -229,6 +317,38 @@ export async function sendMessage(params: {
 }
 
 /**
+ * Bell-notify everyone @mentioned in a just-sent channel message —
+ * group-chat-style "X mentioned you in #channel" alert, distinct from the
+ * ordinary new-message badge the Messages icon already shows. Fire-and-
+ * forget per recipient (one failure doesn't block the others); the sender
+ * is skipped even if they mention themselves.
+ */
+export async function notifyChannelMention(input: {
+  mentionedProfileIds: string[];
+  senderId: string;
+  senderName: string;
+  channelId: string;
+  channelTitle: string;
+  messageBody: string;
+}): Promise<void> {
+  const recipients = Array.from(new Set(input.mentionedProfileIds)).filter((id) => id && id !== input.senderId);
+  if (recipients.length === 0) return;
+  const { createNotification } = await import("./notifications");
+  const snippet = input.messageBody.length > 120 ? `${input.messageBody.slice(0, 117)}...` : input.messageBody;
+  await Promise.all(
+    recipients.map((recipientId) =>
+      createNotification({
+        recipientId,
+        senderId: input.senderId,
+        senderName: input.senderName,
+        body: `💬 ${input.senderName} mentioned you in ${input.channelTitle}: "${snippet}"`,
+        linkTo: `/m/admin/internal-message-support#channel=${input.channelId}`,
+      }).catch((err) => console.error("Failed to send mention notification:", err))
+    )
+  );
+}
+
+/**
  * Subscribe to new messages on a channel or DM thread. Returns an unsubscribe
  * function. Caller renders the row immediately when invoked.
  */
@@ -275,7 +395,7 @@ export async function getAnnouncementsChannel(): Promise<ChannelRow> {
   const { data, error } = await supabase
     .from("message_channels")
     .insert(DEFAULT_CHANNELS[0])
-    .select("id, slug, title, subtitle, kind, is_announcement, is_system, created_at")
+    .select(CHANNEL_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
   return data as ChannelRow;

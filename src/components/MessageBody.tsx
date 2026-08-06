@@ -102,13 +102,22 @@ function useTicketExistence(ticketNo: string): ExistenceState {
 interface Props {
   text: string;
   className?: string;
+  /**
+   * Known member/employee display names for this thread. Any "@Full Name"
+   * substring that exactly matches one is highlighted as a mention.
+   * Optional — omitted (e.g. on ticket comments, Live Chat) means no
+   * mention highlighting, since those threads have no channel-membership
+   * list to validate a name against.
+   */
+  mentionNames?: string[];
 }
 
 type Part =
   | string
   | { kind: "url"; value: string; trailing: string }
   | { kind: "ticket"; value: string; trailing: string }
-  | { kind: "namedLink"; label: string; url: string };
+  | { kind: "namedLink"; label: string; url: string }
+  | { kind: "mention"; name: string };
 
 // Optional named-link syntax `[label](https://...)` — e.g. for forwarding a
 // CV with the actual filename as the clickable text instead of a raw signed
@@ -117,6 +126,23 @@ type Part =
 // purely additive — every plain "https://..." URL still auto-linkifies
 // exactly as before.
 const NAMED_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Builds a regex matching `@FullName` for any of the given names — sorted
+ * longest-first so "@John Smith" matches whole rather than stopping at
+ * "@John" when both a "John" and a "John Smith" are members of the same
+ * thread. Names can contain spaces, so this runs as a whole-string pass
+ * (like NAMED_LINK_RE below), not the per-whitespace-token scan.
+ */
+function buildMentionRegex(names: string[]): RegExp | null {
+  const unique = Array.from(new Set(names.filter(Boolean))).sort((a, b) => b.length - a.length);
+  if (unique.length === 0) return null;
+  return new RegExp(`@(${unique.map(escapeRegExp).join("|")})\\b`, "g");
+}
 
 /** Runs the existing per-token URL/#ticket scan over one plain-text segment. */
 function scanPlainText(text: string, parts: Part[]): void {
@@ -155,17 +181,35 @@ function scanPlainText(text: string, parts: Part[]): void {
   }
 }
 
-/** Render `text` with clickable URLs, `[label](url)` named links, and validated `#ticket-no` references. */
-export function MessageBody({ text, className }: Props) {
+/** Render `text` with clickable URLs, `[label](url)` named links, validated `#ticket-no` references, and (when `mentionNames` is given) highlighted `@Full Name` mentions. */
+export function MessageBody({ text, className, mentionNames }: Props) {
   if (!text) return null;
+
+  // Whole-string passes (label/mention text can contain spaces, so these
+  // can't be found by the per-whitespace-token scan below) — collected
+  // together and sorted by position so they interleave correctly whichever
+  // comes first in the actual message.
+  const wholeStringMatches: Array<{ start: number; end: number; part: Part }> = [];
+  for (const m of text.matchAll(NAMED_LINK_RE)) {
+    const idx = m.index ?? 0;
+    wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "namedLink", label: m[1], url: m[2] } });
+  }
+  const mentionRe = buildMentionRegex(mentionNames ?? []);
+  if (mentionRe) {
+    for (const m of text.matchAll(mentionRe)) {
+      const idx = m.index ?? 0;
+      wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "mention", name: m[1] } });
+    }
+  }
+  wholeStringMatches.sort((a, b) => a.start - b.start);
 
   const parts: Part[] = [];
   let lastIndex = 0;
-  for (const m of text.matchAll(NAMED_LINK_RE)) {
-    const idx = m.index ?? 0;
-    if (idx > lastIndex) scanPlainText(text.slice(lastIndex, idx), parts);
-    parts.push({ kind: "namedLink", label: m[1], url: m[2] });
-    lastIndex = idx + m[0].length;
+  for (const { start, end, part } of wholeStringMatches) {
+    if (start < lastIndex) continue; // skip an overlap with the previous match
+    if (start > lastIndex) scanPlainText(text.slice(lastIndex, start), parts);
+    parts.push(part);
+    lastIndex = end;
   }
   if (lastIndex < text.length) scanPlainText(text.slice(lastIndex), parts);
 
@@ -184,6 +228,16 @@ export function MessageBody({ text, className }: Props) {
             >
               📎 {p.label}
             </a>
+          );
+        }
+        if (p.kind === "mention") {
+          return (
+            <span
+              key={i}
+              className="rounded bg-blue-500/20 px-1 py-[1px] font-semibold text-blue-200"
+            >
+              @{p.name}
+            </span>
           );
         }
         if (p.kind === "url") {
