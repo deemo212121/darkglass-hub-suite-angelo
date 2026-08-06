@@ -680,7 +680,7 @@ function rowToVisit(row: any): UIVisit {
 }
 
 /** Resolve a ticket's internal UUID from its ticket number (company-scoped). */
-async function getTicketId(ticketNo: string): Promise<string | null> {
+export async function getTicketId(ticketNo: string): Promise<string | null> {
   const { data, error } = await supabase
     .from("tickets")
     .select("id")
@@ -1088,6 +1088,10 @@ export interface UIPartRow {
   cxPaid: string;
   createdBy: string;
   lastModifiedBy: string;
+  /** The distributor's own reference/account number for this order — see migration 0134. */
+  distributorNo: string;
+  /** Claim job code for this individual part line, distinct from a ticket's own job code (ticket_claim_details.jobCode). */
+  jobCode: string;
 }
 
 const numOrNull = (v: unknown) => {
@@ -1131,6 +1135,8 @@ function rowToPart(row: any): UIPartRow {
     cxPaid: row.cx_paid ? "Y" : "",
     createdBy: row.created_by ?? "",
     lastModifiedBy: row.last_modified_by ?? "",
+    distributorNo: row.distributor_no ?? "",
+    jobCode: row.job_code ?? "",
   };
 }
 
@@ -1162,6 +1168,8 @@ function partToColumns(part: Partial<UIPartRow>) {
     credit_no: part.creditNo ?? null,
     hold: part.hold === "Y" || part.hold === "Yes",
     cx_paid: part.cxPaid === "Y" || part.cxPaid === "Yes",
+    distributor_no: part.distributorNo ?? null,
+    job_code: part.jobCode ?? null,
   };
 }
 

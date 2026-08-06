@@ -17,6 +17,8 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
+import { getCompanyTicketClaimDetails, upsertTicketClaimDetails, type TicketClaimDetails } from "@/lib/supabase/claimDetails";
+import { PreClaimModal } from "@/components/PreClaimModal";
 
 interface Props {
   mod: ModuleDef;
@@ -186,11 +188,17 @@ export function NeedClaimList({ mod, sub }: Props) {
   const [claimed, setClaimed] = useState(true);
   const [search, setSearch] = useState("");
 
-  // ── Selection + per-row editable fields (UI only for now) ──
+  // ── Selection + per-row editable fields ──
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [rowOverrides, setRowOverrides] = useState<
-    Record<string, { preClaimStatus?: string; claimNote?: string; claimVerified?: boolean }>
-  >({});
+  // "claim # verified" has no persisted column (out of scope for the Pre-Claim
+  // modal's DB work) — stays UI-only like before.
+  const [rowOverrides, setRowOverrides] = useState<Record<string, { claimVerified?: boolean }>>({});
+  // Pre-Claim Status / Claim Note now come from ticket_claim_details
+  // (migration 0135) via the Pre-Claim modal, keyed by the ticket's
+  // internal UUID (Ticket._id) — replaces what used to be pure useState
+  // that reset on every reload.
+  const [claimDetailsByTicketId, setClaimDetailsByTicketId] = useState<Map<string, TicketClaimDetails>>(new Map());
+  const [preClaimTicketNo, setPreClaimTicketNo] = useState<string | null>(null);
 
   const locDropdown = usePortalPosition(locOpen);
   const locListRef = useRef<HTMLDivElement>(null);
@@ -230,6 +238,12 @@ export function NeedClaimList({ mod, sub }: Props) {
         return NEED_CLAIM_STATUSES.has(s);
       });
       setTickets(claimsRelated);
+
+      // Fire-and-forget: real Pre-Claim Status/Claim Note, keyed by ticket
+      // UUID, replacing what used to reset to defaults on every reload.
+      getCompanyTicketClaimDetails()
+        .then(setClaimDetailsByTicketId)
+        .catch((err) => console.warn("[NeedClaimList] claim details fetch failed:", err));
 
       // Bulk part counts grouped by ticket_id so we don't fire a query
       // per row. We grab the ticket_id + 1 column to keep the payload
@@ -293,18 +307,19 @@ export function NeedClaimList({ mod, sub }: Props) {
         ? "Claim Not Needed"
         : "Need Claim";
       const override = rowOverrides[t.ticketNo] ?? {};
+      const saved = tid ? claimDetailsByTicketId.get(tid) : undefined;
       return {
         ticket: t,
         partsCount,
         compCancelIso,
         compCancelDate: date,
         aging,
-        preClaimStatus: override.preClaimStatus ?? defaultPreClaim,
-        claimNote: override.claimNote ?? "",
+        preClaimStatus: saved?.preClaimStatus || defaultPreClaim,
+        claimNote: saved?.claimNote ?? "",
         claimVerified: override.claimVerified ?? false,
       };
     });
-  }, [tickets, partCounts, rowOverrides]);
+  }, [tickets, partCounts, rowOverrides, claimDetailsByTicketId]);
 
   // ── Filtered view ──
   const filtered = useMemo(() => {
@@ -428,8 +443,33 @@ export function NeedClaimList({ mod, sub }: Props) {
   // ── Per-row editors ──
   const updateRow = (
     ticketNo: string,
-    patch: { preClaimStatus?: string; claimNote?: string; claimVerified?: boolean },
+    patch: { claimVerified?: boolean },
   ) => setRowOverrides((prev) => ({ ...prev, [ticketNo]: { ...prev[ticketNo], ...patch } }));
+
+  // Pre-Claim Status / Claim Note save straight to ticket_claim_details —
+  // optimistic local update first (keyed by ticket UUID, same as the bulk
+  // fetch) so the row reflects the edit immediately, then persist.
+  const [savingClaimRowTicketNo, setSavingClaimRowTicketNo] = useState<string | null>(null);
+  const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string; claimNote?: string }) => {
+    const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
+    if (!tid) return;
+    const prevSaved = claimDetailsByTicketId.get(tid);
+    setClaimDetailsByTicketId((prev) => {
+      const next = new Map(prev);
+      next.set(tid, { ...(prevSaved ?? ({} as TicketClaimDetails)), ...patch } as TicketClaimDetails);
+      return next;
+    });
+    setSavingClaimRowTicketNo(ticketNo);
+    try {
+      const saved = await upsertTicketClaimDetails(ticketNo, patch, auth.email || auth.displayName || null);
+      setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, saved));
+    } catch (err) {
+      console.error("Failed to save claim details:", err);
+      if (prevSaved) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, prevSaved));
+    } finally {
+      setSavingClaimRowTicketNo(null);
+    }
+  };
 
   // ── Status-dot helper ──
   const dotColor = (d: 0 | 1 | 2) => (d === 0 ? "" : d === 1 ? "bg-orange-400" : "bg-red-500");
@@ -781,8 +821,9 @@ export function NeedClaimList({ mod, sub }: Props) {
                     <td className="px-2 py-2">
                       <select
                         value={r.preClaimStatus}
-                        onChange={(e) => updateRow(t.ticketNo, { preClaimStatus: e.target.value })}
-                        className="glass-input text-xs py-0.5 px-1 rounded w-36"
+                        disabled={savingClaimRowTicketNo === t.ticketNo}
+                        onChange={(e) => void updateClaimDetails(t.ticketNo, { preClaimStatus: e.target.value })}
+                        className="glass-input text-xs py-0.5 px-1 rounded w-36 disabled:opacity-50"
                       >
                         {PRE_CLAIM_STATUSES.map((s) => (
                           <option key={s} value={s}>{s}</option>
@@ -791,23 +832,34 @@ export function NeedClaimList({ mod, sub }: Props) {
                     </td>
                     <td className="px-2 py-2">
                       <input
+                        key={`note:${t.ticketNo}:${r.claimNote}`}
                         type="text"
-                        value={r.claimNote}
-                        onChange={(e) => updateRow(t.ticketNo, { claimNote: e.target.value })}
-                        className="glass-input text-xs py-0.5 px-1 rounded w-32"
+                        defaultValue={r.claimNote}
+                        disabled={savingClaimRowTicketNo === t.ticketNo}
+                        onBlur={(e) => void updateClaimDetails(t.ticketNo, { claimNote: e.target.value })}
+                        className="glass-input text-xs py-0.5 px-1 rounded w-32 disabled:opacity-50"
                         placeholder="Note"
                       />
                     </td>
                     <td className="px-2 py-2 text-center">{r.aging} d</td>
                     <td className="px-2 py-2 whitespace-nowrap">
-                      <a
-                        href={`/ticket/${encodeURIComponent(t.ticketNo)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 text-xs"
-                      >
-                        Open ticket ›
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreClaimTicketNo(t.ticketNo)}
+                          className="text-blue-400 hover:text-blue-300 text-xs font-medium"
+                        >
+                          Pre Claim
+                        </button>
+                        <a
+                          href={`/ticket/${encodeURIComponent(t.ticketNo)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 text-xs"
+                        >
+                          Open ticket ›
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -821,6 +873,23 @@ export function NeedClaimList({ mod, sub }: Props) {
       <div className="mt-4 text-xs text-muted-foreground">
         * Caution: verification messages may not fully confirm a claim is accepted. Check with the warranty company when any claim is denied.
       </div>
+
+      {preClaimTicketNo && (() => {
+        const row = filtered.find((r) => r.ticket.ticketNo === preClaimTicketNo);
+        if (!row) return null;
+        return (
+          <PreClaimModal
+            ticket={row.ticket}
+            ticketNumbers={filtered.map((r) => r.ticket.ticketNo)}
+            onNavigate={setPreClaimTicketNo}
+            onSaved={(ticketNo, details) => {
+              const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
+              if (tid) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, details));
+            }}
+            onClose={() => setPreClaimTicketNo(null)}
+          />
+        );
+      })()}
     </main>
   );
 }
