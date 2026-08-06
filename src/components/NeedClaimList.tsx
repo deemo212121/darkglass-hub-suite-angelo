@@ -843,23 +843,13 @@ export function NeedClaimList({ mod, sub }: Props) {
                     </td>
                     <td className="px-2 py-2 text-center">{r.aging} d</td>
                     <td className="px-2 py-2 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPreClaimTicketNo(t.ticketNo)}
-                          className="text-blue-400 hover:text-blue-300 text-xs font-medium"
-                        >
-                          Pre Claim
-                        </button>
-                        <a
-                          href={`/ticket/${encodeURIComponent(t.ticketNo)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:text-blue-300 text-xs"
-                        >
-                          Open ticket ›
-                        </a>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreClaimTicketNo(t.ticketNo)}
+                        className="text-blue-400 hover:text-blue-300 text-xs font-medium"
+                      >
+                        Pre Claim
+                      </button>
                     </td>
                   </tr>
                 );
