@@ -33,6 +33,8 @@ export interface MileageEntry {
   createdByName: string | null;
   createdAt: string;
   ticketId: string | null;
+  /** Human-readable ticket number, set only on auto-synced entries — see migration 0142. */
+  ticketNo: string | null;
   source: "manual" | "auto";
 }
 
@@ -51,6 +53,7 @@ function mapRow(r: any): MileageEntry {
     createdByName: r.created_by_name ?? null,
     createdAt: r.created_at,
     ticketId: r.ticket_id ?? null,
+    ticketNo: r.ticket_no ?? null,
     source: r.source === "auto" ? "auto" : "manual",
   };
 }
@@ -59,7 +62,7 @@ function mapRow(r: any): MileageEntry {
 export async function getMileageEntries(): Promise<MileageEntry[]> {
   const { data, error } = await supabase
     .from("mileage_entries")
-    .select("id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, source")
+    .select("id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, source")
     .order("work_date", { ascending: false });
   if (error) {
     console.error("getMileageEntries error:", error.message);
@@ -238,6 +241,7 @@ export async function syncMileageFromTickets(input: {
       google_map_link: googleMapLink || null,
       created_by_name: "Auto-sync",
       ticket_id: ticket.id,
+      ticket_no: ticket.ticket_no,
       source: "auto",
     });
     if (insertErr) {

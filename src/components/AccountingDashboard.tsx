@@ -2736,6 +2736,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         <tr className="bg-slate-700/80">
                           <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Date</th>
                           <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Technician</th>
+                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Ticket #</th>
                           <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Address</th>
                           <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>
                           <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>
@@ -2774,6 +2775,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   </span>
                                 )}
                               </button>
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-300">
+                              {entry.ticketNo ? (
+                                <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                  {entry.ticketNo}
+                                </Link>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
                             </td>
                             <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>
                             <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>
@@ -3119,6 +3129,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         <thead>
                           <tr className="bg-white/5 border-b border-white/10">
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Date</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Ticket #</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Branch</th>
                             <th className="px-2 py-1.5 text-left font-semibold text-slate-400">Address</th>
                             <th className="px-2 py-1.5 text-right font-semibold text-slate-400">Mileage</th>
@@ -3130,6 +3141,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           {techEntries.map((entry) => (
                             <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5">
                               <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{entry.workDate}</td>
+                              <td className="px-2 py-1.5">
+                                {entry.ticketNo ? (
+                                  <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
+                                    {entry.ticketNo}
+                                  </Link>
+                                ) : (
+                                  <span className="text-slate-500">—</span>
+                                )}
+                              </td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.branch}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.address}</td>
                               <td className="px-2 py-1.5 text-right text-slate-300">{entry.totalMileage}</td>
