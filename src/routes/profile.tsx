@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { Save, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
-import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
+import { getMyFullProfile, getCompanyUsers, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 
@@ -33,11 +33,21 @@ export const Route = createFileRoute("/profile")({
 type Profile = {
   firstName: string;
   lastName: string;
+  email: string;
   phone: string;
   department: string;
+  role: string;
   officeLocation: string;
   poInitials: string;
 };
+
+// Own-account fields (Email, Role, Department) are locked for regular
+// employees — only admin-tier accounts can self-edit them here. SUPERSUPERADMIN
+// is excluded from the ROLE dropdown's own OPTIONS (see roleOptions below), not
+// from being able to open this gate — the platform role never reaches /profile
+// in practice (redirected to /superadmin), but excluding it here too costs
+// nothing.
+const ACCOUNT_FIELD_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
 interface WeekDay {
   dayNum: number;
@@ -69,13 +79,28 @@ const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday
 function ProfilePage() {
   const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
+  // Email is the real Firebase Auth login credential (changed via
+  // /api/admin-update-email, same as the admin-side user editor), and Role
+  // determines every permission check in the app — both are locked down to
+  // admin-tier accounts editing their OWN profile, not opened up for everyone.
+  const canEditAccountFields = ACCOUNT_FIELD_EDIT_ROLES.has(String(role || "").toUpperCase());
   const [profileId, setProfileId] = useState<string | null>(null);
+  // Compared against profile.email in save() to know whether the Firebase
+  // Auth update call is needed at all — same convention as the admin-side
+  // user editor (m.$module.$submodule.$userId.tsx).
+  const [originalEmail, setOriginalEmail] = useState("");
+  // Live distinct department values already in use across the company —
+  // populates the Department dropdown instead of a hardcoded list. Only
+  // fetched for admin-tier viewers, since only they can edit this field.
+  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
 
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
     lastName: "",
+    email: "",
     phone: "",
     department: "",
+    role: "",
     officeLocation: "",
     poInitials: "",
   });
@@ -148,11 +173,14 @@ function ProfilePage() {
         const nameParts = p.displayName.trim().split(/\s+/).filter(Boolean);
         const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
         const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(" ") : (nameParts[0] || "");
+        setOriginalEmail(p.email || "");
         setProfile({
           firstName,
           lastName,
+          email: p.email || "",
           phone: p.phoneNumber,
           department: p.department,
+          role: p.role || "",
           officeLocation: p.assignedBranch,
           poInitials: p.poInitials,
         });
@@ -177,6 +205,25 @@ function ProfilePage() {
     };
   }, [uid]);
 
+  // Department dropdown options — every distinct, non-empty department
+  // value already in use across the company's real profiles, instead of a
+  // hardcoded list. Only fetched for admin-tier viewers, since only they
+  // can edit this field.
+  useEffect(() => {
+    if (!canEditAccountFields) return;
+    let cancelled = false;
+    getCompanyUsers()
+      .then((users) => {
+        if (cancelled) return;
+        const distinct = Array.from(new Set(users.map((u) => (u.department || "").trim()).filter(Boolean)));
+        setDepartmentOptions(distinct.sort((a, b) => a.localeCompare(b)));
+      })
+      .catch((err) => console.error("Failed to load department options:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [canEditAccountFields]);
+
   const save = async () => {
     if (!profileId) {
       setSaved("Could not resolve your profile. Please re-login.");
@@ -184,10 +231,31 @@ function ProfilePage() {
     }
     setSaving(true);
     try {
+      // Email is the real Firebase Auth login credential — update it there
+      // FIRST via the same admin-only server endpoint the admin-side user
+      // editor uses, and only fold the new address into the Supabase update
+      // below once that succeeds, so profiles.email and Firebase Auth never
+      // end up desynced from a partial failure.
+      const emailChanged = canEditAccountFields && profile.email.trim() !== originalEmail.trim();
+      if (emailChanged) {
+        const { auth: firebaseAuthInstance } = await import("@/lib/firebase/config");
+        const idToken = await firebaseAuthInstance?.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+        const res = await fetch("/api/admin-update-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, targetProfileId: profileId, newEmail: profile.email.trim() }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "Failed to update login email");
+      }
+
       await updateCompanyUser(profileId, {
         displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim(),
+        ...(emailChanged ? { email: profile.email.trim() } : {}),
         phoneNumber: profile.phone,
         department: profile.department,
+        ...(canEditAccountFields ? { role: profile.role as any } : {}),
         assignedBranch: profile.officeLocation,
         poInitials: profile.poInitials,
         ...(canEditSchedule
@@ -198,6 +266,7 @@ function ProfilePage() {
             }
           : {}),
       });
+      if (emailChanged) setOriginalEmail(profile.email.trim());
       setSaved("Profile saved.");
       void logModuleActivity({
         module: "user-management",
@@ -408,13 +477,53 @@ function ProfilePage() {
           {field("Last name", "lastName")}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Email</span>
-            <input className="glass-input opacity-70" type="email" value={email ?? ""} disabled title="Contact an admin to change your login email" />
+            <input
+              className={`glass-input ${canEditAccountFields ? "" : "opacity-70"}`}
+              type="email"
+              value={canEditAccountFields ? profile.email : (email ?? "")}
+              onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+              disabled={!canEditAccountFields}
+              title={canEditAccountFields ? undefined : "Contact an admin to change your login email"}
+            />
           </label>
           {field("Phone", "phone", "tel")}
-          {field("Department", "department")}
+          {canEditAccountFields ? (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-muted-foreground">Department</span>
+              <select
+                value={profile.department}
+                onChange={(e) => setProfile({ ...profile, department: e.target.value })}
+                className="glass-input"
+              >
+                <option value="">Select a department</option>
+                {departmentOptions.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+                {profile.department && !departmentOptions.includes(profile.department) && (
+                  <option value={profile.department}>{profile.department}</option>
+                )}
+              </select>
+            </label>
+          ) : (
+            field("Department", "department")
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Role</span>
-            <input className="glass-input opacity-70" type="text" value={ROLE_LABELS[normalizeRole(role)] || role || ""} disabled />
+            {canEditAccountFields ? (
+              <select
+                value={profile.role}
+                onChange={(e) => setProfile({ ...profile, role: e.target.value })}
+                className="glass-input"
+              >
+                {Object.entries(ROLE_LABELS)
+                  .filter(([code]) => code !== "SUPERSUPERADMIN")
+                  .map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+              </select>
+            ) : (
+              <input className="glass-input opacity-70" type="text" value={ROLE_LABELS[normalizeRole(role)] || role || ""} disabled />
+            )}
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Office Location</span>
