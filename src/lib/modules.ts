@@ -161,6 +161,15 @@ const dashboardMod: ModuleDef = {
       },
     },
     {
+      slug: "general-information",
+      title: "General Information",
+      description: "Branch management directory — roles, regions, and leadership.",
+      custom: "general-information" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "employee-self-service",
       title: "Employee Self-Service Portal",
       description: "Allow employees to view timecards and request time off.",

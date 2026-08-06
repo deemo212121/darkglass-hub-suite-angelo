@@ -74,6 +74,90 @@ export function addMinutesToHHMM(hhmm: string, minutes: number): string {
   return `${String(Math.floor(wrapped / 60)).padStart(2, "0")}:${String(wrapped % 60).padStart(2, "0")}`;
 }
 
+/**
+ * Real clock punches (TimeClockMenu.tsx/routes/timecard.tsx) save "HH:MM:SS"
+ * — schedules (profiles.required_check_in/out) are always "HH:MM". Comparing
+ * those two as raw strings is unsound (e.g. "08:00:00" > "08:00" — the
+ * seconds-bearing string always sorts "greater" even at the exact same
+ * instant), so every comparison below goes through seconds-since-midnight
+ * instead. A bare "HH:MM" is treated as "HH:MM:00".
+ */
+export function toSeconds(hms: string): number {
+  const [h, m, s = 0] = hms.split(":").map(Number);
+  return h * 3600 + m * 60 + s;
+}
+
+function fromSeconds(totalSeconds: number): string {
+  const wrapped = ((totalSeconds % 86400) + 86400) % 86400;
+  const h = Math.floor(wrapped / 3600);
+  const m = Math.floor((wrapped % 3600) / 60);
+  const s = wrapped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Clock-precision rounding tolerance — a punch within this many seconds of
+ * the scheduled time (either side, for check-out) is treated as exactly on
+ * schedule, before any minutes-based grace policy even starts being
+ * consumed. E.g. required 08:00: 08:00:01-08:00:59 is on time; lateness
+ * (and the PH/US-office grace window) only starts accruing from 08:01:01.
+ */
+export const ON_TIME_BUFFER_SECONDS = 60;
+
+/**
+ * Pay-affecting grace period (distinct from the flat ATTENDANCE_GRACE_MINUTES
+ * alert softener above — this is the actual per-region policy Finance uses to
+ * decide how much lateness gets forgiven in paid hours). PH: 5 min. US office
+ * (any non-technician role): 15 min. Technicians: 0 — they're paid per
+ * completed repair ticket (Tech Payroll), not hourly, so grace doesn't apply.
+ * Callers pass `isTechnician` (normalizeRole(role) === "TECHNICIAN") rather
+ * than a raw role string, so this file never needs to import role logic.
+ */
+export function payGraceMinutesFor(country: string | null | undefined, isTechnician: boolean): number {
+  if (isTechnician) return 0;
+  return country === "PH" ? 5 : 15;
+}
+
+/**
+ * The check-in time to use for PAY purposes, given a grace window.
+ * - On time or early (actual <= scheduled): unchanged/literal — pays any
+ *   early arrival as worked, untouched by this feature.
+ * - Late by up to ON_TIME_BUFFER_SECONDS: treated as exactly on schedule
+ *   (clock-precision rounding, not part of the grace budget).
+ * - Late beyond the buffer but within the grace window: also treated as
+ *   exactly on schedule (fully forgiven).
+ * - Late beyond the grace window: only the excess past the window is
+ *   docked — e.g. required 08:00, grace 5 min, checkIn 08:06:00 -> "08:01:00"
+ *   (only the 1 minute past the 5-minute grace window is unpaid).
+ * Never applies to clock-out — see roundCheckOutToSchedule for the (much
+ * narrower) rounding-only tolerance that applies there instead.
+ */
+export function applyGraceToCheckIn(checkIn: string, requiredCheckIn: string, graceMinutes: number): string {
+  if (!checkIn || !requiredCheckIn) return checkIn;
+  const actualSec = toSeconds(checkIn);
+  const requiredSec = toSeconds(requiredCheckIn);
+  if (actualSec <= requiredSec) return checkIn;
+  const lateSeconds = actualSec - requiredSec;
+  if (lateSeconds <= ON_TIME_BUFFER_SECONDS) return requiredCheckIn;
+  if (graceMinutes <= 0) return checkIn;
+  const dockedSeconds = Math.max(0, lateSeconds - graceMinutes * 60);
+  return fromSeconds(requiredSec + dockedSeconds);
+}
+
+/**
+ * Clock-out never gets the minutes-based grace period (leaving early or
+ * working late is always paid/docked at the literal actual time) — but a
+ * punch within ON_TIME_BUFFER_SECONDS of the scheduled end, on EITHER side,
+ * is still just clock-precision noise and rounds to exactly on schedule:
+ * neither docked for a few seconds early nor paid overtime for a few
+ * seconds late. Beyond that buffer, genuinely early/late is literal.
+ */
+export function roundCheckOutToSchedule(checkOut: string, requiredCheckOut: string): string {
+  if (!checkOut || !requiredCheckOut) return checkOut;
+  const deltaSeconds = Math.abs(toSeconds(checkOut) - toSeconds(requiredCheckOut));
+  return deltaSeconds <= ON_TIME_BUFFER_SECONDS ? requiredCheckOut : checkOut;
+}
+
 /** Current wall-clock time and date in the given IANA timezone, regardless of the caller's own local timezone. */
 export function nowInTimezone(timeZone: string): { hhmm: string; dateISO: string } {
   const now = new Date();

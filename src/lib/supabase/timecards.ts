@@ -4,6 +4,7 @@
  */
 
 import { supabase } from "./client";
+import { applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -302,7 +303,15 @@ export async function getAttendanceForRange(
   profileId: string,
   startDate: string,
   endDate: string,
-  scheduled: { requiredCheckIn?: string; requiredCheckOut?: string; workingHours?: number | null; mealMinutes?: number | null; daysOff?: number[] } = {}
+  scheduled: {
+    requiredCheckIn?: string;
+    requiredCheckOut?: string;
+    workingHours?: number | null;
+    mealMinutes?: number | null;
+    daysOff?: number[];
+    /** Opt-in — omitted/0 means hoursWorked is the literal punch, unchanged from today. Pay-facing callers pass payGraceMinutesFor(...) (see attendanceGrace.ts) so hoursWorked reflects paid hours, not just the raw clock-in. */
+    graceMinutes?: number;
+  } = {}
 ): Promise<AttendanceRow[]> {
   const { data, error } = await supabase
     .from("timecard_entries")
@@ -362,13 +371,24 @@ export async function getAttendanceForRange(
     if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && mealEligible && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
+    // hoursWorked reflects PAID hours (grace-adjusted check-in/rounded
+    // check-out, when opted in via graceMinutes being explicitly passed —
+    // even 0, e.g. Technicians, still gets the clock-precision rounding) —
+    // clockIn/clockOut below stay the literal punch for display.
+    const graceOptedIn = scheduled.graceMinutes !== undefined;
+    const paidCheckIn = graceOptedIn && scheduled.requiredCheckIn
+      ? applyGraceToCheckIn(entry.checkIn, scheduled.requiredCheckIn, scheduled.graceMinutes ?? 0)
+      : entry.checkIn;
+    const paidCheckOut = graceOptedIn && scheduled.requiredCheckOut
+      ? roundCheckOutToSchedule(entry.checkOut, scheduled.requiredCheckOut)
+      : entry.checkOut;
     rows.push({
       date: key,
       clockIn: entry.checkIn,
       clockOut: entry.checkOut,
       mealStart: entry.mealStart,
       mealEnd: entry.mealEnd,
-      hoursWorked: calcWorkedHours(entry),
+      hoursWorked: calcWorkedHours({ ...entry, checkIn: paidCheckIn, checkOut: paidCheckOut }),
       status,
     });
   }

@@ -108,6 +108,7 @@ import { RepairStatusReport } from "@/components/RepairStatusReport";
 import { AccountingDashboard } from "@/components/AccountingDashboard";
 import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
 import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
+import { GeneralInfoPage } from "@/components/GeneralInfoPage";
 import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 import { CSRDashboard } from "@/components/CSRDashboard";
@@ -474,6 +475,8 @@ function SubModule() {
         ? <AttendanceMonitoringPage mod={mod} sub={sub} />
         : (sub as any).custom === "payroll-calculation"
         ? <PayrollCalculationPage mod={mod} sub={sub} />
+        : (sub as any).custom === "general-information"
+        ? <GeneralInfoPage mod={mod} sub={sub} />
         : (sub as any).custom === "employee-self-service"
         ? <EmployeeSelfServicePage mod={mod} sub={sub} />
         : (sub as any).custom === "it-tickets"

@@ -24,6 +24,8 @@ interface Props {
   workingHours?: number | null;
   mealMinutes?: number | null;
   offDays?: number[];
+  /** Pre-computed by the caller via payGraceMinutesFor(country, isTechnician) — see attendanceGrace.ts. Defaults to 0 (no forgiveness) so existing callers aren't required to pass it. */
+  graceMinutes?: number;
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
@@ -68,6 +70,7 @@ export function EmployeePayrollDetailModal({
   workingHours,
   mealMinutes,
   offDays,
+  graceMinutes = 0,
   onClose,
   onRateChanged,
 }: Props) {
@@ -98,7 +101,7 @@ export function EmployeePayrollDetailModal({
     try {
       const { start, end } = monthBounds(month);
       const [attRows, hist] = await Promise.all([
-        getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays }),
+        getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
         getSalaryHistory(profileId),
       ]);
       if (cancelledRef.current) return;
