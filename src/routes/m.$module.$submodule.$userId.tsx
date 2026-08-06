@@ -152,7 +152,7 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
-  const { ready, role: viewerRole, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
+  const { ready, role: viewerRole, extraRoles: viewerExtraRoles, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
   const navigate = useNavigate();
   // Only Admin/SuperAdmin may edit a user's email — it's the actual Firebase
   // Auth login credential (landing.tsx's username-login path resolves a
@@ -160,12 +160,23 @@ function UserDetailsPage() {
   // info, so changing it has to go through /api/admin-update-email (see
   // adminUpdateEmailBridge.ts) rather than a plain Supabase field edit.
   const canEditEmail = viewerRole === "ADMIN" || viewerRole === "SUPERADMIN";
+  // A plain ADMIN cannot edit a SUPERADMIN's role/details — only another
+  // SUPERADMIN (company-scoped) or the platform SUPERSUPERADMIN can. Mirrors
+  // can_edit_profile_row() (migration 0144) so the UI reads the same as what
+  // the server will actually allow, instead of letting an ADMIN fill out the
+  // whole form and only find out it's rejected on Save.
+  const viewerIsSuperOrAbove =
+    viewerRole === "SUPERADMIN" || viewerRole === "SUPERSUPERADMIN" || (viewerExtraRoles ?? []).includes("SUPERADMIN");
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
+  // The role this profile had when the page loaded — the permission check
+  // below is against this, not form.role, so an ADMIN can't sidestep it by
+  // just changing the role dropdown themselves before saving.
+  const [targetOriginalRole, setTargetOriginalRole] = useState<string>("");
   // The email as loaded from the server — compared against form.email in
   // handleSave to know whether the Firebase Auth update call is needed at all.
   const [originalEmail, setOriginalEmail] = useState<string>("");
@@ -219,6 +230,7 @@ function UserDetailsPage() {
         }
         setProfileId(p.id);
         setOriginalEmail(p.email || "");
+        setTargetOriginalRole(p.role || "");
         try {
           const all = await getCompanyUsers();
           const idx = all.findIndex((u) => u.id === p.id);
@@ -275,6 +287,8 @@ function UserDetailsPage() {
     return () => { cancelled = true; };
   }, [ready, userId]);
 
+  const canEditTarget = viewerIsSuperOrAbove || targetOriginalRole !== "SUPERADMIN";
+
   const update = (field: keyof typeof form, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -308,6 +322,10 @@ function UserDetailsPage() {
 
   const handleSave = async () => {
     if (!profileId) return;
+    if (!canEditTarget) {
+      setStatus("Error: only a Super Admin can edit another Super Admin's account.");
+      return;
+    }
     setSaving(true);
     setStatus(null);
     try {
@@ -461,10 +479,21 @@ function UserDetailsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">{form.displayName || form.username}</h1>
                     <p className="mt-1 text-sm text-slate-400">{form.email}</p>
                   </div>
-                  <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-50">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !canEditTarget}
+                    title={canEditTarget ? undefined : "Only a Super Admin can edit another Super Admin's account"}
+                    className="btn btn-primary disabled:opacity-50"
+                  >
                     {saving ? "Saving…" : "Save Changes"}
                   </button>
                 </div>
+
+                {!canEditTarget && (
+                  <div className="mb-4 text-sm rounded p-3 text-amber-300 bg-amber-500/10 border border-amber-500/30">
+                    This account is a Super Admin — only another Super Admin can edit its details or role.
+                  </div>
+                )}
 
                 {/* Tabs */}
                 <div className="flex flex-wrap gap-1 border-b border-white/10 mb-6">
@@ -486,6 +515,7 @@ function UserDetailsPage() {
                   </div>
                 )}
 
+                <fieldset disabled={!canEditTarget} className="min-w-0">
                 {activeTab === "General Information" ? (
                   <div className="space-y-6">
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -711,6 +741,7 @@ function UserDetailsPage() {
                     <p className="text-sm">This section is coming soon.</p>
                   </div>
                 )}
+                </fieldset>
               </>
             )}
           </div>
