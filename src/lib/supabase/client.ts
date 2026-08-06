@@ -24,7 +24,7 @@ export function isSupabaseConfigured(): boolean {
 // The minted Supabase JWT is held here and injected into every request.
 let supabaseAccessToken: string | null = null;
 let tokenExpiresAt = 0; // unix seconds
-// One-active-session-per-account (migration 0120) — whatever /api/supabase-token
+// One-active-session-per-account (migration 0124) — whatever /api/supabase-token
 // last reported as this account's current_session_id. auth.tsx compares this
 // against what it locally claimed to detect a login elsewhere superseding
 // this device. See supabaseTokenBridge.ts's mintOrReadSessionId.

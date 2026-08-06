@@ -52,7 +52,19 @@ interface RequiredSchedule {
   mealMinutes: string;
 }
 
+// Display order only (a work week reads naturally Monday-first). The actual
+// stored/compared value for each day is NOT its position in this array —
+// off_days is interpreted everywhere else in the app (AttendanceMonitoringPage,
+// AccountingDashboard, ReportHRDaily, ReportAttendanceMonitoring, payslips,
+// timecards.ts) via JS's native Date.getDay(): 0=Sunday..6=Saturday. See
+// DAYS_OF_WEEK_INDEX below, which maps each display position to that real
+// index — storing raw 0..6 by display position here would silently shift
+// everyone's off days by one relative to every other reader (e.g. "Saturday
+// and Sunday" would get saved as {5,6} and then misread elsewhere as
+// "Friday and Saturday").
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK_INDEX = [1, 2, 3, 4, 5, 6, 0];
+const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function ProfilePage() {
   const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
@@ -102,7 +114,8 @@ function ProfilePage() {
   useEffect(() => {
     const week: WeekDay[] = [];
     for (let i = 0; i < 7; i++) {
-      week.push({ dayNum: i, dayName: DAYS_OF_WEEK[i], isOffDay: selectedOffDays.includes(i) });
+      const dayNum = DAYS_OF_WEEK_INDEX[i];
+      week.push({ dayNum, dayName: DAYS_OF_WEEK[i], isOffDay: selectedOffDays.includes(dayNum) });
     }
     setCurrentWeekDays(week);
   }, [selectedOffDays]);
@@ -485,7 +498,7 @@ function ProfilePage() {
             ))}
           </div>
           {selectedOffDays.length > 0 && (
-            <p className="text-xs text-blue-300">Selected: {selectedOffDays.map((d) => DAYS_OF_WEEK[d]).join(", ")}</p>
+            <p className="text-xs text-blue-300">Selected: {selectedOffDays.map((d) => DAY_NAME_BY_INDEX[d]).join(", ")}</p>
           )}
         </div>
 

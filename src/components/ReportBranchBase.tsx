@@ -461,7 +461,7 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
           <p className="text-sm font-semibold mb-1">
             Daily LTP % by Location <span className="text-xs font-normal text-muted-foreground ml-2">🟢 ≥50%  🟡 40–49%  🔴 &lt;40%</span>
           </p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} debounce={200}>
             <BarChart data={ltpChartData} margin={{ left: -10 }}>
               <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={55} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
@@ -546,7 +546,7 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
         {completionChartData.length > 0 && (
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Assigned vs Completed by Location</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={completionChartData} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-20} textAnchor="end" height={50} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
@@ -563,7 +563,7 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
           {dailyChartData.length === 0 ? (
             <p className="text-xs text-muted-foreground py-16 text-center">No tickets scheduled in this date range.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={dailyChartData} margin={{ left: -10 }}>
                 <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -582,7 +582,7 @@ export function ReportBranchBase({ tickets, regionGroups, exportFilePrefix }: Pr
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-1">Cancellation Reasons {multiRegion ? "— All Regions" : ""}</p>
           <p className="text-[10px] text-muted-foreground mb-4">Structured reasons recorded when BizOps confirmed a CL-Cancelled ticket, tallied across {filtered.length} location{filtered.length === 1 ? "" : "s"}.</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} debounce={200}>
             <BarChart data={reasonBreakdown} margin={{ left: -10 }}>
               <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={70} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

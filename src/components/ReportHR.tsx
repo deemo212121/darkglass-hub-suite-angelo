@@ -219,7 +219,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
             {filteredCandidates.length === 0 ? (
               <p className="text-xs text-muted-foreground py-16 text-center">No candidates in this period.</p>
             ) : (
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={220} debounce={200}>
                 <BarChart data={statusBreakdown} margin={{ left: -10 }}>
                   <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -231,7 +231,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Headcount by Role</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={headcountByRole.slice(0, 10)} margin={{ left: -10 }}>
                 <XAxis dataKey="role" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

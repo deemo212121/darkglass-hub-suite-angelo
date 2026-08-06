@@ -5,7 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
-import { ALL_TECHNICIANS } from "@/lib/locations";
+import { getCompanyTechnicians } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
@@ -137,6 +137,14 @@ export function WorkCalendarPage({ mod, sub }: Props) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Real, active technicians (role=TECHNICIAN, primary or secondary) —
+  // replaces the old static ALL_TECHNICIANS seed list.
+  const [liveTechnicianNames, setLiveTechnicianNames] = useState<string[]>([]);
+  useEffect(() => {
+    getCompanyTechnicians()
+      .then((techs) => setLiveTechnicianNames(techs.map((t) => t.name)))
+      .catch((err) => console.error("Work Calendar: failed to load technician roster:", err));
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -179,13 +187,14 @@ export function WorkCalendarPage({ mod, sub }: Props) {
 
   const allRows = useMemo(() => buildRowsFromTickets(tickets), [tickets]);
 
-  // Full company technician roster (src/lib/locations.ts), not just techs
-  // with a scheduled ticket in view — otherwise the dropdown would shrink
-  // to whoever happens to have work booked this month.
+  // Full live technician roster, not just techs with a scheduled ticket in
+  // view — otherwise the dropdown would shrink to whoever happens to have
+  // work booked this month. Also folds in any technician name already on a
+  // ticket but not (yet) an active user, so historical assignments stay visible.
   const technicianOptions = useMemo(() => {
     const fromTickets = allRows.map((r) => r.technician).filter((name) => name && name !== "Unassigned");
-    return Array.from(new Set([...ALL_TECHNICIANS, ...fromTickets])).sort((a, b) => a.localeCompare(b));
-  }, [allRows]);
+    return Array.from(new Set([...liveTechnicianNames, ...fromTickets])).sort((a, b) => a.localeCompare(b));
+  }, [allRows, liveTechnicianNames]);
 
   const monthRows = useMemo(() => {
     return allRows.filter((row) => {

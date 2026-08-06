@@ -279,7 +279,7 @@ function ModuleIndex() {
           return (leftIndex === -1 ? order.length : leftIndex) - (rightIndex === -1 ? order.length : rightIndex);
         })
       : m.submodules
-  ).filter((s) => !s.hiddenFromGrid);
+  ).filter((s: SubModuleDef) => !s.hiddenFromGrid);
 
   return (
     <>

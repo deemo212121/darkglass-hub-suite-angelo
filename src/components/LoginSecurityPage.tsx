@@ -4,6 +4,7 @@ import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, Sh
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyLoginEvents, type LoginEvent } from "@/lib/supabase/loginEvents";
+import { getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { resetLoginLockout, getLoginLockoutHistory, type LoginLockoutEventRow } from "@/lib/supabase/loginLockouts";
 import { createItTicket } from "@/lib/supabase/itTickets";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
@@ -109,6 +110,11 @@ export function LoginSecurityPage({ mod, sub }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [historyFor, setHistoryFor] = useState<UserLoginStats | null>(null);
+  // Fetched on demand when the Login History modal opens — lets each row's
+  // Notes cell say whether that day actually has a clock-in/out, so a
+  // reviewer can spot a login that was never followed by any real work.
+  const [historyTimecardEntries, setHistoryTimecardEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [historyTimecardLoading, setHistoryTimecardLoading] = useState(false);
   const [freezeTarget, setFreezeTarget] = useState<ProfileRow | null>(null);
   const [freezing, setFreezing] = useState(false);
   const [unlockingId, setUnlockingId] = useState<string | null>(null);
@@ -143,6 +149,36 @@ export function LoginSecurityPage({ mod, sub }: Props) {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!historyFor) {
+      setHistoryTimecardEntries([]);
+      return;
+    }
+    const userEvents = events.filter((e) => e.profileId === historyFor.profile.id);
+    if (userEvents.length === 0) {
+      setHistoryTimecardEntries([]);
+      return;
+    }
+    // Same "viewer's local date" convention the Timestamp column already
+    // renders with (toLocaleString()) — keeps the day shown here consistent
+    // with the day the reviewer sees next to it in the table.
+    const dates = userEvents.map((e) => new Date(e.createdAt).toLocaleDateString("en-CA"));
+    const start = dates.reduce((a, b) => (b < a ? b : a));
+    const end = dates.reduce((a, b) => (b > a ? b : a));
+    let cancelled = false;
+    setHistoryTimecardLoading(true);
+    getCompanyTimecardEntries(start, end)
+      .then((rows) => {
+        if (!cancelled) setHistoryTimecardEntries(rows.filter((r) => r.profileId === historyFor.profile.id));
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryTimecardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [historyFor, events]);
 
   const handleUnlock = async (profile: ProfileRow) => {
     setUnlockingId(profile.id);
@@ -449,7 +485,7 @@ export function LoginSecurityPage({ mod, sub }: Props) {
           onClick={() => setHistoryFor(null)}
         >
           <div
-            className="relative max-h-[85vh] w-full max-w-4xl overflow-y-auto rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60"
+            className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-xl border border-white/15 bg-slate-950/95 shadow-2xl shadow-black/60"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/95 px-5 py-4 backdrop-blur-md">
@@ -497,6 +533,15 @@ export function LoginSecurityPage({ mod, sub }: Props) {
                       const locIsNew =
                         olderEvents.length > 0 && locationLabel(e) !== "—" && !olderEvents.some((o) => locationLabel(o) === locationLabel(e));
                       const flagged = ipIsNew || locIsNew;
+                      // Same day as the Timestamp column (viewer-local date)
+                      // — whether this login was ever followed by an actual
+                      // clock-in/out that day, for spotting a login with no
+                      // real work behind it.
+                      const workDate = new Date(e.createdAt).toLocaleDateString("en-CA");
+                      const dayEntry = historyTimecardEntries.find((t) => t.workDate === workDate);
+                      const attendanceNote = !dayEntry || (!dayEntry.checkIn && !dayEntry.checkOut)
+                        ? "No clock-in that day"
+                        : `In ${dayEntry.checkIn || "—"} · Out ${dayEntry.checkOut || "—"}`;
                       return (
                         <tr
                           key={e.id}
@@ -507,10 +552,13 @@ export function LoginSecurityPage({ mod, sub }: Props) {
                           <td className="px-2 py-2 whitespace-nowrap">{e.browser || "—"}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{e.device || "—"}</td>
                           <td className="px-2 py-2 whitespace-nowrap text-slate-300">{locationLabel(e)}</td>
-                          <td className="px-2 py-2 whitespace-nowrap">
-                            <div className="flex gap-1">
+                          <td className="px-2 py-2">
+                            <div className="flex flex-wrap items-center gap-1">
                               {ipIsNew && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">New IP</span>}
                               {locIsNew && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">New location</span>}
+                              <span className={`whitespace-nowrap ${!dayEntry || (!dayEntry.checkIn && !dayEntry.checkOut) ? "text-slate-500" : "text-slate-300"}`}>
+                                {historyTimecardLoading ? "…" : attendanceNote}
+                              </span>
                             </div>
                           </td>
                         </tr>

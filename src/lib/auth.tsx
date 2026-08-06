@@ -11,7 +11,7 @@ import { getProfileForLogin, touchLastLogin } from "./supabase/users";
 import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 import { subscribeTableChanges } from "./supabase/realtime";
 
-// One active session per account (migration 0120) — see checkAndHandleSession below.
+// One active session per account (migration 0124) — see checkAndHandleSession below.
 const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
 
 /**
@@ -40,6 +40,13 @@ async function checkAndHandleSession(
   }
   const claimed = localStorage.getItem(CLAIMED_SESSION_KEY);
   if (claimed && claimed !== serverSessionId) {
+    // Clear this device's own stale claim — otherwise a later interactive
+    // login on this same device would overwrite it correctly anyway (the
+    // isInteractiveLogin branch above always writes fresh), but leaving a
+    // superseded id sitting in localStorage in the meantime is misleading
+    // and worth cleaning up rather than trusting every future code path to
+    // unconditionally stomp over it.
+    localStorage.removeItem(CLAIMED_SESSION_KEY);
     onSuperseded();
     await firebaseSignOut();
     return true;
@@ -69,7 +76,7 @@ type AuthState = {
   mustChangePassword: boolean;
   /** Flips the in-memory flag off immediately after a successful self-service password change, so the /profile redirect gate stops right away instead of waiting for a re-login. */
   clearMustChangePasswordFlag: () => void;
-  /** True once this device has been signed out because the account logged in somewhere else (one active session per account — migration 0120). Shown by SessionKickedOutBanner.tsx. */
+  /** True once this device has been signed out because the account logged in somewhere else (one active session per account — migration 0124). Shown by SessionKickedOutBanner.tsx. */
   kickedOut: boolean;
   dismissKickedOut: () => void;
   login: (email: string, password: string) => Promise<void>;
@@ -198,14 +205,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [kickedOut, setKickedOut] = useState(false);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Set by login() right before signing in, consumed by the very next
-  // onAuthStateChanged firing — so only that one Supabase-token exchange
-  // (the actual login page submit) gets recorded to login_events, not the
-  // 45-min background refresh, the tab-focus refresh, or the initial
-  // onAuthStateChanged firing from an already-persisted Firebase session on
-  // page load (none of those are "at the login page").
-  const pendingInteractiveLoginRef = useRef(false);
-
+  // Set by login() right after it fully claims the session for this uid
+  // (fully awaited, including the server round-trip), consumed by the very
+  // next onAuthStateChanged firing for that SAME uid to skip its own
+  // redundant read-only session check. Without this, that firing's GET
+  // (checking current_session_id) can race login()'s own PATCH — if the GET
+  // lands first and reads the pre-login session id, it looks exactly like
+  // this brand-new login was itself instantly superseded, signing the user
+  // right back out. login() already fully claimed the session directly, so
+  // this firing has nothing left to do anyway.
+  const justClaimedUidRef = useRef<string | null>(null);
   useEffect(() => {
     // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
@@ -273,7 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (refreshTimer) clearInterval(refreshTimer);
           refreshTimer = null;
         };
-        // One active session per account (migration 0120) — the realtime fast
+        // One active session per account (migration 0124) — the realtime fast
         // path. Fires almost immediately when another device's login
         // overwrites this account's current_session_id, instead of waiting
         // for the 45-min interval or a tab-focus refresh (both above/below
@@ -312,12 +321,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             // Establish Supabase session (exchange Firebase token -> Supabase JWT)
             // so all Supabase queries are scoped to this user's company via RLS.
-            const isInteractiveLogin = pendingInteractiveLoginRef.current;
-            pendingInteractiveLoginRef.current = false;
-            const wasKickedOut = await runSessionCheck(firebaseUser, isInteractiveLogin, () => setKickedOut(true));
-            // A newer auth event already landed while we were awaiting
-            // (e.g. this was a stale duplicate firing) — let that one own
-            // the outcome instead of this one potentially undoing it.
+            // An actual interactive login claims the session (and records to
+            // login_events) directly from login() below, fully awaited
+            // before login() returns. This firing — which follows right
+            // behind that same login — skips its own check entirely when
+            // justClaimedUidRef says login() just handled this exact uid, to
+            // avoid a read-after-write race against login()'s own claim (see
+            // the ref's declaration above for what that race looks like).
+            // Every OTHER firing (background refresh, tab-focus, a
+            // persisted session restoring on page load, or genuinely being
+            // superseded by another device) still does the real check.
+            let wasKickedOut = false;
+            if (justClaimedUidRef.current === firebaseUser.uid) {
+              justClaimedUidRef.current = null;
+            } else {
+              wasKickedOut = await runSessionCheck(firebaseUser, false, () => setKickedOut(true));
+            }
+            // A newer auth event already landed while we were awaiting (e.g.
+            // this was a stale duplicate firing) — let that one own the
+            // outcome instead of this one potentially undoing it.
             if (isStale()) return;
             if (wasKickedOut) {
               // Superseded by a login elsewhere before this device even
@@ -436,12 +458,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               await firebaseSignOut();
             }
           } else if (auth?.currentUser) {
-            // A "signed out" notification can arrive after the fact — e.g.
-            // a kickout's firebaseSignOut() finishing its async cleanup
-            // AFTER the user already logged back in on this same device.
-            // Firebase's own current user is the ground truth here: if
-            // it's already someone again, this notification is stale —
-            // skip it instead of wiping out the fresh login it raced.
+            // A "signed out" notification can arrive after the fact — e.g. a
+            // kickout's firebaseSignOut() finishing its async cleanup AFTER
+            // the user already logged back in on this same device.
+            // Firebase's own current user is the ground truth here: if it's
+            // already someone again, this notification is stale — skip it
+            // instead of wiping out the fresh login it raced.
             console.log("🔓 Ignoring stale sign-out notification — already signed in again");
           } else {
             console.log("🔓 No Firebase user authenticated");
@@ -487,7 +509,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
-    pendingInteractiveLoginRef.current = true;
     try {
       // Server-enforced lockout check — 5 failed attempts locks the account
       // for 30s regardless of browser/device (see loginLockoutBridge.ts).
@@ -515,7 +536,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // stale "kicked out elsewhere" banner from a previous session.
       setKickedOut(false);
 
-      // State will be updated by onAuthStateChanged listener
+      // Claim the session (one active session per account) and record this
+      // interactive login to login_events (IP, geolocation, browser/device)
+      // directly, right here — awaited, rather than via a flag for the next
+      // onAuthStateChanged firing to pick up. That flag-based approach could
+      // lose the claim/login under rapid logout/login cycling: a stray
+      // background refresh (45-min interval, tab-focus) firing between
+      // setting the flag and this login's own onAuthStateChanged callback
+      // would consume it first, silently recording this real login as a
+      // routine refresh instead (no login_events row, no IP update, and no
+      // session claimed). This is the one and only place that ever claims a
+      // session as "true" interactive, fully awaited before login() returns.
+      if (auth?.currentUser) {
+        const claimedUid = auth.currentUser.uid;
+        try {
+          await checkAndHandleSession(auth.currentUser, true, () => setKickedOut(true));
+          // Tell the onAuthStateChanged firing that's about to follow this
+          // same login to skip its own read-only check entirely — see
+          // justClaimedUidRef's declaration for why that matters (a GET
+          // there could otherwise race this claim's own PATCH and read
+          // stale data, making this brand-new login look instantly
+          // superseded by itself). Only set on success — if the claim
+          // itself failed, there's nothing to skip; let the normal check run.
+          justClaimedUidRef.current = claimedUid;
+        } catch (e) {
+          console.warn("Failed to claim session / record login event:", e);
+        }
+      }
+
+      // Remaining state (role, companyId, etc.) will be updated by the
+      // onAuthStateChanged listener.
     } catch (error: any) {
       // Only a real Firebase credential failure should count against the
       // lockout — not our own "already locked" error thrown just above.
@@ -533,11 +583,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       console.error("❌ Login failed:", error.message);
-      // Sign-in never went through, so onAuthStateChanged won't fire to
-      // consume this — clear it now or it'd wrongly tag some later,
-      // unrelated auth event (e.g. a background token refresh) as an
-      // interactive login.
-      pendingInteractiveLoginRef.current = false;
       throw error;
     } finally {
       setLoading(false);

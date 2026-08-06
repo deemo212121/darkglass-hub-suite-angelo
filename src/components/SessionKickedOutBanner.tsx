@@ -1,5 +1,5 @@
 /**
- * One active session per account (migration 0120) — shown the moment this
+ * One active session per account (migration 0124) — shown the moment this
  * device is signed out because the account logged in somewhere else (see
  * checkAndHandleSession in src/lib/auth.tsx). Rendered unconditionally in
  * __root.tsx (outside the hideChrome guard, same as MustChangePasswordGate)

@@ -209,7 +209,7 @@ export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-4">Completed — Last 10 Days</p>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={200} debounce={200}>
             <BarChart data={trendData} margin={{ left: -10 }}>
               <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

@@ -357,7 +357,7 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Team Performance Comparison</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={teamBarData} margin={{ left: -10 }}>
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
@@ -372,7 +372,7 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </div>
           <div className="panel p-4">
             <p className="text-sm font-semibold mb-4">Schedule Trend — Last 10 Days</p>
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <LineChart data={trend} margin={{ left: -10 }}>
                 <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />

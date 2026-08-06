@@ -42,7 +42,19 @@ interface NewUserFormData {
   selectedOffDays: number[];
 }
 
+// Display order only (a work week reads naturally Monday-first). The actual
+// stored/compared value for each day is NOT its position in this array —
+// off_days is interpreted everywhere else in the app (AttendanceMonitoringPage,
+// AccountingDashboard, ReportHRDaily, ReportAttendanceMonitoring, payslips,
+// timecards.ts) via JS's native Date.getDay(): 0=Sunday..6=Saturday. See
+// DAYS_OF_WEEK_INDEX below, which maps each display position to that real
+// index — storing raw 0..6 by display position here would silently shift
+// everyone's off days by one relative to every other reader (e.g. "Saturday
+// and Sunday" would get saved as {5,6} and then misread elsewhere as
+// "Friday and Saturday").
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK_INDEX = [1, 2, 3, 4, 5, 6, 0];
+const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // Branch/office locations (used by Assigned Branch + Branch Access dropdowns)
 const LOCATIONS = [
@@ -674,7 +686,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     requiredCheckOut: "17:00",
     workingHours: "",
     mealMinutes: "",
-    selectedOffDays: [5, 6], // Saturday and Sunday by default
+    selectedOffDays: [0, 6], // Sunday and Saturday by default
   });
 
   // Load users from Supabase on mount (RLS scopes to the caller's company).
@@ -756,30 +768,36 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // is just: group everyone by their manager's name, then start from
   // whoever's own manager name doesn't resolve to a real person in view
   // (blank, "Unassigned", or a typo/former manager) — those are the roots.
+  // Deactivated accounts (e.g. an inactive placeholder like "Dummy.csr")
+  // don't belong in the org chart at all — excluded from every hierarchy
+  // structure below. Anyone whose real manager turns out to be one of these
+  // simply surfaces as their own root instead (same as an unassigned/typo'd
+  // manager already does), rather than nesting under a deactivated account.
+  const activeForHierarchy = useMemo(() => filtered.filter((r) => r.isActive !== false), [filtered]);
+
   const usersByName = useMemo(() => {
     const map = new Map<string, UserManagementRecord>();
-    filtered.forEach((r) => { if (r.userName) map.set(r.userName, r); });
+    activeForHierarchy.forEach((r) => { if (r.userName) map.set(r.userName, r); });
     return map;
-  }, [filtered]);
+  }, [activeForHierarchy]);
 
   const childrenByManagerName = useMemo(() => {
     const map = new Map<string, UserManagementRecord[]>();
-    filtered.forEach((record) => {
+    activeForHierarchy.forEach((record) => {
       if (!record.manager) return;
       map.set(record.manager, [...(map.get(record.manager) ?? []), record]);
     });
     for (const list of map.values()) list.sort((a, b) => a.userName.localeCompare(b.userName));
     return map;
-  }, [filtered]);
+  }, [activeForHierarchy]);
 
   // Roots with actual direct reports (real department heads) sort first,
   // alphabetically among themselves; roots with no one under them at all
-  // (disconnected/unused accounts, e.g. an inactive placeholder like
-  // "Dummy.csr") sink to the bottom instead of interleaving alphabetically
-  // with the real org chart.
+  // (disconnected/unused accounts) sink to the bottom instead of
+  // interleaving alphabetically with the real org chart.
   const hierarchyRoots = useMemo(
     () =>
-      filtered
+      activeForHierarchy
         .filter((record) => !record.manager || !usersByName.has(record.manager))
         .sort((a, b) => {
           const aHasChildren = (childrenByManagerName.get(a.userName)?.length ?? 0) > 0;
@@ -787,7 +805,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           if (aHasChildren !== bHasChildren) return aHasChildren ? -1 : 1;
           return a.userName.localeCompare(b.userName);
         }),
-    [filtered, usersByName, childrenByManagerName],
+    [activeForHierarchy, usersByName, childrenByManagerName],
   );
 
   // Manager dropdown candidates: real users with a manager-ish or admin
@@ -1010,7 +1028,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         requiredCheckOut: "17:00",
         workingHours: "",
         mealMinutes: "",
-        selectedOffDays: [5, 6],
+        selectedOffDays: [0, 6],
       });
       setShowAddUserModal(false);
     } catch (error: any) {
@@ -1427,7 +1445,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <div className="pt-4 border-t border-white/10">
                 <h3 className="text-sm font-semibold text-slate-300 mb-4">Days Off</h3>
                 <div className="grid grid-cols-7 gap-2 mb-4">
-                  {DAYS_OF_WEEK.map((dayName, dayNum) => (
+                  {DAYS_OF_WEEK.map((dayName, i) => {
+                    const dayNum = DAYS_OF_WEEK_INDEX[i];
+                    return (
                     <button
                       key={dayNum}
                       type="button"
@@ -1441,10 +1461,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <span className="text-xs truncate">{dayName.slice(0, 3)}</span>
                       <span className="text-xs mt-1 opacity-75">{newUserForm.selectedOffDays.includes(dayNum) ? "OFF" : "WORK"}</span>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 {newUserForm.selectedOffDays.length > 0 && (
-                  <p className="text-xs text-blue-300">Selected: {newUserForm.selectedOffDays.map((d) => DAYS_OF_WEEK[d]).join(", ")}</p>
+                  <p className="text-xs text-blue-300">Selected: {newUserForm.selectedOffDays.map((d) => DAY_NAME_BY_INDEX[d]).join(", ")}</p>
                 )}
               </div>
 

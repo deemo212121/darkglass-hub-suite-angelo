@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone } from "lucide-react";
@@ -303,6 +302,8 @@ interface VisitLogEntry {
   by: string;
   scheduleDate: string;
   technician: string;
+  /** Optional assisting technician on a "Two Tech" job (Tech Payroll's per-visit second-tech count). */
+  secondTechnician?: string;
   timeSlot: string;
   activity: string;
   actionType: string;
@@ -624,6 +625,15 @@ function isNearAnyTimestamp(entryTimestamp: string, anchors: string[]): boolean 
     const anchorMs = new Date(anchor).getTime();
     return Number.isFinite(anchorMs) && Math.abs(entryMs - anchorMs) <= VISIT_AUDIT_CORRELATION_WINDOW_MS;
   });
+}
+
+// Pulls one "Label: value" field back out of a summarizePartRow()-style
+// snapshot string (e.g. a deleted part's audit-log `before` value) — used
+// to show a deleted part's number/description without re-parsing the
+// whole snapshot.
+function snapshotField(summary: string, label: string): string {
+  const match = summary.match(new RegExp(`(?:^|\\| )${label}: ([^|]*)`));
+  return match ? match[1].trim() : "";
 }
 
 function renderVisitSummary(summary: string, comparedSummary?: string) {
@@ -1148,6 +1158,9 @@ function TicketDetailsPage() {
   const [newVisitNote, setNewVisitNote] = useState("");
   const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
   const [newVisitTechnician, setNewVisitTechnician] = useState("Memphis Admin");
+  // Optional assisting technician on a "Two Tech" job — feeds Tech Payroll's
+  // per-visit second-technician count, distinct from the "2 Man Job" repair_type.
+  const [newVisitSecondTechnician, setNewVisitSecondTechnician] = useState("");
   const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
   const [newVisitActivity, setNewVisitActivity] = useState("");
   const [newVisitActionType, setNewVisitActionType] = useState("SCHEDULE");
@@ -1202,6 +1215,9 @@ function TicketDetailsPage() {
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
   const [isPartListModalOpen, setIsPartListModalOpen] = useState(false);
+  // Which deleted-part audit entry (by entry.id) currently has its full
+  // before-deletion snapshot expanded in the Part Transaction Log modal.
+  const [expandedDeletedPartLogId, setExpandedDeletedPartLogId] = useState<string | null>(null);
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [auditEntriesLoaded, setAuditEntriesLoaded] = useState(false);
@@ -1912,6 +1928,14 @@ function TicketDetailsPage() {
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
     [auditEntries],
+  );
+  // deletePartRow already logs a full before-deletion snapshot (via
+  // summarizePartRow) on every delete — this just surfaces those entries in
+  // the Part Transaction Log modal so a deleted part (and who deleted it)
+  // stays visible instead of silently vanishing once it's gone from partRows.
+  const deletedPartAuditEntries = useMemo(
+    () => partAuditEntries.filter((entry) => entry.action === "Deleted part transaction"),
+    [partAuditEntries],
   );
   // Who has flagged/unflagged this ticket as misdiagnosed, most recent
   // first — shown inline next to the checkbox itself rather than folded
@@ -2757,6 +2781,7 @@ function TicketDetailsPage() {
         by: currentEditor,
         scheduleDate: newVisitScheduleDate,
         technician: newVisitTechnician,
+        secondTechnician: newVisitSecondTechnician || undefined,
         timeSlot: newVisitTimeSlot,
         activity: newVisitActivity,
         actionType: newVisitActionType,
@@ -2779,6 +2804,7 @@ function TicketDetailsPage() {
       by: currentEditor,
       scheduleDate: newVisitScheduleDate,
       technician: newVisitTechnician,
+      secondTechnician: newVisitSecondTechnician || undefined,
       timeSlot: newVisitTimeSlot,
       activity: newVisitActivity,
       actionType: newVisitActionType,
@@ -2905,6 +2931,7 @@ function TicketDetailsPage() {
     setNewVisitStatus("Visited");
     setNewVisitScheduleDate("");
     setNewVisitTechnician(defaultTechnicianForLocation(ticket?.location));
+    setNewVisitSecondTechnician("");
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
     setNewVisitActionType("SCHEDULE");
@@ -3162,6 +3189,7 @@ function TicketDetailsPage() {
     setNewVisitNote(entry.note || "");
     setNewVisitScheduleDate(entry.scheduleDate || "");
     setNewVisitTechnician(entry.technician || "");
+    setNewVisitSecondTechnician(entry.secondTechnician || "");
     setNewVisitTimeSlot(entry.timeSlot || "");
     setNewVisitActivity(entry.activity || "");
     setNewVisitActionType(entry.actionType || "");
@@ -4077,13 +4105,11 @@ function TicketDetailsPage() {
   // multi-role check below piles up the caller's primary role and their
   // extra_roles the same way.
 
-  // Merged technician list for the Add Visit / Edit Schedule
-  // dropdowns. Combines the canonical ALL_TECHNICIANS constant with
+  // Live technician list for the Add Visit / Edit Schedule dropdowns —
   // every Supabase profile that has TECHNICIAN as primary role OR in
-  // extra_roles — so multi-role users like Daven Hodge (BizOps + Tech)
+  // extra_roles, so multi-role users like Daven Hodge (BizOps + Tech)
   // show up in the technician picker. De-duplicated, sorted
-  // alphabetically. Falls back to the static list when the fetch
-  // hasn't completed yet.
+  // alphabetically.
   const [companyTechUsers, setCompanyTechUsers] = useState<string[]>([]);
   useEffect(() => {
     if (!authReady) return;
@@ -4113,12 +4139,14 @@ function TicketDetailsPage() {
     return () => { cancelled = true; };
   }, [authReady]);
   const technicianOptions = useMemo(() => {
-    // De-duplicate across the canonical roster + Supabase-driven names.
-    // The key is aggressive enough to collapse common variants of the
-    // same person (case, whitespace, middle initials, email local part,
-    // trailing "(Tech)" markers) so a user listed in both sources — or
-    // as "Daven Hodge" and "Daven J Hodge" — renders once. We keep the
-    // longer/more-formal string (usually the display_name) as the
+    // De-duplicate the Supabase-driven names (and fold in the ticket's
+    // currently-assigned technician, even if they're no longer an active
+    // TECHNICIAN-role user, so an existing assignment never silently
+    // disappears from its own dropdown). The key is aggressive enough to
+    // collapse common variants of the same person (case, whitespace,
+    // middle initials, email local part, trailing "(Tech)" markers) so a
+    // name like "Daven Hodge" vs "Daven J Hodge" renders once. We keep
+    // the longer/more-formal string (usually the display_name) as the
     // canonical label.
     const canonicalKey = (n: string) =>
       String(n || "")
@@ -4141,10 +4169,10 @@ function TicketDetailsPage() {
         chosen.set(key, t);
       }
     };
-    for (const n of ALL_TECHNICIANS) add(n);
     for (const n of companyTechUsers) add(n);
+    add(ticket?.technician || "");
     return Array.from(chosen.values()).sort((a, b) => a.localeCompare(b));
-  }, [companyTechUsers]);
+  }, [companyTechUsers, ticket?.technician]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
@@ -6920,6 +6948,9 @@ function TicketDetailsPage() {
                                 <div><span className="font-semibold text-amber-200">Schedule:</span> <span className="font-semibold text-white">{entry.scheduleDate || "—"}</span></div>
                                 <div><span className="font-semibold text-amber-200">Technician:</span> <span className="font-semibold text-white">{entry.technician || "—"}</span></div>
                                 <div><span className="font-semibold text-amber-200">Time Slot:</span> <span className="font-semibold text-white">{entry.timeSlot || "—"}</span></div>
+                                {entry.secondTechnician ? (
+                                  <div><span className="font-semibold text-amber-200">2nd Technician:</span> <span className="font-semibold text-white">{entry.secondTechnician}</span></div>
+                                ) : null}
                               </div>
                             </div>
                           ) : (
@@ -6928,6 +6959,9 @@ function TicketDetailsPage() {
                               <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
                               <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
                               <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
+                              {entry.secondTechnician ? (
+                                <div><span className="font-semibold text-slate-400">2nd Technician:</span> {entry.secondTechnician}</div>
+                              ) : null}
                             </div>
                           )}
 
@@ -7040,6 +7074,17 @@ function TicketDetailsPage() {
                           </label>
                           <select id="visit-technician-modal" disabled={editingLockedVisit} value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
                             <option value="">— select —</option>
+                            {technicianOptions.map((technician) => (
+                              <option key={technician} value={technician}>{technician}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label htmlFor="visit-second-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                            2nd Technician{editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
+                          </label>
+                          <select id="visit-second-technician-modal" disabled={editingLockedVisit} value={newVisitSecondTechnician} onChange={(event) => setNewVisitSecondTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <option value="">— none —</option>
                             {technicianOptions.map((technician) => (
                               <option key={technician} value={technician}>{technician}</option>
                             ))}
@@ -7380,6 +7425,9 @@ function TicketDetailsPage() {
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
+                      {viewingVisitEntry.secondTechnician ? (
+                        <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">2nd Technician:</span> {viewingVisitEntry.secondTechnician}</div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -7523,7 +7571,7 @@ function TicketDetailsPage() {
                   <button 
                     type="button"
                     onClick={() => {
-                      if (partRows.length === 0) {
+                      if (partRows.length === 0 && deletedPartAuditEntries.length === 0) {
                         alert('No parts to view');
                         return;
                       }
@@ -8389,6 +8437,62 @@ function TicketDetailsPage() {
                       ))
                     )}
                   </div>
+
+                  {/* Deleted parts — same audit trail deletePartRow already
+                      writes on every delete, just surfaced here so a removed
+                      part (and who removed it) doesn't just vanish. */}
+                  {deletedPartAuditEntries.length > 0 && (
+                    <div className="mt-6 border-t border-white/10 pt-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                        Deleted Parts
+                      </p>
+                      <p className="text-sm text-slate-400 mt-1 mb-3">
+                        {deletedPartAuditEntries.length} deleted part{deletedPartAuditEntries.length === 1 ? '' : 's'}
+                      </p>
+                      <div className="space-y-3">
+                        {deletedPartAuditEntries.map((entry) => {
+                          const expanded = expandedDeletedPartLogId === entry.id;
+                          const partNo = snapshotField(entry.before, "Part No") || "(no part #)";
+                          const partDesc = snapshotField(entry.before, "Part Desc");
+                          return (
+                            <div key={entry.id} className="border border-red-500/20 rounded-lg bg-red-950/10">
+                              <div className="px-4 py-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h4 className="text-base font-semibold text-slate-400 line-through decoration-2">{partNo}</h4>
+                                      <span className="rounded border border-red-400/30 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-300">
+                                        Deleted
+                                      </span>
+                                    </div>
+                                    {partDesc ? <div className="text-sm text-slate-400 mb-1">{partDesc}</div> : null}
+                                    <div className="text-xs text-slate-500">
+                                      Deleted by <span className="text-slate-300">{entry.by}</span> on {new Date(entry.timestamp).toLocaleString()}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="rounded border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-white/10"
+                                    onClick={() => setExpandedDeletedPartLogId(expanded ? null : entry.id)}
+                                  >
+                                    {expanded ? "Hide Snapshot" : "View Snapshot"}
+                                  </button>
+                                </div>
+                                {expanded && (
+                                  <div className="mt-3 border-t border-white/10 pt-3">
+                                    <div className="text-xs text-slate-400 font-semibold mb-2">
+                                      Full record at time of deletion
+                                    </div>
+                                    {renderVisitSummary(entry.before)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}

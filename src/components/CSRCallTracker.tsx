@@ -133,7 +133,7 @@ export function CSRCallTracker({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {/* Chart */}
         <div className="panel p-4 mb-4">
           <p className="text-sm font-semibold mb-4">Calls & Tickets Per Agent (top 14)</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} debounce={200}>
             <BarChart data={barData} margin={{ left: -10 }}>
               <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />

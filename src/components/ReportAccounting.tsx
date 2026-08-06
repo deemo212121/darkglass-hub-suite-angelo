@@ -252,7 +252,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           {monthlyChartData.length === 0 ? (
             <p className="text-xs text-muted-foreground py-16 text-center">No payroll runs generated yet.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={220} debounce={200}>
               <BarChart data={monthlyChartData} margin={{ left: -10 }}>
                 <XAxis dataKey="month" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

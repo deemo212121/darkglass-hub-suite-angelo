@@ -6,6 +6,11 @@ import { usePersistedTab } from "@/lib/usePersistedTab";
 import { LOCATIONS } from "@/lib/locations";
 import {
   DEFAULT_REPAIR_TYPE,
+  REPAIR_TYPES,
+  BASE_RATE_TYPES,
+  MANUAL_PAY_TYPES,
+  CROSS_REFERENCE_TYPES,
+  ACHIEVEMENT_BONUS_TYPES,
   getTechRepairRates,
   upsertTechRepairRate,
   deleteTechRepairRate,
@@ -14,15 +19,6 @@ import {
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
-// Matches the real "Repair Type (2nd Tech)" dropdown on a ticket's Visit Log
-// (ticket.$ticketNo.tsx) plus DEFAULT_REPAIR_TYPE, the fallback rate used
-// when a completed visit has no repair_type set.
-const REPAIR_TYPES = [
-  DEFAULT_REPAIR_TYPE,
-  "2 Man Job", "Back Tub", "Major Repair", "Panel 60 Over", "Panel 80 Over",
-  "Seal with Trainee", "Sealed System", "Sealed System Follow Up",
-  "Sealed System(R600)", "Stacked Unit(Washer Only)", "Wall Oven",
-];
 const ALL_BRANCHES = "__ALL__";
 
 export function TechPayrollSetup({ mod, sub }: Props) {
@@ -130,7 +126,7 @@ export function TechPayrollSetup({ mod, sub }: Props) {
       {tab==="amount" && (
         <div className="panel p-0 overflow-hidden">
           <p className="px-4 pt-3 text-xs text-muted-foreground">
-            The $ amount a technician earns per completed repair ticket of this type. A branch-specific rate overrides the "All Branches" rate for that same repair type. "{DEFAULT_REPAIR_TYPE}" is the fallback used when a completed visit has no repair type set.
+            The $ amount a technician earns per completed repair ticket of this type. A branch-specific rate overrides the "All Branches" rate for that same repair type. "{DEFAULT_REPAIR_TYPE}" is the fallback used when a completed visit has no repair type set. "Completed Tickets" is a flat rate paid on every completed (non-redo) ticket regardless of its repair type — on top of, not instead of, that ticket's own repair-type rate. LDT, Mileage, and Training Paid work the same way rate-wise, but the count/value is entered manually per technician per period on the Tech Payroll tab instead of being counted from completed tickets. "Two Tech" is auto-counted like a repair type, but from how many completed visits this technician was the assisting (2nd) technician on. "MCA Threshold" holds the minimum completed-ticket count required for the period (not a dollar amount); "MCA Bonus" is the flat amount paid when a technician meets it.
           </p>
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
             <span className="text-sm text-muted-foreground"><span className="text-foreground font-medium">{filteredRates.length}</span> record{filteredRates.length===1?"":"s"} found</span>
@@ -149,7 +145,21 @@ export function TechPayrollSetup({ mod, sub }: Props) {
                 <tr className="border-b border-white/5">
                   <td className="px-3 py-2">
                     <select aria-label="Repair type" value={newRepairType} onChange={(e)=>setNewRepairType(e.target.value)} className="glass-input text-xs py-1 px-2 rounded w-44">
-                      {REPAIR_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      <optgroup label="Repair Type (per completed ticket)">
+                        {REPAIR_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </optgroup>
+                      <optgroup label="Base Rate (every completed ticket)">
+                        {BASE_RATE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </optgroup>
+                      <optgroup label="Manual (entered per period)">
+                        {MANUAL_PAY_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </optgroup>
+                      <optgroup label="Cross-reference (auto-counted)">
+                        {CROSS_REFERENCE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </optgroup>
+                      <optgroup label="Achievement Bonus (MCA)">
+                        {ACHIEVEMENT_BONUS_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </optgroup>
                     </select>
                   </td>
                   <td className="px-3 py-2">

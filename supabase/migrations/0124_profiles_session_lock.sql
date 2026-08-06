@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0120 — One active session per account
+-- 0124 — One active session per account
 --
 -- current_session_id is minted fresh on every real interactive login (see
 -- src/lib/server/supabaseTokenBridge.ts's recordLogin branch) and compared
@@ -14,7 +14,7 @@
 -- live updates — see 0037/0052) instead of waiting for its next 45-min
 -- token refresh.
 --
--- Run once in the Supabase SQL Editor, after 0119.
+-- Run once in the Supabase SQL Editor, after 0123.
 -- =====================================================================
 
 alter table profiles add column if not exists current_session_id uuid;

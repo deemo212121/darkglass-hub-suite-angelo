@@ -4147,7 +4147,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         {departmentTrendData.length === 0 ? (
           <p className="text-xs text-muted-foreground py-8 text-center">No warnings, terminations, or resignations in this window.</p>
         ) : (
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={260} debounce={200}>
             <BarChart data={departmentTrendData} margin={{ left: -10 }}>
               <XAxis dataKey="department" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-25} textAnchor="end" height={55} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />

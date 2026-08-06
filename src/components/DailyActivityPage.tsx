@@ -498,7 +498,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
               {overallDailySeries.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-8 text-center">No activity to chart for this range.</p>
               ) : (
-                <ResponsiveContainer width="100%" height={260}>
+                <ResponsiveContainer width="100%" height={260} debounce={200}>
                   <LineChart data={overallDailySeries} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
@@ -638,7 +638,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
                   {detailsDailySeries.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-8 text-center">No activity to chart yet.</p>
                   ) : (
-                    <ResponsiveContainer width="100%" height={300}>
+                    <ResponsiveContainer width="100%" height={300} debounce={200}>
                       <LineChart data={detailsDailySeries} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />

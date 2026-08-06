@@ -8,7 +8,7 @@ import { getModule, getSubModule } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, ROLE_OPTIONS } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -28,36 +28,6 @@ export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   },
   component: UserDetailsPage,
 });
-
-const ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "ADMIN", label: "Admin" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "SENIOR_MANAGER", label: "Senior Manager" },
-  { value: "CSR", label: "CSR" },
-  { value: "TECHNICIAN", label: "Technician" },
-  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
-  { value: "DISPATCHER", label: "Dispatcher" },
-  { value: "CLAIMS", label: "Claims" },
-  { value: "HR", label: "HR" },
-  { value: "IT", label: "IT" },
-  { value: "PARTS", label: "Parts" },
-  { value: "FINANCE", label: "Finance" },
-  { value: "CSR_AGENT", label: "CSR Agent" },
-  { value: "CSR_TEAM_LEADER", label: "CSR Team Leader" },
-  { value: "CSR_MANAGER", label: "CSR Manager" },
-  { value: "BRANCH_MANAGER", label: "Branch Manager" },
-  { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
-  { value: "CLAIMS_MANAGER", label: "Claims Manager" },
-  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
-  { value: "PARTS_MANAGER", label: "Parts Manager" },
-  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
-  { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
-  { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Technical Support" },
-  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
-  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
-  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
-].sort((a, b) => a.label.localeCompare(b.label));
 
 /**
  * Multi-select dropdown for User Type. Mirrors the look + behavior of the

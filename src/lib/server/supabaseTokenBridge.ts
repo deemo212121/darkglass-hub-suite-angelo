@@ -480,7 +480,7 @@ async function recordLoginEvent(
 }
 
 /**
- * One active session per account (migration 0120) — mints a fresh
+ * One active session per account (migration 0124) — mints a fresh
  * current_session_id on a real interactive login (recordLogin=true),
  * claiming this device as the one true session. Every other call (the
  * 45-min background refresh, tab-focus, or a persisted session restoring on

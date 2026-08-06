@@ -202,7 +202,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ["daily-attendance", "pto-management", "corrections", "warnings"],
     "daily-attendance",
   );
-  const [summaryView, setSummaryView] = useState<"weekly" | "monthly">("weekly");
+  const [summaryView, setSummaryView] = useState<"weekly" | "monthly" | "custom">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [summaryDepartmentFilter, setSummaryDepartmentFilter] = useState<string>("all");
@@ -225,6 +225,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [notifyTeamLead, setNotifyTeamLead] = useState(false);
   const [alertModalOpen, setAlertModalOpen] = useState(false);
   const [selectedAlertType, setSelectedAlertType] = useState<"missing-clockin" | "missing-clockout" | "late-arrival" | null>(null);
+  // Custom Attendance Summary — clicking a row's Present/Absent/Late count
+  // opens a day-by-day breakdown for that one employee over the picked range.
+  const [customDetailModal, setCustomDetailModal] = useState<{ profileId: string; name: string; type: "present" | "absent" | "late" } | null>(null);
   const [showPtoForm, setShowPtoForm] = useState(false);
   const [ptoForm, setPtoForm] = useState({ profileId: "", ptoType: "vacation" as PtoType, startDate: "", endDate: "", reason: "" });
   const [ptoFormHireDate, setPtoFormHireDate] = useState<string | null>(null);
@@ -353,6 +356,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return map;
   }, [dailyDate, rangeStart, rangeEnd, entries, dailyDateEntries]);
 
+  // Custom Attendance Summary — lets HR/managers pick any date range instead
+  // of being limited to the current week or month-to-date. Defaults to the
+  // same window already loaded (rangeStart/rangeEnd) so switching to Custom
+  // shows real data immediately, before the user picks their own dates.
+  const [customRangeStart, setCustomRangeStart] = useState<string>(rangeStart);
+  const [customRangeEnd, setCustomRangeEnd] = useState<string>(rangeEnd);
+  const [customRangeEntries, setCustomRangeEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [customRangeLoading, setCustomRangeLoading] = useState(false);
+  // Same "only fetch when outside what's already loaded" rule as dailyDateEntries above.
+  const customRangeCovered = customRangeStart >= rangeStart && customRangeEnd <= rangeEnd;
+  useEffect(() => {
+    if (summaryView !== "custom" || customRangeCovered) { setCustomRangeEntries([]); return; }
+    if (!ready || !uid || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return;
+    let cancelled = false;
+    setCustomRangeLoading(true);
+    getCompanyTimecardEntries(customRangeStart, customRangeEnd)
+      .then((rows) => { if (!cancelled) setCustomRangeEntries(rows); })
+      .finally(() => { if (!cancelled) setCustomRangeLoading(false); });
+    return () => { cancelled = true; };
+  }, [summaryView, customRangeStart, customRangeEnd, customRangeCovered, ready, uid]);
+
   // PTO eligibility for whoever is selected in the New PTO Request form —
   // hire date lives in profiles.employee_info, fetched on demand per
   // selection rather than bulk-loaded for the whole roster.
@@ -423,6 +447,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     entries.forEach((e) => map.set(`${e.profileId}|${e.workDate}`, e));
     return map;
   }, [entries]);
+
+  const customEntriesByKey = useMemo(() => {
+    if (customRangeCovered) return entriesByKey;
+    const map = new Map<string, CompanyTimecardEntry>();
+    customRangeEntries.forEach((e) => map.set(`${e.profileId}|${e.workDate}`, e));
+    return map;
+  }, [customRangeCovered, entriesByKey, customRangeEntries]);
 
   const isDailyDateToday = dailyDate === todayISO;
   const dailyDateLabel = isDailyDateToday ? "Today" : dailyDate;
@@ -510,10 +541,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const filteredAndSortedData = (dateRangeActive ? rangeRecords : dailyRecords)
     .filter((record) => {
+      // Employees who never clocked in for this date don't belong in the
+      // Daily Attendance Tracker table at all — it's a list of the day's
+      // actual attendance, not a roster. They're still counted in the
+      // Absent KPI card and the Missing Clock-In alert above, just not
+      // listed row-by-row here.
+      if (record.checkIn === "—") return false;
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartment !== "all" && record.department !== filterDepartment) return false;
       if (filterLocation !== "all" && record.location !== filterLocation) return false;
-      if (completeOnly && (record.checkIn === "—" || record.checkOut === "—")) return false;
+      // checkIn is already guaranteed above — this now only additionally
+      // requires a completed checkOut.
+      if (completeOnly && record.checkOut === "—") return false;
       return true;
     })
     .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
@@ -615,6 +654,73 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
   }, [summaryProfiles, entriesByKey]);
+
+  // ---- Custom-range summary — same shape as monthlySummary above, just
+  // over whatever [customRangeStart, customRangeEnd] the user picked instead
+  // of a fixed week/month-to-date window. ----
+  const customSummary = useMemo(() => {
+    if (!customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
+    const start = new Date(customRangeStart + "T00:00:00");
+    const end = new Date(customRangeEnd + "T00:00:00");
+    return summaryProfiles.map((p) => {
+      const offDays = new Set<number>(p.off_days ?? []);
+      let workingDays = 0;
+      let present = 0;
+      let late = 0;
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const iso = toISODate(d);
+        if (iso > todayISO) break; // don't count days that haven't happened yet as absences
+        const dow = d.getDay();
+        if (offDays.has(dow)) continue;
+        workingDays++;
+        const entry = customEntriesByKey.get(`${p.id}|${iso}`);
+        const checkIn = entry?.checkIn || "";
+        const checkOut = entry?.checkOut || "";
+        if (checkIn) present++;
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null);
+        if (alerts.some((a) => a.includes("Late"))) late++;
+      }
+      const absent = Math.max(0, workingDays - present);
+      const pct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 100;
+      const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
+      return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
+    });
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO]);
+
+  // Day-by-day breakdown behind the Custom Attendance Summary's Present/
+  // Absent/Late numbers — same day-iteration/off-day rules as customSummary
+  // above, just returning one row per day instead of an aggregate count.
+  // Only computed on demand (the modal is rarely open), so a plain function
+  // rather than a memo.
+  interface CustomDayDetail {
+    date: string;
+    checkIn: string;
+    mealStart: string;
+    mealEnd: string;
+    checkOut: string;
+    isLate: boolean;
+  }
+  const buildCustomDayDetails = (profileId: string): CustomDayDetail[] => {
+    const p = summaryProfiles.find((pr) => pr.id === profileId);
+    if (!p || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
+    const offDays = new Set<number>(p.off_days ?? []);
+    const start = new Date(customRangeStart + "T00:00:00");
+    const end = new Date(customRangeEnd + "T00:00:00");
+    const days: CustomDayDetail[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = toISODate(d);
+      if (iso > todayISO) break;
+      if (offDays.has(d.getDay())) continue;
+      const entry = customEntriesByKey.get(`${p.id}|${iso}`);
+      const checkIn = entry?.checkIn || "";
+      const checkOut = entry?.checkOut || "";
+      const mealStart = entry?.mealStart || "";
+      const mealEnd = entry?.mealEnd || "";
+      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null);
+      days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
+    }
+    return days;
+  };
 
   // ---- Warnings tab: month-to-date late counts, tardiest first ----
   const warnEmployees = useMemo(() => {
@@ -1099,7 +1205,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* Filters and Search for Daily */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-5">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
                     <input
@@ -1172,31 +1278,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               {/* Daily Attendance Table */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  {/* The single-date picker/Jump-to-Today control lives up in the
+                      page header (drives the KPI cards too) — not duplicated
+                      here. This heading just reflects whichever mode is active. */}
                   <h2 className="text-lg font-bold text-white">
                     {dateRangeActive
                       ? `Attendance — ${filterDateFrom} to ${filterDateTo}`
                       : `Daily Attendance Tracker — ${dailyDate}`}
                   </h2>
-                  {!dateRangeActive && (
-                    <div className="flex items-center gap-2">
-                      {!isDailyDateToday && (
-                        <button
-                          type="button"
-                          onClick={() => setDailyDate(todayISO)}
-                          className="text-xs px-2 py-1.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition"
-                        >
-                          Jump to Today
-                        </button>
-                      )}
-                      <input
-                        type="date"
-                        value={dailyDate}
-                        max={todayISO}
-                        onChange={(e) => e.target.value && setDailyDate(e.target.value)}
-                        className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                  )}
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -1302,10 +1391,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     >
                       Monthly
                     </button>
+                    <button
+                      onClick={() => setSummaryView("custom")}
+                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${summaryView === "custom" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                    >
+                      Custom
+                    </button>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex flex-wrap items-center gap-3">
                     {summaryView === "weekly" && (
-                      <>
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs text-slate-400 uppercase">Day</span>
                         <select
                           value={weeklyDayFilter}
@@ -1328,19 +1423,42 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <option value="present">Checked In</option>
                           <option value="absent">Absent</option>
                         </select>
-                      </>
+                      </div>
                     )}
-                    <span className="text-xs text-slate-400 uppercase">Department</span>
-                    <select
-                      value={summaryDepartmentFilter}
-                      onChange={(e) => setSummaryDepartmentFilter(e.target.value)}
-                      className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="all">All Departments</option>
-                      {departments.map((dept) => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
+                    {summaryView === "custom" && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="date"
+                          value={customRangeStart}
+                          max={customRangeEnd || todayISO}
+                          onChange={(e) => e.target.value && setCustomRangeStart(e.target.value)}
+                          className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                        />
+                        <span className="text-slate-500 text-sm">to</span>
+                        <input
+                          type="date"
+                          value={customRangeEnd}
+                          min={customRangeStart || undefined}
+                          max={todayISO}
+                          onChange={(e) => e.target.value && setCustomRangeEnd(e.target.value)}
+                          className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                        />
+                        {customRangeLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400 uppercase">Department</span>
+                      <select
+                        value={summaryDepartmentFilter}
+                        onChange={(e) => setSummaryDepartmentFilter(e.target.value)}
+                        className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="all">All Departments</option>
+                        {departments.map((dept) => (
+                          <option key={dept} value={dept}>{dept}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1447,6 +1565,78 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     ))}
                   </tbody>
                 </table>
+              </div>
+              )}
+
+              {/* Custom-range Attendance */}
+              {summaryView === "custom" && (
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+                <h2 className="text-lg font-bold text-white mb-4">
+                  Custom Attendance Summary {customRangeStart && customRangeEnd ? `(${customRangeStart} – ${customRangeEnd})` : ""}
+                </h2>
+                {!customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd ? (
+                  <p className="text-sm text-slate-400">Pick a valid start and end date above.</p>
+                ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Total Days</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Present</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Absent</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Late</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Attendance %</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customSummary.map((row) => (
+                      <tr key={row.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
+                        <td className="px-3 py-3 text-white font-medium">
+                          <a href={`/employee/${row.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                            {row.name}
+                          </a>
+                        </td>
+                        <td className="px-3 py-3 text-center text-slate-300">{row.workingDays}</td>
+                        <td className="px-3 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setCustomDetailModal({ profileId: row.profileId, name: row.name, type: "present" })}
+                            disabled={row.present === 0}
+                            className="text-green-300 font-semibold hover:underline disabled:no-underline disabled:cursor-default"
+                          >
+                            {row.present}
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setCustomDetailModal({ profileId: row.profileId, name: row.name, type: "absent" })}
+                            disabled={row.absent === 0}
+                            className="text-red-300 font-semibold hover:underline disabled:no-underline disabled:cursor-default"
+                          >
+                            {row.absent}
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setCustomDetailModal({ profileId: row.profileId, name: row.name, type: "late" })}
+                            disabled={row.late === 0}
+                            className="text-yellow-300 font-semibold hover:underline disabled:no-underline disabled:cursor-default"
+                          >
+                            {row.late}
+                          </button>
+                        </td>
+                        <td className="px-3 py-3 text-center text-white font-semibold">{row.pct}%</td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${row.status === "Good" ? "bg-green-500/20 text-green-300 border-green-500/30" : row.status === "Warning" ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" : "bg-red-500/20 text-red-300 border-red-500/30"}`}>{row.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                )}
               </div>
               )}
             </>
@@ -2258,6 +2448,97 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           </div>
         )}
+
+        {/* Custom Attendance Summary — per-employee day-by-day detail behind
+            the Present/Absent/Late counts. */}
+        {customDetailModal && (() => {
+          const allDays = buildCustomDayDetails(customDetailModal.profileId);
+          const days =
+            customDetailModal.type === "present"
+              ? allDays.filter((d) => d.checkIn)
+              : customDetailModal.type === "late"
+                ? allDays.filter((d) => d.checkIn && d.isLate)
+                : allDays.filter((d) => !d.checkIn);
+          const typeLabel = customDetailModal.type === "present" ? "Present" : customDetailModal.type === "late" ? "Late" : "Absent";
+          const badgeClass =
+            customDetailModal.type === "present"
+              ? "bg-green-500/20 text-green-300 border-green-500/40"
+              : customDetailModal.type === "late"
+                ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/40"
+                : "bg-red-500/20 text-red-300 border-red-500/40";
+          const fmtDay = (iso: string) =>
+            new Date(iso + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+          return (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setCustomDetailModal(null)}>
+              <div className="bg-slate-900 border border-white/10 rounded-lg max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">{customDetailModal.name}</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">{typeLabel} — {customRangeStart} – {customRangeEnd}</p>
+                  </div>
+                  <button onClick={() => setCustomDetailModal(null)} className="p-1 hover:bg-white/10 rounded transition">
+                    <svg className="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                  {days.length === 0 ? (
+                    <p className="text-sm text-slate-400">No days to show.</p>
+                  ) : customDetailModal.type === "absent" ? (
+                    <div className="space-y-2">
+                      {days.map((d) => (
+                        <div key={d.date} className="flex items-center justify-between bg-slate-800/50 border border-red-500/30 rounded-lg px-4 py-3">
+                          <span className="text-white font-medium">{fmtDay(d.date)}</span>
+                          <span className={`inline-block px-3 py-1 text-xs font-semibold rounded border ${badgeClass}`}>Absent</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {days.map((d) => (
+                        <div key={d.date} className="bg-slate-800/50 border border-white/10 rounded-lg px-4 py-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-white font-medium">{fmtDay(d.date)}</span>
+                            {d.isLate && (
+                              <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded border ${badgeClass}`}>Late</span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                            <div>
+                              <p className="text-slate-500 uppercase text-[10px] mb-1">Time In</p>
+                              <p className="text-slate-200 font-mono">{d.checkIn || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 uppercase text-[10px] mb-1">Meal In</p>
+                              <p className="text-slate-200 font-mono">{d.mealStart || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 uppercase text-[10px] mb-1">Meal Out</p>
+                              <p className="text-slate-200 font-mono">{d.mealEnd || "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 uppercase text-[10px] mb-1">Time Out</p>
+                              <p className="text-slate-200 font-mono">{d.checkOut || "—"}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="border-t border-white/10 px-6 py-4">
+                  <button
+                    onClick={() => setCustomDetailModal(null)}
+                    className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </main>
     </div>
   );
