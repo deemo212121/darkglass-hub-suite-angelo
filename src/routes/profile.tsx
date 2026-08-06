@@ -5,9 +5,13 @@ import { useAuth } from "@/lib/auth";
 import { Save, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
-import { getMyFullProfile, getCompanyUsers, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
+import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
+
+// Canonical department list for the Department dropdown (admin-tier
+// self-edit only — see ACCOUNT_FIELD_EDIT_ROLES below).
+const DEPARTMENT_OPTIONS = ["Admin", "BizOps", "Branch Manager", "Claims", "Parts", "Technician", "Triage", "Executives"];
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
 const SCHEDULE_EDIT_ROLES = new Set([
@@ -89,10 +93,6 @@ function ProfilePage() {
   // Auth update call is needed at all — same convention as the admin-side
   // user editor (m.$module.$submodule.$userId.tsx).
   const [originalEmail, setOriginalEmail] = useState("");
-  // Live distinct department values already in use across the company —
-  // populates the Department dropdown instead of a hardcoded list. Only
-  // fetched for admin-tier viewers, since only they can edit this field.
-  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
 
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
@@ -204,25 +204,6 @@ function ProfilePage() {
       cancelled = true;
     };
   }, [uid]);
-
-  // Department dropdown options — every distinct, non-empty department
-  // value already in use across the company's real profiles, instead of a
-  // hardcoded list. Only fetched for admin-tier viewers, since only they
-  // can edit this field.
-  useEffect(() => {
-    if (!canEditAccountFields) return;
-    let cancelled = false;
-    getCompanyUsers()
-      .then((users) => {
-        if (cancelled) return;
-        const distinct = Array.from(new Set(users.map((u) => (u.department || "").trim()).filter(Boolean)));
-        setDepartmentOptions(distinct.sort((a, b) => a.localeCompare(b)));
-      })
-      .catch((err) => console.error("Failed to load department options:", err));
-    return () => {
-      cancelled = true;
-    };
-  }, [canEditAccountFields]);
 
   const save = async () => {
     if (!profileId) {
@@ -496,10 +477,10 @@ function ProfilePage() {
                 className="glass-input"
               >
                 <option value="">Select a department</option>
-                {departmentOptions.map((d) => (
+                {DEPARTMENT_OPTIONS.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
-                {profile.department && !departmentOptions.includes(profile.department) && (
+                {profile.department && !DEPARTMENT_OPTIONS.includes(profile.department) && (
                   <option value={profile.department}>{profile.department}</option>
                 )}
               </select>
