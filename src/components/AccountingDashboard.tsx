@@ -2861,9 +2861,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </tr>
                   ) : (
                     payrollRuns.map((run) => (
-                      <>
+                      <Fragment key={run.id}>
                         <tr
-                          key={run.id}
                           className="border-b border-white/5 hover:bg-white/5 cursor-pointer"
                           onClick={() => toggleRun(run.id)}
                         >
@@ -3035,7 +3034,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     ))
                   )}
                 </tbody>
