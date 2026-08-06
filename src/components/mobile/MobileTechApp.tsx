@@ -367,12 +367,14 @@ export function MobileTechApp() {
   // scoped to the manager's allowed locations (assigned_branch / branch_access).
   const roster = useMemo(() => {
     // Include users who have TECHNICIAN as their primary role OR in
-    // extra_roles. Daven Hodge is a manager+technician, for example.
+    // extra_roles (e.g. a manager+technician), but only while active — a
+    // deactivated tech shouldn't still show up in the roster.
     const techUsers = users.filter((u) => {
+      if (!u.is_active) return false;
       const primary = (u.role || "").toUpperCase();
-      if (primary === "TECHNICIAN") return true;
+      if (primary.includes("TECHNICIAN")) return true;
       const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
-      return extras.some((r) => String(r).toUpperCase() === "TECHNICIAN");
+      return extras.some((r) => String(r).toUpperCase().includes("TECHNICIAN"));
     });
     const inScope = techUsers.filter((u) => {
       if (allowedLocations === null) return true;

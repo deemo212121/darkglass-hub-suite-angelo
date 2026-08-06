@@ -17,6 +17,7 @@ import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns
 import { resolveTierCode } from "@/lib/tierCodes";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import type { TechnicianOption } from "@/lib/supabase/users";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 import {
   buildSquaretradeUrlFromToken,
@@ -4106,73 +4107,35 @@ function TicketDetailsPage() {
   // extra_roles the same way.
 
   // Live technician list for the Add Visit / Edit Schedule dropdowns —
-  // every Supabase profile that has TECHNICIAN as primary role OR in
-  // extra_roles, so multi-role users like Daven Hodge (BizOps + Tech)
-  // show up in the technician picker. De-duplicated, sorted
-  // alphabetically.
-  const [companyTechUsers, setCompanyTechUsers] = useState<string[]>([]);
+  // every ACTIVE technician (primary role TECHNICIAN/TECHNICIAN_MANAGER, or
+  // either in extra_roles, so multi-role users like Daven Hodge (BizOps +
+  // Tech) show up), sourced from getCompanyTechnicians() — the same
+  // is_active-filtered roster used by Work Planner and every other
+  // technician picker in the app. The ticket's own currently-assigned
+  // technician is always folded in, even if they're no longer an active
+  // TECHNICIAN-role user, so an existing assignment never silently
+  // disappears from its own dropdown.
+  const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
   useEffect(() => {
     if (!authReady) return;
     let cancelled = false;
     (async () => {
       try {
-        const { getCompanyUsers } = await import("@/lib/supabase/users");
-        const rows = await getCompanyUsers();
-        if (cancelled) return;
-        const names = new Set<string>();
-        for (const u of rows as any[]) {
-          const primary = String(u?.role ?? "").toUpperCase();
-          const extras = ((u?.extra_roles as string[] | null | undefined) ?? []).map((r) =>
-            String(r ?? "").toUpperCase(),
-          );
-          if (primary === "TECHNICIAN" || extras.includes("TECHNICIAN")) {
-            const name = String(u?.display_name || u?.username || u?.email || "").trim();
-            if (name) names.add(name);
-          }
-        }
-        setCompanyTechUsers(Array.from(names));
+        const { getCompanyTechnicians } = await import("@/lib/supabase/users");
+        const rows = await getCompanyTechnicians();
+        if (!cancelled) setLiveTechnicians(rows);
       } catch (err) {
-        console.warn("technician user list load failed:", err);
-        if (!cancelled) setCompanyTechUsers([]);
+        console.warn("technician roster load failed:", err);
+        if (!cancelled) setLiveTechnicians([]);
       }
     })();
     return () => { cancelled = true; };
   }, [authReady]);
   const technicianOptions = useMemo(() => {
-    // De-duplicate the Supabase-driven names (and fold in the ticket's
-    // currently-assigned technician, even if they're no longer an active
-    // TECHNICIAN-role user, so an existing assignment never silently
-    // disappears from its own dropdown). The key is aggressive enough to
-    // collapse common variants of the same person (case, whitespace,
-    // middle initials, email local part, trailing "(Tech)" markers) so a
-    // name like "Daven Hodge" vs "Daven J Hodge" renders once. We keep
-    // the longer/more-formal string (usually the display_name) as the
-    // canonical label.
-    const canonicalKey = (n: string) =>
-      String(n || "")
-        .toLowerCase()
-        .replace(/@.*$/g, "") // drop email domain
-        .replace(/\(.*?\)/g, "") // drop parenthetical tags
-        .replace(/[^a-z\s]/g, " ") // strip punctuation
-        .replace(/\b[a-z]\b/g, "") // strip single-letter middle initials
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const chosen = new Map<string, string>();
-    const add = (raw: string) => {
-      const t = String(raw || "").trim();
-      if (!t) return;
-      const key = canonicalKey(t);
-      if (!key) return;
-      const existing = chosen.get(key);
-      if (!existing || t.length > existing.length) {
-        chosen.set(key, t);
-      }
-    };
-    for (const n of companyTechUsers) add(n);
-    add(ticket?.technician || "");
-    return Array.from(chosen.values()).sort((a, b) => a.localeCompare(b));
-  }, [companyTechUsers, ticket?.technician]);
+    const names = new Set<string>(liveTechnicians.map((t) => t.name));
+    if (ticket?.technician) names.add(ticket.technician);
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [liveTechnicians, ticket?.technician]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
