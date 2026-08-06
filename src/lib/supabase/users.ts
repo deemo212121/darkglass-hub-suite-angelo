@@ -353,6 +353,34 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   return rows;
 }
 
+/** One real, active technician — canonical shape returned by getCompanyTechnicians(). */
+export interface TechnicianOption {
+  name: string;
+  /** assigned_branch, for branch-scoped views (Work Planner columns, Work Map's per-location list). "" if unset. */
+  branch: string;
+}
+
+/**
+ * Real, active technicians for the caller's company — role === "TECHNICIAN"
+ * or "TECHNICIAN_MANAGER", whether that's the primary role or a secondary
+ * one (extra_roles). Canonical live source for every technician dropdown/
+ * roster in the app, replacing the old hand-maintained static list
+ * (TECHNICIANS_BY_LOCATION / ALL_TECHNICIANS in src/lib/locations.ts),
+ * which needed a manual code edit on every hire/departure and silently
+ * drifted from who's actually active.
+ */
+export async function getCompanyTechnicians(): Promise<TechnicianOption[]> {
+  const users = await getCompanyUsers();
+  return users
+    .filter((u) => {
+      const roles = [u.role, ...(u.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
+      return u.is_active && (roles.includes("TECHNICIAN") || roles.includes("TECHNICIAN_MANAGER"));
+    })
+    .map((u) => ({ name: u.display_name || u.email, branch: u.assigned_branch || "" }))
+    .filter((t) => t.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface EmployeeInfo {
   bankName?: string;
   routingNumber?: string;

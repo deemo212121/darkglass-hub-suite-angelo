@@ -3,7 +3,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from 
 import { Link } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { ALL_TECHNICIANS, LOCATIONS, getTechniciansForLocation, normalizeLocationName } from "@/lib/locations";
+import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame, normalizeTimePeriod } from "@/lib/timeframes";
@@ -13,7 +13,7 @@ import {
   getLatestVisitTechnicianByTicketIds,
 } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
-import type { TechnicianHome } from "@/lib/supabase/users";
+import { getCompanyTechnicians, type TechnicianOption, type TechnicianHome } from "@/lib/supabase/users";
 import { lookupZip } from "@/lib/zipCoverage";
 import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
@@ -145,7 +145,7 @@ function techColor(roster: readonly string[], techName: string): string {
   return idx >= 0 ? TECH_COLORS[idx % TECH_COLORS.length] : "#3B82F6";
 }
 
-function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
+function createPlannerTickets(rows: TicketRecord[], liveTechnicians: TechnicianOption[]): PlannerTicket[] {
   // Daily schedule should hide cancelled work — drop them at the source so
   // they never appear on the planner board, map, or counts. "Need Cancel"
   // is still an open work item (CSR requested cancellation but it isn't
@@ -165,8 +165,10 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
     const rawSlot = String(row.slot || row.timeSlot || row.schedulePeriod || "").trim();
     const slot: TimeFrame = normalizeTimePeriod(rawSlot) ?? "ANYTIME";
     
-    const techRoster = getTechniciansForLocation(normalizeBranch(row.location || row.city || row.branch));
-    const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || ALL_TECHNICIANS[index % ALL_TECHNICIANS.length] || "Unassigned";
+    const branch = normalizeBranch(row.location || row.city || row.branch);
+    const techRoster = liveTechnicians.filter((t) => t.branch === branch).map((t) => t.name);
+    const allTechNames = liveTechnicians.map((t) => t.name);
+    const technician = row.technician || techRoster[index % Math.max(techRoster.length, 1)] || allTechNames[index % Math.max(allTechNames.length, 1)] || "Unassigned";
     
     // Build complete address with street, city, state, and zip for accurate geocoding
     const streetAddress = row.customer_address || row.address || "";
@@ -213,11 +215,11 @@ function createPlannerTickets(rows: TicketRecord[]): PlannerTicket[] {
   });
 }
 
-function getSelectedTechRoster(location: string) {
+function getSelectedTechRoster(location: string, liveTechnicians: TechnicianOption[]) {
   if (!location) return [];
-  const roster = getTechniciansForLocation(location);
+  const roster = liveTechnicians.filter((t) => t.branch === location).map((t) => t.name);
   if (roster.length) return roster;
-  return ALL_TECHNICIANS.slice(0, 8);
+  return liveTechnicians.map((t) => t.name);
 }
 
 export function WorkPlannerPage({ mod, sub }: Props) {
@@ -226,6 +228,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     ? (LOCATION_OPTIONS as unknown as string[])
     : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
   const [location, setLocation] = useState("");
+  // Real, active technicians (role=TECHNICIAN, primary or secondary) — the
+  // planner's technician columns, map markers/colors, and auto-assignment
+  // fallback all read from this instead of the old hand-maintained static
+  // roster in locations.ts.
+  const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
+  useEffect(() => {
+    getCompanyTechnicians()
+      .then(setLiveTechnicians)
+      .catch((err) => console.error("Work Planner: failed to load technician roster:", err));
+  }, []);
   const [plannerDate, setPlannerDate] = useState(() => getLocalDateStr());
   const [showRescheduled, setShowRescheduled] = useState(false);
   const [plannerTickets, setPlannerTickets] = useState<PlannerTicket[]>([]);
@@ -315,7 +327,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         } catch (visitErr) {
           console.warn("Work Planner: tech overlay skipped", visitErr);
         }
-        if (!cancelled) setPlannerTickets(createPlannerTickets(rows));
+        if (!cancelled) setPlannerTickets(createPlannerTickets(rows, liveTechnicians));
       } catch (err) {
         console.error("Work Planner: failed to load tickets:", err);
         if (!cancelled) setPlannerTickets([]);
@@ -323,7 +335,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     };
     if (ready) load();
     return () => { cancelled = true; };
-  }, [ready]);
+  }, [ready, liveTechnicians]);
 
   // Hydrate the location cache (localStorage) from Supabase so the Work Map's
   // office pin can use saved coordinates/addresses even if the user never
@@ -374,7 +386,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const selectedTechRoster = useMemo(() => getSelectedTechRoster(location), [location]);
+  const selectedTechRoster = useMemo(() => getSelectedTechRoster(location, liveTechnicians), [location, liveTechnicians]);
 
   const visibleTickets = useMemo(() => {
     const selectedDate = plannerDate;
@@ -950,7 +962,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         // Reload from Supabase to revert the optimistic change.
         try {
           const rows = (await getCompanyTickets()) as unknown as TicketRecord[];
-          setPlannerTickets(createPlannerTickets(rows));
+          setPlannerTickets(createPlannerTickets(rows, liveTechnicians));
         } catch { /* ignore */ }
         dragSourceRef.current = null;
         return;

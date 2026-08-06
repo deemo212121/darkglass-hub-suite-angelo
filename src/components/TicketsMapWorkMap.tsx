@@ -4,10 +4,11 @@ import { Link } from "@tanstack/react-router";
 import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CalendarDays, ChevronLeft, ChevronDown, MapPin, X } from "lucide-react";
-import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName, TECHNICIANS_BY_LOCATION } from "@/lib/locations";
+import { WORK_MAP_LOCATIONS, mergeLocationOptions, normalizeLocationName } from "@/lib/locations";
 import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
 import { getCompanyTickets, getCsrVisitDatesByTicketIds, getLatestVisitTechnicianByTicketIds } from "@/lib/supabase/tickets";
 import { getLocations as sbGetLocations } from "@/lib/supabase/locationManagement";
+import { getCompanyTechnicians, type TechnicianOption } from "@/lib/supabase/users";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -105,6 +106,14 @@ function getStatusDotClass(status: "ready" | "op" | "clNeed" | "comp") {
 
 export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [selectedLocation, setSelectedLocation] = useState("");
+  // Real, active technicians (role=TECHNICIAN, primary or secondary) —
+  // replaces the old static TECHNICIANS_BY_LOCATION seed list.
+  const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
+  useEffect(() => {
+    getCompanyTechnicians()
+      .then(setLiveTechnicians)
+      .catch((err) => console.error("Work Map: failed to load technician roster:", err));
+  }, []);
   const [selectedTicket, setSelectedTicket] = useState<TicketRecord | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>("status");
   const [sidebarTab, setSidebarTab] = usePersistedTab<SidebarTab>(
@@ -465,16 +474,20 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
   // Get all technicians for the selected location (not just those with scheduled tickets)
   const uniqueTechnicians = useMemo(() => {
-    // First, get technicians from the selected location's roster
-    const locationTechs = selectedLocation ? (TECHNICIANS_BY_LOCATION[selectedLocation] || []) : [];
-    
-    // Also include any technicians that have tickets scheduled (in case they're not in the roster)
+    // First, get real active technicians for the selected location (or
+    // everyone if no location is picked yet).
+    const locationTechs = liveTechnicians
+      .filter((t) => !selectedLocation || t.branch === selectedLocation)
+      .map((t) => t.name);
+
+    // Also include any technicians that have tickets scheduled (in case
+    // they're not an active user, e.g. a historical/former technician).
     const ticketTechs = visibleTickets.map(t => t.technician_name || t.technician).filter(Boolean);
-    
+
     // Combine and deduplicate, prioritizing roster order
     const combined = [...locationTechs, ...ticketTechs];
     return Array.from(new Set(combined)).filter(tech => tech !== "Unassigned");
-  }, [selectedLocation, visibleTickets]);
+  }, [selectedLocation, visibleTickets, liveTechnicians]);
 
   // Helper to get technician color
   const getTechColor = (techName: string) => {

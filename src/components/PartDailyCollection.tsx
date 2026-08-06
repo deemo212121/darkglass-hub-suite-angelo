@@ -2,10 +2,11 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer, Save, CheckCircle } from "lucide-react";
-import { LOCATIONS, ALL_TECHNICIANS } from "@/lib/locations";
+import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { sendNotificationToRole } from "@/lib/firebase/notifications";
+import { getCompanyTechnicians } from "@/lib/supabase/users";
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -31,6 +32,12 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [startDate,setStartDate]=useState(getDefaultCollectionDate);const [endDate,setEndDate]=useState(getDefaultCollectionDate);
   const [ticketNo,setTicketNo]=useState(""); const [notCollected,setNotCollected]=useState(true);const [collected,setCollected]=useState(false);
   const [restockToast,setRestockToast]=useState("");
+  const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
+  useEffect(() => {
+    getCompanyTechnicians()
+      .then((techs) => setTechnicianRoster(techs.map((t) => t.name)))
+      .catch((err) => console.error("Failed to load technician roster:", err));
+  }, []);
 
   // Feature 4: When collect type is set to "Restock" and saved, auto-fire
   // a notification to Parts Manager role that this part is back in stock.
@@ -70,7 +77,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         </div>
         <div className="flex flex-col gap-1 min-w-[160px] flex-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
           <button ref={techD.ref} onClick={()=>setTechOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2"><span className={tech?"":"text-muted-foreground"}>{tech||"All Technicians"}</span><Chev o={techOpen}/></button>
-          {techOpen&&techD.pos&&createPortal(<div ref={techL} style={{...DS,top:techD.pos.top,left:techD.pos.left,width:techD.pos.width}}><button onClick={()=>{setTech("");setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===""?"bg-blue-600 text-white":"text-slate-400"}`}>— All —</button>{ALL_TECHNICIANS.map((t,i)=><button key={i} onClick={()=>{setTech(t);setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===t?"bg-blue-600 text-white":""}`}>{t}</button>)}</div>,document.body)}
+          {techOpen&&techD.pos&&createPortal(<div ref={techL} style={{...DS,top:techD.pos.top,left:techD.pos.left,width:techD.pos.width}}><button onClick={()=>{setTech("");setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===""?"bg-blue-600 text-white":"text-slate-400"}`}>— All —</button>{technicianRoster.map((t,i)=><button key={i} onClick={()=>{setTech(t);setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===t?"bg-blue-600 text-white":""}`}>{t}</button>)}</div>,document.body)}
         </div>
         <div className="flex flex-col gap-1 min-w-[140px]"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pickup Date</label>
           <button ref={dtD.ref} onClick={()=>setDtOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2"><span>{dateType}</span><Chev o={dtOpen}/></button>

@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { ALL_TECHNICIANS } from "@/lib/locations";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone } from "lucide-react";
@@ -4086,13 +4085,11 @@ function TicketDetailsPage() {
   // multi-role check below piles up the caller's primary role and their
   // extra_roles the same way.
 
-  // Merged technician list for the Add Visit / Edit Schedule
-  // dropdowns. Combines the canonical ALL_TECHNICIANS constant with
+  // Live technician list for the Add Visit / Edit Schedule dropdowns —
   // every Supabase profile that has TECHNICIAN as primary role OR in
-  // extra_roles — so multi-role users like Daven Hodge (BizOps + Tech)
+  // extra_roles, so multi-role users like Daven Hodge (BizOps + Tech)
   // show up in the technician picker. De-duplicated, sorted
-  // alphabetically. Falls back to the static list when the fetch
-  // hasn't completed yet.
+  // alphabetically.
   const [companyTechUsers, setCompanyTechUsers] = useState<string[]>([]);
   useEffect(() => {
     if (!authReady) return;
@@ -4122,12 +4119,14 @@ function TicketDetailsPage() {
     return () => { cancelled = true; };
   }, [authReady]);
   const technicianOptions = useMemo(() => {
-    // De-duplicate across the canonical roster + Supabase-driven names.
-    // The key is aggressive enough to collapse common variants of the
-    // same person (case, whitespace, middle initials, email local part,
-    // trailing "(Tech)" markers) so a user listed in both sources — or
-    // as "Daven Hodge" and "Daven J Hodge" — renders once. We keep the
-    // longer/more-formal string (usually the display_name) as the
+    // De-duplicate the Supabase-driven names (and fold in the ticket's
+    // currently-assigned technician, even if they're no longer an active
+    // TECHNICIAN-role user, so an existing assignment never silently
+    // disappears from its own dropdown). The key is aggressive enough to
+    // collapse common variants of the same person (case, whitespace,
+    // middle initials, email local part, trailing "(Tech)" markers) so a
+    // name like "Daven Hodge" vs "Daven J Hodge" renders once. We keep
+    // the longer/more-formal string (usually the display_name) as the
     // canonical label.
     const canonicalKey = (n: string) =>
       String(n || "")
@@ -4150,10 +4149,10 @@ function TicketDetailsPage() {
         chosen.set(key, t);
       }
     };
-    for (const n of ALL_TECHNICIANS) add(n);
     for (const n of companyTechUsers) add(n);
+    add(ticket?.technician || "");
     return Array.from(chosen.values()).sort((a, b) => a.localeCompare(b));
-  }, [companyTechUsers]);
+  }, [companyTechUsers, ticket?.technician]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
