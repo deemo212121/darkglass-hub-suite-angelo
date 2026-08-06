@@ -26,16 +26,27 @@ interface Props {
   offDays?: number[];
   /** Pre-computed by the caller via payGraceMinutesFor(country, isTechnician) — see attendanceGrace.ts. Defaults to 0 (no forgiveness) so existing callers aren't required to pass it. */
   graceMinutes?: number;
+  /** The payroll period selected on the caller's own page (e.g. genStart/
+   *  genEnd on AccountingDashboard, startDate/endDate on
+   *  PayrollCalculationPage) — this modal opens scoped to THAT period by
+   *  default, not the current calendar month, so what you see here always
+   *  matches the period you were just looking at. Falls back to the current
+   *  calendar month if omitted. Still freely adjustable via the Start/End
+   *  date pickers once open. */
+  initialStart?: string;
+  initialEnd?: string;
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
 }
 
-function monthBounds(monthStr: string): { start: string; end: string } {
-  const [y, m] = monthStr.split("-").map(Number);
-  const start = `${monthStr}-01`;
+function currentMonthBounds(): { start: string; end: string } {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const start = `${y}-${String(m).padStart(2, "0")}-01`;
   const lastDay = new Date(y, m, 0).getDate();
-  const end = `${monthStr}-${String(lastDay).padStart(2, "0")}`;
+  const end = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   return { start, end };
 }
 
@@ -71,12 +82,16 @@ export function EmployeePayrollDetailModal({
   mealMinutes,
   offDays,
   graceMinutes = 0,
+  initialStart,
+  initialEnd,
   onClose,
   onRateChanged,
 }: Props) {
   const { displayName, email } = useAuth();
   const actorName = displayName || email || "Unknown";
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const fallbackMonth = currentMonthBounds();
+  const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
+  const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [history, setHistory] = useState<SalaryEntryRow[]>([]);
@@ -99,9 +114,8 @@ export function EmployeePayrollDetailModal({
     setLoading(true);
     setRateEdits({});
     try {
-      const { start, end } = monthBounds(month);
       const [attRows, hist] = await Promise.all([
-        getAttendanceForRange(profileId, start, end, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
+        getAttendanceForRange(profileId, rangeStart, rangeEnd, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, daysOff: offDays, graceMinutes }),
         getSalaryHistory(profileId),
       ]);
       if (cancelledRef.current) return;
@@ -119,14 +133,14 @@ export function EmployeePayrollDetailModal({
     load(cancelledRef);
     return () => { cancelledRef.current = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, month]);
+  }, [profileId, rangeStart, rangeEnd]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
   const warnings = useMemo(() => attendance.filter((r) => r.status !== "present"), [attendance]);
-  // The entry effective as of the end of the viewed month — used to decide
+  // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
   // to show the right numbers for whichever it is.
-  const currentEntry = useMemo(() => entryEffectiveOn(history, monthBounds(month).end), [history, month]);
+  const currentEntry = useMemo(() => entryEffectiveOn(history, rangeEnd), [history, rangeEnd]);
   const isCurrentlyFixed = currentEntry?.compensationType === "fixed";
   // Fixed-salary pay doesn't depend on hours worked at all (see migration
   // 0118) — shows the monthly amount for this calendar-month estimate.
@@ -235,14 +249,23 @@ export function EmployeePayrollDetailModal({
             <p className="font-semibold text-white">{employeeName}</p>
             {department && <p className="text-xs text-slate-400">{department}</p>}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
+              type="date"
+              value={rangeStart}
+              max={rangeEnd || undefined}
+              onChange={(e) => setRangeStart(e.target.value)}
               className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
             />
-            <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">
+            <span className="text-slate-500 text-xs">to</span>
+            <input
+              type="date"
+              value={rangeEnd}
+              min={rangeStart || undefined}
+              onChange={(e) => setRangeEnd(e.target.value)}
+              className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white"
+            />
+            <button onClick={onClose} className="text-white/40 hover:text-white/80 transition ml-1">
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -270,7 +293,7 @@ export function EmployeePayrollDetailModal({
               )}
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Est. Pay ({month})</p>
+              <p className="text-xs text-slate-400 uppercase">Est. Pay ({rangeStart} – {rangeEnd})</p>
               <p className="text-xl font-bold text-green-300 mt-1">${computedPay.toFixed(2)}</p>
             </div>
           </div>
@@ -404,7 +427,7 @@ export function EmployeePayrollDetailModal({
           {/* Attendance table */}
           <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-white">Attendance — {month}</h3>
+              <h3 className="text-sm font-semibold text-white">Attendance — {rangeStart} to {rangeEnd}</h3>
               {pendingRateChanges.length > 0 && (
                 <button
                   type="button"
@@ -422,7 +445,7 @@ export function EmployeePayrollDetailModal({
             {loading ? (
               <p className="text-xs text-slate-400 text-center py-4">Loading…</p>
             ) : attendance.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-4">No attendance records for this month.</p>
+              <p className="text-xs text-slate-500 text-center py-4">No attendance records for this period.</p>
             ) : (
               <div className="max-h-64 overflow-y-auto">
                 <table className="w-full text-xs">

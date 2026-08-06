@@ -3056,6 +3056,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
           graceMinutes={payGraceMinutesFor(detailEmployee.country, normalizeRole(detailEmployee.role) === "TECHNICIAN")}
+          initialStart={genStart || undefined}
+          initialEnd={genEnd || undefined}
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}
         />
