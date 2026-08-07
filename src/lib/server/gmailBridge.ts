@@ -371,7 +371,28 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       // handleSendPayslip) and handed over as base64 to attach as-is.
       const pdfBase64 = typeof payload.pdfBase64 === "string" ? payload.pdfBase64 : "";
 
-      const accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Google rejects a dead/revoked refresh token this way — no amount
+        // of retrying or re-refreshing fixes it (there's nothing left to
+        // refresh from); the only fix is redoing the OAuth consent flow to
+        // mint a new one. Most common cause for an internal tool: the
+        // Google Cloud OAuth consent screen is still in "Testing"
+        // publishing status, where refresh tokens hard-expire 7 days after
+        // being issued regardless of activity — publish it to Production
+        // to stop this recurring every week.
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `Your ${region} Gmail connection has expired or was revoked. Click "Connect Gmail" for ${region} Payroll above to reconnect, then try again.`,
+            reauthRequired: true,
+            region,
+          }, 409);
+        }
+        throw err;
+      }
       const fromEmail = connection.connectedEmail || "me";
       const subject = `Your Payslip: ${periodStart} to ${periodEnd}`;
 
