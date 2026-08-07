@@ -34,8 +34,8 @@
 create table if not exists repair_statuses (
   id                          uuid primary key default gen_random_uuid(),
   company_id                  uuid not null references companies(id) on delete cascade,
-  code                        text not null,
-  description                 text not null,
+  code                        text not null default '',
+  description                 text not null default '',
   overall_status              text not null default 'Pending',
   initial_status              text,
   color                       text not null default '#888888',
@@ -52,9 +52,48 @@ create table if not exists repair_statuses (
   early_sms_trigger_flow      text,
   sort_order                   int not null default 0,
   created_at                   timestamptz not null default now(),
-  updated_at                   timestamptz not null default now(),
-  unique (company_id, code)
+  updated_at                   timestamptz not null default now()
 );
+
+-- Defensive — a previous partial run of this same migration (or a stale
+-- table from anywhere else with this name) can leave repair_statuses
+-- existing but missing columns entirely, since `create table if not
+-- exists` above is then a no-op that doesn't add anything it's missing.
+-- Every column gets its own idempotent add here regardless of which
+-- subset already exists, so this migration is safe to just re-run as-is
+-- after a failed first attempt instead of needing to hand-diagnose which
+-- columns actually made it in.
+alter table repair_statuses add column if not exists code text not null default '';
+alter table repair_statuses add column if not exists description text not null default '';
+alter table repair_statuses add column if not exists overall_status text not null default 'Pending';
+alter table repair_statuses add column if not exists initial_status text;
+alter table repair_statuses add column if not exists color text not null default '#888888';
+alter table repair_statuses add column if not exists font_bold boolean not null default false;
+alter table repair_statuses add column if not exists follow_up_dashboard text;
+alter table repair_statuses add column if not exists allowed_roles text[] not null default '{}';
+alter table repair_statuses add column if not exists csr_reschedule_status boolean not null default false;
+alter table repair_statuses add column if not exists part_pending_status boolean not null default false;
+alter table repair_statuses add column if not exists cx_requests_reschedule boolean not null default false;
+alter table repair_statuses add column if not exists dispatch_completed_status boolean not null default false;
+alter table repair_statuses add column if not exists mobile_search boolean not null default false;
+alter table repair_statuses add column if not exists hide_in_mobile boolean not null default false;
+alter table repair_statuses add column if not exists service_power_status text;
+alter table repair_statuses add column if not exists early_sms_trigger_flow text;
+alter table repair_statuses add column if not exists sort_order int not null default 0;
+alter table repair_statuses add column if not exists created_at timestamptz not null default now();
+alter table repair_statuses add column if not exists updated_at timestamptz not null default now();
+
+-- Also defensive, for the same reason — a prior partial run could have
+-- created the table without this constraint.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'repair_statuses_company_id_code_key'
+  ) then
+    alter table repair_statuses add constraint repair_statuses_company_id_code_key unique (company_id, code);
+  end if;
+end $$;
+
 create index if not exists idx_repair_statuses_company on repair_statuses(company_id);
 
 create or replace function repair_statuses_stamp_and_touch()
