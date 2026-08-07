@@ -4200,27 +4200,39 @@ function TicketDetailsPage() {
     ]),
     [],
   );
+  // Triage identifies the part a repair needs, so they can add/edit parts on
+  // an open ticket — but unlike PART_LOCK_BYPASS_ROLES above, they do NOT
+  // bypass the post-claim lock; once a ticket is Claimed / Data Closed it's
+  // still Parts/Claims/Manager-only. Kept as its own set (rather than folded
+  // into PART_LOCK_BYPASS_ROLES) specifically so the lock-bypass stays
+  // untouched for Triage.
+  const TRIAGE_PART_ROLES = useMemo(
+    () => new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]),
+    [],
+  );
   const canUsePartToolbar = useMemo(() => {
     if (isNaveen) return true;
     const primary = String(currentUserRole || "").toUpperCase();
     const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
     // If they hold ANY non-CSR role we consider valid for parts, allow it.
-    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r))) return true;
+    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r) || TRIAGE_PART_ROLES.has(r))) return true;
     // If the user is *only* a CSR-family role, hide the toolbar.
     if (allRoles.every((r) => CSR_ONLY_ROLES.has(r) || !r)) return false;
-    // Everyone else (Technician, Triage, Dispatcher, etc.) also loses
-    // the toolbar per current business rule.
+    // Everyone else (Technician, Dispatcher, etc.) also loses the toolbar
+    // per current business rule.
     return false;
-  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, CSR_ONLY_ROLES]);
+  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, TRIAGE_PART_ROLES, CSR_ONLY_ROLES]);
 
-  // Split of PART_LOCK_BYPASS_ROLES into two disjoint tiers — everyone in
-  // that set can still SEE the Part Transaction toolbar (canUsePartToolbar,
-  // unchanged above), but which specific actions they can actually use now
-  // depends on which tier they're in. Team Leaders/Admins procure (Submit
-  // POs); the day-to-day Parts/Claims/Manager tier maintains the part
-  // records themselves (add/edit/delete/Update). Neither tier overlaps the
-  // other — a mixed-role user (e.g. primary ADMIN + extra_roles PARTS_MANAGER)
-  // gets the union of both, same as every other multi-role check in this file.
+  // Split of PART_LOCK_BYPASS_ROLES (plus Triage, see TRIAGE_PART_ROLES
+  // above) into two disjoint tiers — everyone who can see the Part
+  // Transaction toolbar (canUsePartToolbar) falls into one of these, but
+  // which specific actions they can actually use depends on which tier
+  // they're in. Team Leaders/Admins procure (Submit POs); the day-to-day
+  // Parts/Claims/Manager tier — plus Triage, who identifies the part during
+  // diagnosis — maintains the part records themselves (add/edit/delete/
+  // Update). Neither tier overlaps the other — a mixed-role user (e.g.
+  // primary ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same
+  // as every other multi-role check in this file.
   const PARTS_ORDER_ONLY_ROLES = useMemo(
     () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
     [],
@@ -4237,6 +4249,8 @@ function TicketDetailsPage() {
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
       "BIZOPS_SENIOR_MANAGER",
+      "TRIAGE_USER",
+      "TRIAGE_MANAGER",
     ]),
     [],
   );
