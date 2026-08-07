@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { Save, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Save, Lock, Eye, EyeOff, Loader2, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
@@ -79,6 +79,16 @@ interface RequiredSchedule {
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAYS_OF_WEEK_INDEX = [1, 2, 3, 4, 5, 6, 0];
 const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** One line of the new-password requirements checklist — the check mark only shows once that requirement is actually met. */
+function PasswordRequirement({ met, label }: { met: boolean; label: string }) {
+  return (
+    <li className={`flex items-center gap-1.5 ${met ? "text-emerald-400" : "text-muted-foreground"}`}>
+      <span className="grid place-items-center h-3.5 w-3.5 shrink-0">{met && <Check className="h-3.5 w-3.5" />}</span>
+      {label}
+    </li>
+  );
+}
 
 function ProfilePage() {
   const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
@@ -309,9 +319,21 @@ function ProfilePage() {
     }
   };
 
+  const passwordChecks = useMemo(
+    () => ({
+      length: password.next.length >= 8,
+      upper: /[A-Z]/.test(password.next),
+      lower: /[a-z]/.test(password.next),
+      symbol: /[^A-Za-z0-9]/.test(password.next),
+    }),
+    [password.next]
+  );
+  const passwordMeetsRequirements =
+    passwordChecks.length && passwordChecks.upper && passwordChecks.lower && passwordChecks.symbol;
+
   const changePassword = async () => {
-    if (!password.next || password.next.length < 6) {
-      setSaved("New password must be at least 6 characters.");
+    if (!passwordMeetsRequirements) {
+      setSaved("New password must be 8+ characters and include an uppercase letter, a lowercase letter, and a symbol.");
       return;
     }
     if (password.next !== password.confirm) {
@@ -655,6 +677,12 @@ function ProfilePage() {
                 {showPassword.next ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-1">
+              <PasswordRequirement met={passwordChecks.upper} label="Uppercase 1 required" />
+              <PasswordRequirement met={passwordChecks.lower} label="Lower Case 1 required" />
+              <PasswordRequirement met={passwordChecks.symbol} label="Symbol 1 required" />
+              <PasswordRequirement met={passwordChecks.length} label="8 characters or more" />
+            </ul>
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Confirm new password</span>
@@ -678,7 +706,11 @@ function ProfilePage() {
           </label>
         </div>
         <div className="flex flex-wrap items-start gap-4">
-          <button className="btn btn-primary disabled:opacity-50" onClick={changePassword} disabled={changingPassword}>
+          <button
+            className="btn btn-primary disabled:opacity-50"
+            onClick={changePassword}
+            disabled={changingPassword || !passwordMeetsRequirements || !password.current || password.next !== password.confirm}
+          >
             {changingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {changingPassword ? "Updating…" : "Update password"}
           </button>
