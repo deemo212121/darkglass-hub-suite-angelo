@@ -522,6 +522,17 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const [ticketSourceFilter, setTicketSourceFilter] = useState("");
   const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
   const [misdiagnosedOnlyFilter, setMisdiagnosedOnlyFilter] = useState(false);
+
+  // Notifications that link here (e.g. a Mileage payroll-hold alert) append
+  // ?ticketNo=<no> so the linked ticket shows up immediately instead of
+  // landing on the unfiltered full list — same convention as Part
+  // History's own ?uniqueId= deep link.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ticketNo = params.get("ticketNo");
+    if (ticketNo) setSearchQuery(ticketNo);
+  }, []);
+
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   // Page size: a real number of rows per page, or "all" to show every
   // filtered row at once (the old, unpaginated behavior).

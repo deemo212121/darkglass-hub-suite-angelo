@@ -17,6 +17,7 @@ import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
+import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -174,6 +175,10 @@ export default {
     if (url.pathname === "/api/admin-reset-password") {
       const merged = await resolveServerEnv(env);
       return await handleAdminPasswordRequest(request, merged);
+    }
+    if (url.pathname === "/api/it-bypass-login") {
+      const merged = await resolveServerEnv(env);
+      return await handleItBypassLoginRequest(request, merged);
     }
 
     try {
