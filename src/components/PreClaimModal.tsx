@@ -355,7 +355,12 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
               </div>
               <div>
                 <p className={labelCls}>Pictures</p>
-                <TicketPhotos ticketNo={ticket.ticketNo} category="claim" title="" uploadedBy={displayName || email || undefined} />
+                {/* Same category as the ticket detail page's own Attachments
+                    section (ticket.$ticketNo.tsx) — deliberately NOT a
+                    separate "claim" category, so Pre-Claim always shows the
+                    exact same photos already on the ticket instead of an
+                    empty, disconnected gallery. */}
+                <TicketPhotos ticketNo={ticket.ticketNo} category="service" title="" uploadedBy={displayName || email || undefined} />
               </div>
             </div>
 
