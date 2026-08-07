@@ -23,12 +23,11 @@ export interface RepairStatus {
   mobileSearch: boolean;
   hideInMobile: boolean;
   servicePowerStatus: string;
-  earlySmsTriggerFlow: string;
   sortOrder: number;
 }
 
 const SELECT_COLUMNS =
-  "id, code, description, overall_status, initial_status, color, font_bold, follow_up_dashboard, allowed_roles, csr_reschedule_status, part_pending_status, cx_requests_reschedule, dispatch_completed_status, mobile_search, hide_in_mobile, service_power_status, early_sms_trigger_flow, sort_order";
+  "id, code, description, overall_status, initial_status, color, font_bold, follow_up_dashboard, allowed_roles, csr_reschedule_status, part_pending_status, cx_requests_reschedule, dispatch_completed_status, mobile_search, hide_in_mobile, service_power_status, sort_order";
 
 function rowToRepairStatus(row: any): RepairStatus {
   return {
@@ -48,7 +47,6 @@ function rowToRepairStatus(row: any): RepairStatus {
     mobileSearch: !!row.mobile_search,
     hideInMobile: !!row.hide_in_mobile,
     servicePowerStatus: row.service_power_status ?? "",
-    earlySmsTriggerFlow: row.early_sms_trigger_flow ?? "",
     sortOrder: row.sort_order ?? 0,
   };
 }
@@ -87,7 +85,6 @@ export async function upsertRepairStatus(
     mobile_search: input.mobileSearch ?? false,
     hide_in_mobile: input.hideInMobile ?? false,
     service_power_status: input.servicePowerStatus || null,
-    early_sms_trigger_flow: input.earlySmsTriggerFlow || null,
     ...(input.sortOrder !== undefined ? { sort_order: input.sortOrder } : {}),
   };
   const { data, error } = await supabase

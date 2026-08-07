@@ -8,7 +8,7 @@ import { getRepairStatuses, upsertRepairStatus, deleteRepairStatus, type RepairS
 type DraftRow = Omit<RepairStatus, "id" | "sortOrder"> & { id?: string };
 
 const OVERALL_STATUS_OPTIONS = ["Pending", "Ready to Repair", "Completed", "Cancelled"];
-const SEARCHABLE_FIELDS: Array<keyof DraftRow> = ["code", "description", "overallStatus", "initialStatus", "followUpDashboard", "servicePowerStatus", "earlySmsTriggerFlow"];
+const SEARCHABLE_FIELDS: Array<keyof DraftRow> = ["code", "description", "overallStatus", "initialStatus", "followUpDashboard", "servicePowerStatus"];
 
 const blankDraft: DraftRow = {
   code: "",
@@ -26,7 +26,6 @@ const blankDraft: DraftRow = {
   mobileSearch: false,
   hideInMobile: false,
   servicePowerStatus: "",
-  earlySmsTriggerFlow: "",
 };
 
 function ToggleCell({ checked, onToggle, label }: { checked: boolean; onToggle: (value: boolean) => void; label?: string }) {
@@ -307,7 +306,6 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
                     <th>Mobile Search</th>
                     <th>Hide in Mobile</th>
                     <th>Service Power Status</th>
-                    <th>EarlySMS Trigger Flow</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -332,7 +330,6 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
                     <td><ToggleCell checked={draft.mobileSearch} onToggle={(value) => updateDraft("mobileSearch", value)} /></td>
                     <td><ToggleCell checked={draft.hideInMobile} onToggle={(value) => updateDraft("hideInMobile", value)} /></td>
                     <td><input value={draft.servicePowerStatus} onChange={(event) => updateDraft("servicePowerStatus", event.target.value)} placeholder="e.g. ACCEPTED" /></td>
-                    <td><input value={draft.earlySmsTriggerFlow} onChange={(event) => updateDraft("earlySmsTriggerFlow", event.target.value)} placeholder="Trigger flow" /></td>
                     <td className="action-cell"><span className="link-btn" onClick={saveAll}>Add</span></td>
                   </tr>
 
@@ -357,7 +354,6 @@ export function RepairStatusesPage({ mod }: { mod: ModuleDef }) {
                       <td><ToggleCell checked={row.mobileSearch} onToggle={(value) => updateRow(row.id, "mobileSearch", value)} /></td>
                       <td><ToggleCell checked={row.hideInMobile} onToggle={(value) => updateRow(row.id, "hideInMobile", value)} /></td>
                       <td><input value={row.servicePowerStatus} onChange={(event) => updateRow(row.id, "servicePowerStatus", event.target.value)} /></td>
-                      <td><input value={row.earlySmsTriggerFlow} onChange={(event) => updateRow(row.id, "earlySmsTriggerFlow", event.target.value)} /></td>
                       <td className="action-cell">
                         <span className="link-btn" onClick={() => removeRow(row)}>Delete</span>
                       </td>

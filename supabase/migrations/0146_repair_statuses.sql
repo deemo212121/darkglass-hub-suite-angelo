@@ -60,7 +60,6 @@ create table if not exists repair_statuses (
   mobile_search                boolean not null default false,
   hide_in_mobile               boolean not null default false,
   service_power_status        text,
-  early_sms_trigger_flow      text,
   sort_order                   int not null default 0,
   created_at                   timestamptz not null default now(),
   updated_at                   timestamptz not null default now(),
