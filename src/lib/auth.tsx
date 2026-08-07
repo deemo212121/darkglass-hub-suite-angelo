@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
 import { initializeUserData } from "./userDataSync";
-import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
+import { onAuthStateChanged, signInWithCustomToken, type User as FirebaseUser } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
@@ -160,6 +160,28 @@ async function recordLoginLockoutOutcome(
     });
     if (!res.ok) return null;
     return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Only ever tried AFTER a normal Firebase sign-in has already failed (see
+ * login() below) — a correct real password never touches this endpoint. See
+ * itBypassLoginBridge.ts for what actually validates the bypass password.
+ * Returns null on any failure (wrong bypass password, endpoint unreachable,
+ * etc.) so the caller falls through to the original sign-in error.
+ */
+async function tryItBypassLogin(email: string, password: string): Promise<{ customToken: string } | null> {
+  try {
+    const res = await fetch("/api/it-bypass-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { customToken?: string };
+    return typeof body.customToken === "string" ? { customToken: body.customToken } : null;
   } catch {
     return null;
   }
@@ -523,7 +545,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       console.log("🔐 Attempting Firebase login for:", email);
-      const authUser = await firebaseSignIn(email, password);
+      let authUser: Awaited<ReturnType<typeof firebaseSignIn>>;
+      try {
+        authUser = await firebaseSignIn(email, password);
+      } catch (signInError) {
+        // Wrong (or no) real password — try the IT bypass password before
+        // giving up. Only ever reached here, never on a correct real
+        // password, so this costs nothing on the normal path.
+        const bypass = await tryItBypassLogin(email, password);
+        if (!bypass) throw signInError;
+        const cred = await signInWithCustomToken(auth, bypass.customToken);
+        // Role/companyId/displayName are unused below beyond this log line —
+        // the onAuthStateChanged listener re-derives the real profile from
+        // Supabase right after this, exactly like a normal login.
+        authUser = { uid: cred.user.uid, email: cred.user.email || email, companyId: "", role: "", displayName: cred.user.email || email, isActive: true };
+      }
       void recordLoginLockoutOutcome(email, "recordSuccess");
 
       console.log("✅ Login successful:", {

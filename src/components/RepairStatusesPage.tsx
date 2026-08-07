@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Save, Settings2, Download, Printer, Trash2, X } from "lucide-react";
 import type { ModuleDef } from "@/lib/modules";
 
-type RepairStatusRow = {
+export type RepairStatusRow = {
   code: string;
   description: string;
   overallStatus: string;
@@ -98,7 +98,12 @@ const INITIAL_ROWS: RepairStatusRow[] = [
   { code: "WP", description: "OP-Waiting for Part", overallStatus: "Pending", initialStatus: "Accepted", status: "Orange", color: "Orange", fontBold: false, followUp: "Do not show", csr: true, partMgr: true, tech: true, csrRescheduleStatus: true, partPendingStatus: true, cxRequestsReschedule: true, dispatchCompletedStatus: false, mobileSearch: false, hideInMobile: false, updateDispatchersStatus: false, earlySmsTriggerFlow: "", actions: "Delete" },
 ];
 
-function loadRows() {
+/** Reads the admin-configured rows (falls back to the seed defaults) — the
+ *  same source Repair Statuses itself edits, so any other screen wanting to
+ *  color-code by status (per this page's own note: "CSS color for repair
+ *  status will be applied in To-do list, Ticket list, Work Planner...")
+ *  can read it here rather than keeping a separate hardcoded copy. */
+export function loadRows(): RepairStatusRow[] {
   if (typeof window === "undefined") return INITIAL_ROWS;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);

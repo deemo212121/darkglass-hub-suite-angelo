@@ -176,6 +176,11 @@ export interface TechRepairCount {
  * excluded outright here rather than counted then subtracted, since this
  * model pays per repair_type bucket rather than one flat completed-count rate.
  *
+ * Also skips any ticket Finance has manually put on hold for payroll via the
+ * Mileage tab's On Hold action (mileage_entries.payroll_excluded, migration
+ * 0144) — stays excluded while on hold even though this ticket did
+ * genuinely complete, but it's reversible (see setMileageEntryPayrollExcluded).
+ *
  * visits has no branch/redo of its own (only its parent ticket does), so this
  * does the same two-step "fetch, then join by ticket_id via a Map" pattern
  * as getLatestVisitTechnicianByTicketIds/getVisitsByTicketIds instead of a
@@ -203,17 +208,24 @@ export async function getTechCompletedRepairCounts(
   if (completed.length === 0) return [];
 
   const ticketIds = Array.from(new Set(completed.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase
-    .from("tickets")
-    .select("id, location, redo")
-    .in("id", ticketIds);
+  const [{ data: ticketRows, error: tErr }, { data: excludedRows, error: exErr }] = await Promise.all([
+    supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
+    // Tickets Finance has put on hold for payroll via the Mileage tab's On
+    // Hold action (migration 0144) — while flagged, a ticket that's
+    // genuinely completed still never counts toward pay, but it's
+    // reversible. Same "skip this ticket_id" treatment as redo below.
+    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
+  ]);
   if (tErr) console.error("getTechCompletedRepairCounts (ticket location) error:", tErr.message);
+  if (exErr) console.error("getTechCompletedRepairCounts (payroll exclusions) error:", exErr.message);
   const locationByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, t.location || ""]));
   const redoByTicket = new Map((ticketRows ?? []).map((t: any) => [t.id, !!t.redo]));
+  const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
 
   const counts = new Map<string, TechRepairCount>();
   for (const r of completed as any[]) {
     if (redoByTicket.get(r.ticket_id)) continue;
+    if (excludedTicketIds.has(r.ticket_id)) continue;
     const technician = String(r.technician).trim();
     const repairType = String(r.repair_type || "").trim() || DEFAULT_REPAIR_TYPE;
     const branch = locationByTicket.get(r.ticket_id) || "";
