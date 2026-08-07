@@ -34,6 +34,14 @@ export interface TicketClaimDetails {
   extraMileFee: number;
   mileageFee: number;
   poAmount: number;
+  // ServicePower submission result (migration 0145) — set once "Submit to
+  // ServicePower" (PreClaimModal.tsx) has been used at least once.
+  spClaimBatchNumber: string;
+  spClaimSequenceNumber: string;
+  spClaimStatusCode: string;
+  spClaimStatusDescription: string;
+  spSubmittedAt: string;
+  spLastResponse: unknown;
 }
 
 function rowToClaimDetails(row: any): TicketClaimDetails {
@@ -63,6 +71,12 @@ function rowToClaimDetails(row: any): TicketClaimDetails {
     extraMileFee: Number(row.extra_mile_fee) || 0,
     mileageFee: Number(row.mileage_fee) || 0,
     poAmount: Number(row.po_amount) || 0,
+    spClaimBatchNumber: row.sp_claim_batch_number ?? "",
+    spClaimSequenceNumber: row.sp_claim_sequence_number ?? "",
+    spClaimStatusCode: row.sp_claim_status_code ?? "",
+    spClaimStatusDescription: row.sp_claim_status_description ?? "",
+    spSubmittedAt: row.sp_submitted_at ?? "",
+    spLastResponse: row.sp_last_response ?? null,
   };
 }
 
@@ -129,6 +143,12 @@ export async function upsertTicketClaimDetails(
   if (fields.extraMileFee !== undefined) payload.extra_mile_fee = fields.extraMileFee;
   if (fields.mileageFee !== undefined) payload.mileage_fee = fields.mileageFee;
   if (fields.poAmount !== undefined) payload.po_amount = fields.poAmount;
+  if (fields.spClaimBatchNumber !== undefined) payload.sp_claim_batch_number = fields.spClaimBatchNumber || null;
+  if (fields.spClaimSequenceNumber !== undefined) payload.sp_claim_sequence_number = fields.spClaimSequenceNumber || null;
+  if (fields.spClaimStatusCode !== undefined) payload.sp_claim_status_code = fields.spClaimStatusCode || null;
+  if (fields.spClaimStatusDescription !== undefined) payload.sp_claim_status_description = fields.spClaimStatusDescription || null;
+  if (fields.spSubmittedAt !== undefined) payload.sp_submitted_at = fields.spSubmittedAt || null;
+  if (fields.spLastResponse !== undefined) payload.sp_last_response = fields.spLastResponse;
 
   const { data, error } = await supabase
     .from("ticket_claim_details")

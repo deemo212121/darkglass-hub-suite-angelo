@@ -9,14 +9,14 @@
  *
  * Supported actions:
  *  - getCallInfo: query work orders (calls) from the SOAP Dispatch Web Service.
- *  - test/retrieveClaim/createRFA/retrieveRFA: REST Claims/RFA endpoints.
+ *  - test/retrieveClaim/submitClaim/createRFA/retrieveRFA: REST Claims/RFA endpoints.
  *
  * Credentials are read from the passed-in env (Cloudflare binding) or
  * process.env (Node/dev).
  */
 
 interface ServicePowerRequestBody {
-  action: 'test' | 'retrieveClaim' | 'createRFA' | 'retrieveRFA' | 'getCallInfo' | 'getCallNotes' | 'addCallNote';
+  action: 'test' | 'retrieveClaim' | 'submitClaim' | 'createRFA' | 'retrieveRFA' | 'getCallInfo' | 'getCallNotes' | 'addCallNote';
   params?: any;
 }
 
@@ -24,6 +24,7 @@ const ENDPOINTS = {
   staging: {
     na: {
       claimsRetrieval: 'https://upgdev.servicepower.com:8443/services/claim/v1/retrieval',
+      claimsSubmission: 'https://upgdev.servicepower.com:8443/services/claim/v1/submission',
       createRFA: 'https://upgdev.servicepower.com:8443/services/rfa/v2/setdetailssvc',
       retrieveRFA: 'https://upgdev.servicepower.com:8443/services/rfa/v2/getdetails',
     },
@@ -31,6 +32,7 @@ const ENDPOINTS = {
   production: {
     na: {
       claimsRetrieval: 'https://claimworks.servicepower.com:8443/services/claim/v1/retrieval',
+      claimsSubmission: 'https://claimworks.servicepower.com:8443/services/claim/v1/submission',
       createRFA: 'https://claimworks.servicepower.com:8443/services/rfa/v2/setdetailssvc',
       retrieveRFA: 'https://claimworks.servicepower.com:8443/services/rfa/v2/getdetails',
     },
@@ -338,6 +340,30 @@ export async function handleServicePowerRequest(
             envServicerNumber ||
             svcrAcct,
           authentication: { userId, password },
+        };
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        return json(data);
+      }
+
+      case 'submitClaim': {
+        // Creates or updates one or more claims. Unlike retrieveClaim above,
+        // manufacturerName/serviceCenterNumber aren't resolved here — the
+        // caller (buildServicePowerClaimPayload, see servicePowerClaimPayload.ts)
+        // already has the real ticket data and sets them per-claim itself, so
+        // there's no ticketNo-only lookup to fall back from. This action is a
+        // thin pass-through: inject authentication, forward params.claims as-is.
+        const endpoint = (ENDPOINTS as any)[envName][region].claimsSubmission;
+        if (!Array.isArray(params?.claims) || params.claims.length === 0) {
+          return json({ success: false, error: 'params.claims must be a non-empty array' }, 400);
+        }
+        const payload = {
+          authentication: { userId, password },
+          claims: params.claims,
         };
         const response = await fetch(endpoint, {
           method: 'POST',

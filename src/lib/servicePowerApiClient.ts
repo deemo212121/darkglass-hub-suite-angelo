@@ -7,6 +7,8 @@
 
 import type {
   ClaimsRetrievalResponse,
+  ClaimSubmissionClaim,
+  ClaimSubmissionResponse,
   CreateRFAResponse,
   RetrieveRFAResponse,
 } from '@/types/servicePower';
@@ -87,6 +89,38 @@ export async function retrieveClaim(params: {
       // Treat ServicePower "ER" responses as logical failures. Some are
       // expected (claim not on file, bad input) but persistent ER bursts
       // still warrant an admin heads-up.
+      isFailure: (r) => Boolean(r && (r as any).responseCode === "ER"),
+      describeFailure: (r) =>
+        (r as any)?.messages?.map((m: any) => m.message).join("; ") ||
+        "ServicePower responded with ER",
+    },
+  );
+}
+
+/**
+ * Submit (create, or update if claim.existingClaimBatchNumber/
+ * existingClaimSequenceNumber are set) one or more claims. Pass fully-built
+ * ClaimSubmissionClaim objects — see buildServicePowerClaimPayload in
+ * servicePowerClaimPayload.ts, which assembles one from a ticket's already-
+ * captured data so nothing has to be manually retyped per claim.
+ */
+export async function submitClaim(claims: ClaimSubmissionClaim[]): Promise<ClaimSubmissionResponse> {
+  const { runWithApiHealth } = await import("./apiHealth");
+  return runWithApiHealth(
+    "servicePower.submitClaim",
+    async () => {
+      const response = await fetch('/api/servicepower', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submitClaim', params: { claims } }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to submit claim');
+      }
+      return response.json() as Promise<ClaimSubmissionResponse>;
+    },
+    {
       isFailure: (r) => Boolean(r && (r as any).responseCode === "ER"),
       describeFailure: (r) =>
         (r as any)?.messages?.map((m: any) => m.message).join("; ") ||

@@ -9,6 +9,7 @@ import {
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { useAuth } from "@/lib/auth";
+import { buildServicePowerClaimPayload } from "@/lib/servicePowerClaimPayload";
 
 interface Props {
   ticket: Ticket;
@@ -64,6 +65,8 @@ const emptyForm = (): FormState => ({
   repairLevel: "", serviceType: "", jobCode: "", repairType: "", diagnosticOnly: false,
   partsOnlyWarranty: false, failureDefectCode: "", resolutionCode: "", laborFee: 0,
   otherFee: 0, shippingFee: 0, extraMileFee: 0, mileageFee: 0, poAmount: 0,
+  spClaimBatchNumber: "", spClaimSequenceNumber: "", spClaimStatusCode: "",
+  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null,
 });
 
 /**
@@ -82,6 +85,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [parts, setParts] = useState<UIPartRow[]>([]);
   const [checkedPartIds, setCheckedPartIds] = useState<Set<string>>(new Set());
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
+  const [submittingToSP, setSubmittingToSP] = useState(false);
+  const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +152,75 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     }
   };
 
+  // Saves whatever's currently in the form (so a fee just typed in doesn't
+  // get left behind), builds the claim entirely from that + the ticket's
+  // own data (buildServicePowerClaimPayload — no manual re-entry), submits
+  // it to ServicePower, and stores the returned batch/sequence/status back
+  // onto this ticket's claim details so a later resubmission updates the
+  // same claim instead of creating a duplicate.
+  const handleSubmitToServicePower = async () => {
+    setSubmittingToSP(true);
+    setSpMessage(null);
+    try {
+      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, email || displayName || null);
+      setForm((prev) => ({ ...prev, ...saved }));
+      onSaved(ticket.ticketNo, saved);
+
+      const { claim, warnings, error } = buildServicePowerClaimPayload(
+        ticket, saved, parts, customerComplaint, servicePerformed, partFee,
+      );
+      if (error || !claim) {
+        setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });
+        return;
+      }
+
+      const { submitClaim } = await import("@/lib/servicePowerApiClient");
+      const response = await submitClaim([claim]);
+      const result = response.claims?.[0];
+
+      if (!result) {
+        setSpMessage({
+          type: "error",
+          text: response.messages?.map((m) => m.message).join("; ") || "ServicePower returned no result for this claim.",
+        });
+        return;
+      }
+
+      const updated = await upsertTicketClaimDetails(ticket.ticketNo, {
+        spClaimBatchNumber: result.claimBatchNumber != null ? String(result.claimBatchNumber) : "",
+        spClaimSequenceNumber: result.claimSequenceNumber != null ? String(result.claimSequenceNumber) : "",
+        spClaimStatusCode: result.claimStatusCode || "",
+        spClaimStatusDescription: result.claimStatusDescription || "",
+        spSubmittedAt: new Date().toISOString(),
+        spLastResponse: response,
+      }, email || displayName || null);
+      setForm((prev) => ({ ...prev, ...updated }));
+      onSaved(ticket.ticketNo, updated);
+
+      const errorTexts = [
+        ...(result.errors?.map((e) => e.errorDescription) ?? []),
+        ...(result.messages?.map((m) => m.message) ?? []),
+      ];
+      const warnText = warnings.length > 0 ? ` (${warnings.join(" ")})` : "";
+
+      if (result.claimResponseCode === "OK") {
+        setSpMessage({
+          type: errorTexts.length > 0 ? "error" : "success",
+          text:
+            `Submitted — ServicePower status: ${result.claimStatusDescription || result.claimStatusCode || "OK"}` +
+            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}` : "") +
+            warnText,
+        });
+      } else {
+        setSpMessage({ type: "error", text: errorTexts.join("; ") || "ServicePower rejected this claim." });
+      }
+    } catch (err) {
+      setSpMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to submit to ServicePower." });
+    } finally {
+      setSubmittingToSP(false);
+    }
+  };
+
   const togglePartChecked = (id: string) =>
     setCheckedPartIds((prev) => {
       const next = new Set(prev);
@@ -199,6 +273,15 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               Submit Pre-Claim
             </button>
+            <button
+              onClick={handleSubmitToServicePower}
+              disabled={submittingToSP || loading}
+              title="Builds the claim from this ticket's own data (no retyping) and files it with ServicePower"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
+            >
+              {submittingToSP && <Loader2 className="h-4 w-4 animate-spin" />}
+              Submit to ServicePower
+            </button>
             <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">
               <X className="h-5 w-5" />
             </button>
@@ -211,6 +294,25 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
           </div>
         ) : (
           <div className="overflow-y-auto flex-1 p-5 space-y-6">
+            {spMessage && (
+              <div
+                className={`text-sm rounded-lg p-3 border whitespace-pre-wrap ${
+                  spMessage.type === "success"
+                    ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+                    : "text-red-300 bg-red-500/10 border-red-500/30"
+                }`}
+              >
+                {spMessage.text}
+              </div>
+            )}
+            {!spMessage && form.spClaimBatchNumber && (
+              <div className="text-xs text-slate-400 rounded-lg p-2.5 border border-white/10 bg-slate-800/30">
+                Already on ServicePower — Batch {form.spClaimBatchNumber} / Seq {form.spClaimSequenceNumber}
+                {form.spClaimStatusDescription ? ` — Status: ${form.spClaimStatusDescription}` : ""}
+                {form.spSubmittedAt ? ` (last submitted ${new Date(form.spSubmittedAt).toLocaleString()})` : ""}.
+                Submitting again updates this same claim.
+              </div>
+            )}
             {/* Ticket / Customer / Product info + Pictures */}
             <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

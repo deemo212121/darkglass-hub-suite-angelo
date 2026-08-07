@@ -75,6 +75,131 @@ export interface ClaimsRetrievalResponse {
 }
 
 // ============================================================================
+// Claims Submission API Types
+// ============================================================================
+
+/** One line of ClaimSubmissionClaim.parts — "number" is the only mandatory field. */
+export interface ClaimSubmissionPart {
+  number: string;
+  quantity?: number;
+  description?: string;
+  schematicLocation?: string;
+  invoiceNumber?: string;
+  priceRequested?: number;
+  returned?: 'Y' | 'N';
+  distributorNumber?: string;
+  faultCode?: string;
+  jobCode?: string;
+}
+
+/**
+ * One entry of the Claims array POSTed to services/claim/v1/submission.
+ * manufacturerName + claimNumber are the only two elements the API itself
+ * marks Mandatory; everything else is optional but, per the integration
+ * guide, any field omitted on an UPDATE (existingClaimBatchNumber set)
+ * is treated as blank/zero and overwrites whatever SP already has — see
+ * buildServicePowerClaimPayload (servicePowerClaimPayload.ts), which always
+ * sends the claim's full current state rather than a partial diff.
+ */
+export interface ClaimSubmissionClaim {
+  manufacturerName: string;
+  distributorNumber?: string;
+  serviceCenterNumber?: string;
+  serviceCenterLocationCode?: string;
+  serviceCenterLocationName?: string;
+  claimNumber: string;
+  customerFirstName?: string;
+  customerLastName?: string;
+  customerAddress1?: string;
+  customerAddress2?: string;
+  customerCity?: string;
+  customerState?: string;
+  customerCountryCode?: string;
+  customerZipCode?: string;
+  customerPhone?: string;
+  customerType?: string;
+  customerEmail?: string;
+  demographicCode?: string;
+  brandName?: string;
+  modelNumber?: string;
+  serialNumber?: string;
+  datePurchased?: string; // CCYYMMDD
+  eiaDefectOrComplaintCode?: string;
+  defectOrComplaintDescription?: string;
+  servicePerformedDescription?: string;
+  eiaRepairCode1?: string;
+  eiaRepairCode2?: string;
+  eiaRepairCode3?: string;
+  eiaRepairCode4?: string;
+  reworkNumberOrPolicy?: string;
+  warrantyType?: string;
+  repairCategory?: string;
+  stockRepairFlag?: 'Y' | 'N';
+  type?: string;
+  /** DO NOT PASS on a new claim — only when updating one SP already assigned an id to. */
+  existingClaimBatchNumber?: number;
+  /** DO NOT PASS on a new claim — only when updating one SP already assigned an id to. */
+  existingClaimSequenceNumber?: number;
+  dateReceived?: string; // CCYYMMDD
+  dateRequested?: string; // CCYYMMDD
+  dateStarted?: string; // CCYYMMDD
+  dateCompleted?: string; // CCYYMMDD
+  callNumber?: string;
+  dealerNumber?: string;
+  dealerName?: string;
+  dealerAddress?: string;
+  dealerCity?: string;
+  dealerState?: string;
+  dealerZipCode?: string;
+  laborAmount?: number;
+  partsAmount?: number;
+  otherAmount?: number;
+  shippingChargeAmount?: number;
+  travelChargeAmount?: number;
+  mileageAmount?: number;
+  travelMiles?: number;
+  serviceContractNumber?: string;
+  authorizationNumber?: string;
+  parts?: ClaimSubmissionPart[];
+}
+
+export interface ClaimSubmissionRequest {
+  authentication: Authentication;
+  claims: ClaimSubmissionClaim[];
+}
+
+export interface ClaimSubmissionResponseError {
+  errorDescription: string;
+  partNumber?: string;
+}
+
+export interface ClaimSubmissionResponseClaim {
+  claimResponseCode: 'OK' | 'ER';
+  manufacturerName: string;
+  claimNumber: string;
+  serviceCenterNumber?: string;
+  serviceCenterLocationCode?: string;
+  type?: string;
+  claimBatchNumber?: number;
+  claimSequenceNumber?: number;
+  claimStatusCode?: string;
+  claimStatusDescription?: string;
+  claimTransactionId?: string;
+  errors?: ClaimSubmissionResponseError[];
+  messages?: Array<{ message: string }>;
+}
+
+export interface ClaimSubmissionResponse {
+  responseCode: 'OK' | 'ER';
+  transactionId?: string;
+  totalClaimsProcessedSuccessfully?: number;
+  totalClaimsReceived?: number;
+  totalClaimsNotProcessedSuccessfully?: number;
+  claims?: ClaimSubmissionResponseClaim[];
+  messages?: Array<{ message: string }>;
+}
+
+// ============================================================================
 // Request for Authorization (RFA) - Create API Types
 // ============================================================================
 
