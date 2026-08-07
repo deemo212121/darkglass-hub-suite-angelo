@@ -1210,8 +1210,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try {
       // Scoped to whichever nation tab is selected — the other nation's
       // employees (and excluded employees' own missing clock-outs) never
-      // factor into this generate action at all.
-      const nationIncludedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+      // factor into this generate action at all. Technicians (Tech Payroll)
+      // are also excluded from this specific check — they're paid per
+      // completed repair ticket, not by clocked hours, so a missing
+      // clock-out on their timecard has no effect on their pay and
+      // shouldn't block generating payroll for anyone.
+      const nationIncludedIds = new Set(
+        nationIncludedPayrollRows.filter((r) => !isTechRole(r.employee)).map((r) => r.employee.id)
+      );
       const nationTimecardEntries = timecardEntries.filter((tc) => nationIncludedIds.has(tc.profile_id || tc.employee_id || ""));
       const missingTimeouts = findMissingTimeouts(nationTimecardEntries, employees);
       if (missingTimeouts.length > 0) {
