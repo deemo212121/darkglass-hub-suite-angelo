@@ -67,7 +67,7 @@ import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
-import { renderPayslipBodyHtml, PAYSLIP_STYLES, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
+import { renderPayslipBodyHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 
@@ -96,6 +96,7 @@ export interface SupabaseEmployee {
   role?: string;
   extraRoles?: string[] | null;
   assigned_branch?: string;
+  email?: string;
   offDays?: number[];
   requiredCheckIn?: string;
   requiredCheckOut?: string;
@@ -559,7 +560,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         techRatesRes,
         mileageRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
         supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
@@ -615,6 +616,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         role: p.role,
         extraRoles: p.extra_roles ?? null,
         assigned_branch: p.assigned_branch,
+        email: p.email ?? undefined,
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
@@ -1463,6 +1465,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           };
         });
     })();
+    const counts = dailyRows.length;
+    const totalHours = dailyRows.reduce((s, r) => s + r.hours, 0);
+    const average = counts > 0 ? totalHours / counts : 0;
+    const myPtoRequests = ptoRequests.filter((r) => r.profileId === row.employee.id);
+    const offDays = offDaysInRange(row.employee.offDays ?? [], genStart, genEnd);
+    const ptoUsed = ptoDaysInRange(myPtoRequests, genStart, genEnd, false);
+    const sickLeave = ptoDaysInRange(myPtoRequests, genStart, genEnd, true);
+    const workingHoursLabel =
+      row.employee.requiredCheckIn && row.employee.requiredCheckOut
+        ? `${formatClockTime(row.employee.requiredCheckIn)} - ${formatClockTime(row.employee.requiredCheckOut)}`
+        : "—";
+    const breakLabel = row.employee.mealMinutes ? `${row.employee.mealMinutes} mins Break` : "—";
     const payslipData: EmployeePayslipData = {
       name: row.employee.full_name,
       department: row.employee.department || "",
@@ -1474,6 +1488,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // payroll_line_items row, which has its own stored net_pay) — gross
       // and net are the same until a real run tracks that separately.
       netPay: row.grossPayUSD,
+      email: row.employee.email || "—",
+      hireDate: employeeInfoByProfileId.get(row.employee.id)?.hireDate || "—",
+      workingHoursLabel,
+      breakLabel,
+      hourlyRate: row.hourlyRateUSD,
+      compensationType: row.compensationType,
+      annualSalary: row.annualSalary,
+      counts,
+      totalHours,
+      average,
+      offDays,
+      ptoUsed,
+      sickLeave,
+      totalDays: offDays + ptoUsed,
+      // Same reason as netPay above — Extra/Notes are entered on a saved
+      // payroll_line_items row (migration 0111) after a run is finalized;
+      // this live-preview row has neither yet.
+      extraPay: 0,
+      notes: "",
+      // Same US/PH split already derived onto SupabaseEmployee.country.
+      isUS: row.employee.country !== "PH",
     };
     const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
     return blobToBase64(pdfBlob);
