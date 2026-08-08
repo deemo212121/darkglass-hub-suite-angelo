@@ -22,6 +22,7 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
+import { formatClockTime } from "@/lib/payslipTemplate";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
@@ -62,6 +63,9 @@ interface DailyRecord {
   isOffDay: boolean;
   /** Display name of whoever clocked this person in, if it wasn't themselves (a manager's proxy clock-in). */
   clockedInBy: string | null;
+  /** Scheduled shift times ("HH:MM", possibly "") — shown in the name popover, see requiredTimePopoverId. */
+  requiredCheckIn: string;
+  requiredCheckOut: string;
 }
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
@@ -225,6 +229,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // punch (absent, or clocked in but not out yet) so the table only shows
   // employees whose attendance for the day is actually complete.
   const [completeOnly, setCompleteOnly] = useState(false);
+  // Daily Attendance Tracker — clicking an employee's name shows their
+  // scheduled shift (Required Check In/Out) right there instead of only
+  // linking out to their full profile. Keyed by the SAME id used for the
+  // row key (profileId, or profileId|date in date-range mode) so opening
+  // one person's popover on one date doesn't also open it for the same
+  // person on a different date. Only one open at a time — clicking the
+  // same name again, or a different name, closes/switches it.
+  const [requiredTimePopoverKey, setRequiredTimePopoverKey] = useState<string | null>(null);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
@@ -504,6 +516,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         alerts,
         isOffDay,
         clockedInBy: clockedInByName,
+        requiredCheckIn: p.required_check_in || "",
+        requiredCheckOut: p.required_check_out || "",
       };
     },
     [nowByTimezone, allProfileById]
@@ -1325,10 +1339,35 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         {group.records.map((record) => (
                       <tr key={dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         {dateRangeActive && <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{record.date}</td>}
-                        <td className="px-3 py-3 text-white font-medium">
-                          <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                        <td className="px-3 py-3 text-white font-medium relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const key = dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId;
+                              setRequiredTimePopoverKey((cur) => (cur === key ? null : key));
+                            }}
+                            className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer text-left"
+                          >
                             {record.name}
-                          </a>
+                          </button>
+                          {requiredTimePopoverKey === (dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId) && (
+                            <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border border-white/10 bg-slate-800 p-3 shadow-xl">
+                              <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Scheduled Shift</p>
+                              <p className="text-xs text-slate-200">
+                                {record.requiredCheckIn && record.requiredCheckOut
+                                  ? `${formatClockTime(record.requiredCheckIn)} – ${formatClockTime(record.requiredCheckOut)}`
+                                  : "No schedule set"}
+                              </p>
+                              <a
+                                href={`/employee/${record.profileId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-2 inline-block text-[11px] text-blue-400 hover:text-blue-300 hover:underline"
+                              >
+                                View full profile ↗
+                              </a>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>
