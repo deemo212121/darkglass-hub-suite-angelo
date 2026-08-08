@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
@@ -2013,29 +2013,31 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
-  // Load photo count for Claims Readiness Checklist (ADMIN/CLAIMS/BIZOPS only).
+  // Load photo count for the Claims Readiness checklist — visible to every
+  // role now, so this loads for everyone, not just Admin/Claims/BizOps.
   // Uses listTicketPhotos from Firebase Storage — non-blocking, best-effort.
   const [ticketPhotoCount, setTicketPhotoCount] = useState<number | null>(null);
   useEffect(() => {
-    const r = String(currentUserRole || "").toUpperCase();
-    const canSeeChecklist = [
-      "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
-      "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
-    ].includes(r);
-    if (!canSeeChecklist || !authReady) return;
+    if (!authReady) return;
     let cancelled = false;
     (async () => {
       try {
         const { listTicketPhotos } = await import("@/lib/firebase/storage");
         const cid = currentCompanyId || "COMP001";
-        const photos = await listTicketPhotos(cid, ticketNo);
+        // TicketPhotos.tsx (the Attachments tab and Mobile Tech App) both
+        // upload under category "service" — .../tickets/{ticketNo}/service/…
+        // — not the bare ticket folder, so this has to match that same
+        // subpath or listAll() finds nothing (subfolders are prefixes, not
+        // items) and the checklist always reads "no photos" even when there
+        // are some.
+        const photos = await listTicketPhotos(cid, `${ticketNo}/service`);
         if (!cancelled) setTicketPhotoCount(photos.length);
       } catch {
         if (!cancelled) setTicketPhotoCount(0);
       }
     })();
     return () => { cancelled = true; };
-  }, [ticketNo, currentUserRole, authReady, currentCompanyId]);
+  }, [ticketNo, authReady, currentCompanyId]);
 
   // Load ticket from centralized system
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
@@ -4180,6 +4182,110 @@ function TicketDetailsPage() {
     );
   }, [currentUserRole, currentUserExtraRoles, CLAIM_VIEW_ROLES, isNaveen]);
 
+  // Claims Readiness — what's missing before this ticket can go to Claims.
+  // Visible to EVERY role (not just Admin/Claims/BizOps) since the whole
+  // point is helping whoever's working the ticket see what's left, not
+  // gatekeeping the information. Computed once here so both the compact
+  // header alert (next to the ticket actions) and the full checklist
+  // further down the page read the same values.
+  const claimsReadiness = useMemo(() => {
+    if (!ticket) return null;
+
+    // NOTE: ticket.problemDescription is the customer's original
+    // complaint, auto-populated from NSA/ServicePower at sync time — it
+    // exists before any service happens, so it can't be used as evidence a
+    // technician documented their work.
+    const hasServiceNotes = Boolean(
+      visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
+    );
+    const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
+      partRows.some(p => (p as any).inTracking);
+    const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
+      const s = String((p as any).status || "").toLowerCase();
+      return s && s !== "tech pickup" && s !== "need po" && s !== "";
+    });
+    // Same-day: the most recent visit must have been created/updated on
+    // the same calendar day as the visit's schedule date. Also passes if
+    // there's no visit yet (nothing to check).
+    const hasSameDayUpdate = (() => {
+      if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
+      const latest = visitLogEntries[0];
+      const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
+      if (!schedDate) return true; // no date set — can't evaluate
+      const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
+      if (!ts) return false;
+      const updatedDay = new Date(ts).toISOString().slice(0, 10);
+      const onTime = updatedDay === schedDate;
+      // Also check if photos were uploaded (if we have a photo count and
+      // the visit was today, photos being present means same-day upload is
+      // satisfied)
+      const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
+      const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
+      return onTime || photosSatisfied;
+    })();
+    // Warranty case — check if case number / warranty agent note is present
+    const warrantyStatuses = [
+      "unsuccessful repair", "infestation", "physical damage",
+      "unrepairable", "model/serial mismatch", "no fault found",
+    ];
+    const needsWarrantyCall = visitLogEntries.some(v => {
+      const rs = String((v as any).repairStatus || "").toLowerCase();
+      return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
+    });
+    const hasWarrantyCase = !needsWarrantyCall || Boolean(
+      visitLogEntries.some(v =>
+        (v as any).note?.toLowerCase().includes("case") ||
+        (v as any).note?.toLowerCase().includes("agent")
+      )
+    );
+
+    const items = [
+      {
+        label: "Warranty Call (if required)",
+        done: hasWarrantyCase,
+        detail: needsWarrantyCall
+          ? "Special scenario detected — ensure case number & agent name are in visit notes"
+          : "Not required for this ticket",
+        skip: !needsWarrantyCall,
+      },
+      {
+        label: "Service Notes Complete",
+        done: hasServiceNotes,
+        detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
+      },
+      {
+        label: "Required Photos Uploaded",
+        done: hasPhotos,
+        detail: ticketPhotoCount === null
+          ? "Checking photo count…"
+          : ticketPhotoCount > 0
+            ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
+            : "No photos found — work order, model/serial tag, installed parts, damage proof required",
+      },
+      {
+        label: "Part Status Correct",
+        done: hasCorrectPartStatus,
+        detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
+        // No parts ordered yet is a genuine "nothing to check" state, same
+        // as Warranty Call's skip — not evidence anything was actually
+        // verified correct.
+        skip: partRows.length === 0,
+      },
+      {
+        label: "Same-Day Updates",
+        done: hasSameDayUpdate,
+        detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
+        // No visit yet means there's nothing to have been "same-day" about
+        // — not evidence anything was verified.
+        skip: visitLogEntries.length === 0,
+      },
+    ];
+
+    const allDone = items.every(i => i.skip || i.done);
+    const doneCount = items.filter(i => i.skip || i.done).length;
+    return { items, allDone, doneCount };
+  }, [ticket, visitLogEntries, partRows, ticketPhotoCount]);
+
   // CSR-only accounts (agents, team leaders, CSR managers) should see
   // the Part Transaction table but not the write-side toolbar (View
   // Log / Sync Parts from Notes / Truck Stock / Submit POs / Update).
@@ -4940,6 +5046,9 @@ function TicketDetailsPage() {
   // Open a small modal, type a teammate's name (or pick from suggestions),
   // and DM them the ticket number.
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  // Claims Readiness compact alert, up near the ticket actions — see
+  // claimsReadiness memo for the underlying computation.
+  const [claimsReadinessPopoverOpen, setClaimsReadinessPopoverOpen] = useState(false);
   const [shareQuery, setShareQuery] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [shareContacts, setShareContacts] = useState<Array<{ id: string; display_name: string | null; email: string | null; role: string | null }>>([]);
@@ -5318,7 +5427,44 @@ function TicketDetailsPage() {
               >
                 <Send className="h-4 w-4" />
               </button>
-              
+
+              {/* Claims Readiness — compact alert next to the ticket
+                  actions, showing what's missing before this ticket can go
+                  to Claims. Visible to everyone; click for the short list
+                  of what's left (the full checklist with detail text is
+                  further down the page). */}
+              {claimsReadiness && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setClaimsReadinessPopoverOpen((v) => !v)}
+                    title="Claims Readiness"
+                    className={`inline-flex items-center gap-1.5 rounded border p-2 text-xs font-semibold transition ${
+                      claimsReadiness.allDone
+                        ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                        : "border-amber-400/40 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                    }`}
+                  >
+                    <ClipboardCheck className="h-4 w-4" />
+                    {claimsReadiness.doneCount}/{claimsReadiness.items.length}
+                  </button>
+                  {claimsReadinessPopoverOpen && (
+                    <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/10 bg-slate-900 p-3 shadow-xl">
+                      <p className="text-xs font-semibold text-slate-200 mb-2">Claims Readiness</p>
+                      {claimsReadiness.allDone ? (
+                        <p className="text-xs text-emerald-300">✓ Ready for Claims</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {claimsReadiness.items.filter((item) => !item.skip && !item.done).map((item, i) => (
+                            <li key={i} className="text-xs text-rose-300">✗ {item.label}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Alert Messages Display - Inline beside controls. Only
                   alerts flagged "Show internally" clutter this view — a
                   mobile-popup-only alert stays out of the way here. */}
@@ -6491,142 +6637,39 @@ function TicketDetailsPage() {
                 </div>
               )}
 
-              {/* Claims Readiness Checklist — visible to Admin, BizOps, Claims roles only */}
-              {(() => {
-                const r = String(currentUserRole || "").toUpperCase();
-                const canSeeChecklist = [
-                  "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
-                  "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
-                ].includes(r);
-                if (!canSeeChecklist || !ticket) return null;
-
-                // Evaluate each of the 5 requirements
-                // NOTE: ticket.problemDescription is the customer's original
-                // complaint, auto-populated from NSA/ServicePower at sync
-                // time — it exists before any service happens, so it can't
-                // be used as evidence a technician documented their work.
-                const hasServiceNotes = Boolean(
-                  visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
-                );
-                const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
-                  partRows.some(p => (p as any).inTracking);
-                const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
-                  const s = String((p as any).status || "").toLowerCase();
-                  return s && s !== "tech pickup" && s !== "need po" && s !== "";
-                });
-                // Same-day: the most recent visit must have been created/updated
-                // on the same calendar day as the visit's schedule date.
-                // Also passes if there's no visit yet (nothing to check).
-                const hasSameDayUpdate = (() => {
-                  if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
-                  const latest = visitLogEntries[0];
-                  const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
-                  if (!schedDate) return true; // no date set — can't evaluate
-                  // Check the visit's own created/updated timestamp
-                  const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
-                  if (!ts) return false;
-                  const updatedDay = new Date(ts).toISOString().slice(0, 10);
-                  const onTime = updatedDay === schedDate;
-                  // Also check if photos were uploaded (if we have a photo count and the
-                  // visit was today, photos being present means same-day upload is satisfied)
-                  const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
-                  const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
-                  return onTime || photosSatisfied;
-                })();
-                // Warranty case — check if case number / warranty agent note is present
-                const warrantyStatuses = [
-                  "unsuccessful repair", "infestation", "physical damage",
-                  "unrepairable", "model/serial mismatch", "no fault found",
-                ];
-                const needsWarrantyCall = visitLogEntries.some(v => {
-                  const rs = String((v as any).repairStatus || "").toLowerCase();
-                  return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
-                });
-                const hasWarrantyCase = !needsWarrantyCall || Boolean(
-                  visitLogEntries.some(v =>
-                    (v as any).note?.toLowerCase().includes("case") ||
-                    (v as any).note?.toLowerCase().includes("agent")
-                  )
-                );
-
-                const items = [
-                  {
-                    label: "Warranty Call (if required)",
-                    done: hasWarrantyCase,
-                    detail: needsWarrantyCall
-                      ? "Special scenario detected — ensure case number & agent name are in visit notes"
-                      : "Not required for this ticket",
-                    skip: !needsWarrantyCall,
-                  },
-                  {
-                    label: "Service Notes Complete",
-                    done: hasServiceNotes,
-                    detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
-                  },
-                  {
-                    label: "Required Photos Uploaded",
-                    done: hasPhotos,
-                    detail: ticketPhotoCount === null
-                      ? "Checking photo count…"
-                      : ticketPhotoCount > 0
-                        ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
-                        : "No photos found — work order, model/serial tag, installed parts, damage proof required",
-                  },
-                  {
-                    label: "Part Status Correct",
-                    done: hasCorrectPartStatus,
-                    detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
-                    // No parts ordered yet is a genuine "nothing to check"
-                    // state, same as Warranty Call's skip — not evidence
-                    // anything was actually verified correct.
-                    skip: partRows.length === 0,
-                  },
-                  {
-                    label: "Same-Day Updates",
-                    done: hasSameDayUpdate,
-                    detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
-                    // No visit yet means there's nothing to have been
-                    // "same-day" about — not evidence anything was verified.
-                    skip: visitLogEntries.length === 0,
-                  },
-                ];
-
-                const allDone = items.every(i => i.skip || i.done);
-                const doneCount = items.filter(i => i.skip || i.done).length;
-
-                return (
-                  <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
-                    <div className={`flex items-center justify-between px-4 py-3 ${allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
-                          {doneCount}/{items.length}
-                        </span>
-                      </div>
-                      {allDone ? (
-                        <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
-                      ) : (
-                        <span className="text-xs text-amber-400">{items.length - doneCount} item{items.length - doneCount !== 1 ? "s" : ""} pending</span>
-                      )}
+              {/* Claims Readiness Checklist — visible to every role, see claimsReadiness above */}
+              {claimsReadiness && (
+                <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
+                  <div className={`flex items-center justify-between px-4 py-3 ${claimsReadiness.allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${claimsReadiness.allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
+                        {claimsReadiness.doneCount}/{claimsReadiness.items.length}
+                      </span>
                     </div>
-                    <div className="divide-y divide-slate-800">
-                      {items.map((item, i) => (
-                        <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
-                            {item.skip ? "—" : item.done ? "✓" : "✗"}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
-                              {item.label}
-                            </div>
-                            <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    {claimsReadiness.allDone ? (
+                      <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
+                    ) : (
+                      <span className="text-xs text-amber-400">{claimsReadiness.items.length - claimsReadiness.doneCount} item{claimsReadiness.items.length - claimsReadiness.doneCount !== 1 ? "s" : ""} pending</span>
+                    )}
                   </div>
-                );
-              })()}
+                  <div className="divide-y divide-slate-800">
+                    {claimsReadiness.items.map((item, i) => (
+                      <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
+                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
+                          {item.skip ? "—" : item.done ? "✓" : "✗"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
+                            {item.label}
+                          </div>
+                          <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Servicer Notes */}
               <div className="space-y-4 pb-12">
