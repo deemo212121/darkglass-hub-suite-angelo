@@ -4,7 +4,10 @@ import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { normalizeTicketSearchValue } from "@/lib/ticket-search";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCoverage, type CoverageRow } from "@/lib/supabase/locationManagement";
 import type { Ticket } from "@/lib/ticketData";
+
+const ZIP_PATTERN = /^\d{5}$/;
 
 export function TicketSearchFab() {
   const navigate = useNavigate();
@@ -12,6 +15,11 @@ export function TicketSearchFab() {
   const [searchText, setSearchText] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
+  // Location Management's own coverage list (location_mgmt_coverage) — the
+  // same data its service-area map is built from. Loaded alongside tickets
+  // so a searched ZIP can be checked against real coverage instead of just
+  // matching existing tickets.
+  const [coverage, setCoverage] = useState<CoverageRow[]>([]);
 
   // Load real company tickets from Supabase when the search dialog opens.
   useEffect(() => {
@@ -29,10 +37,25 @@ export function TicketSearchFab() {
         if (!cancelled) setLoading(false);
       }
     })();
+    // Best-effort — a failed coverage load just means the "is this ZIP
+    // covered" banner doesn't show, it never blocks ticket search itself.
+    getCoverage()
+      .then((rows) => { if (!cancelled) setCoverage(rows); })
+      .catch((err) => console.error("Ticket search: failed to load coverage", err));
     return () => {
       cancelled = true;
     };
   }, [searchOpen]);
+
+  // Only fires for a complete 5-digit ZIP — partial digits while typing
+  // ("3811") would otherwise flash a false "not covered" before the user's
+  // done typing.
+  const zipQuery = searchText.trim();
+  const isZipQuery = ZIP_PATTERN.test(zipQuery);
+  const matchedCoverage = useMemo(
+    () => (isZipQuery ? coverage.find((c) => c.zipCode === zipQuery) ?? null : null),
+    [isZipQuery, zipQuery, coverage]
+  );
 
   const searchResults = useMemo(() => {
     const query = normalizeTicketSearchValue(searchText);
@@ -97,6 +120,19 @@ export function TicketSearchFab() {
                 autoFocus
               />
             </label>
+            {isZipQuery && (
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  matchedCoverage
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                }`}
+              >
+                {matchedCoverage
+                  ? `✓ ${zipQuery} is covered — ${matchedCoverage.location}${matchedCoverage.tierCode ? ` (Tier ${matchedCoverage.tierCode})` : ""}`
+                  : `✗ ${zipQuery} is not in our service coverage area`}
+              </div>
+            )}
             {loading && (
               <div className="text-xs text-muted-foreground px-1 py-2">Loading tickets…</div>
             )}
