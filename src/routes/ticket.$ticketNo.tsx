@@ -4152,24 +4152,18 @@ function TicketDetailsPage() {
   // locked. Adding brand-new rows is also blocked when the lock is on.
   const partsEditDisabled = isTicketPartLocked && !isClaimsRole && !isNaveen;
 
-  // Claim Transaction section visibility. Only the Claims department and
-  // Admin / Manager / Branch-level roles can see (or interact with) the
-  // claim transaction grid. Everyone else — CSR, technician, parts, triage
-  // — never sees the section. Naveen also retained as an explicit allow
-  // by name (matches the Part-lock allow-list semantics so the two
-  // surfaces stay symmetrical).
+  // Claim Transaction section visibility — deliberately narrow: only
+  // Super Admin and the Claims department can see (or interact with) the
+  // claim transaction grid. Everyone else, including plain Admin/Manager/
+  // Branch-level roles, never sees the section. Naveen also retained as an
+  // explicit allow by name (matches the Part-lock allow-list semantics so
+  // the two surfaces stay symmetrical).
   const CLAIM_VIEW_ROLES = useMemo(
     () => new Set([
       "CLAIMS",
       "CLAIMS_MANAGER",
-      "MANAGER",
-      "SENIOR_MANAGER",
-      "ADMIN",
+      "CLAIMS_TEAM_LEADER",
       "SUPERADMIN",
-      "BRANCH_MANAGER",
-      "SENIOR_BRANCH_MANAGER",
-      "BIZOPS_MANAGER",
-      "BIZOPS_SENIOR_MANAGER",
     ]),
     [],
   );
