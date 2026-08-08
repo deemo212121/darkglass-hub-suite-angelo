@@ -7,7 +7,7 @@ import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, ROLE_OPTIONS, normalizeRole } from "@/lib/roleLabels";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -66,38 +66,14 @@ const LOCATIONS = [
   "Tallahassee", "Wilmington", "Philippines",
 ];
 
-// User types: { value stored as Firestore role, label shown in the dropdown }
-// Users can tick multiple — the first ticked value becomes the primary `role`
-// (used by RLS / legacy access checks); the rest go into `extra_roles`.
-const USER_TYPES: { value: string; label: string }[] = [
-  { value: "ADMIN", label: "Admin" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "SENIOR_MANAGER", label: "Senior Manager" },
-  { value: "CSR", label: "CSR" },
-  { value: "TECHNICIAN", label: "Technician" },
-  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
-  { value: "DISPATCHER", label: "Dispatcher" },
-  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
-  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
-  { value: "CLAIMS", label: "Claims" },
-  { value: "HR", label: "HR" },
-  { value: "IT", label: "IT" },
-  { value: "PARTS", label: "Parts" },
-  { value: "FINANCE", label: "Finance" },
-  { value: "CSR_AGENT", label: "CSR Agent" },
-  { value: "CSR_TEAM_LEADER", label: "CSR Team Leader" },
-  { value: "CSR_MANAGER", label: "CSR Manager" },
-  { value: "BRANCH_MANAGER", label: "Branch Manager" },
-  { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
-  { value: "CLAIMS_MANAGER", label: "Claims Manager" },
-  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
-  { value: "PARTS_MANAGER", label: "Parts Manager" },
-  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
-  { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
-  { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Technical Support" },
-  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
-].sort((a, b) => a.label.localeCompare(b.label));
+// User types shown in the "Add New User" dropdown. Sourced from
+// ROLE_OPTIONS (src/lib/roleLabels.ts) instead of a separate hardcoded list
+// — this used to be its own array and had already drifted out of sync with
+// roleLabels.ts (e.g. missing CLAIMS_TEAM_LEADER), so a role added in one
+// place silently didn't show up in the other. Users can tick multiple —
+// the first ticked value becomes the primary `role` (used by RLS / legacy
+// access checks); the rest go into `extra_roles`.
+const USER_TYPES = ROLE_OPTIONS;
 
 // Sentinel for the "All Locations" entry in Branch Access. Picking this clears
 // every individual selection — the user can see every branch. Stored as-is so

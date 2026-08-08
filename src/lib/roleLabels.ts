@@ -36,6 +36,8 @@ export const ROLE_LABELS: Record<string, string> = {
   TRIAGE_MANAGER: "Technical Support Manager",
   TECHNICAL_DIRECTOR: "Technical Director",
   TECHNICAL_ASSISTANT_DIRECTOR: "Technical Assistant Director",
+  SENIOR_DIRECTOR: "Senior Director",
+  ASSISTANT_MANAGER: "Assistant Manager",
 };
 
 /**
