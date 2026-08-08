@@ -268,6 +268,29 @@ export async function uploadExpenseReceipt(companyId: string, expenseId: string,
   return { url, fullPath: snapshot.ref.fullPath };
 }
 
+/**
+ * Upload a screenshot for an IT ticket (IT Support page). Stored under
+ * companies/{companyId}/it-tickets/{ticketKey}/, same convention as
+ * expense receipts above. `ticketKey` is a client-generated placeholder
+ * (crypto.randomUUID()) since there's no row id until after the ticket is
+ * inserted — the upload happens first, and the resulting URL is included
+ * in that same insert (see createItTicket in itTickets.ts).
+ */
+export async function uploadItTicketScreenshot(companyId: string, ticketKey: string, blob: Blob, fileName: string): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/it-tickets/${ticketKey}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(fileName)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, blob, {
+    contentType: blob.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
 /** Delete an expense receipt file by its full storage path — best-effort cleanup when a receipt is replaced or removed. */
 export async function deleteExpenseReceiptFile(fullPath: string): Promise<void> {
   if (!isFirebaseReady() || !storage) {

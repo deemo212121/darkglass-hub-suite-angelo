@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { Send } from "lucide-react";
+import { Send, Paperclip, X } from "lucide-react";
 import {
   createItTicket,
   getItTickets,
@@ -11,6 +11,8 @@ import {
   type ItTicketStatus,
 } from "@/lib/supabase/itTickets";
 import { getMyFullProfile } from "@/lib/supabase/users";
+import { uploadItTicketScreenshot } from "@/lib/firebase/storage";
+import { compressImage, validateImageFile } from "@/lib/imageCompression";
 
 export const Route = createFileRoute("/it-tickets")({
   head: () => ({ meta: [{ title: "IT Support — Admin Hub Solutions" }] }),
@@ -32,7 +34,7 @@ const STATUS_CLASSES: Record<ItTicketStatus, string> = {
 };
 
 function ItSupportPage() {
-  const { uid, email, displayName } = useAuth();
+  const { uid, email, displayName, companyId } = useAuth();
   const [displayNameFromProfile, setDisplayNameFromProfile] = useState<string | null>(null);
 
   const [ticketForm, setTicketForm] = useState<{ subject: string; description: string; priority: ItTicketPriority }>({
@@ -43,6 +45,32 @@ function ItSupportPage() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [myTickets, setMyTickets] = useState<ItTicketRow[]>([]);
+
+  // Optional screenshot showing the error — compressed and uploaded to
+  // Firebase Storage under a client-generated placeholder key (there's no
+  // ticket row id yet), then the resulting URL is included in the same
+  // createItTicket insert. previewUrl is a local object URL, revoked on
+  // clear/unmount so it doesn't leak.
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState<string | null>(null);
+  const [screenshotError, setScreenshotError] = useState("");
+
+  const handleScreenshotChange = (file: File | null) => {
+    if (screenshotPreviewUrl) URL.revokeObjectURL(screenshotPreviewUrl);
+    if (!file) {
+      setScreenshotFile(null);
+      setScreenshotPreviewUrl(null);
+      return;
+    }
+    const invalidReason = validateImageFile(file);
+    if (invalidReason) {
+      setScreenshotError(invalidReason);
+      return;
+    }
+    setScreenshotError("");
+    setScreenshotFile(file);
+    setScreenshotPreviewUrl(URL.createObjectURL(file));
+  };
 
   // getMyFullProfile just for a reliable display name to stamp on the ticket —
   // useAuth's displayName can lag right after login, so prefer the DB value.
@@ -84,13 +112,21 @@ function ItSupportPage() {
     setSubmitting(true);
     try {
       const createdByName = displayNameFromProfile || displayName || email || "Unknown";
+      let screenshotUrl: string | null = null;
+      if (screenshotFile && companyId) {
+        const compressed = await compressImage(screenshotFile);
+        const uploaded = await uploadItTicketScreenshot(companyId, crypto.randomUUID(), compressed.blob, screenshotFile.name);
+        screenshotUrl = uploaded.url;
+      }
       await createItTicket({
         subject: ticketForm.subject.trim(),
         description: ticketForm.description.trim(),
         priority: ticketForm.priority,
         createdByName,
+        screenshotUrl,
       });
       setTicketForm({ subject: "", description: "", priority: "normal" });
+      handleScreenshotChange(null);
       setMessage("Ticket submitted.");
       await loadMyTickets();
     } catch (err) {
@@ -141,6 +177,28 @@ function ItSupportPage() {
               onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })}
             />
           </label>
+          <label className="flex flex-col gap-1.5 sm:col-span-2">
+            <span className="text-xs text-muted-foreground">Screenshot (optional)</span>
+            {screenshotPreviewUrl ? (
+              <div className="flex items-center gap-3">
+                <img src={screenshotPreviewUrl} alt="Screenshot preview" className="h-20 w-20 object-cover rounded-lg border border-white/10" />
+                <button type="button" className="btn" onClick={() => handleScreenshotChange(null)}>
+                  <X className="h-3.5 w-3.5" /> Remove
+                </button>
+              </div>
+            ) : (
+              <label className="btn w-fit cursor-pointer">
+                <Paperclip className="h-3.5 w-3.5" /> Attach a screenshot
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleScreenshotChange(e.target.files?.[0] || null)}
+                />
+              </label>
+            )}
+            {screenshotError && <span className="text-xs text-red-400">{screenshotError}</span>}
+          </label>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button className="btn btn-primary" onClick={submitTicket} disabled={submitting}>
@@ -164,6 +222,11 @@ function ItSupportPage() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">{t.description}</p>
+                {t.screenshotUrl && (
+                  <a href={t.screenshotUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-2">
+                    <img src={t.screenshotUrl} alt="Attached screenshot" className="h-16 w-16 object-cover rounded-lg border border-white/10 hover:border-blue-400/50 transition" />
+                  </a>
+                )}
                 {t.resolutionNotes && (
                   <p className="text-xs text-emerald-300/90 mt-2">IT note: {t.resolutionNotes}</p>
                 )}

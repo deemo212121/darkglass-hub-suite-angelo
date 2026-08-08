@@ -27,12 +27,14 @@ export interface ItTicketRow {
   assignedTo: string | null;
   assignedToName: string | null;
   resolutionNotes: string | null;
+  /** Screenshot the submitter attached, if any — see migration 0149. */
+  screenshotUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 const COLUMNS =
-  "id, company_id, created_by, created_by_name, subject, description, priority, status, assigned_to, assigned_to_name, resolution_notes, created_at, updated_at";
+  "id, company_id, created_by, created_by_name, subject, description, priority, status, assigned_to, assigned_to_name, resolution_notes, screenshot_url, created_at, updated_at";
 
 function mapRow(row: any): ItTicketRow {
   return {
@@ -47,6 +49,7 @@ function mapRow(row: any): ItTicketRow {
     assignedTo: row.assigned_to,
     assignedToName: row.assigned_to_name,
     resolutionNotes: row.resolution_notes,
+    screenshotUrl: row.screenshot_url ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -59,12 +62,13 @@ export async function getItTickets(): Promise<ItTicketRow[]> {
   return (data ?? []).map(mapRow);
 }
 
-export async function createItTicket(input: { subject: string; description: string; priority: ItTicketPriority; createdByName: string }): Promise<void> {
+export async function createItTicket(input: { subject: string; description: string; priority: ItTicketPriority; createdByName: string; screenshotUrl?: string | null }): Promise<void> {
   const { error } = await supabase.from("it_tickets").insert({
     subject: input.subject,
     description: input.description,
     priority: input.priority,
     created_by_name: input.createdByName,
+    screenshot_url: input.screenshotUrl || null,
   });
   if (error) throw new Error(error.message);
   void notifyItTicketSubmitted({ subject: input.subject, createdByName: input.createdByName });
