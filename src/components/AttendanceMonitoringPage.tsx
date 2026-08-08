@@ -132,7 +132,8 @@ function computeAlerts(
   requiredCheckOut: string,
   isOffDay: boolean,
   nowHHMM: string | null,
-  graceMinutes: number = ATTENDANCE_GRACE_MINUTES
+  graceMinutes: number = ATTENDANCE_GRACE_MINUTES,
+  workingHours?: number | null
 ): string[] {
   if (isOffDay) return [];
 
@@ -159,7 +160,15 @@ function computeAlerts(
     const paidCheckIn = requiredCheckIn ? applyGraceToCheckIn(checkIn, requiredCheckIn, graceMinutes) : checkIn;
     const paidCheckOut = requiredCheckOut ? roundCheckOutToSchedule(checkOut, requiredCheckOut) : checkOut;
     const worked = calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart, mealEnd, notes: "" });
-    const requiredHours = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
+    // `worked` already has the meal break subtracted (calcWorkedHours), so
+    // the target it's compared against needs to be the NET duty-hours
+    // figure too — the profile's own working_hours (already meal-excluded)
+    // when set. Falling back to the raw requiredCheckIn/requiredCheckOut
+    // span here would compare a meal-EXCLUSIVE worked total against a
+    // meal-INCLUSIVE required span, so anyone who takes their full
+    // scheduled lunch reads as "Under Time" by about the length of their
+    // lunch even after working their entire required shift.
+    const requiredHours = workingHours != null ? workingHours : requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
     if (worked - requiredHours > 0.25) alerts.push(`Over Time (${fmtHoursMinutes(worked)})`);
     else if (requiredHours - worked > 0.25) alerts.push(`Under Time (${fmtHoursMinutes(worked)})`);
   }
@@ -477,7 +486,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
       const graceMinutes = payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes);
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -645,7 +654,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (checkIn) present++;
         const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
         const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry, normalizeRole(p.role) === "TECHNICIAN");
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes, p.working_hours);
         if (alerts.some(isPenalizedLateAlert)) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -677,7 +686,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkIn = entry?.checkIn || "";
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
         if (alerts.some((a) => a.includes("Late"))) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -716,7 +725,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const checkOut = entry?.checkOut || "";
       const mealStart = entry?.mealStart || "";
       const mealEnd = entry?.mealEnd || "";
-      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null);
+      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
       days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
     }
     return days;
