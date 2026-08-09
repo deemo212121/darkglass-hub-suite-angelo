@@ -2,8 +2,6 @@ import { useRef, useState } from "react";
 import {
   FileText,
   Wrench,
-  DollarSign,
-  Receipt,
   Link2,
   ClipboardList,
   Package,
@@ -12,7 +10,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 
-type TabKey = "general" | "tracking" | "compensation" | "billing";
+type TabKey = "general" | "tracking";
 
 interface TicketSidebarProps {
   activeTab: TabKey;
@@ -21,8 +19,8 @@ interface TicketSidebarProps {
 
 const TRACKING_SECTIONS = [
   { id: "section-related-tickets", label: "Related Tickets", icon: Link2 },
-  { id: "section-visit-log", label: "Visit Log", icon: ClipboardList },
   { id: "section-part-transaction", label: "Part Transaction", icon: Package },
+  { id: "section-visit-log", label: "Visit Log", icon: ClipboardList },
   { id: "section-claim-transaction", label: "Claim Transaction", icon: ScrollText },
   { id: "section-attachments", label: "Attachments", icon: Paperclip },
 ];
@@ -130,9 +128,6 @@ export function TicketSidebar({ activeTab, setActiveTab }: TicketSidebarProps) {
                 </button>
               ))}
             </div>
-
-            <TopBtn tab="compensation" label="Compensation" Icon={DollarSign} />
-            <TopBtn tab="billing" label="Billing" Icon={Receipt} />
           </div>
         </div>
       </aside>

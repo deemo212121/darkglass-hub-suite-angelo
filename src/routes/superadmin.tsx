@@ -85,8 +85,9 @@ function SuperAdminDashboard() {
   const handleLogout = async () => {
     if (confirm("Are you sure you want to logout?")) {
       try {
+        // logout() itself navigates to /landing (a full reload, not a
+        // router transition) once sign-out settles — see auth.tsx.
         await logout();
-        navigate({ to: "/landing" });
       } catch (error) {
         console.error("Logout error:", error);
       }

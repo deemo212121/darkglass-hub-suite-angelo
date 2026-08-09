@@ -40,6 +40,17 @@ async function checkAndHandleSession(
   }
   const claimed = localStorage.getItem(CLAIMED_SESSION_KEY);
   if (claimed && claimed !== serverSessionId) {
+    // A newer login (interactive, on this same device/tab) may have already
+    // taken over while the await above was in flight — this function
+    // snapshots `firebaseUser` at call time, so a same-tab relogin racing
+    // this same non-interactive check can leave it holding a stale
+    // reference. If Firebase's OWN current user has already moved on, this
+    // check's "supersede" no longer applies to anything real: don't touch
+    // localStorage (the fresh login already wrote its own claim there) and
+    // don't sign out (that would blindly end the NEW session instead of the
+    // stale one this check actually meant to end — the bug behind "logged
+    // in elsewhere, needs a hard refresh before it fully logs in").
+    if (auth?.currentUser?.uid !== firebaseUser.uid) return false;
     // Clear this device's own stale claim — otherwise a later interactive
     // login on this same device would overwrite it correctly anyway (the
     // isInteractiveLogin branch above always writes fresh), but leaving a
@@ -652,11 +663,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log("🔓 Logging out...");
       await firebaseSignOut();
       console.log("✅ Logout successful");
-      
+
       // State will be cleared by onAuthStateChanged listener
     } catch (error) {
       console.error("❌ Logout failed:", error);
       throw error;
+    } finally {
+      // A full navigation (not a client-side route change) always follows
+      // logout — same reasoning as the reload-on-login-error in
+      // landing.tsx: leftover in-memory auth state (timers, realtime
+      // subscriptions, cached tokens, in-flight session checks) is exactly
+      // what caused "logged in elsewhere, needs a hard refresh" bugs, and
+      // logging out is another moment that state needs to be thrown away
+      // rather than carried into whatever comes next in this tab. Runs
+      // even if firebaseSignOut() above threw — a clean landing page is
+      // the safest fallback either way.
+      if (typeof window !== "undefined") {
+        window.location.href = "/landing";
+      }
     }
   };
 
