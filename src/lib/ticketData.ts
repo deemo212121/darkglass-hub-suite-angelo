@@ -21,6 +21,8 @@ export interface Ticket {
   location: string;
   model: string;
   internalNote: string;
+  /** Latest Visit Log entry's Triage Note, overlaid client-side (visits.triage_note has no column on tickets itself) — see overlayTriageNotes in TicketList.tsx. */
+  triageNotes?: string;
   problemDescription?: string;
   diagnosed: string;
   technician: string;

@@ -16,6 +16,7 @@ import {
   getCompanyTickets,
   backfillTicketLocations,
   getPartOrderStateByTicketIds,
+  getLatestVisitTriageNoteByTicketIds,
   getVisitsByTicketIds,
   getPartsByTicketIds,
 } from "@/lib/supabase/tickets";
@@ -39,6 +40,7 @@ const TICKET_COLUMNS = [
   { key: "product", label: "Product" },
   { key: "model", label: "Model" },
   { key: "internalNote", label: "Internal Note" },
+  { key: "triageNotes", label: "Triage Notes" },
   { key: "cancellationReason", label: "Cancellation Reason" },
   { key: "repair", label: "Repair" },
   { key: "technician", label: "Technician" },
@@ -307,11 +309,32 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     return rows;
   };
 
+  // Overlay each ticket's latest Visit Log Triage Note — same single-bulk-
+  // pass rationale as overlayPartOrderState above. Errors are logged and
+  // swallowed — the column just shows blank rather than breaking the list.
+  const overlayTriageNotes = async (rows: TicketItem[]): Promise<TicketItem[]> => {
+    try {
+      const ids = rows
+        .map((t: any) => String(t?._id ?? "").trim())
+        .filter(Boolean);
+      if (ids.length === 0) return rows;
+      const noteMap = await getLatestVisitTriageNoteByTicketIds(ids);
+      for (const t of rows as any[]) {
+        const tid = String(t?._id ?? "").trim();
+        const note = tid ? noteMap.get(tid) : undefined;
+        if (note) t.triageNotes = note;
+      }
+    } catch (err) {
+      console.warn("Ticket List: triage-notes overlay skipped:", err);
+    }
+    return rows;
+  };
+
   const reloadTickets = useCallback(async () => {
     try {
       setTicketsLoading(true);
       const rows = await getCompanyTickets();
-      const enriched = await overlayPartOrderState(rows as TicketItem[]);
+      const enriched = await overlayTriageNotes(await overlayPartOrderState(rows as TicketItem[]));
       setTickets(enriched);
     } catch (err) {
       console.error("Failed to load tickets:", err);
@@ -338,7 +361,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
           console.warn("Portal request sync skipped:", e);
         }
         const rows = await getCompanyTickets();
-        const enriched = await overlayPartOrderState(rows as TicketItem[]);
+        const enriched = await overlayTriageNotes(await overlayPartOrderState(rows as TicketItem[]));
         if (!cancelled) setTickets(enriched);
       } catch (err) {
         console.error("Failed to load tickets:", err);
@@ -633,7 +656,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // columnValueGetters below.
   const COLUMN_FILTER_KEYS = [
     "ticketNo","warranty","ticketSource","customer","city","location",
-    "product","model","internalNote","cancellationReason","repair","technician","customerPref",
+    "product","model","internalNote","triageNotes","cancellationReason","repair","technician","customerPref",
     "schedule","status","phone","redo","partOrder","posting",
   ] as const;
   type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
@@ -666,6 +689,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     product: (t) => productLabel(t) || "",
     model: (t) => t.model || "",
     internalNote: (t) => t.internalNote || "",
+    triageNotes: (t) => t.triageNotes || "",
     cancellationReason: (t) => t.cancellationReason || "",
     repair: (t) => t.diagnosed || "",
     technician: (t) => t.technician || "",
@@ -764,7 +788,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const NUMERIC_SORT_KEYS = new Set<string>(["aging", "statusSpend", "calls"]);
   const SORTABLE_KEYS = new Set<string>([
     "ticketNo","warranty","ticketSource","customer","city","location",
-    "product","model","internalNote","cancellationReason","repair","technician","customerPref",
+    "product","model","internalNote","triageNotes","cancellationReason","repair","technician","customerPref",
     "schedule","status","phone","redo","aging","statusSpend","calls",
     "partOrder","posting",
   ]);
@@ -1149,6 +1173,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   {isColVisible("product") && renderHeader("product", "Product", { filterKey: "product" })}
                   {isColVisible("model") && renderHeader("model", "Model", { filterKey: "model" })}
                   {isColVisible("internalNote") && renderHeader("internalNote", "Internal Note", { filterKey: "internalNote" })}
+                  {isColVisible("triageNotes") && renderHeader("triageNotes", "Triage Notes", { filterKey: "triageNotes" })}
                   {isColVisible("cancellationReason") && renderHeader("cancellationReason", "Cancellation Reason", { filterKey: "cancellationReason" })}
                   {isColVisible("repair") && renderHeader("repair", "Repair", { filterKey: "repair" })}
                   {isColVisible("technician") && renderHeader("technician", "Technician", { filterKey: "technician" })}
@@ -1206,6 +1231,11 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                     {isColVisible("internalNote") && (
                     <td className="px-2 py-1.5 text-slate-400 text-xs max-w-xs truncate" title={ticket.internalNote}>
                       {ticket.internalNote || "—"}
+                    </td>
+                    )}
+                    {isColVisible("triageNotes") && (
+                    <td className="px-2 py-1.5 text-slate-400 text-xs max-w-xs truncate" title={ticket.triageNotes}>
+                      {ticket.triageNotes || "—"}
                     </td>
                     )}
                     {isColVisible("cancellationReason") && (

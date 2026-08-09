@@ -899,6 +899,39 @@ export async function getLatestVisitTechnicianByTicketIds(
 }
 
 /**
+ * Bulk-fetch the latest Visit Log Triage Note for a set of tickets — used
+ * by the Ticket List's Triage Notes column. Same shape/rationale as
+ * `getLatestVisitTechnicianByTicketIds` right above: one query for the
+ * whole visible page instead of one per ticket, newest-first so the most
+ * recent visit's note wins. Returns a `Map<ticket_id, triageNote>` for
+ * tickets that have at least one visit with a non-empty triage note.
+ */
+export async function getLatestVisitTriageNoteByTicketIds(
+  ticketIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(ticketIds.filter(Boolean)));
+  if (uniq.length === 0) return out;
+  const { data, error } = await supabase
+    .from("visits")
+    .select("ticket_id, triage_note, created_at")
+    .in("ticket_id", uniq)
+    .not("triage_note", "is", null)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("getLatestVisitTriageNoteByTicketIds error:", error.message);
+    return out;
+  }
+  for (const row of data ?? []) {
+    const tid = (row as any).ticket_id as string | null;
+    const note = String((row as any).triage_note ?? "").trim();
+    if (!tid || !note) continue;
+    if (!out.has(tid)) out.set(tid, note);
+  }
+  return out;
+}
+
+/**
  * Bulk-fetch full visit rows (not a derived summary) for a set of tickets,
  * keyed by ticket_id. Used by exports/reports that need the complete
  * Visit Log detail for many tickets at once — a single `.in()` query
