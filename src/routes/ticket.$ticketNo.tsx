@@ -5323,8 +5323,15 @@ function TicketDetailsPage() {
           tracking sub-section anchors into view. */}
       <TicketSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 bg-slate-950 py-6">
-        <div className="max-w-[1600px] mx-auto px-6">
-          <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
+        {/* Sticky positioning is anchored to the nearest ancestor that's
+            taller than this element itself — a dedicated wrapper div sized
+            exactly to this box's own height gives it nowhere to "stick"
+            (it scrolls away the instant its one-height-tall parent does).
+            So this box is a direct child of <main> (which spans the whole
+            page, well past this), not wrapped in its own solo container.
+            z-10, not z-20 — TicketSidebar's floating rail (fixed, z-20)
+            must stay above this box so its hover flyout isn't covered. */}
+        <div className="max-w-[1600px] mx-auto px-6 sticky top-[64px] z-10 bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
             <div className="mb-4 flex items-center gap-4">
               <label htmlFor="ticket-selector" className="text-slate-400 font-semibold whitespace-nowrap">Select Ticket:</label>
               <input
@@ -5563,7 +5570,6 @@ function TicketDetailsPage() {
                 )}
               </div>
             </div>
-          </div>
         </div>
 
         {/* Tabs replaced by the floating TicketSidebar — kept here as a
@@ -5741,7 +5747,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Remaining Customer Details */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <h4 className="font-semibold text-slate-300">Contact Details</h4>
                 {!isEditingCustomerInfo ? (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -5872,7 +5878,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Product Information */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h4 className="font-semibold text-slate-300">Product Information</h4>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -6331,7 +6337,7 @@ function TicketDetailsPage() {
               )}
 
               {/* Schedule Information */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-slate-300">Schedule Information</h4>
                   {!isEditingScheduleInfo ? (

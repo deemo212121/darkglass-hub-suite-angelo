@@ -25,6 +25,7 @@ import { createPortal } from "react-dom";
 import { LayoutGrid } from "lucide-react";
 import { MODULES, type ModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
 
 // Header's inner container in AppHeader: `max-w-[1400px] mx-auto px-6`.
 // We mirror those constants here so the floating navigator's right edge
@@ -83,7 +84,7 @@ function useHeaderMetrics() {
 }
 
 export function ModuleNavigator() {
-  const { ready, email } = useAuth();
+  const { ready, email, role, extraRoles } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
@@ -102,6 +103,14 @@ export function ModuleNavigator() {
   }, []);
 
   if (!ready || !email || !mounted) return null;
+
+  // CSR-department roles only get Dashboard/Tickets (see isModuleAllowed) —
+  // the actual pages already enforce this, but the quick-nav pill strip
+  // rendered every module unconditionally, so a restricted user could still
+  // see and click into Parts/Claims/Report/Admin from here even though
+  // they'd be blocked on arrival. Filtering the strip itself, not just the
+  // destination page, keeps what's hoverable in sync with what's allowed.
+  const visibleModules = MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles));
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -134,8 +143,16 @@ export function ModuleNavigator() {
       <div className="flex items-center justify-end gap-1">
         {expanded && (
           <div className="flex items-stretch overflow-visible">
-            {MODULES.map((m) => {
+            {visibleModules.map((m) => {
               const isActive = activeModule?.slug === m.slug;
+              // Same hiddenFromGrid convention as the module's own tile grid
+              // (m.$module.tsx) — a submodule meant to be reached only via
+              // another page's button (e.g. Flash Tech Calendar via Expense
+              // Tracking) stays out of this quick-nav dropdown too — plus the
+              // CSR allow-list, same as the module filter above.
+              const visibleSubmodules = m.submodules.filter(
+                (s) => !s.hiddenFromGrid && isSubmoduleAllowed(role, m.slug, s.slug, extraRoles)
+              );
               return (
                 <div
                   key={m.slug}
@@ -160,7 +177,7 @@ export function ModuleNavigator() {
                     <span>{m.label}</span>
                   </Link>
 
-                  {isActive && m.submodules.length > 0 && (
+                  {isActive && visibleSubmodules.length > 0 && (
                     <div
                       className="absolute right-0 top-full mt-1.5 z-50 min-w-[16rem] max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900/95 backdrop-blur-md shadow-2xl py-1.5"
                       onMouseEnter={cancelClose}
@@ -169,7 +186,7 @@ export function ModuleNavigator() {
                       <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500 border-b border-white/5">
                         {m.label}
                       </div>
-                      {m.submodules.map((s) => (
+                      {visibleSubmodules.map((s) => (
                         <Link
                           key={s.slug}
                           to="/m/$module/$submodule"
