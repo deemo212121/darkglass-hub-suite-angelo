@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
@@ -236,19 +236,6 @@ interface TicketData {
   nsaCoverageExclusions?: string;
 }
 
-interface CompensationRow {
-  id: string;
-  item: string;
-  beneficiary: string;
-  amount: string;
-  rate: string;
-  activityDate: string;
-  requiresClaimOrCxPayment: string;
-  comment: string;
-  createdBy: string;
-  lastModifiedBy: string;
-}
-
 interface PartTransactionRow {
   id: string;
   partNo: string;
@@ -356,8 +343,8 @@ const TICKET_AUDIT_KEY_PREFIX = "ahs:ticket-audit:";
 const TICKET_VISIT_LOG_KEY_PREFIX = "ahs:ticket-visit-log:";
 const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
 const TICKET_ACTIVE_TAB_KEY_PREFIX = "ahs:ticket-active-tab:";
-type TicketDetailsTab = "general" | "tracking" | "compensation" | "billing";
-const TICKET_DETAILS_TABS: TicketDetailsTab[] = ["general", "tracking", "compensation", "billing"];
+type TicketDetailsTab = "general" | "tracking";
+const TICKET_DETAILS_TABS: TicketDetailsTab[] = ["general", "tracking"];
 
 function formatAuditValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -745,16 +732,6 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
     ...params,
   };
 }
-
-const COMPENSATION_FIELD_LABELS: Record<keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
-  item: "Compensation Item",
-  beneficiary: "Beneficiary",
-  amount: "Amount",
-  rate: "Rate",
-  activityDate: "Activity Date",
-  requiresClaimOrCxPayment: "Requires Approved Claim / Requires Cx Payment",
-  comment: "Comment",
-};
 
 const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
   partNo: "Part No",
@@ -1235,6 +1212,23 @@ function TicketDetailsPage() {
   const [ticketDbId, setTicketDbId] = useState<string | null>(null);
   const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
   const [visitsLoaded, setVisitsLoaded] = useState(false);
+  // Visit History cards: the latest visit is expanded by default, every
+  // older one starts collapsed (header row only). This set holds ids whose
+  // expanded state has been manually flipped AWAY from that default — so
+  // isVisitExpanded below XORs membership against "is this the latest
+  // visit", rather than storing expanded/collapsed directly. That means the
+  // default (latest = open) always recomputes live off current data instead
+  // of needing to be seeded once when visitLogEntries first loads (which
+  // happens asynchronously) or re-seeded whenever a new visit is added.
+  const [visitExpandOverrides, setVisitExpandOverrides] = useState<Set<string>>(new Set());
+  const toggleVisitExpanded = (id: string) => {
+    setVisitExpandOverrides((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
   const [partRowsLoaded, setPartRowsLoaded] = useState(false);
   // Marcone Parts Order modal state — pre-filtered Marcone parts and the
@@ -1322,21 +1316,6 @@ function TicketDetailsPage() {
   // Marcone /parts/lookup state for the inline Add row's "Lookup" button.
   const [marconeLookupBusy, setMarconeLookupBusy] = useState(false);
   const [marconeLookupMsg, setMarconeLookupMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
-    {
-      id: "comp-1",
-      item: "Extra Labor",
-      beneficiary: "Anna Seo",
-      amount: "1",
-      rate: "",
-      activityDate: "05/29/2026",
-      requiresClaimOrCxPayment: "",
-      comment: "",
-      createdBy: currentEditor,
-      lastModifiedBy: currentEditor,
-    },
-  ]);
-
   // ServicePower status sending
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
@@ -5006,31 +4985,6 @@ function TicketDetailsPage() {
     setClaimDraft(rest);
   };
 
-  const addCompensationRow = () => {
-    appendAuditEntry({
-      by: currentEditor,
-      action: "Added compensation row",
-      field: "Compensation Grid",
-      before: "—",
-      after: "Blank row created",
-    });
-    setCompensationRows((rows) => [
-      ...rows,
-      {
-        id: `comp-${Date.now()}`,
-        item: "",
-        beneficiary: "",
-        amount: "",
-        rate: "",
-        activityDate: "05/29/2026",
-        requiresClaimOrCxPayment: "",
-        comment: "",
-        createdBy: currentEditor,
-        lastModifiedBy: currentEditor,
-      },
-    ]);
-  };
-
   const copyToNewTicket = () => {
     if (!ticket) return;
 
@@ -5147,31 +5101,6 @@ function TicketDetailsPage() {
       return;
     }
     void sendTicketToContact(target);
-  };
-
-  const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
-    setCompensationRows((rows) =>
-      rows.map((row) =>
-        row.id === rowId ? (() => {
-          const previousValue = row[field];
-          if (previousValue !== value) {
-            appendAuditEntry({
-              by: currentEditor,
-              action: "Updated compensation row",
-              field: COMPENSATION_FIELD_LABELS[field],
-              before: formatAuditValue(previousValue),
-              after: formatAuditValue(value),
-            });
-          }
-
-          return {
-            ...row,
-            [field]: value,
-            lastModifiedBy: currentEditor,
-          };
-        })() : row,
-      ),
-    );
   };
 
   // Editable Part Transaction rows used both at the top of the table (Add
@@ -5649,8 +5578,6 @@ function TicketDetailsPage() {
               {([
                 { tab: "general", label: "General" },
                 { tab: "tracking", label: "Tracking" },
-                { tab: "compensation", label: "Compensation" },
-                { tab: "billing", label: "Billing" },
               ] as const).map(({ tab, label }) => (
                 <button
                   key={tab}
@@ -6790,6 +6717,374 @@ function TicketDetailsPage() {
               </div>
             </div>
 
+            {/* Part Transaction */}
+            <div id="section-part-transaction" className="scroll-mt-28">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-semibold text-slate-300">Part Transaction</h4>
+                  <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
+                  {isTicketPartLocked ? (
+                    <span
+                      className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        partsEditDisabled
+                          ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                          : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                      }`}
+                      title={
+                        partsEditDisabled
+                          ? `Ticket is "${ticket?.status}". Only Claims can change parts.`
+                          : `Ticket is "${ticket?.status}". Claims-only edit window.`
+                      }
+                    >
+                      🔒 Locked — Claims only
+                    </span>
+                  ) : null}
+                </div>
+                {canUsePartToolbar && (
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (partRows.length === 0 && deletedPartAuditEntries.length === 0) {
+                        alert('No parts to view');
+                        return;
+                      }
+                      setIsPartListModalOpen(true);
+                    }}
+                    className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
+                    title="View all parts"
+                  >
+                    View Log
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => void syncPartsFromNotes()}
+                    disabled={partsEditDisabled || syncingNotesParts}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || syncingNotesParts
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-purple-400/40 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : "Import parts the warranty company announced in SP customer notes (Squaretrade / Allstate). Adds Need-PO rows for new parts and overlays tracking numbers onto existing ones."
+                    }
+                  >
+                    {syncingNotesParts ? "Syncing…" : "Sync Parts from Notes"}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={openTruckStockBatch}
+                    disabled={partsEditDisabled}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-emerald-400/40 bg-emerald-600/20 text-emerald-200 hover:bg-emerald-600/30"
+                    }`}
+                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Fulfill Need PO parts from in-house Truck Stock"}
+                  >
+                    Truck Stock
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitAllPOs}
+                    disabled={partsEditDisabled || !canOrderParts}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || !canOrderParts
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : !canOrderParts
+                          ? "Only Parts Team Leader, Admin, or Super Admin can submit part orders."
+                          : "Submit POs for parts that need ordering"
+                    }
+                  >
+                    Submit POs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveAllRowEdits}
+                    disabled={partsEditDisabled || !canEditParts || rowEditsSaving || dirtyRowCount === 0}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || !canEditParts || dirtyRowCount === 0
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : !canEditParts
+                        ? "Your role can only order parts, not add or edit them."
+                        : dirtyRowCount === 0
+                        ? "Edit any cell in a part row, then click Update to save"
+                        : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
+                    }
+                  >
+                    {rowEditsSaving
+                      ? "Saving…"
+                      : dirtyRowCount > 0
+                      ? `Update (${dirtyRowCount})`
+                      : "Update"}
+                  </button>
+                  {/* Auto-sync indicator removed — Marcone order status
+                      is now manual-refresh only via the per-row Refresh
+                      button. */}
+                </div>
+                )}
+              </div>
+              {partsEditDisabled ? (
+                <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  This ticket is <span className="font-semibold">{ticket?.status}</span>. Part Transactions are locked.
+                  Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them. Any attempt will alert Naveen, Ian, and Tina.
+                </div>
+              ) : null}
+
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-xs pt-compact" style={{ minWidth: "1180px" }}>
+                  {/* Two-row header */}
+                  <thead>
+                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
+                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part No*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Dist.*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Description</th>
+                      <th className="px-2 py-2 text-left font-semibold">PO No</th>
+                      <th className="px-2 py-2 text-left font-semibold">P/O Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice No</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Qty*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Price</th>
+                      <th className="px-2 py-2 text-left font-semibold">Core Value</th>
+                      <th className="px-2 py-2 text-left font-semibold">Ship Cost</th>
+                      <th className="px-2 py-2 text-left font-semibold">Markup</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim To</th>
+                    </tr>
+                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
+                      <th className="px-2 py-2 text-left font-semibold">Part Status*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Note</th>
+                      <th className="px-2 py-2 text-left font-semibold">Visit ID*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Order #</th>
+                      <th className="px-2 py-2 text-left font-semibold">ETA</th>
+                      <th className="px-2 py-2 text-left font-semibold">In Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Out Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Credit #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Total (Markup)</th>
+                      <th className="px-2 py-2 text-left font-semibold">Hold</th>
+                      <th className="px-2 py-2 text-left font-semibold">Cx Paid</th>
+                      <th className="px-2 py-2 text-left font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {/* ── Add inline row (hidden while editing — the editor
+                          appears in-place at the row being edited so the
+                          page does not jump to the top) ── */}
+                    {editingPartId ? null : renderPartDraftRows()}
+
+                    {/* ── Saved rows — every cell is an editable input. The
+                          user types changes that buffer into rowEdits; the
+                          global Update button (next to Submit POs) flushes
+                          them to Supabase. There is no separate "edit
+                          mode" or Edit button anymore. ── */}
+                    {partRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
+                      </tr>
+                    ) : (
+                      partRows.map((row, index) => {
+                        const isDirty = !!rowEdits[row.id];
+                        const cellWrap = "px-1 py-1";
+                        const inputCls = "w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50";
+                        const selectCls = inputCls;
+                        const val = <K extends keyof PartTransactionRow>(field: K) => getRowValue(row, field);
+                        const set = <K extends keyof PartTransactionRow>(field: K, v: PartTransactionRow[K]) =>
+                            updateRowField(row.id, field, v);
+                        return (
+                        <React.Fragment key={row.id}>
+                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
+                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
+                              P{index + 1}
+                              {isDirty ? (
+                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
+                              ) : null}
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
+                                <option value="">Dist.*</option>
+                                {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
+                                <option>AIG</option>
+                                <option>Electrolux</option>
+                                <option>Encompass</option>
+                                <option>Encompass-Birmingham / Montgomery</option>
+                                <option>GE</option>
+                                <option>LG</option>
+                                <option>Marcone- Birmingham / Montgomery</option>
+                                <option>Marcone-162468</option>
+                                <option>Midea</option>
+                                <option>Miele</option>
+                                <option>NSA</option>
+                                <option>OW</option>
+                                <option>SB</option>
+                                <option>Sharp</option>
+                                <option>SP</option>
+                                <option>Squaretrade</option>
+                                <option>SS</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
+                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="PO No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Invoice No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
+                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
+                                {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
+                                  <option key={v} value={String(v)}>{v}%</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Claim To" /></td>
+                          </tr>
+                          <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
+                            <td className={cellWrap}>
+                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
+                                <option value="">Status*</option>
+                                <option>Back Order</option>
+                                <option>Cancelled</option>
+                                <option>Claimed</option>
+                                <option>CX Home</option>
+                                <option>Cx Received</option>
+                                <option>Defective</option>
+                                <option>Hold for Estimation</option>
+                                <option>Hold for next vist</option>
+                                <option>In Review</option>
+                                <option>Lost</option>
+                                <option>Need PO</option>
+                                <option>Not Used &amp; Stocked</option>
+                                <option>PAID</option>
+                                <option>Part Ready</option>
+                                <option>PNN</option>
+                                <option>PO Made</option>
+                                <option>RA - Defect</option>
+                                <option>RA- DMG</option>
+                                <option>RA - PNN</option>
+                                <option>RA - Qty Discrepancy</option>
+                                <option>SQT Received</option>
+                                <option>Tech Pickup</option>
+                                <option>Transfer to Another Ticket</option>
+                                <option>Used</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Note" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
+                                <option value="">Visit ID*</option>
+                                {visitLogEntries.map((entry) => (
+                                  <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
+                                ))}
+                                {/* Stale value from before this became a dropdown, or a
+                                    since-deleted visit — keep it selectable so it isn't
+                                    silently blanked out. */}
+                                {String(val("visitId") ?? "") && !visitLogEntries.some((entry) => entry.visitNo === String(val("visitId") ?? "")) && (
+                                  <option value={String(val("visitId") ?? "")}>{String(val("visitId"))} (not found)</option>
+                                )}
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Order #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="In Track #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
+                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
+                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
+                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
+                            </td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              {row.orderNo && isMarconeDist(row.partDist) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => refreshMarconeOrderStatus(row)}
+                                  disabled={marconeRefreshingId === row.id}
+                                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
+                                  title={`Pull ETA / invoice / tracking from Marcone for order ${row.orderNo}`}
+                                >
+                                  {marconeRefreshingId === row.id ? "…" : "Refresh"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => deletePartRow(row.id)}
+                                disabled={partsEditDisabled || !canEditParts}
+                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${
+                                  partsEditDisabled || !canEditParts
+                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
+                                    : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                                }`}
+                                title={
+                                  partsEditDisabled
+                                    ? "Locked: Parts / Claims / Manager roles only"
+                                    : !canEditParts
+                                      ? "Your role can only order parts, not add or edit them."
+                                      : "Delete part"
+                                }
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {partRows.length > 0 && (() => {
+                    const totals = partRows.reduce((acc, r) => {
+                      const qty = parseFloat(r.quantity) || 0;
+                      acc.qty += qty;
+                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
+                      acc.coreValue += parseFloat(r.coreValue) || 0;
+                      acc.shipCost += parseFloat(r.shipCost) || 0;
+                      acc.markup += parseFloat(r.markup) || 0;
+                      return acc;
+                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
+                    const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
+                    const money = (n: number) => `$${n.toFixed(2)}`;
+                    return (
+                      <tfoot>
+                        <tr className="bg-yellow-200 text-slate-900 font-semibold text-[11px]">
+                          <td className="px-2 py-1.5 uppercase tracking-wide" colSpan={8}>Total</td>
+                          <td className="px-2 py-1.5">{totals.qty}</td>
+                          <td className="px-2 py-1.5">{money(totals.partPrice)}</td>
+                          <td className="px-2 py-1.5">{money(totals.coreValue)}</td>
+                          <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
+                          <td className="px-2 py-1.5">{money(totals.markup)}</td>
+                          <td className="px-2 py-1.5 text-right" colSpan={20}>
+                            <span className="mr-2 text-slate-700">Grand Total:</span>
+                            <span className="text-slate-900">{money(grand)}</span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+            </div>
+
             {/* Visit Log */}
             <div id="section-visit-log" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
@@ -6915,9 +7210,20 @@ function TicketDetailsPage() {
                           orderedIds.map((id, i) => [id, `V${i + 1}`])
                         );
 
-                        return [...visitLogEntries].reverse().map((entry) => (
+                        const latestVisitId = orderedIds[orderedIds.length - 1];
+
+                        return [...visitLogEntries].reverse().map((entry) => {
+                        // XOR against the default (latest = expanded, everything
+                        // else collapsed) — see visitExpandOverrides' declaration.
+                        const isExpanded = visitExpandOverrides.has(entry.id) !== (entry.id === latestVisitId);
+                        return (
                         <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleVisitExpanded(entry.id)}
+                            className="flex w-full flex-wrap items-start justify-between gap-2 text-left"
+                            aria-expanded={isExpanded}
+                          >
                             <div className="flex items-center gap-3">
                               {/* Fixed inline colors, not Tailwind's theme-swept blue-*
                                   classes — guarantees this stays readable in both dark
@@ -6951,8 +7257,13 @@ function TicketDetailsPage() {
                                 </div>
                               </div>
                             </div>
-                            <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
-                          </div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
+                              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </div>
+                          </button>
+                          {isExpanded && (
+                          <>
                           {entry.updatedAt ? (
                             /* Schedule Information — the edited timestamp already shows at
                                the top of the card, so this box just highlights the current
@@ -7041,8 +7352,11 @@ function TicketDetailsPage() {
                               Delete
                             </button>
                           </div>
+                          </>
+                          )}
                         </div>
-                      ));
+                        );
+                      });
                       })()
                     )}
                   </div>
@@ -7556,374 +7870,6 @@ function TicketDetailsPage() {
                 </div>
               </div>
             ) : null}
-
-            {/* Part Transaction */}
-            <div id="section-part-transaction" className="scroll-mt-28">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-semibold text-slate-300">Part Transaction</h4>
-                  <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
-                  {isTicketPartLocked ? (
-                    <span
-                      className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                        partsEditDisabled
-                          ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
-                          : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
-                      }`}
-                      title={
-                        partsEditDisabled
-                          ? `Ticket is "${ticket?.status}". Only Claims can change parts.`
-                          : `Ticket is "${ticket?.status}". Claims-only edit window.`
-                      }
-                    >
-                      🔒 Locked — Claims only
-                    </span>
-                  ) : null}
-                </div>
-                {canUsePartToolbar && (
-                <div className="flex items-center gap-2">
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      if (partRows.length === 0 && deletedPartAuditEntries.length === 0) {
-                        alert('No parts to view');
-                        return;
-                      }
-                      setIsPartListModalOpen(true);
-                    }}
-                    className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
-                    title="View all parts"
-                  >
-                    View Log
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => void syncPartsFromNotes()}
-                    disabled={partsEditDisabled || syncingNotesParts}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || syncingNotesParts
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-purple-400/40 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : "Import parts the warranty company announced in SP customer notes (Squaretrade / Allstate). Adds Need-PO rows for new parts and overlays tracking numbers onto existing ones."
-                    }
-                  >
-                    {syncingNotesParts ? "Syncing…" : "Sync Parts from Notes"}
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={openTruckStockBatch}
-                    disabled={partsEditDisabled}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-emerald-400/40 bg-emerald-600/20 text-emerald-200 hover:bg-emerald-600/30"
-                    }`}
-                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Fulfill Need PO parts from in-house Truck Stock"}
-                  >
-                    Truck Stock
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitAllPOs}
-                    disabled={partsEditDisabled || !canOrderParts}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || !canOrderParts
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : !canOrderParts
-                          ? "Only Parts Team Leader, Admin, or Super Admin can submit part orders."
-                          : "Submit POs for parts that need ordering"
-                    }
-                  >
-                    Submit POs
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveAllRowEdits}
-                    disabled={partsEditDisabled || !canEditParts || rowEditsSaving || dirtyRowCount === 0}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || !canEditParts || dirtyRowCount === 0
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : !canEditParts
-                        ? "Your role can only order parts, not add or edit them."
-                        : dirtyRowCount === 0
-                        ? "Edit any cell in a part row, then click Update to save"
-                        : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
-                    }
-                  >
-                    {rowEditsSaving
-                      ? "Saving…"
-                      : dirtyRowCount > 0
-                      ? `Update (${dirtyRowCount})`
-                      : "Update"}
-                  </button>
-                  {/* Auto-sync indicator removed — Marcone order status
-                      is now manual-refresh only via the per-row Refresh
-                      button. */}
-                </div>
-                )}
-              </div>
-              {partsEditDisabled ? (
-                <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  This ticket is <span className="font-semibold">{ticket?.status}</span>. Part Transactions are locked.
-                  Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them. Any attempt will alert Naveen, Ian, and Tina.
-                </div>
-              ) : null}
-
-              <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-xs pt-compact" style={{ minWidth: "1180px" }}>
-                  {/* Two-row header */}
-                  <thead>
-                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
-                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part No*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Dist.*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Description</th>
-                      <th className="px-2 py-2 text-left font-semibold">PO No</th>
-                      <th className="px-2 py-2 text-left font-semibold">P/O Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">Invoice No</th>
-                      <th className="px-2 py-2 text-left font-semibold">Invoice Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">Qty*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Price</th>
-                      <th className="px-2 py-2 text-left font-semibold">Core Value</th>
-                      <th className="px-2 py-2 text-left font-semibold">Ship Cost</th>
-                      <th className="px-2 py-2 text-left font-semibold">Markup</th>
-                      <th className="px-2 py-2 text-left font-semibold">Claim To</th>
-                    </tr>
-                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
-                      <th className="px-2 py-2 text-left font-semibold">Part Status*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Note</th>
-                      <th className="px-2 py-2 text-left font-semibold">Visit ID*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Order #</th>
-                      <th className="px-2 py-2 text-left font-semibold">ETA</th>
-                      <th className="px-2 py-2 text-left font-semibold">In Tracking #</th>
-                      <th className="px-2 py-2 text-left font-semibold">RA Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">RA #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Out Tracking #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Credit #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Total (Markup)</th>
-                      <th className="px-2 py-2 text-left font-semibold">Hold</th>
-                      <th className="px-2 py-2 text-left font-semibold">Cx Paid</th>
-                      <th className="px-2 py-2 text-left font-semibold">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {/* ── Add inline row (hidden while editing — the editor
-                          appears in-place at the row being edited so the
-                          page does not jump to the top) ── */}
-                    {editingPartId ? null : renderPartDraftRows()}
-
-                    {/* ── Saved rows — every cell is an editable input. The
-                          user types changes that buffer into rowEdits; the
-                          global Update button (next to Submit POs) flushes
-                          them to Supabase. There is no separate "edit
-                          mode" or Edit button anymore. ── */}
-                    {partRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
-                      </tr>
-                    ) : (
-                      partRows.map((row, index) => {
-                        const isDirty = !!rowEdits[row.id];
-                        const cellWrap = "px-1 py-1";
-                        const inputCls = "w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50";
-                        const selectCls = inputCls;
-                        const val = <K extends keyof PartTransactionRow>(field: K) => getRowValue(row, field);
-                        const set = <K extends keyof PartTransactionRow>(field: K, v: PartTransactionRow[K]) =>
-                            updateRowField(row.id, field, v);
-                        return (
-                        <React.Fragment key={row.id}>
-                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
-                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
-                              P{index + 1}
-                              {isDirty ? (
-                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
-                              ) : null}
-                            </td>
-                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                <option value="">Dist.*</option>
-                                {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
-                                <option>AIG</option>
-                                <option>Electrolux</option>
-                                <option>Encompass</option>
-                                <option>Encompass-Birmingham / Montgomery</option>
-                                <option>GE</option>
-                                <option>LG</option>
-                                <option>Marcone- Birmingham / Montgomery</option>
-                                <option>Marcone-162468</option>
-                                <option>Midea</option>
-                                <option>Miele</option>
-                                <option>NSA</option>
-                                <option>OW</option>
-                                <option>SB</option>
-                                <option>Sharp</option>
-                                <option>SP</option>
-                                <option>Squaretrade</option>
-                                <option>SS</option>
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
-                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="PO No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Invoice No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
-                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
-                                  <option key={v} value={String(v)}>{v}%</option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Claim To" /></td>
-                          </tr>
-                          <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
-                            <td className={cellWrap}>
-                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
-                                <option value="">Status*</option>
-                                <option>Back Order</option>
-                                <option>Cancelled</option>
-                                <option>Claimed</option>
-                                <option>CX Home</option>
-                                <option>Cx Received</option>
-                                <option>Defective</option>
-                                <option>Hold for Estimation</option>
-                                <option>Hold for next vist</option>
-                                <option>In Review</option>
-                                <option>Lost</option>
-                                <option>Need PO</option>
-                                <option>Not Used &amp; Stocked</option>
-                                <option>PAID</option>
-                                <option>Part Ready</option>
-                                <option>PNN</option>
-                                <option>PO Made</option>
-                                <option>RA - Defect</option>
-                                <option>RA- DMG</option>
-                                <option>RA - PNN</option>
-                                <option>RA - Qty Discrepancy</option>
-                                <option>SQT Received</option>
-                                <option>Tech Pickup</option>
-                                <option>Transfer to Another Ticket</option>
-                                <option>Used</option>
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Note" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                <option value="">Visit ID*</option>
-                                {visitLogEntries.map((entry) => (
-                                  <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
-                                ))}
-                                {/* Stale value from before this became a dropdown, or a
-                                    since-deleted visit — keep it selectable so it isn't
-                                    silently blanked out. */}
-                                {String(val("visitId") ?? "") && !visitLogEntries.some((entry) => entry.visitNo === String(val("visitId") ?? "")) && (
-                                  <option value={String(val("visitId") ?? "")}>{String(val("visitId"))} (not found)</option>
-                                )}
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Order #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="In Track #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
-                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
-                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
-                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
-                            <td className={cellWrap}>
-                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
-                            </td>
-                            <td className={cellWrap}>
-                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
-                            </td>
-                            <td className="px-2 py-1.5 whitespace-nowrap">
-                              {row.orderNo && isMarconeDist(row.partDist) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => refreshMarconeOrderStatus(row)}
-                                  disabled={marconeRefreshingId === row.id}
-                                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
-                                  title={`Pull ETA / invoice / tracking from Marcone for order ${row.orderNo}`}
-                                >
-                                  {marconeRefreshingId === row.id ? "…" : "Refresh"}
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                onClick={() => deletePartRow(row.id)}
-                                disabled={partsEditDisabled || !canEditParts}
-                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${
-                                  partsEditDisabled || !canEditParts
-                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
-                                    : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
-                                }`}
-                                title={
-                                  partsEditDisabled
-                                    ? "Locked: Parts / Claims / Manager roles only"
-                                    : !canEditParts
-                                      ? "Your role can only order parts, not add or edit them."
-                                      : "Delete part"
-                                }
-                              >
-                                Delete
-                              </button>
-                            </td>
-                          </tr>
-                        </React.Fragment>
-                        );
-                      })
-                    )}
-                  </tbody>
-                  {partRows.length > 0 && (() => {
-                    const totals = partRows.reduce((acc, r) => {
-                      const qty = parseFloat(r.quantity) || 0;
-                      acc.qty += qty;
-                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
-                      acc.coreValue += parseFloat(r.coreValue) || 0;
-                      acc.shipCost += parseFloat(r.shipCost) || 0;
-                      acc.markup += parseFloat(r.markup) || 0;
-                      return acc;
-                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
-                    const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
-                    const money = (n: number) => `$${n.toFixed(2)}`;
-                    return (
-                      <tfoot>
-                        <tr className="bg-yellow-200 text-slate-900 font-semibold text-[11px]">
-                          <td className="px-2 py-1.5 uppercase tracking-wide" colSpan={8}>Total</td>
-                          <td className="px-2 py-1.5">{totals.qty}</td>
-                          <td className="px-2 py-1.5">{money(totals.partPrice)}</td>
-                          <td className="px-2 py-1.5">{money(totals.coreValue)}</td>
-                          <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
-                          <td className="px-2 py-1.5">{money(totals.markup)}</td>
-                          <td className="px-2 py-1.5 text-right" colSpan={20}>
-                            <span className="mr-2 text-slate-700">Grand Total:</span>
-                            <span className="text-slate-900">{money(grand)}</span>
-                          </td>
-                        </tr>
-                      </tfoot>
-                    );
-                  })()}
-                </table>
-              </div>
-            </div>
             {canSeeClaimTransaction && (
             <div id="section-claim-transaction" className="scroll-mt-28">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -8755,232 +8701,6 @@ function TicketDetailsPage() {
           </div>
         )}
 
-        {activeTab === "compensation" && (
-          <div className="space-y-6">
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-2">Default Date:</label>
-                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">05/29/2026</div>
-                </div>
-                <div>
-                  <label className="block text-slate-500 font-semibold mb-2">Schedule Date</label>
-                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">Today</div>
-                </div>
-                <div className="flex items-end">
-                  <button
-                    onClick={addCompensationRow}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded text-sm transition"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto border border-white/10 rounded-lg">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Compensation Item</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Beneficiary</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Amount</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Rate</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Activity Date</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Requires Approved Claim / Requires Cx Payment</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Comment</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Created by</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Last Modified by</th>
-                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {compensationRows.map((row) => (
-                    <tr key={row.id} className="border-b border-white/5 align-top hover:bg-white/5">
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.item}
-                          onChange={(e) => updateCompensationRow(row.id, "item", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Compensation item"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={row.beneficiary}
-                          onChange={(e) => updateCompensationRow(row.id, "beneficiary", e.target.value)}
-                          title="Select technician"
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                        >
-                          <option value="">Select technician</option>
-                          {technicianOptions.map((technician) => (
-                            <option key={technician} value={technician}>
-                              {technician}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.amount}
-                          onChange={(e) => updateCompensationRow(row.id, "amount", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Amount"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.rate}
-                          onChange={(e) => updateCompensationRow(row.id, "rate", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Rate"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.activityDate}
-                          onChange={(e) => updateCompensationRow(row.id, "activityDate", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Activity date"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.requiresClaimOrCxPayment}
-                          onChange={(e) => updateCompensationRow(row.id, "requiresClaimOrCxPayment", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Yes / No"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          value={row.comment}
-                          onChange={(e) => updateCompensationRow(row.id, "comment", e.target.value)}
-                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          placeholder="Comment"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{row.createdBy}</td>
-                      <td className="px-4 py-3 text-slate-300">{row.lastModifiedBy}</td>
-                      <td className="px-4 py-3 text-slate-300">
-                        <button className="text-blue-400 hover:text-blue-300 font-semibold">Edit</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "billing" && (
-          <div className="space-y-6">
-            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
-              <div className="text-lg font-semibold text-blue-200">Billing Information</div>
-              <div className="mt-3 rounded-md border border-white/10 bg-slate-900/90 px-3 py-2 text-sm font-semibold text-white">Paid in full</div>
-              <div className="mt-2 text-sm font-semibold text-blue-200/90">0 distinct record found</div>
-              <div className="mt-4 max-w-sm">
-                <label htmlFor="billing-search" className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">search in result</label>
-                <input
-                  id="billing-search"
-                  type="text"
-                  readOnly
-                  value=""
-                  className="mt-2 w-full rounded-md border border-white/15 bg-slate-900/90 px-3 py-2 text-sm text-white focus:outline-none"
-                />
-              </div>
-              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
-                <table className="w-full min-w-[1400px] text-left text-sm">
-                  <thead>
-                    <tr className="bg-blue-900/50 text-blue-200">
-                      <th className="px-4 py-3">ID</th>
-                      <th className="px-4 py-3">Visit ID*</th>
-                      <th className="px-4 py-3">Cx Email</th>
-                      <th className="px-4 py-3">Cx Name*</th>
-                      <th className="px-4 py-3">Labor Fee*</th>
-                      <th className="px-4 py-3">Part Fee*</th>
-                      <th className="px-4 py-3">Diag(Trip) Fee*</th>
-                      <th className="px-4 py-3">Others Fee*</th>
-                      <th className="px-4 py-3">Tax Rate*</th>
-                      <th className="px-4 py-3">Tax</th>
-                      <th className="px-4 py-3">Deduction</th>
-                      <th className="px-4 py-3">Total</th>
-                      <th className="px-4 py-3">Payment*</th>
-                      <th className="px-4 py-3">C. Card #</th>
-                      <th className="px-4 py-3">App. Code</th>
-                      <th className="px-4 py-3">Sign</th>
-                      <th className="px-4 py-3">Comment</th>
-                      <th className="px-4 py-3">Tx Date</th>
-                      <th className="px-4 py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/10">
-                    <tr className="bg-slate-900/70 text-slate-200">
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3">V1</td>
-                      <td className="px-4 py-3">jonshaw@lakesidechurch.ws</td>
-                      <td className="px-4 py-3">Jon Shaw</td>
-                      <td className="px-4 py-3">Tax</td>
-                      <td className="px-4 py-3">Tax</td>
-                      <td className="px-4 py-3">Tax</td>
-                      <td className="px-4 py-3">Tax</td>
-                      <td className="px-4 py-3">%</td>
-                      <td className="px-4 py-3">$0.00</td>
-                      <td className="px-4 py-3">0.00</td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3"></td>
-                      <td className="px-4 py-3">05/14/2026</td>
-                      <td className="px-4 py-3 text-blue-300 font-semibold">Add</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
-              <div className="text-lg font-semibold text-blue-200">Estimations</div>
-              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
-                <table className="w-full min-w-[1100px] text-left text-sm">
-                  <thead>
-                    <tr className="bg-blue-900/50 text-blue-200">
-                      <th className="px-4 py-3">ID</th>
-                      <th className="px-4 py-3">Estimated</th>
-                      <th className="px-4 py-3">Type</th>
-                      <th className="px-4 py-3">Labor Fee</th>
-                      <th className="px-4 py-3">Part Fee</th>
-                      <th className="px-4 py-3">Diagnose Fee</th>
-                      <th className="px-4 py-3">Others Fee</th>
-                      <th className="px-4 py-3">Tax Rate (%)</th>
-                      <th className="px-4 py-3">Tax Fee</th>
-                      <th className="px-4 py-3">Deduction</th>
-                      <th className="px-4 py-3">Refund</th>
-                      <th className="px-4 py-3">Total</th>
-                      <th className="px-4 py-3">Confirmed</th>
-                      <th className="px-4 py-3">Created by</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/10">
-                    <tr className="bg-slate-900/70 text-slate-200">
-                      <td className="px-4 py-3" colSpan={14}></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
-                  Close
-                </button>
-                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
-                  List
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         </div>
       </main>
 

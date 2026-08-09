@@ -160,10 +160,27 @@ function Landing() {
       // Navigation will happen automatically via useEffect once validated.
     } catch (error: any) {
       console.error("Login error:", error);
-      setErr(error.message || "Login failed. Please check your credentials.");
-      setSubmitting(false);
+      const message = error.message || "Login failed. Please check your credentials.";
+      // A failed login can leave this tab's in-memory auth state tangled
+      // (e.g. a stale sign-out call racing a fresh one — see auth.tsx's
+      // checkAndHandleSession) — a full reload guarantees the next attempt
+      // starts from clean state instead of retrying on top of whatever
+      // broke. Stash the message first so it still shows once the reload lands.
+      sessionStorage.setItem("ahs:loginErrorAfterReload", message);
+      window.location.reload();
     }
   };
+
+  // Restore the error message stashed right before the reload above, so it
+  // isn't lost — read once and clear it so it doesn't reappear on a later,
+  // unrelated reload.
+  useEffect(() => {
+    const pending = sessionStorage.getItem("ahs:loginErrorAfterReload");
+    if (pending) {
+      setErr(pending);
+      sessionStorage.removeItem("ahs:loginErrorAfterReload");
+    }
+  }, []);
 
   return (
     <div className="min-h-screen">

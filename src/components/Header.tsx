@@ -204,9 +204,10 @@ export function AppHeader() {
                 <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
                 <DropdownMenuItem
                   onSelect={() => {
-                    logout();
-                    // Use window.location to bypass router and prevent infinite loop
-                    window.location.href = "/landing";
+                    // logout() itself navigates to /landing (a full
+                    // reload, not a router transition) once sign-out
+                    // settles — see auth.tsx.
+                    void logout();
                   }}
                   className="gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-destructive focus:text-destructive"
                 >
