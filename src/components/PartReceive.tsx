@@ -339,6 +339,8 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                         <Link
                           to="/ticket/$ticketNo"
                           params={{ ticketNo: item.ticketNo }}
+                          target="_blank"
+                          rel="noreferrer"
                           className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
                         >
                           {item.poNo}
