@@ -84,6 +84,25 @@ const CLAIM_COMPANY_OPTIONS = [
   "SS 4930403", "SS 6488757",
 ];
 
+// Part Transaction's "Dist." (distributor) options. Most are national/
+// company-wide, but a location can have its own dedicated distributor
+// branch instead — when it does, only that location's own entries show,
+// not the generic list too (e.g. Birmingham and Montgomery both route
+// through the same shared Marcone/Encompass branch, so their tickets
+// should only ever see those two, never the unrelated national ones).
+const UNIVERSAL_PART_DISTRIBUTORS = [
+  "AIG", "Electrolux", "Encompass", "GE", "LG", "Marcone-162468", "Midea",
+  "Miele", "NSA", "OW", "SB", "Sharp", "SP", "Squaretrade", "SS",
+];
+const LOCATION_PART_DISTRIBUTORS: Record<string, string[]> = {
+  Birmingham: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
+  Montgomery: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
+};
+
+function partDistOptionsForLocation(location: string | null | undefined): string[] {
+  return LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? UNIVERSAL_PART_DISTRIBUTORS;
+}
+
 // Map a ServicePower "Warranty Info" value to our AHS Warranty Type dropdown.
 //  - Sales fulfillment  -> In warranty
 //  - Concessions        -> Concession LP
@@ -5147,23 +5166,9 @@ function TicketDetailsPage() {
             {partDraft.partDist.startsWith("In-House (") ? (
               <option value={partDraft.partDist}>{partDraft.partDist}</option>
             ) : null}
-            <option>AIG</option>
-            <option>Electrolux</option>
-            <option>Encompass</option>
-            <option>Encompass-Birmingham / Montgomery</option>
-            <option>GE</option>
-            <option>LG</option>
-            <option>Marcone- Birmingham / Montgomery</option>
-            <option>Marcone-162468</option>
-            <option>Midea</option>
-            <option>Miele</option>
-            <option>NSA</option>
-            <option>OW</option>
-            <option>SB</option>
-            <option>Sharp</option>
-            <option>SP</option>
-            <option>Squaretrade</option>
-            <option>SS</option>
+            {partDistOptionsForLocation(ticket?.location).map((d) => (
+              <option key={d}>{d}</option>
+            ))}
           </select>
         </td>
         <td className="px-1 py-1.5">
@@ -6924,23 +6929,9 @@ function TicketDetailsPage() {
                               <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 <option value="">Dist.*</option>
                                 {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
-                                <option>AIG</option>
-                                <option>Electrolux</option>
-                                <option>Encompass</option>
-                                <option>Encompass-Birmingham / Montgomery</option>
-                                <option>GE</option>
-                                <option>LG</option>
-                                <option>Marcone- Birmingham / Montgomery</option>
-                                <option>Marcone-162468</option>
-                                <option>Midea</option>
-                                <option>Miele</option>
-                                <option>NSA</option>
-                                <option>OW</option>
-                                <option>SB</option>
-                                <option>Sharp</option>
-                                <option>SP</option>
-                                <option>Squaretrade</option>
-                                <option>SS</option>
+                                {partDistOptionsForLocation(ticket?.location).map((d) => (
+                                  <option key={d}>{d}</option>
+                                ))}
                               </select>
                             </td>
                             <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
