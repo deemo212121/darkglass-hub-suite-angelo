@@ -415,6 +415,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
+                  // Hydrate this company's Dashboard-submodule role-gate
+                  // overrides (migration 0151) — every getDashboardRoleGate()
+                  // call site stays synchronous and just starts seeing the
+                  // customized list once this resolves. Never blocks login;
+                  // a submodule reads as "use the hardcoded default" until it does.
+                  void (async () => {
+                    try {
+                      const { getDashboardRoleGateOverrides } = await import("./supabase/dashboardRoleGates");
+                      const { hydrateDashboardRoleGates } = await import("./dashboardAccess");
+                      hydrateDashboardRoleGates(await getDashboardRoleGateOverrides());
+                    } catch (e) {
+                      console.warn("Dashboard role gate override hydration skipped:", e);
+                    }
+                  })();
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
                   //   1. branch_access = "*" (admin set "All Locations") →

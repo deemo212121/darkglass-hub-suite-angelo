@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, RefreshCw, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { getModule } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { ROLE_OPTIONS, ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { DASHBOARD_ROLE_GATES, hydrateDashboardRoleGates } from "@/lib/dashboardAccess";
+import { getDashboardRoleGateOverrides, setDashboardRoleGateOverride } from "@/lib/supabase/dashboardRoleGates";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
@@ -31,6 +34,24 @@ function ColGroup() {
   );
 }
 
+// Second grid, further down the page: which roles may open each gated
+// Dashboard submodule. Only the submodule-title column differs in width
+// from the first grid's Name column; role columns reuse CHECKBOX_COL_W so
+// both grids line up visually.
+const GATE_NAME_COL_W = 260;
+const GATE_COL_WIDTHS = [GATE_NAME_COL_W, ...ROLE_OPTIONS.map(() => CHECKBOX_COL_W)];
+const GATE_TABLE_WIDTH = GATE_COL_WIDTHS.reduce((sum, w) => sum + w, 0);
+
+function GateColGroup() {
+  return (
+    <colgroup>
+      {GATE_COL_WIDTHS.map((w, i) => (
+        <col key={i} style={{ width: w }} />
+      ))}
+    </colgroup>
+  );
+}
+
 /**
  * Bulk secondary-role ("Accessibility") assignment grid — one row per
  * company user, one checkbox column per assignable role (ROLE_OPTIONS, the
@@ -50,6 +71,22 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // `${profileId}:${roleCode}` of the one checkbox currently saving, so only
   // that cell shows a spinner/disables instead of freezing the whole grid.
   const [savingCell, setSavingCell] = useState<string | null>(null);
+
+  // Dashboard-submodule role-gate grid (second section, below).
+  const [dashboardGates, setDashboardGates] = useState<Record<string, string[]>>({});
+  const [gatesLoading, setGatesLoading] = useState(true);
+  const [savingGateCell, setSavingGateCell] = useState<string | null>(null);
+  const gateTableScrollRef = useRef<HTMLDivElement>(null);
+  const gateHeaderScrollRef = useRef<HTMLDivElement>(null);
+
+  // Every Dashboard submodule that has a hardcoded default gate — the ones
+  // with no entry in DASHBOARD_ROLE_GATES are open to every role and aren't
+  // configurable here, same as before this grid existed.
+  const gatedSubmodules = useMemo(() => {
+    const dashboardMod = getModule("dashboard");
+    const gatedSlugs = new Set(Object.keys(DASHBOARD_ROLE_GATES));
+    return (dashboardMod?.submodules ?? []).filter((s) => gatedSlugs.has(s.slug));
+  }, []);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -97,6 +134,46 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
       alert(`Failed to update role: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingCell(null);
+    }
+  };
+
+  const loadDashboardGates = async () => {
+    setGatesLoading(true);
+    try {
+      const overrides = await getDashboardRoleGateOverrides();
+      const effective: Record<string, string[]> = {};
+      for (const s of gatedSubmodules) {
+        effective[s.slug] = overrides[s.slug] ?? DASHBOARD_ROLE_GATES[s.slug] ?? [];
+      }
+      setDashboardGates(effective);
+    } finally {
+      setGatesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadDashboardGates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleGateToggle = async (submoduleSlug: string, roleCode: string, checked: boolean) => {
+    const prev = dashboardGates[submoduleSlug] ?? [];
+    const next = checked ? Array.from(new Set([...prev, roleCode])) : prev.filter((r) => r !== roleCode);
+
+    setDashboardGates((p) => ({ ...p, [submoduleSlug]: next }));
+    const cellKey = `${submoduleSlug}:${roleCode}`;
+    setSavingGateCell(cellKey);
+    try {
+      await setDashboardRoleGateOverride(submoduleSlug, next);
+      // Reflect the change in this tab's own nav gating immediately too,
+      // instead of only taking effect on the next login/reload.
+      hydrateDashboardRoleGates({ ...dashboardGates, [submoduleSlug]: next });
+    } catch (err) {
+      // Roll back this one cell — every other row/cell is unaffected.
+      setDashboardGates((p) => ({ ...p, [submoduleSlug]: prev }));
+      alert(`Failed to update module access: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingGateCell(null);
     }
   };
 
@@ -236,6 +313,88 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                                 title={isPrimary ? "Primary role — change it from this user's profile page" : undefined}
                                 onChange={(e) => void handleToggle(user, r.value, e.target.checked)}
                                 className="h-4 w-4 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                              />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-10 mb-4">
+          <h2 className="text-xl font-semibold text-white">Dashboard Module Access by Role</h2>
+          <p className="text-sm text-slate-400 mt-1">
+            Check a box to let that role open the submodule from the Dashboard's tile grid. A row you haven't edited
+            yet shows the built-in default; changing any box here replaces that submodule's whole list, company-wide,
+            immediately. Super Admin can always open every submodule regardless of this grid.
+          </p>
+        </div>
+
+        <FloatingHorizontalScrollbar targetRef={gateTableScrollRef} />
+        <div
+          ref={gateHeaderScrollRef}
+          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
+            <GateColGroup />
+            <thead>
+              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Dashboard Submodule</th>
+                {ROLE_OPTIONS.map((r) => (
+                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
+                    {r.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div
+          ref={gateTableScrollRef}
+          onScroll={(e) => {
+            if (gateHeaderScrollRef.current) gateHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
+            <GateColGroup />
+            <tbody>
+              {gatesLoading ? (
+                <tr>
+                  <td colSpan={1 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
+                    Loading…
+                  </td>
+                </tr>
+              ) : (
+                gatedSubmodules.map((s) => {
+                  const allowed = new Set(dashboardGates[s.slug] ?? []);
+                  return (
+                    <tr key={s.slug} className="border-b border-white/5 hover:bg-white/5">
+                      <td
+                        className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+                        title={s.title}
+                      >
+                        {s.title}
+                      </td>
+                      {ROLE_OPTIONS.map((r) => {
+                        const checked = allowed.has(r.value);
+                        const cellKey = `${s.slug}:${r.value}`;
+                        const cellSaving = savingGateCell === cellKey;
+                        return (
+                          <td key={r.value} className="px-2 py-2 text-center">
+                            {cellSaving ? (
+                              <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+                            ) : (
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => void handleGateToggle(s.slug, r.value, e.target.checked)}
+                                className="h-4 w-4 accent-blue-500"
                               />
                             )}
                           </td>
