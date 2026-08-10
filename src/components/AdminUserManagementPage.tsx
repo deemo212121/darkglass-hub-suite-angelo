@@ -20,6 +20,19 @@ function roleDisplay(role: string | null | undefined): string {
   return ROLE_LABELS[normalizeRole(role)] || role;
 }
 
+function isTopTierRole(record: UserManagementRecord): boolean {
+  const role = normalizeRole(record.type);
+  return role === "SUPERADMIN" || role === "ADMIN";
+}
+
+/** 0 = Super Admin, 1 = Admin, 2 = everyone else — for sorting the Hierarchy tree's root row so Super Admin always leads, then Admin, per the requested chart order. */
+function topTierRank(record: UserManagementRecord): number {
+  const role = normalizeRole(record.type);
+  if (role === "SUPERADMIN") return 0;
+  if (role === "ADMIN") return 1;
+  return 2;
+}
+
 type ViewMode = "list" | "hierarchy";
 
 interface NewUserFormData {
@@ -758,16 +771,25 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   }, [activeForHierarchy]);
 
   // Built straight from manager_name — no synthetic edges. A root here
-  // only ever gets the reports it actually, really has.
+  // only ever gets the reports it actually, really has. One exception: a
+  // Super Admin/Admin whose manager_name happens to point at someone who
+  // ISN'T also Super Admin/Admin doesn't get nested there — real data has
+  // stray/incidental manager_name values on these accounts (e.g. leftover
+  // from testing) that don't reflect a genuine reporting line, and burying
+  // a top-tier account several levels deep under an unrelated chain would
+  // make the top of the chart misleading. They surface as their own root
+  // instead (see hierarchyRoots) unless their manager is ALSO top-tier.
   const childrenByManagerName = useMemo(() => {
     const map = new Map<string, UserManagementRecord[]>();
     activeForHierarchy.forEach((record) => {
       if (!record.manager) return;
+      const manager = usersByName.get(record.manager);
+      if (isTopTierRole(record) && (!manager || !isTopTierRole(manager))) return;
       map.set(record.manager, [...(map.get(record.manager) ?? []), record]);
     });
     for (const list of map.values()) list.sort((a, b) => a.userName.localeCompare(b.userName));
     return map;
-  }, [activeForHierarchy]);
+  }, [activeForHierarchy, usersByName]);
 
   const subtreeSize = useMemo(() => {
     const cache = new Map<string, number>();
@@ -783,17 +805,26 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return (userName: string) => countBelow(userName, new Set());
   }, [childrenByManagerName]);
 
-  // Roots (no manager set, or manager isn't a real active user in view) are
-  // NEVER nested under each other — that would show a false reporting line
-  // for people who don't actually report to that person. They just sort so
-  // whoever has the biggest real reporting chain underneath them (not role
-  // — an Admin/Super Admin with no reports sorts like anyone else) leads
-  // the list; everyone else still follows, biggest-chain-first, then name.
+  // Roots — no manager set, manager isn't a real active user in view, or
+  // (see childrenByManagerName) a Super Admin/Admin whose real manager
+  // isn't ALSO Super Admin/Admin — are NEVER nested under each other; that
+  // would show a false reporting line for people who don't actually report
+  // to that person. Sorted Super Admin first, then Admin, per the
+  // requested chart order; within the same tier (and for everyone else)
+  // whoever has the biggest real reporting chain underneath them leads,
+  // then name.
   const hierarchyRoots = useMemo(
     () =>
       activeForHierarchy
-        .filter((record) => !record.manager || !usersByName.has(record.manager))
+        .filter((record) => {
+          const manager = record.manager ? usersByName.get(record.manager) : undefined;
+          if (!manager) return true;
+          if (isTopTierRole(record) && !isTopTierRole(manager)) return true;
+          return false;
+        })
         .sort((a, b) => {
+          const tierDiff = topTierRank(a) - topTierRank(b);
+          if (tierDiff !== 0) return tierDiff;
           const diff = subtreeSize(b.userName) - subtreeSize(a.userName);
           if (diff !== 0) return diff;
           return a.userName.localeCompare(b.userName);
