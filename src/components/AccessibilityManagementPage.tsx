@@ -126,14 +126,25 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
         </div>
 
         <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
-        <div ref={tableScrollRef} className="panel overflow-x-auto">
+        {/*
+          Sticky headers need `overflow-y` to stay `visible` so they can
+          stick against the page, but CSS forces overflow-y to `auto` the
+          moment overflow-x isn't `visible` (spec: an axis can't be
+          `visible` while the other isn't) — so a plain `overflow-x-auto`
+          wrapper silently traps `position: sticky` inside itself instead
+          of letting it stick to the viewport. Embracing that instead:
+          bound this wrapper's height and let it scroll both axes
+          internally, with the header sticking to ITS top (`top-0`), not
+          the page's.
+        */}
+        <div ref={tableScrollRef} className="panel overflow-auto max-h-[70vh]">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 whitespace-nowrap sticky left-0 bg-slate-950">Name</th>
-                <th className="px-3 py-2 whitespace-nowrap">Primary Role</th>
+                <th className="px-3 py-2 whitespace-nowrap sticky left-0 top-0 z-30 bg-slate-950">Name</th>
+                <th className="px-3 py-2 whitespace-nowrap sticky top-0 z-20 bg-slate-950">Primary Role</th>
                 {ROLE_OPTIONS.map((r) => (
-                  <th key={r.value} className="px-2 py-2 text-center whitespace-nowrap font-normal">
+                  <th key={r.value} className="px-2 py-2 text-center whitespace-nowrap font-normal sticky top-0 z-20 bg-slate-950">
                     {r.label}
                   </th>
                 ))}
@@ -158,7 +169,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                   const extraSet = new Set((user.extra_roles ?? []).map(normalizeRole));
                   return (
                     <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="px-3 py-2 whitespace-nowrap font-medium text-white sticky left-0 bg-slate-950">
+                      <td className="px-3 py-2 whitespace-nowrap font-medium text-white sticky left-0 z-10 bg-slate-950">
                         {user.display_name || user.email}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-slate-300">
