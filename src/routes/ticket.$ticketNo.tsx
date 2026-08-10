@@ -5446,11 +5446,11 @@ function TicketDetailsPage() {
               })()}
             </div>
             <div>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
-                
+
                 {ticket ? (
-                  <div className="text-sm text-slate-300 leading-relaxed">
+                  <div className="text-sm text-slate-300 leading-relaxed text-right">
                     <span className="text-slate-400">Account</span>{" "}
                     {(() => {
                       // Squaretrade tickets jump to the appointment-completion
@@ -5564,7 +5564,7 @@ function TicketDetailsPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                  <div className="w-full mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
                     No ticket data is available for this number yet.
                   </div>
                 )}
