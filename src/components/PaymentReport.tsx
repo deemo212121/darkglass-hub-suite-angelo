@@ -1,8 +1,33 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+
+/** Shared portal-dropdown positioning — button ref + fixed-position coords, recalculated on scroll/resize. Used for both Location and Technician here. */
+function useDropdownPortal(open: boolean) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const update = useCallback(() => {
+    if (!btnRef.current) return;
+    const b = btnRef.current.getBoundingClientRect();
+    setPos({ top: b.bottom + 4, left: b.left, width: b.width });
+  }, []);
+  useLayoutEffect(() => { if (open) update(); }, [open, update]);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open, update]);
+  return { btnRef, listRef, pos };
+}
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const PAYROLL_DATES = ["(custom)","05/13/2026 ~ 05/26/2026","04/28/2026 ~ 05/12/2026","04/11/2026 ~ 04/27/2026",
@@ -33,16 +58,18 @@ export function PaymentReport({ mod, sub }: Props) {
   const [endDate, setEndDate] = useState(todayStr());
   const [techPaid, setTechPaid] = useState(false);
   const [cancelled, setCancelled] = useState(false);
-  const locRef = useRef<HTMLDivElement>(null);
-  const techRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const locD = useDropdownPortal(locOpen);
+  const techD = useDropdownPortal(techOpen);
 
   useEffect(() => {
     const fn = (e: MouseEvent) => {
-      if (locRef.current && !locRef.current.contains(e.target as Node)) setLocOpen(false);
-      if (techRef.current && !techRef.current.contains(e.target as Node)) setTechOpen(false);
+      const t = e.target as Node;
+      if (locOpen && !locD.btnRef.current?.contains(t) && !locD.listRef.current?.contains(t)) setLocOpen(false);
+      if (techOpen && !techD.btnRef.current?.contains(t) && !techD.listRef.current?.contains(t)) setTechOpen(false);
     };
     document.addEventListener("mousedown", fn); return () => document.removeEventListener("mousedown", fn);
-  }, []);
+  }, [locOpen, techOpen, locD.btnRef, locD.listRef, techD.btnRef, techD.listRef]);
 
   const rows = useMemo(()=>{
     let r = ALL_ROWS;
@@ -56,12 +83,8 @@ export function PaymentReport({ mod, sub }: Props) {
   }, [location, tech, startDate, endDate, techPaid, cancelled]);
 
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Payment Report</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Payment Report</h1>
@@ -73,40 +96,50 @@ export function PaymentReport({ mod, sub }: Props) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-40">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
-            <div ref={locRef} className="relative flex-1">
-              <button aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
+            <div className="flex-1">
+              <button ref={locD.btnRef} aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
                 className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
                 <span className={location?"":"text-muted-foreground"}>{location||"All Locations"}</span>
                 <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${locOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              {locOpen && (
-                <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
+              {locOpen && locD.pos && createPortal(
+                <div
+                  ref={locD.listRef}
+                  style={{ position: "fixed", top: locD.pos.top, left: locD.pos.left, width: locD.pos.width, zIndex: 99999, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  className="max-h-64 overflow-y-auto rounded-md shadow-xl"
+                >
                   {LOCATIONS.map((l,i)=>(
                     <button key={i} onClick={()=>{setLocation(l);setLocOpen(false);}}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
                       {l||"— All Locations —"}
                     </button>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
           <div className="flex items-center gap-2 flex-1 min-w-40">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Technician</span>
-            <div ref={techRef} className="relative flex-1">
-              <button aria-label="Select technician" aria-expanded={techOpen} onClick={()=>setTechOpen(o=>!o)}
+            <div className="flex-1">
+              <button ref={techD.btnRef} aria-label="Select technician" aria-expanded={techOpen} onClick={()=>setTechOpen(o=>!o)}
                 className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
                 <span className={tech?"":"text-muted-foreground"}>{tech||"All Technicians"}</span>
                 <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${techOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              {techOpen && (
-                <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
+              {techOpen && techD.pos && createPortal(
+                <div
+                  ref={techD.listRef}
+                  style={{ position: "fixed", top: techD.pos.top, left: techD.pos.left, width: techD.pos.width, zIndex: 99999, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  className="max-h-64 overflow-y-auto rounded-md shadow-xl"
+                >
                   <button onClick={()=>{setTech("");setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===""?"bg-blue-600 text-white":"text-muted-foreground"}`}>— All Technicians —</button>
                   {TECHS_FULL.map((t,i)=>(
                     <button key={i} onClick={()=>{setTech(t);setTechOpen(false);}}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===t?"bg-blue-600 text-white":""}`}>{t}</button>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
@@ -130,8 +163,9 @@ export function PaymentReport({ mod, sub }: Props) {
           </label>
         </div>
       </div>
-      <div className="panel overflow-x-auto p-0">
-        <table className="w-full text-sm">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+        <table className="w-full min-w-max text-sm">
           <thead><tr className="border-b border-white/10 bg-white/5">
             {["#","Ticket No","Location","Technician","Complete Date","Labor $","Tech Paid","Status"].map(h=>(
               <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
@@ -156,5 +190,6 @@ export function PaymentReport({ mod, sub }: Props) {
         </table>
       </div>
     </main>
+    </div>
   );
 }

@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, offsetStr, todayStr } from "@/components/shared";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const GROUP_BY = ["Branch (Samsung Only)","Location","State of Customer","Technician"];
@@ -19,20 +21,42 @@ export function SalesSummaryReport({ mod, sub }: Props) {
   const [endDate, setEndDate] = useState(todayStr());
   const [groupBy, setGroupBy] = useState("");
   const [gbOpen, setGbOpen] = useState(false);
-  const gbRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const fn = (e: MouseEvent) => { if (gbRef.current && !gbRef.current.contains(e.target as Node)) setGbOpen(false); };
-    document.addEventListener("mousedown", fn); return () => document.removeEventListener("mousedown", fn);
+  const gbBtnRef = useRef<HTMLButtonElement>(null);
+  const gbListRef = useRef<HTMLDivElement>(null);
+  const [gbPos, setGbPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateGbPos = useCallback(() => {
+    if (!gbBtnRef.current) return;
+    const b = gbBtnRef.current.getBoundingClientRect();
+    setGbPos({ top: b.bottom + 4, left: b.left, width: b.width });
   }, []);
 
+  useLayoutEffect(() => { if (gbOpen) updateGbPos(); }, [gbOpen, updateGbPos]);
+
+  useEffect(() => {
+    if (!gbOpen) return;
+    window.addEventListener("scroll", updateGbPos, true);
+    window.addEventListener("resize", updateGbPos);
+    return () => {
+      window.removeEventListener("scroll", updateGbPos, true);
+      window.removeEventListener("resize", updateGbPos);
+    };
+  }, [gbOpen, updateGbPos]);
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (gbOpen && !gbBtnRef.current?.contains(t) && !gbListRef.current?.contains(t)) setGbOpen(false);
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [gbOpen]);
+
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Sales Summary</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Sales Summary</h1>
@@ -47,20 +71,25 @@ export function SalesSummaryReport({ mod, sub }: Props) {
           </div>
           <div className="flex items-center gap-2 flex-1 min-w-48">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Group by</span>
-            <div ref={gbRef} className="relative flex-1">
-              <button aria-label="Select group by" aria-expanded={gbOpen} onClick={()=>setGbOpen(o=>!o)}
+            <div className="flex-1">
+              <button ref={gbBtnRef} aria-label="Select group by" aria-expanded={gbOpen} onClick={()=>setGbOpen(o=>!o)}
                 className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
                 <span className={groupBy?"":"text-muted-foreground"}>{groupBy||"Select group..."}</span>
                 <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${gbOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              {gbOpen && (
-                <div className="absolute z-[99999] top-full mt-1 left-0 w-full rounded-md shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
+              {gbOpen && gbPos && createPortal(
+                <div
+                  ref={gbListRef}
+                  style={{ position: "fixed", top: gbPos.top, left: gbPos.left, width: gbPos.width, zIndex: 99999, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  className="rounded-md shadow-xl"
+                >
                   <button onClick={()=>{setGroupBy("");setGbOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${groupBy===""?"bg-blue-600 text-white":"text-muted-foreground"}`}>— Select group... —</button>
                   {GROUP_BY.map((g,i)=>(
                     <button key={i} onClick={()=>{setGroupBy(g);setGbOpen(false);}}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${groupBy===g?"bg-blue-600 text-white":""}`}>{g}</button>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
@@ -73,8 +102,9 @@ export function SalesSummaryReport({ mod, sub }: Props) {
           </button>
         ))}
       </div>
-      <div className="panel overflow-x-auto p-0">
-        <table className="w-full text-sm">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+        <table className="w-full min-w-max text-sm">
           <thead><tr className="border-b border-white/10 bg-white/5">
             {["Group","Total Claims","Approved $","Paid $","Rejected $","Pending $"].map(h=>(
               <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
@@ -93,5 +123,6 @@ export function SalesSummaryReport({ mod, sub }: Props) {
         </table>
       </div>
     </main>
+    </div>
   );
 }

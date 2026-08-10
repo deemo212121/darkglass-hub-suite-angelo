@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, Save } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, offsetStr, todayStr } from "@/components/shared";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const PAYROLL_PERIODS = ["(custom)","05/13/2026 ~ 05/26/2026","04/28/2026 ~ 05/12/2026","04/11/2026 ~ 04/27/2026",
@@ -31,23 +33,45 @@ export function PayrollReport({ mod, sub }: Props) {
   const [payrollDate, setPayrollDate] = useState("(custom)");
   const [startDate, setStartDate] = useState(offsetStr(-14));
   const [endDate, setEndDate] = useState(todayStr());
-  const locRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
+  const locBtnRef = useRef<HTMLButtonElement>(null);
+  const locListRef = useRef<HTMLDivElement>(null);
+  const [locPos, setLocPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateLocPos = useCallback(() => {
+    if (!locBtnRef.current) return;
+    const b = locBtnRef.current.getBoundingClientRect();
+    setLocPos({ top: b.bottom + 4, left: b.left, width: b.width });
+  }, []);
+
+  useLayoutEffect(() => { if (locOpen) updateLocPos(); }, [locOpen, updateLocPos]);
 
   useEffect(() => {
-    const fn = (e: MouseEvent) => { if (locRef.current && !locRef.current.contains(e.target as Node)) setLocOpen(false); };
-    document.addEventListener("mousedown", fn); return () => document.removeEventListener("mousedown", fn);
-  }, []);
+    if (!locOpen) return;
+    window.addEventListener("scroll", updateLocPos, true);
+    window.addEventListener("resize", updateLocPos);
+    return () => {
+      window.removeEventListener("scroll", updateLocPos, true);
+      window.removeEventListener("resize", updateLocPos);
+    };
+  }, [locOpen, updateLocPos]);
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (locOpen && !locBtnRef.current?.contains(t) && !locListRef.current?.contains(t)) setLocOpen(false);
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [locOpen]);
 
   const techRows = TECH_ROWS.filter(r=>!location||r.location===location);
   const cpaRows = CPA_ROWS.filter(r=>!location||r.location===location);
 
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Payroll Report</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Payroll Report</h1>
@@ -56,21 +80,26 @@ export function PayrollReport({ mod, sub }: Props) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-40">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
-            <div ref={locRef} className="relative flex-1">
-              <button aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
+            <div className="flex-1">
+              <button ref={locBtnRef} aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
                 className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
                 <span className={location?"":"text-muted-foreground"}>{location||"All Locations"}</span>
                 <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${locOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              {locOpen && (
-                <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
+              {locOpen && locPos && createPortal(
+                <div
+                  ref={locListRef}
+                  style={{ position: "fixed", top: locPos.top, left: locPos.left, width: locPos.width, zIndex: 99999, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  className="max-h-64 overflow-y-auto rounded-md shadow-xl"
+                >
                   {LOCATIONS.map((l,i)=>(
                     <button key={i} onClick={()=>{setLocation(l);setLocOpen(false);}}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
                       {l||"— All Locations —"}
                     </button>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
@@ -95,9 +124,10 @@ export function PayrollReport({ mod, sub }: Props) {
           </button>
         ))}
       </div>
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
       {tab==="tech" ? (
-        <div className="panel overflow-x-auto p-0">
-          <table className="w-full text-sm">
+        <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+          <table className="w-full min-w-max text-sm">
             <thead><tr className="border-b border-white/10 bg-white/5">
               {["#","Technician","Location","Jobs","Labor","Parts","Adjustments","Total Pay"].map(h=>(
                 <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
@@ -118,11 +148,11 @@ export function PayrollReport({ mod, sub }: Props) {
           </table>
         </div>
       ) : (
-        <div className="panel overflow-x-auto p-0">
+        <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
           <div className="px-4 py-3 flex justify-end border-b border-white/10">
             <button className="btn flex items-center gap-2 px-4"><Save className="h-3.5 w-3.5"/>Save</button>
           </div>
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead><tr className="border-b border-white/10 bg-white/5">
               {["#","Location","Payroll Period","Total Techs","Gross Payroll","Deductions","Net Payroll"].map(h=>(
                 <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
@@ -143,5 +173,6 @@ export function PayrollReport({ mod, sub }: Props) {
         </div>
       )}
     </main>
+    </div>
   );
 }
