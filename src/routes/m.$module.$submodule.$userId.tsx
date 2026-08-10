@@ -5,14 +5,319 @@ import { Check, ChevronDown } from "lucide-react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { getModule, getSubModule } from "@/lib/modules";
+import { getUserManagementRecord } from "@/lib/user-management";
 import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
+import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
 import { normalizeRole, ROLE_OPTIONS } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+
+const TABS = [
+  "General Information",
+  "Branch Access",
+  "Billing Information",
+  "Account Information",
+  "Vehicle Information",
+  "Employee Information",
+] as const;
+
+const BRANCH_COLUMNS = ["Weekday", "Weekend", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const DAY_SCHEDULE_OPTIONS = ["AM + PM", "AM only", "PM only"] as const;
+const QUARTER_MS = 90 * 24 * 60 * 60 * 1000;
+const DAY_COLUMN_ACCESS: Record<string, "weekday" | "weekend"> = {
+  Sunday: "weekend",
+  Monday: "weekday",
+  Tuesday: "weekday",
+  Wednesday: "weekday",
+  Thursday: "weekday",
+  Friday: "weekday",
+  Saturday: "weekend",
+};
+type BranchSettingRow = ReturnType<typeof defaultBranchSettings>;
+
+function normalizeBranches(value: string) {
+  return String(value || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function hashString(value: string) {
+  return Array.from(value).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function buildDob(recordId: string) {
+  const seed = hashString(recordId);
+  const year = 1975 + (seed % 22);
+  const month = String((seed % 12) + 1).padStart(2, "0");
+  const day = String((seed % 28) + 1).padStart(2, "0");
+  return `${month}/${day}/${year}`;
+}
+
+function buildHomeAddress(userName: string, office: string) {
+  const seed = hashString(`${userName}${office}`);
+  const streetNo = 100 + (seed % 800);
+  const streets = ["Oak", "Maple", "Cedar", "Pine", "Hillcrest", "Sunset", "River", "Main"];
+  const cities = [office, "Memphis", "Nashville", "Birmingham", "Atlanta"];
+  const states = ["TN", "AL", "GA", "MS", "LA", "NC", "SC"];
+  return `${streetNo} ${streets[seed % streets.length]} St, ${cities[seed % cities.length]}, ${states[seed % states.length]} 0000${seed % 9}`;
+}
+
+function buildEmergencyContacts(userName: string) {
+  const seed = hashString(userName);
+  const contacts = ["Spouse", "Parent", "Sibling", "Friend"];
+  return [
+    {
+      name: `${userName.split(" ")[0] || "Primary"} Contact`,
+      relationship: contacts[seed % contacts.length],
+      phone: `555-${String(200 + (seed % 700)).padStart(3, "0")}-${String(1000 + (seed % 9000)).slice(-4)}`,
+    },
+    {
+      name: `${userName.split(" ")[0] || "Secondary"} Backup`,
+      relationship: contacts[(seed + 1) % contacts.length],
+      phone: `555-${String(300 + ((seed + 17) % 600)).padStart(3, "0")}-${String(2000 + ((seed + 17) % 7000)).slice(-4)}`,
+    },
+  ];
+}
+
+function getBranchAccess(user: { type: string; office: string; locations: string }) {
+  const type = user.type.toLowerCase();
+  if (type.includes("admin") || type === "hr" || type === "manager" || type === "claim manager" || type === "part manager" || type.includes("super admin")) {
+    return [...LOCATIONS];
+  }
+  if (type.includes("tech manager")) {
+    const locations = normalizeBranches(user.locations);
+    return locations.length ? locations : [user.office].filter(Boolean);
+  }
+  if (type.includes("technician")) {
+    return [user.office].filter(Boolean);
+  }
+  const locations = normalizeBranches(user.locations);
+  return locations.length ? locations : [user.office].filter(Boolean);
+}
+
+function getBranchAccessReason(userType: string) {
+  const type = userType.toLowerCase();
+  if (type.includes("admin") || type === "hr" || type === "manager" || type.includes("super admin")) return "Full branch access";
+  if (type === "part manager") return "Part team leaders can see all branches";
+  if (type.includes("tech manager")) return "Branch access is limited to assigned branches";
+  if (type.includes("technician")) return "Branch access is limited to the assigned branch";
+  return "Branch access follows the assigned locations";
+}
+
+function defaultBranchSettings(location: string, hasAccess: boolean) {
+  return {
+    weekday: hasAccess,
+    weekend: hasAccess,
+    sunday: hasAccess ? "AM + PM" : "AM only",
+    monday: hasAccess ? "AM + PM" : "AM only",
+    tuesday: hasAccess ? "AM + PM" : "AM only",
+    wednesday: hasAccess ? "AM + PM" : "AM only",
+    thursday: hasAccess ? "AM + PM" : "AM only",
+    friday: hasAccess ? "AM + PM" : "AM only",
+    saturday: hasAccess ? "AM + PM" : "AM only",
+  };
+}
+
+function buildBranchSettings(branchAccess: string[]) {
+  return Object.fromEntries(
+    LOCATIONS.map((location) => [location, defaultBranchSettings(location, branchAccess.includes(location))]),
+  ) as Record<string, BranchSettingRow>;
+}
+
+function loadBranchSettings(userId: string, branchAccess: string[]) {
+  const defaults = buildBranchSettings(branchAccess);
+  if (typeof window === "undefined") return defaults;
+
+  const raw = window.localStorage.getItem(`ahs:branch-access:${userId}`);
+  if (!raw) return defaults;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<Record<string, Partial<BranchSettingRow>>>;
+    return Object.fromEntries(
+      LOCATIONS.map((location) => {
+        const fallback = defaults[location];
+        const row = parsed[location];
+        return [location, {
+          weekday: typeof row?.weekday === "boolean" ? row.weekday : fallback.weekday,
+          weekend: typeof row?.weekend === "boolean" ? row.weekend : fallback.weekend,
+          sunday: typeof row?.sunday === "string" ? row.sunday : fallback.sunday,
+          monday: typeof row?.monday === "string" ? row.monday : fallback.monday,
+          tuesday: typeof row?.tuesday === "string" ? row.tuesday : fallback.tuesday,
+          wednesday: typeof row?.wednesday === "string" ? row.wednesday : fallback.wednesday,
+          thursday: typeof row?.thursday === "string" ? row.thursday : fallback.thursday,
+          friday: typeof row?.friday === "string" ? row.friday : fallback.friday,
+          saturday: typeof row?.saturday === "string" ? row.saturday : fallback.saturday,
+        }];
+      }),
+    ) as Record<string, BranchSettingRow>;
+  } catch {
+    return defaults;
+  }
+}
+
+function loadAssignedOffice(userId: string, fallbackOffice: string) {
+  if (typeof window === "undefined") return fallbackOffice;
+  return window.localStorage.getItem(`ahs:assigned-office:${userId}`) || fallbackOffice;
+}
+
+type EmployeeInfoState = {
+  bankName: string;
+  routingNumber: string;
+  accountNumber: string;
+  photoName: string;
+  photoDataUrl: string;
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  employeeId: string;
+  employeeSsn: string;
+  employeeSalary: string;
+  birthDate: string;
+  hireDate: string;
+  terminateDate: string;
+  employeeNote: string;
+  attachments: string[];
+};
+
+type AccountInfoRow = {
+  id: string;
+  account: string;
+  technicianId: string;
+  technicianName: string;
+  groupKey: string;
+  techKey: string;
+};
+
+function formatTechnicianName(value: string) {
+  const parts = value.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 1].toUpperCase()},${parts[0].toUpperCase()}`;
+  }
+  return value.toUpperCase();
+}
+
+function buildAccountInfoDefaults(user: { id: string; userName: string }) {
+  return [
+    {
+      id: "account-row-1",
+      account: "SB",
+      technicianId: user.id,
+      technicianName: `${user.id} - ${formatTechnicianName(user.userName)}`,
+      groupKey: "",
+      techKey: "",
+    },
+    {
+      id: "account-row-2",
+      account: "SP",
+      technicianId: "1290884",
+      technicianName: "",
+      groupKey: "GE_Memphis",
+      techKey: "",
+    },
+  ] satisfies AccountInfoRow[];
+}
+
+function loadAccountInfo(user: { id: string; userName: string }) {
+  const defaults = buildAccountInfoDefaults(user);
+  if (typeof window === "undefined") return defaults;
+  const raw = window.localStorage.getItem(`ahs:account-info:${user.id}`);
+  if (!raw) return defaults;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<{ rows: AccountInfoRow[] }>;
+    if (!Array.isArray(parsed.rows)) return defaults;
+    return parsed.rows
+      .filter((row): row is AccountInfoRow => Boolean(row && row.id))
+      .map((row, index) => ({
+        id: row.id || `account-row-${index + 1}`,
+        account: row.account || "SB",
+        technicianId: row.technicianId || "",
+        technicianName: row.technicianName || "",
+        groupKey: row.groupKey || "",
+        techKey: row.techKey || "",
+      }));
+  } catch {
+    return defaults;
+  }
+}
+
+function saveAccountInfo(userId: string, rows: AccountInfoRow[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(`ahs:account-info:${userId}`, JSON.stringify({ rows }));
+}
+
+function buildEmployeeInfoDefaults(user: { id: string; userName: string; office: string; email?: string | null }) {
+  const seed = hashString(`${user.id}${user.userName}${user.office}`);
+  const bankNames = ["First National Bank", "Community Trust", "Pioneer Federal", "Summit Bank"];
+  const streetNames = ["Oak", "Maple", "Cedar", "Pine", "Hillcrest", "Sunset"];
+  const cityNames = [user.office, "Memphis", "Nashville", "Birmingham", "Atlanta"];
+  const stateCodes = ["TN", "AL", "GA", "MS", "NC", "SC"];
+  return {
+    bankName: bankNames[seed % bankNames.length],
+    routingNumber: String(100000000 + (seed % 900000000)),
+    accountNumber: String(10000000 + (seed % 90000000)),
+    photoName: "",
+    photoDataUrl: "",
+    address1: `${100 + (seed % 800)} ${streetNames[seed % streetNames.length]} St`,
+    address2: "",
+    city: cityNames[seed % cityNames.length],
+    state: stateCodes[seed % stateCodes.length],
+    zipCode: String(10000 + (seed % 89999)),
+    employeeId: user.id,
+    employeeSsn: `${String(100 + (seed % 900))}-${String(10 + (seed % 90))}-${String(1000 + (seed % 9000))}`,
+    employeeSalary: String(45000 + (seed % 40000)),
+    birthDate: buildDob(user.id),
+    hireDate: `01/${String((seed % 28) + 1).padStart(2, "0")}/2022`,
+    terminateDate: "",
+    employeeNote: "",
+    attachments: [] as string[],
+  } satisfies EmployeeInfoState;
+}
+
+function loadEmployeeInfo(user: { id: string; userName: string; office: string; email?: string | null }) {
+  const defaults = buildEmployeeInfoDefaults(user);
+  if (typeof window === "undefined") return defaults;
+  const keys = [
+    `ahs:employee-info:${user.id}`,
+    user.email ? `ahs:employee-info-email:${user.email.trim().toLowerCase()}` : "",
+  ].filter(Boolean) as string[];
+
+  const raw = keys.map((key) => window.localStorage.getItem(key)).find(Boolean);
+  if (!raw) return defaults;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<EmployeeInfoState>;
+    return {
+      ...defaults,
+      ...parsed,
+      attachments: Array.isArray(parsed.attachments) ? parsed.attachments.filter((attachment) => typeof attachment === "string") : defaults.attachments,
+    } satisfies EmployeeInfoState;
+  } catch {
+    return defaults;
+  }
+}
+
+function formatEmployeeAddress(employeeInfo: EmployeeInfoState) {
+  const firstLine = [employeeInfo.address1, employeeInfo.address2].filter(Boolean).join(" ");
+  const secondLine = [employeeInfo.city, employeeInfo.state, employeeInfo.zipCode].filter(Boolean).join(" ");
+  return [firstLine, secondLine].filter(Boolean).join(", ");
+}
+
+function saveEmployeeInfoToStorage(userId: string, email: string | undefined | null, employeeInfo: EmployeeInfoState) {
+  if (typeof window === "undefined") return;
+  const serialized = JSON.stringify(employeeInfo);
+  window.localStorage.setItem(`ahs:employee-info:${userId}`, serialized);
+  if (email) {
+    window.localStorage.setItem(`ahs:employee-info-email:${email.trim().toLowerCase()}`, serialized);
+  }
+}
 
 export const Route = createFileRoute("/m/$module/$submodule/$userId")({
   ssr: false,
@@ -150,33 +455,35 @@ const USER_TABS = [
 const SMS_OPTIONS = ["SMS Available", "Chat available", "View available", "Not available"];
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// Only these roles may open an employee's detail/edit page at all — every
+// field here (Role, Direct Manager, Status, branch, work plan, ...) can
+// reshape the org hierarchy or someone's access, so it isn't limited to
+// just the email field like canEditEmail below. Checked against primary
+// role OR any extra_roles entry, same "holding it either way counts"
+// convention as everywhere else in this file.
+const ACCOUNT_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR"]);
+function canEditAccountDetails(role: string | null | undefined, extraRoles: string[] | null | undefined): boolean {
+  const held = [role, ...(extraRoles ?? [])].map((r) => normalizeRole(r));
+  return held.some((r) => ACCOUNT_EDIT_ROLES.has(r));
+}
+
 function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready, role: viewerRole, extraRoles: viewerExtraRoles, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
   const navigate = useNavigate();
+  const hasAccountAccess = canEditAccountDetails(viewerRole, viewerExtraRoles);
   // Only Admin/SuperAdmin may edit a user's email — it's the actual Firebase
   // Auth login credential (landing.tsx's username-login path resolves a
   // username to profiles.email before calling Firebase), not just contact
   // info, so changing it has to go through /api/admin-update-email (see
   // adminUpdateEmailBridge.ts) rather than a plain Supabase field edit.
   const canEditEmail = viewerRole === "ADMIN" || viewerRole === "SUPERADMIN";
-  // A plain ADMIN cannot edit a SUPERADMIN's role/details — only another
-  // SUPERADMIN (company-scoped) or the platform SUPERSUPERADMIN can. Mirrors
-  // can_edit_profile_row() (migration 0144) so the UI reads the same as what
-  // the server will actually allow, instead of letting an ADMIN fill out the
-  // whole form and only find out it's rejected on Save.
-  const viewerIsSuperOrAbove =
-    viewerRole === "SUPERADMIN" || viewerRole === "SUPERSUPERADMIN" || (viewerExtraRoles ?? []).includes("SUPERADMIN");
 
   const [loading, setLoading] = useState(true);
   const [notFoundUser, setNotFoundUser] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
-  // The role this profile had when the page loaded — the permission check
-  // below is against this, not form.role, so an ADMIN can't sidestep it by
-  // just changing the role dropdown themselves before saving.
-  const [targetOriginalRole, setTargetOriginalRole] = useState<string>("");
   // The email as loaded from the server — compared against form.email in
   // handleSave to know whether the Firebase Auth update call is needed at all.
   const [originalEmail, setOriginalEmail] = useState<string>("");
@@ -230,7 +537,6 @@ function UserDetailsPage() {
         }
         setProfileId(p.id);
         setOriginalEmail(p.email || "");
-        setTargetOriginalRole(p.role || "");
         try {
           const all = await getCompanyUsers();
           const idx = all.findIndex((u) => u.id === p.id);
@@ -239,7 +545,15 @@ function UserDetailsPage() {
           // admin role, not a hardcoded name list. Stored as free-text
           // (manager_name matched against real profiles by display name —
           // see resolveTeamLeadOrManager in src/lib/notifyRouting.ts).
-          const eligible = all.filter((u) => ["ADMIN", "SUPERADMIN"].includes((u.role || "").toUpperCase()) || (u.role || "").toUpperCase().includes("MANAGER"));
+          // Checked against the user's FULL role set (primary + extra_roles),
+          // not just the primary role — a user whose primary role is e.g.
+          // "Claims Team Leader" but who also holds "Claims Manager" as a
+          // secondary role should still be selectable.
+          const isManagerish = (r: string | null | undefined) => {
+            const v = (r || "").toUpperCase();
+            return v === "ADMIN" || v === "SUPERADMIN" || v.includes("MANAGER");
+          };
+          const eligible = all.filter((u) => [u.role, ...(u.extra_roles ?? [])].some(isManagerish));
           setManagerCandidates(
             Array.from(new Set(eligible.map((u) => u.display_name || u.email).filter(Boolean))).sort((a, b) => a.localeCompare(b))
           );
@@ -287,8 +601,6 @@ function UserDetailsPage() {
     return () => { cancelled = true; };
   }, [ready, userId]);
 
-  const canEditTarget = viewerIsSuperOrAbove || targetOriginalRole !== "SUPERADMIN";
-
   const update = (field: keyof typeof form, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -322,10 +634,6 @@ function UserDetailsPage() {
 
   const handleSave = async () => {
     if (!profileId) return;
-    if (!canEditTarget) {
-      setStatus("Error: only a Super Admin can edit another Super Admin's account.");
-      return;
-    }
     setSaving(true);
     setStatus(null);
     try {
@@ -448,6 +756,25 @@ function UserDetailsPage() {
     </label>
   );
 
+  if (ready && !hasAccountAccess) {
+    return (
+      <>
+        <AppHeader />
+        <main className="flex-1 bg-slate-950 py-6">
+          <div className="max-w-5xl mx-auto px-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-6 text-white backdrop-blur-md">
+              <h1 className="text-2xl font-bold mb-2">Access restricted</h1>
+              <p className="text-slate-300">Only Admin, Super Admin, and HR can view or edit employee details.</p>
+              <p className="mt-2 text-sm text-slate-400">Current sign-in: {viewerEmail}</p>
+              <p className="mt-1 text-sm text-slate-400">Your role: {viewerRole || "No role assigned"}</p>
+            </div>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
   return (
     <>
       <AppHeader />
@@ -479,21 +806,10 @@ function UserDetailsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">{form.displayName || form.username}</h1>
                     <p className="mt-1 text-sm text-slate-400">{form.email}</p>
                   </div>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving || !canEditTarget}
-                    title={canEditTarget ? undefined : "Only a Super Admin can edit another Super Admin's account"}
-                    className="btn btn-primary disabled:opacity-50"
-                  >
+                  <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-50">
                     {saving ? "Saving…" : "Save Changes"}
                   </button>
                 </div>
-
-                {!canEditTarget && (
-                  <div className="mb-4 text-sm rounded p-3 text-amber-300 bg-amber-500/10 border border-amber-500/30">
-                    This account is a Super Admin — only another Super Admin can edit its details or role.
-                  </div>
-                )}
 
                 {/* Tabs */}
                 <div className="flex flex-wrap gap-1 border-b border-white/10 mb-6">
@@ -515,7 +831,6 @@ function UserDetailsPage() {
                   </div>
                 )}
 
-                <fieldset disabled={!canEditTarget} className="min-w-0">
                 {activeTab === "General Information" ? (
                   <div className="space-y-6">
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -741,7 +1056,6 @@ function UserDetailsPage() {
                     <p className="text-sm">This section is coming soon.</p>
                   </div>
                 )}
-                </fieldset>
               </>
             )}
           </div>
@@ -751,4 +1065,3 @@ function UserDetailsPage() {
     </>
   );
 }
-

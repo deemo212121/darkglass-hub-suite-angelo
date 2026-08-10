@@ -757,6 +757,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [activeForHierarchy]);
 
+  // Built straight from manager_name — no synthetic edges. A root here
+  // only ever gets the reports it actually, really has.
   const childrenByManagerName = useMemo(() => {
     const map = new Map<string, UserManagementRecord[]>();
     activeForHierarchy.forEach((record) => {
@@ -767,21 +769,36 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [activeForHierarchy]);
 
-  // Roots with actual direct reports (real department heads) sort first,
-  // alphabetically among themselves; roots with no one under them at all
-  // (disconnected/unused accounts) sink to the bottom instead of
-  // interleaving alphabetically with the real org chart.
+  const subtreeSize = useMemo(() => {
+    const cache = new Map<string, number>();
+    const countBelow = (userName: string, seen: Set<string>): number => {
+      if (seen.has(userName)) return 0; // guard a bad manager cycle
+      if (cache.has(userName)) return cache.get(userName)!;
+      const nextSeen = new Set(seen).add(userName);
+      const kids = childrenByManagerName.get(userName) ?? [];
+      const total = kids.reduce((sum, kid) => sum + 1 + countBelow(kid.userName, nextSeen), 0);
+      cache.set(userName, total);
+      return total;
+    };
+    return (userName: string) => countBelow(userName, new Set());
+  }, [childrenByManagerName]);
+
+  // Roots (no manager set, or manager isn't a real active user in view) are
+  // NEVER nested under each other — that would show a false reporting line
+  // for people who don't actually report to that person. They just sort so
+  // whoever has the biggest real reporting chain underneath them (not role
+  // — an Admin/Super Admin with no reports sorts like anyone else) leads
+  // the list; everyone else still follows, biggest-chain-first, then name.
   const hierarchyRoots = useMemo(
     () =>
       activeForHierarchy
         .filter((record) => !record.manager || !usersByName.has(record.manager))
         .sort((a, b) => {
-          const aHasChildren = (childrenByManagerName.get(a.userName)?.length ?? 0) > 0;
-          const bHasChildren = (childrenByManagerName.get(b.userName)?.length ?? 0) > 0;
-          if (aHasChildren !== bHasChildren) return aHasChildren ? -1 : 1;
+          const diff = subtreeSize(b.userName) - subtreeSize(a.userName);
+          if (diff !== 0) return diff;
           return a.userName.localeCompare(b.userName);
         }),
-    [activeForHierarchy, usersByName, childrenByManagerName],
+    [activeForHierarchy, usersByName, subtreeSize],
   );
 
   // Manager dropdown candidates: real users with a manager-ish or admin
