@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -89,6 +90,7 @@ function PortalDropdown({label,options,value,onChange}:{label:string;options:str
 }
 
 export function ClaimList({ mod, sub }: Props) {
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
   const [account, setAccount] = useState("");
   const [ticketNo, setTicketNo] = useState("");
@@ -127,7 +129,8 @@ export function ClaimList({ mod, sub }: Props) {
   const RedAmt=({v}:{v:number})=>v>0?<span className="inline-block bg-red-500 text-white px-1 py-0.5 rounded text-xs font-medium">{v.toFixed(2)}</span>:<span className="text-muted-foreground text-xs">0.00</span>;
 
   return (
-    <main className="max-w-[1900px] mx-auto px-4 py-6">
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
         <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
         <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
@@ -214,8 +217,9 @@ export function ClaimList({ mod, sub }: Props) {
       </div>
 
       {/* Table */}
-      <div className="panel overflow-x-auto p-0">
-        <table className="w-full text-xs">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+        <table className="w-full min-w-max text-xs">
           <thead>
             {/* Header row 1 */}
             <tr className="border-b border-white/10 bg-white/5">
@@ -318,5 +322,6 @@ export function ClaimList({ mod, sub }: Props) {
         </table>
       </div>
     </main>
+    </div>
   );
 }
