@@ -11,6 +11,26 @@ interface Props {
   sub: SubModuleDef;
 }
 
+// Fixed per-column pixel widths, shared by the header table and the body
+// table below (see the split-table comment further down for why there are
+// two <table> elements). table-layout: fixed + identical <colgroup> widths
+// is what keeps their columns pixel-aligned as the body scrolls sideways.
+const NAME_COL_W = 190;
+const ROLE_COL_W = 150;
+const CHECKBOX_COL_W = 92;
+const COL_WIDTHS = [NAME_COL_W, ROLE_COL_W, ...ROLE_OPTIONS.map(() => CHECKBOX_COL_W)];
+const TABLE_WIDTH = COL_WIDTHS.reduce((sum, w) => sum + w, 0);
+
+function ColGroup() {
+  return (
+    <colgroup>
+      {COL_WIDTHS.map((w, i) => (
+        <col key={i} style={{ width: w }} />
+      ))}
+    </colgroup>
+  );
+}
+
 /**
  * Bulk secondary-role ("Accessibility") assignment grid — one row per
  * company user, one checkbox column per assignable role (ROLE_OPTIONS, the
@@ -26,6 +46,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const headerScrollRef = useRef<HTMLDivElement>(null);
   // `${profileId}:${roleCode}` of the one checkbox currently saving, so only
   // that cell shows a spinner/disables instead of freezing the whole grid.
   const [savingCell, setSavingCell] = useState<string | null>(null);
@@ -127,29 +148,49 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
 
         <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
         {/*
-          Sticky headers need `overflow-y` to stay `visible` so they can
-          stick against the page, but CSS forces overflow-y to `auto` the
-          moment overflow-x isn't `visible` (spec: an axis can't be
-          `visible` while the other isn't) — so a plain `overflow-x-auto`
-          wrapper silently traps `position: sticky` inside itself instead
-          of letting it stick to the viewport. Embracing that instead:
-          bound this wrapper's height and let it scroll both axes
-          internally, with the header sticking to ITS top (`top-0`), not
-          the page's.
+          Two separate <table>s (header-only, body-only) instead of one —
+          a single table can't have a header that's sticky against the PAGE
+          while also living inside an overflow-x-auto wrapper: CSS forces
+          overflow-y to `auto` the moment overflow-x isn't `visible` (an
+          axis can't stay `visible` while the other isn't), which silently
+          traps `position: sticky` inside that wrapper instead of letting
+          it stick to the viewport, forcing a second inner scrollbar.
+          Splitting it in two keeps the header wrapper free of any
+          overflow-x-auto ancestor (so `sticky top-16` — same offset as the
+          ticket detail page's header — sticks to the real page), while the
+          body wrapper below it owns the one real (native) horizontal
+          scrollbar; a scroll listener mirrors the body's scrollLeft onto
+          the header so they move together. table-layout: fixed with an
+          identical <colgroup> in both keeps their columns pixel-aligned.
         */}
-        <div ref={tableScrollRef} className="panel overflow-auto max-h-[70vh]">
-          <table className="min-w-full text-sm">
+        <div
+          ref={headerScrollRef}
+          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: TABLE_WIDTH }}>
+            <ColGroup />
             <thead>
               <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 whitespace-nowrap sticky left-0 top-0 z-30 bg-slate-950">Name</th>
-                <th className="px-3 py-2 whitespace-nowrap sticky top-0 z-20 bg-slate-950">Primary Role</th>
+                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Name</th>
+                <th className="px-3 py-2 whitespace-nowrap truncate">Primary Role</th>
                 {ROLE_OPTIONS.map((r) => (
-                  <th key={r.value} className="px-2 py-2 text-center whitespace-nowrap font-normal sticky top-0 z-20 bg-slate-950">
+                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
                     {r.label}
                   </th>
                 ))}
               </tr>
             </thead>
+          </table>
+        </div>
+        <div
+          ref={tableScrollRef}
+          onScroll={(e) => {
+            if (headerScrollRef.current) headerScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: TABLE_WIDTH }}>
+            <ColGroup />
             <tbody>
               {loading ? (
                 <tr>
@@ -169,10 +210,13 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                   const extraSet = new Set((user.extra_roles ?? []).map(normalizeRole));
                   return (
                     <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="px-3 py-2 whitespace-nowrap font-medium text-white sticky left-0 z-10 bg-slate-950">
+                      <td
+                        className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+                        title={user.display_name || user.email || undefined}
+                      >
                         {user.display_name || user.email}
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-slate-300">
+                      <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
                         {ROLE_LABELS[primary] || user.role || "—"}
                       </td>
                       {ROLE_OPTIONS.map((r) => {
