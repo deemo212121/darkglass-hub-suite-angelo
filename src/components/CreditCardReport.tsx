@@ -1,8 +1,10 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -28,12 +30,43 @@ export function CreditCardReport({ mod, sub }: Props) {
   const [locOpen, setLocOpen] = useState(false);
   const [startDate, setStartDate] = useState(offsetStr(-5));
   const [endDate, setEndDate] = useState(todayStr());
-  const locRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
+  // Portaled to document.body (position: fixed, computed from the button's
+  // own bounding rect) instead of a locally `absolute`-positioned overlay —
+  // the old version didn't reserve layout space when open, so it floated on
+  // top of whatever came next in normal flow instead of cleanly above it.
+  // Same pattern as ClaimList.tsx / ClaimPlanner.tsx / ClaimCalendarWeekly.tsx.
+  const locBtnRef = useRef<HTMLButtonElement>(null);
+  const locListRef = useRef<HTMLDivElement>(null);
+  const [locPos, setLocPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateLocPos = useCallback(() => {
+    if (!locBtnRef.current) return;
+    const b = locBtnRef.current.getBoundingClientRect();
+    setLocPos({ top: b.bottom + 4, left: b.left, width: b.width });
+  }, []);
+
+  useLayoutEffect(() => { if (locOpen) updateLocPos(); }, [locOpen, updateLocPos]);
 
   useEffect(() => {
-    const fn = (e: MouseEvent) => { if (locRef.current && !locRef.current.contains(e.target as Node)) setLocOpen(false); };
-    document.addEventListener("mousedown", fn); return () => document.removeEventListener("mousedown", fn);
-  }, []);
+    if (!locOpen) return;
+    window.addEventListener("scroll", updateLocPos, true);
+    window.addEventListener("resize", updateLocPos);
+    return () => {
+      window.removeEventListener("scroll", updateLocPos, true);
+      window.removeEventListener("resize", updateLocPos);
+    };
+  }, [locOpen, updateLocPos]);
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (locOpen && !locBtnRef.current?.contains(t) && !locListRef.current?.contains(t)) setLocOpen(false);
+    };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [locOpen]);
 
   const rows = useMemo(()=>{
     let r = ALL_ROWS;
@@ -46,12 +79,8 @@ export function CreditCardReport({ mod, sub }: Props) {
   const totalApproved = rows.filter(r=>r.status==="Approved").reduce((s,r)=>s+r.amount,0);
 
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Credit Card Report</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Credit Card Report</h1>
@@ -60,21 +89,26 @@ export function CreditCardReport({ mod, sub }: Props) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-48">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Location</span>
-            <div ref={locRef} className="relative flex-1">
-              <button aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
+            <div className="flex-1">
+              <button ref={locBtnRef} aria-label="Select location" aria-expanded={locOpen} onClick={()=>setLocOpen(o=>!o)}
                 className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
                 <span className={location?"":"text-muted-foreground"}>{location||"All Locations"}</span>
                 <svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${locOpen?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              {locOpen && (
-                <div className="absolute z-[99999] top-full mt-1 left-0 w-full max-h-64 overflow-y-auto rounded-md shadow-xl" style={{background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)"}}>
+              {locOpen && locPos && createPortal(
+                <div
+                  ref={locListRef}
+                  style={{ position: "fixed", top: locPos.top, left: locPos.left, width: locPos.width, zIndex: 99999, background: "rgb(22,28,52)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  className="max-h-64 overflow-y-auto rounded-md shadow-xl"
+                >
                   {LOCATIONS.map((l,i)=>(
                     <button key={i} onClick={()=>{setLocation(l);setLocOpen(false);}}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${location===l?"bg-blue-600 text-white":l===""?"text-muted-foreground":""}`}>
                       {l||"— All Locations —"}
                     </button>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
@@ -98,8 +132,9 @@ export function CreditCardReport({ mod, sub }: Props) {
           </div>
         ))}
       </div>
-      <div className="panel overflow-x-auto p-0">
-        <table className="w-full text-sm">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+        <table className="w-full min-w-max text-sm">
           <thead><tr className="border-b border-white/10 bg-white/5">
             {["#","Trans Date","Location","Card Type","Last 4","Trans Type","Amount","Status","Ticket No"].map(h=>(
               <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
@@ -125,5 +160,6 @@ export function CreditCardReport({ mod, sub }: Props) {
         </table>
       </div>
     </main>
+    </div>
   );
 }
