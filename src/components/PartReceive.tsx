@@ -385,7 +385,21 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                         </a>
                       ) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{item.ticketNo}</td>
+                    <td className="px-4 py-3 text-slate-300">
+                      {item.ticketNo ? (
+                        <Link
+                          to="/ticket/$ticketNo"
+                          params={{ ticketNo: item.ticketNo }}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          {item.ticketNo}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className={`px-4 py-3 font-semibold ${ticketStatusClass(item.ticketStatus)}`}>{item.ticketStatus}</td>
                     <td className="px-4 py-3 text-slate-300">{item.tech || "—"}</td>
                     <td className="px-4 py-3 text-slate-300">{item.schedule || "—"}</td>
