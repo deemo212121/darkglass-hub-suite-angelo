@@ -1,4 +1,5 @@
 import { normalizeRole, ATTENDANCE_MANAGER_TIER_ROLES_ARRAY } from "./roleLabels";
+import { getModuleRoleGate } from "./moduleAccess";
 
 /**
  * Role gates for the Dashboard module's submodules (mod.slug === "dashboard").
@@ -40,24 +41,15 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
 };
 
 /**
- * Per-company overrides (migration 0151, dashboard_role_gate_overrides),
- * hydrated once per session by auth.tsx right after the profile loads —
- * every getDashboardRoleGate() call site (9 of them, including a
- * server-side check in liveChatBridge.ts) stays synchronous and unaware
- * this exists; it just starts seeing the company's customized list instead
- * of the hardcoded default the moment hydration completes. Empty until
- * then, so a submodule reads as "use the hardcoded default" during the
- * brief window before the first hydration finishes.
+ * Company overrides (migration 0151, module_role_gate_overrides — shared
+ * with every other module, see moduleAccess.ts) win over the hardcoded
+ * default above. Every one of getDashboardRoleGate()'s 9 call sites (incl.
+ * a server-side check in liveChatBridge.ts) stays synchronous and unaware
+ * an override cache even exists; it just starts seeing the company's
+ * customized list once auth.tsx's hydration resolves.
  */
-let roleGateOverrides: Record<string, string[]> = {};
-
-/** Called once after login/profile load — see auth.tsx. */
-export function hydrateDashboardRoleGates(overrides: Record<string, string[]>): void {
-  roleGateOverrides = overrides;
-}
-
 export function getDashboardRoleGate(subSlug: string): string[] | null {
-  return roleGateOverrides[subSlug] ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
+  return getModuleRoleGate("dashboard", subSlug) ?? DASHBOARD_ROLE_GATES[subSlug] ?? null;
 }
 
 /**

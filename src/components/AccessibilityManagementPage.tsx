@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, RefreshCw, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { getModule } from "@/lib/modules";
+import { MODULES } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { ROLE_OPTIONS, ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
-import { DASHBOARD_ROLE_GATES, hydrateDashboardRoleGates } from "@/lib/dashboardAccess";
-import { getDashboardRoleGateOverrides, setDashboardRoleGateOverride } from "@/lib/supabase/dashboardRoleGates";
+import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
+import { hydrateModuleRoleGates } from "@/lib/moduleAccess";
+import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
@@ -52,6 +53,19 @@ function GateColGroup() {
   );
 }
 
+// Every role code, for the display-only fallback of a (module, submodule)
+// that has neither an override nor (for Dashboard) a hardcoded default —
+// shown as "every role checked" so an unrestricted row visually reads as
+// "everyone currently has access," not as "nobody does."
+const ALL_ROLE_VALUES = ROLE_OPTIONS.map((r) => r.value);
+
+interface GateRow {
+  moduleSlug: string;
+  moduleLabel: string;
+  slug: string;
+  title: string;
+}
+
 /**
  * Bulk secondary-role ("Accessibility") assignment grid — one row per
  * company user, one checkbox column per assignable role (ROLE_OPTIONS, the
@@ -78,15 +92,19 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   const [savingGateCell, setSavingGateCell] = useState<string | null>(null);
   const gateTableScrollRef = useRef<HTMLDivElement>(null);
   const gateHeaderScrollRef = useRef<HTMLDivElement>(null);
+  // The TRUE override map (no "open to everyone" rows filled in) — kept
+  // separate from dashboardGates (which fills in ALL_ROLE_VALUES for
+  // display on untouched rows) so hydrateModuleRoleGates never mistakes a
+  // merely-displayed default for a real override.
+  const rawOverridesRef = useRef<Record<string, string[]>>({});
 
-  // Every Dashboard submodule that has a hardcoded default gate — the ones
-  // with no entry in DASHBOARD_ROLE_GATES are open to every role and aren't
-  // configurable here, same as before this grid existed.
-  const gatedSubmodules = useMemo(() => {
-    const dashboardMod = getModule("dashboard");
-    const gatedSlugs = new Set(Object.keys(DASHBOARD_ROLE_GATES));
-    return (dashboardMod?.submodules ?? []).filter((s) => gatedSlugs.has(s.slug));
-  }, []);
+  // Every submodule across every module — grouped by module for the grid
+  // below. A row with no override (and, for Dashboard, no hardcoded
+  // DASHBOARD_ROLE_GATES entry either) is open to every role today.
+  const gateRows = useMemo<GateRow[]>(
+    () => MODULES.flatMap((m) => m.submodules.map((s) => ({ moduleSlug: m.slug, moduleLabel: m.label, slug: s.slug, title: s.title }))),
+    []
+  );
 
   const loadUsers = async () => {
     setLoading(true);
@@ -140,12 +158,19 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   const loadDashboardGates = async () => {
     setGatesLoading(true);
     try {
-      const overrides = await getDashboardRoleGateOverrides();
+      const overrides = await getModuleRoleGateOverrides();
+      rawOverridesRef.current = overrides;
       const effective: Record<string, string[]> = {};
-      for (const s of gatedSubmodules) {
-        effective[s.slug] = overrides[s.slug] ?? DASHBOARD_ROLE_GATES[s.slug] ?? [];
+      for (const row of gateRows) {
+        const key = `${row.moduleSlug}:${row.slug}`;
+        const hardcodedDefault = row.moduleSlug === "dashboard" ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
+        effective[key] = overrides[key] ?? hardcodedDefault ?? ALL_ROLE_VALUES;
       }
       setDashboardGates(effective);
+      // Every client (including this tab's own nav gating) reads overrides
+      // straight from moduleAccess.ts's hydrated cache — keep it in sync
+      // with what we just loaded rather than waiting for the next login.
+      hydrateModuleRoleGates(overrides);
     } finally {
       setGatesLoading(false);
     }
@@ -156,21 +181,26 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleGateToggle = async (submoduleSlug: string, roleCode: string, checked: boolean) => {
-    const prev = dashboardGates[submoduleSlug] ?? [];
+  const handleGateToggle = async (moduleSlug: string, submoduleSlug: string, roleCode: string, checked: boolean) => {
+    const key = `${moduleSlug}:${submoduleSlug}`;
+    const prev = dashboardGates[key] ?? [];
     const next = checked ? Array.from(new Set([...prev, roleCode])) : prev.filter((r) => r !== roleCode);
 
-    setDashboardGates((p) => ({ ...p, [submoduleSlug]: next }));
-    const cellKey = `${submoduleSlug}:${roleCode}`;
+    setDashboardGates((p) => ({ ...p, [key]: next }));
+    const cellKey = `${key}:${roleCode}`;
     setSavingGateCell(cellKey);
     try {
-      await setDashboardRoleGateOverride(submoduleSlug, next);
+      await setModuleRoleGateOverride(moduleSlug, submoduleSlug, next);
       // Reflect the change in this tab's own nav gating immediately too,
-      // instead of only taking effect on the next login/reload.
-      hydrateDashboardRoleGates({ ...dashboardGates, [submoduleSlug]: next });
+      // instead of only taking effect on the next login/reload — only the
+      // ONE real override changes here, everything else stays exactly what
+      // it actually is in the database (never the "all roles" display
+      // fallback dashboardGates uses for an untouched row).
+      rawOverridesRef.current = { ...rawOverridesRef.current, [key]: next };
+      hydrateModuleRoleGates(rawOverridesRef.current);
     } catch (err) {
       // Roll back this one cell — every other row/cell is unaffected.
-      setDashboardGates((p) => ({ ...p, [submoduleSlug]: prev }));
+      setDashboardGates((p) => ({ ...p, [key]: prev }));
       alert(`Failed to update module access: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingGateCell(null);
@@ -327,11 +357,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
         </div>
 
         <div className="mt-10 mb-4">
-          <h2 className="text-xl font-semibold text-white">Dashboard Module Access by Role</h2>
+          <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
           <p className="text-sm text-slate-400 mt-1">
-            Check a box to let that role open the submodule from the Dashboard's tile grid. A row you haven't edited
-            yet shows the built-in default; changing any box here replaces that submodule's whole list, company-wide,
-            immediately. Super Admin can always open every submodule regardless of this grid.
+            Check a box to let that role open the submodule (from its tile grid, and directly by URL). A row you
+            haven't edited yet shows the built-in default — every role for most submodules, or the Dashboard's own
+            built-in list for the few that have one. Changing any box here replaces that submodule's whole list,
+            company-wide, immediately. Super Admin can always open every submodule regardless of this grid.
           </p>
         </div>
 
@@ -344,7 +375,7 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
             <GateColGroup />
             <thead>
               <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Dashboard Submodule</th>
+                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Module / Submodule</th>
                 {ROLE_OPTIONS.map((r) => (
                   <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
                     {r.label}
@@ -371,38 +402,49 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                   </td>
                 </tr>
               ) : (
-                gatedSubmodules.map((s) => {
-                  const allowed = new Set(dashboardGates[s.slug] ?? []);
-                  return (
-                    <tr key={s.slug} className="border-b border-white/5 hover:bg-white/5">
-                      <td
-                        className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-                        title={s.title}
-                      >
-                        {s.title}
-                      </td>
-                      {ROLE_OPTIONS.map((r) => {
-                        const checked = allowed.has(r.value);
-                        const cellKey = `${s.slug}:${r.value}`;
-                        const cellSaving = savingGateCell === cellKey;
-                        return (
-                          <td key={r.value} className="px-2 py-2 text-center">
-                            {cellSaving ? (
-                              <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-                            ) : (
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => void handleGateToggle(s.slug, r.value, e.target.checked)}
-                                className="h-4 w-4 accent-blue-500"
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })
+                MODULES.flatMap((m) => [
+                  <tr key={`mod-${m.slug}`} className="border-b border-white/10 bg-white/5">
+                    <td
+                      colSpan={1 + ROLE_OPTIONS.length}
+                      className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 sticky left-0 bg-slate-900"
+                    >
+                      {m.label}
+                    </td>
+                  </tr>,
+                  ...m.submodules.map((s) => {
+                    const key = `${m.slug}:${s.slug}`;
+                    const allowed = new Set(dashboardGates[key] ?? []);
+                    return (
+                      <tr key={key} className="border-b border-white/5 hover:bg-white/5">
+                        <td
+                          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+                          title={s.title}
+                        >
+                          {s.title}
+                        </td>
+                        {ROLE_OPTIONS.map((r) => {
+                          const checked = allowed.has(r.value);
+                          const cellKey = `${key}:${r.value}`;
+                          const cellSaving = savingGateCell === cellKey;
+                          return (
+                            <td key={r.value} className="px-2 py-2 text-center">
+                              {cellSaving ? (
+                                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+                              ) : (
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => void handleGateToggle(m.slug, s.slug, r.value, e.target.checked)}
+                                  className="h-4 w-4 accent-blue-500"
+                                />
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  }),
+                ])
               )}
             </tbody>
           </table>

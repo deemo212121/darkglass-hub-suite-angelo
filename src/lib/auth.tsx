@@ -415,18 +415,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
-                  // Hydrate this company's Dashboard-submodule role-gate
-                  // overrides (migration 0151) — every getDashboardRoleGate()
-                  // call site stays synchronous and just starts seeing the
-                  // customized list once this resolves. Never blocks login;
-                  // a submodule reads as "use the hardcoded default" until it does.
+                  // Hydrate this company's per-module/submodule role-gate
+                  // overrides (migration 0151) — every getDashboardRoleGate()/
+                  // getModuleRoleGate() call site stays synchronous and just
+                  // starts seeing the customized list once this resolves.
+                  // Never blocks login; a submodule reads as "open to
+                  // everyone" (or the Dashboard's hardcoded default) until it does.
                   void (async () => {
                     try {
-                      const { getDashboardRoleGateOverrides } = await import("./supabase/dashboardRoleGates");
-                      const { hydrateDashboardRoleGates } = await import("./dashboardAccess");
-                      hydrateDashboardRoleGates(await getDashboardRoleGateOverrides());
+                      const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
+                      const { hydrateModuleRoleGates } = await import("./moduleAccess");
+                      hydrateModuleRoleGates(await getModuleRoleGateOverrides());
                     } catch (e) {
-                      console.warn("Dashboard role gate override hydration skipped:", e);
+                      console.warn("Module role gate override hydration skipped:", e);
                     }
                   })();
                   // Compute location access. Two overrides win over the

@@ -6,6 +6,7 @@ import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, type SubModuleDef } from "@/lib/modules";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { getModuleRoleGate } from "@/lib/moduleAccess";
 import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
 import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
 import {
@@ -435,6 +436,10 @@ function ModuleIndex() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
+              .filter((s: SubModuleDef) => {
+                const allowed = getModuleRoleGate(m.slug, s.slug);
+                return !allowed || hasDashboardAccess(allowed, role, extraRoles);
+              })
               .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
               .map((s: SubModuleDef) => (
               <Link

@@ -76,6 +76,7 @@ import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule 
 import { isSubmoduleAllowed, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { getModuleRoleGate } from "@/lib/moduleAccess";
 
 // Roles allowed into the admin module overall, and into User Management
 // specifically. Checked via hasDashboardAccess so a secondary role
@@ -161,8 +162,17 @@ function SubModule() {
   // whose PRIMARY role is Admin/SuperAdmin. Only fetch extra_roles when the
   // primary role alone doesn't already pass any of these three gates —
   // avoids an extra query on every ungated page load.
-  const dashboardAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : null;
-  const roleGrantsQuick = !dashboardAllowedRoles || hasDashboardAccess(dashboardAllowedRoles, role, []);
+  //
+  // moduleAllowedRoles covers every module, not just Dashboard: the
+  // Dashboard module additionally has a hardcoded default per submodule
+  // (getDashboardRoleGate, DASHBOARD_ROLE_GATES) for when there's no
+  // company override; every other module has no hardcoded default, so
+  // null here (no override) means open to every role, same as before this
+  // system existed. This is purely additive on top of the admin-module/
+  // user-management/company-settings/CSR gates below — it can only narrow
+  // access further, never grant access past one of those.
+  const moduleAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : getModuleRoleGate(mod.slug, sub.slug);
+  const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
   // CSR restriction is the mirror case — restricted based on primary role
@@ -172,7 +182,7 @@ function SubModule() {
   // company-settings is a RESTRICTION relative to the general admin-module
   // gate (plain ADMIN must NOT get in, only the per-company SUPERADMIN role)
   // so it always needs extraRoles resolved, not just when the quick check fails.
-  const needsExtraRoles = (Boolean(dashboardAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || !csrGrantsQuick || sub.custom === "company-settings";
+  const needsExtraRoles = (Boolean(moduleAllowedRoles) && !roleGrantsQuick) || !adminGrantsQuick || !userMgmtGrantsQuick || !csrGrantsQuick || sub.custom === "company-settings";
   const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
   useEffect(() => {
     if (!needsExtraRoles || !ready || !uid) return;
@@ -324,12 +334,12 @@ function SubModule() {
     return <Outlet />;
   }
 
-  // Dashboard-page role gate resolution (extra_roles fetch already awaited
-  // above, alongside the admin/user-management gates).
-  const dashboardAccessOk = !dashboardAllowedRoles || roleGrantsQuick || hasDashboardAccess(dashboardAllowedRoles, role, extraRoles);
+  // Module/submodule role gate resolution (extra_roles fetch already
+  // awaited above, alongside the admin/user-management gates).
+  const moduleAccessOk = !moduleAllowedRoles || roleGrantsQuick || hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
-  if (dashboardAllowedRoles && !dashboardAccessOk) {
-    const allowedLabels = dashboardAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
+  if (moduleAllowedRoles && !moduleAccessOk) {
+    const allowedLabels = moduleAllowedRoles.map((r) => ROLE_LABELS[r] || r).join(", ");
     return (
       <>
         <AppHeader />
