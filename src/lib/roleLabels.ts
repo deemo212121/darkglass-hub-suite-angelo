@@ -42,10 +42,12 @@ export const ROLE_LABELS: Record<string, string> = {
 
 /**
  * Every role code assignable via the "User Type" multi-select (individual
- * user edit page) and the Accessibility Management bulk grid — every
- * ROLE_LABELS code except the two platform/company super-admin tiers, which
- * are deliberately excluded from casual tick-box assignment. Single source
- * of truth so both UIs can never drift out of sync with each other.
+ * user edit page), the Role Management bulk grid, and the roles list on the
+ * left of Accessibility Management's access matrix — every ROLE_LABELS
+ * code except the two platform/company super-admin tiers, which are
+ * deliberately excluded (they bypass every access gate unconditionally, so
+ * restricting them here would be meaningless). Single source of truth so
+ * none of these UIs can drift out of sync with each other.
  */
 export const ROLE_OPTIONS: { value: string; label: string }[] = Object.entries(ROLE_LABELS)
   .filter(([code]) => code !== "SUPERADMIN" && code !== "SUPERSUPERADMIN")

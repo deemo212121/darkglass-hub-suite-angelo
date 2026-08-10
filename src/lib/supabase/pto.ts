@@ -21,6 +21,11 @@ export type PtoStatus = "pending" | "approved" | "denied" | "cancelled";
 export type PtoStageStatus = "pending" | "approved" | "rejected";
 export type PtoStage = "manager" | "hr" | "accounting";
 
+/** Sick Leave is always unpaid and never credited to payroll — separate from every other leave type, which defaults to paid unless explicitly `unpaid`. */
+export function isPaidPtoType(ptoType: PtoType): boolean {
+  return ptoType !== "unpaid" && ptoType !== "sick";
+}
+
 /**
  * Employees need 1 year of tenure before they're eligible for PTO. Tenure is
  * measured from profiles.employee_info.hireDate if HR has set one, falling
@@ -104,9 +109,10 @@ export function ptoYearWindow(
 }
 
 /**
- * Requests that count against a PTO year window — pending or approved,
- * dated inside the window, excluding `unpaid` (which doesn't draw against
- * the allowance).
+ * Requests that count against a PTO (vacation) year window — pending or
+ * approved, dated inside the window, excluding `unpaid` (which doesn't draw
+ * against the allowance) and `sick` (which draws against its own separate
+ * Sick Leave allowance instead — see sickRequestsInYear below).
  */
 export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">>(
   requests: T[],
@@ -115,6 +121,7 @@ export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "sta
   return requests.filter(
     (r) =>
       r.ptoType !== "unpaid" &&
+      r.ptoType !== "sick" &&
       r.status !== "denied" &&
       r.status !== "cancelled" &&
       r.startDate >= window.start &&
@@ -122,12 +129,78 @@ export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "sta
   );
 }
 
-/** Days already spoken for (pending or approved) inside a PTO year window. */
+/** Days already spoken for (pending or approved) inside a PTO (vacation) year window. */
 export function ptoDaysUsed(
   requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
   window: Pick<PtoYearWindow, "start" | "end">
 ): number {
   return ptoRequestsInYear(requests, window).reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+}
+
+/**
+ * Sick Leave is its own allowance, entirely separate from vacation PTO:
+ * available from day 1 of employment (no 1-year wait), flat at 5 days every
+ * tenure year (never increments like vacation does), and always unpaid (see
+ * isPaidPtoType) — so it's tracked with its own window/allowance/usage
+ * functions rather than folding into ptoYearWindow/ptoDaysUsed above.
+ */
+export const SICK_LEAVE_ANNUAL_ALLOWANCE = 5;
+
+export interface SickYearWindow {
+  /** 0 = the employee's first year, 1 = second year, etc. — unlike PtoYearWindow, year 0 is valid since Sick Leave has no eligibility wait. */
+  tenureYear: number;
+  start: string; // "YYYY-MM-DD", inclusive
+  end: string; // "YYYY-MM-DD", exclusive — the next anniversary
+  allowance: number;
+}
+
+/** Which Sick Leave tenure-year `onDate` falls in, anchored to the employee's hire anniversary. Unlike ptoYearWindow, this never returns null for tenure — only when there's no hire/created date to anchor to at all. */
+export function sickYearWindow(
+  hireDate: string | null | undefined,
+  createdAt: string | null | undefined,
+  onDate: string = new Date().toISOString().slice(0, 10)
+): SickYearWindow | null {
+  const base = (hireDate || createdAt || "").slice(0, 10);
+  if (!base) return null;
+  const hire = new Date(base + "T00:00:00");
+  const target = new Date(onDate + "T00:00:00");
+  if (Number.isNaN(hire.getTime()) || Number.isNaN(target.getTime())) return null;
+
+  const tenureYear = Math.max(0, fullYearsElapsed(hire, target));
+  const start = new Date(hire);
+  start.setFullYear(hire.getFullYear() + tenureYear);
+  const end = new Date(hire);
+  end.setFullYear(hire.getFullYear() + tenureYear + 1);
+
+  return {
+    tenureYear,
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+    allowance: SICK_LEAVE_ANNUAL_ALLOWANCE,
+  };
+}
+
+/** Sick Leave requests (pending or approved) dated inside a Sick Leave year window. */
+export function sickRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">>(
+  requests: T[],
+  window: Pick<SickYearWindow, "start" | "end">
+): T[] {
+  return requests.filter(
+    (r) =>
+      r.ptoType === "sick" &&
+      r.status !== "denied" &&
+      r.status !== "cancelled" &&
+      r.startDate >= window.start &&
+      r.startDate < window.end
+  );
+}
+
+/** Sick Leave days already spoken for (pending or approved) inside a Sick Leave year window. */
+export function sickDaysUsed(
+  requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
+  window: Pick<SickYearWindow, "start" | "end">
+): number {
+  return sickRequestsInYear(requests, window).reduce((sum, r) => sum + r.hoursRequested / 8, 0);
 }
 
 export interface PtoRequestRow {

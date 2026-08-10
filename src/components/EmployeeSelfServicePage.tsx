@@ -21,6 +21,8 @@ import {
   ptoYearWindow,
   ptoDaysUsed,
   ptoRequestsInYear,
+  sickYearWindow,
+  sickRequestsInYear,
   weekdayCount,
   type PtoRequestRow,
   type PtoType,
@@ -124,7 +126,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState<"pto" | "dispute" | "correction" | "inquiry">("pto");
+  const [modalType, setModalType] = useState<"pto" | "sick" | "dispute" | "correction" | "inquiry">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
   // Real Supabase-backed attendance for the My Attendance tab.
   const [liveAttendance, setLiveAttendance] = useState<AttendanceRow[]>([]);
@@ -148,8 +150,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [responseNote, setResponseNote] = useState<Record<string, string>>({});
-  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
-  const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | null>(null);
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+  const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
   const [formData, setFormData] = useState({
     leaveType: "Vacation",
@@ -289,7 +291,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         : "HR: pending";
       items.push({
         id: `pto-${r.id}`,
-        type: "PTO Request",
+        type: r.ptoType === "sick" ? "Sick Leave Request" : "PTO Request",
         status: r.status === "denied" ? "rejected" : r.status === "cancelled" ? "closed" : r.status,
         submittedDate: r.createdAt.slice(0, 10),
         details: `${PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}: ${r.startDate} to ${r.endDate} (${r.hoursRequested}h)${r.reason ? ` - ${r.reason}` : ""}\n${managerLine} | ${hrLine}`,
@@ -351,6 +353,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const myPtoYearRequestIds = useMemo(
     () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
     [myPtoYearRequests]
+  );
+
+  // Sick Leave: its own flat 5-days-a-year allowance (never increments like
+  // vacation PTO does), available from day 1 of employment — no 1-year wait,
+  // and always unpaid (see isPaidPtoType in pto.ts) so it never draws
+  // against, or gets confused with, the vacation PTO allowance above.
+  const mySickYear = sickYearWindow(myHireDate, myCreatedAt);
+  const mySickYearRequests = useMemo(
+    () => (mySickYear ? sickRequestsInYear(myPtoRequests, mySickYear) : []),
+    [myPtoRequests, mySickYear]
+  );
+  const mySickUsed = mySickYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const mySickRemaining = mySickYear ? Math.max(0, mySickYear.allowance - mySickUsed) : 0;
+  const mySickYearRequestIds = useMemo(
+    () => new Set(mySickYearRequests.map((r) => `pto-${r.id}`)),
+    [mySickYearRequests]
   );
 
   // Deep link from a bell-icon notification straight into a specific tab
@@ -500,7 +518,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           const ptoTypeMap: Record<string, PtoType> = {
             Vacation: "vacation",
-            "Sick Leave": "sick",
             Personal: "personal",
           };
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
@@ -532,6 +549,56 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   senderId: myProfileId,
                   senderName: displayName || "Employee",
                   body: `🗓️ New PTO Request from ${displayName || "an employee"} needs your approval: ${formData.leaveType}, ${formData.startDate} to ${formData.endDate}.`,
+                  linkTo: "/m/dashboard/employee-self-service?tab=manage",
+                }).catch((err) => console.error("Failed to notify", r.id, err))
+              )
+            );
+          }
+          break;
+        }
+        case "sick": {
+          if (!formData.startDate || !formData.endDate) {
+            alert("Please select start and end dates");
+            setSubmitting(false);
+            return;
+          }
+          // No 1-year eligibility gate here — Sick Leave is available from
+          // day 1 of employment, unlike vacation PTO above.
+          const requestedDays = weekdayCount(formData.startDate, formData.endDate);
+          if (mySickYear && requestedDays > mySickRemaining) {
+            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${mySickRemaining} of ${mySickYear.allowance} Sick Leave day(s) left for Year ${mySickYear.tenureYear} (resets ${mySickYear.end}).`);
+            setSubmitting(false);
+            return;
+          }
+          const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+          const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+          await createPtoRequest({
+            profileId: myProfileId,
+            ptoType: "sick",
+            startDate: formData.startDate,
+            endDate: formData.endDate,
+            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || employee?.role || "N/A"} - ${formData.details}`,
+            requestedBy: myProfileId,
+            managerId: managerProfile?.id ?? null,
+          });
+          // Same manager + HR (or fallback Admin) notification pattern as
+          // vacation PTO — Sick Leave goes through the same approval pipeline,
+          // it just doesn't draw against the same allowance or get paid.
+          {
+            const recipients = new Map<string, ProfileRow>();
+            if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
+            for (const p of companyProfiles) {
+              if (p.id === myProfileId) continue;
+              const primary = (p.role || "").toUpperCase();
+              if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
+            }
+            await Promise.all(
+              Array.from(recipients.values()).map((r) =>
+                createNotification({
+                  recipientId: r.id,
+                  senderId: myProfileId,
+                  senderName: displayName || "Employee",
+                  body: `🤒 New Sick Leave Request from ${displayName || "an employee"} needs your approval: ${formData.startDate} to ${formData.endDate}.`,
                   linkTo: "/m/dashboard/employee-self-service?tab=manage",
                 }).catch((err) => console.error("Failed to notify", r.id, err))
               )
@@ -1202,7 +1269,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div className="grid gap-4 md:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <button
                 type="button"
                 onClick={() => setSummaryModal("pto")}
@@ -1214,6 +1281,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("sick")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-teal-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Sick Leave Remaining</p>
+                <p className="text-2xl font-bold text-teal-300">
+                  {mySickYear ? `${mySickRemaining} of ${mySickYear.allowance}` : "—"}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {mySickYear ? `Year ${mySickYear.tenureYear} · resets ${mySickYear.end}` : "—"}
                 </p>
               </button>
               <button
@@ -1268,6 +1348,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 PTO Request
               </button>
               <button
+                type="button"
+                onClick={() => { setModalType("sick"); setShowModal(true); }}
+                className="px-4 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Sick Leave Request
+              </button>
+              <button
                 onClick={() => { setModalType("dispute"); setShowModal(true); }}
                 className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
@@ -1302,6 +1390,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 >
                   <option value="all">All Types</option>
                   <option value="PTO Request">PTO Request</option>
+                  <option value="Sick Leave Request">Sick Leave Request</option>
                   <option value="Time Correction">Time Correction</option>
                   <option value="Attendance Dispute">Attendance Dispute</option>
                   <option value="Payroll Inquiry">Payroll Inquiry</option>
@@ -1604,6 +1693,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-bold text-white">
                     {modalType === "pto" && "Submit PTO Request"}
+                    {modalType === "sick" && "Submit Sick Leave Request"}
                     {modalType === "dispute" && "Submit Attendance Dispute"}
                     {modalType === "correction" && "Submit Time Correction Request"}
                     {modalType === "inquiry" && "Submit Payroll Inquiry"}
@@ -1617,20 +1707,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </div>
 
                 <div className="space-y-3">
-                  {modalType === "pto" && (
+                  {(modalType === "pto" || modalType === "sick") && (
                     <>
-                      <div>
-                        <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
-                        <select 
-                          value={formData.leaveType}
-                          onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                        >
-                          <option>Vacation</option>
-                          <option>Sick Leave</option>
-                          <option>Personal</option>
-                        </select>
-                      </div>
+                      {modalType === "pto" && (
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
+                          <select
+                            value={formData.leaveType}
+                            onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          >
+                            <option>Vacation</option>
+                            <option>Personal</option>
+                          </select>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
@@ -1803,6 +1894,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       {summaryModal && (() => {
         const titles: Record<typeof summaryModal & string, string> = {
           pto: `PTO Requests — Year ${myPtoYear?.tenureYear ?? "—"}`,
+          sick: `Sick Leave Requests — Year ${mySickYear?.tenureYear ?? "—"}`,
           pending: "Pending Requests",
           approved: "Approved Requests",
           rejected: "Rejected Requests",
@@ -1811,7 +1903,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         const items =
           summaryModal === "pto"
             ? myRequests.filter((r) => myPtoYearRequestIds.has(r.id))
-            : filteredMyRequests.filter((r) => r.status === summaryModal);
+            : summaryModal === "sick"
+              ? myRequests.filter((r) => mySickYearRequestIds.has(r.id))
+              : filteredMyRequests.filter((r) => r.status === summaryModal);
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSummaryModal(null)}>
             <div

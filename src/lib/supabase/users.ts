@@ -64,6 +64,8 @@ export interface ProfileRow {
   /** How many minutes this person's meal break should be. Not enforced anywhere yet, just stored/shown. */
   meal_minutes: number | null;
   work_plan: Record<string, any> | null;
+  /** Trainee vs Regular — see migration 0152. Fetched separately/best-effort in getCompanyUsers (like working_hours/meal_minutes below), so it defaults to "regular" instead of breaking the whole roster if that migration hasn't been run yet. */
+  employment_type: "trainee" | "regular";
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
@@ -348,6 +350,26 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
         const extra = extraById.get(row.id);
         row.working_hours = extra?.working_hours ?? null;
         row.meal_minutes = extra?.meal_minutes ?? null;
+      }
+    }
+  }
+
+  // Same best-effort pattern, in its OWN separate query (not merged into the
+  // one above) — employment_type (migration 0152) is newer/optional, so it
+  // must not be able to break working_hours/meal_minutes (or the rest of
+  // this function's callers) if that migration hasn't been run yet.
+  for (const row of rows) row.employment_type = "regular";
+  if (rows.length > 0) {
+    const { data: empTypeRows, error: empTypeError } = await supabase
+      .from("profiles")
+      .select("id, employment_type")
+      .in("id", rows.map((r) => r.id));
+    if (empTypeError) {
+      console.error("getCompanyUsers (employment_type) error:", empTypeError.message);
+    } else {
+      const empTypeById = new Map((empTypeRows ?? []).map((r: any) => [r.id, r.employment_type]));
+      for (const row of rows) {
+        row.employment_type = empTypeById.get(row.id) ?? "regular";
       }
     }
   }
@@ -752,6 +774,8 @@ export async function updateCompanyUser(
     offDays: number[];
     workPlan: Record<string, any>;
     isActive: boolean;
+    /** Trainee vs Regular. See migration 0152. */
+    employmentType: "trainee" | "regular";
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -782,6 +806,7 @@ export async function updateCompanyUser(
   if (fields.offDays !== undefined) payload.off_days = fields.offDays;
   if (fields.workPlan !== undefined) payload.work_plan = fields.workPlan;
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
+  if (fields.employmentType !== undefined) payload.employment_type = fields.employmentType;
 
   const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
   if (error) {

@@ -60,7 +60,7 @@ import { fillW9Pdf } from "@/lib/w9PdfFill";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
-import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
@@ -166,11 +166,14 @@ interface Employee {
   country: "US" | "PH";
   birthday: string;
   address: string;
+  phone: string;
   ssn?: string;
   startDate: string;
   terminationDate?: string;
   terminationReason?: string;
   status: EmploymentStatus;
+  /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
+  employmentType: "trainee" | "regular";
   onboardingDocs: Record<string, boolean>;
   // Same off-day/required-shift fields Attendance Monitoring already uses
   // (profiles.off_days/required_check_in/required_check_out) — carried
@@ -669,9 +672,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
 
+  // Defaults to "active" (not "" / All) so deactivated accounts — including
+  // cleanup artifacts like a deactivated duplicate profile — don't clutter
+  // the directory by default. HR can still pick "Inactive"/"Terminated" from
+  // the Status filter below to look someone up on purpose.
   const [employeeFilters, setEmployeeFilters] = useState({
     search: "",
-    status: "" as "" | EmploymentStatus,
+    status: "active" as "" | EmploymentStatus,
     branch: "",
     sortBy: "name" as "name" | "startDate" | "warnings",
     sortOrder: "asc" as "asc" | "desc",
@@ -705,11 +712,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           country: PH_BRANCH_NAMES.has(p.assigned_branch || "") ? "PH" : "US",
           birthday: info.birthDate || "",
           address: [info.address1, info.city, info.state].filter(Boolean).join(", "),
+          phone: p.phone_number || "",
           ssn: info.employeeSsn || undefined,
           startDate: info.hireDate || p.created_at?.slice(0, 10) || "",
           terminationDate: info.employmentStatusDate || info.terminateDate || undefined,
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
+          employmentType: p.employment_type || "regular",
           onboardingDocs: info.onboardingDocs || {},
           offDays: p.off_days ?? [],
           requiredCheckIn: p.required_check_in || "",
@@ -3228,6 +3237,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfirmDialog(null);
   };
 
+  // Trainee vs Regular — a separate classification from Account Status
+  // above, no confirmation needed (unlike terminating/resigning someone).
+  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular") => {
+    const employee = employees.find((e) => e.id === id);
+    const prevType = employee?.employmentType ?? "regular";
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: newType } : e)));
+    try {
+      await updateCompanyUser(id, { employmentType: newType });
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { employmentType: newType } });
+    } catch (err) {
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update employment type.");
+    }
+  };
+
   const handleCancelStatusChange = () => setConfirmDialog(null);
 
   // ── Onboarding Documents: per-employee checklist, persisted on
@@ -3399,6 +3423,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [employees, ptoRequestsByProfile]);
 
+  // Remaining Sick Leave per employee — flat 5 days every tenure year
+  // (never increments), available from day 1 (no 1-year wait, unlike
+  // vacation PTO above) — same sickYearWindow/sickDaysUsed logic Employee
+  // Self-Service uses.
+  const remainingSickByProfile = useMemo(() => {
+    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    for (const e of employees) {
+      const window = sickYearWindow(e.startDate, null);
+      if (!window) {
+        map.set(e.id, null);
+        continue;
+      }
+      const used = sickDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+    }
+    return map;
+  }, [employees, ptoRequestsByProfile]);
+
   // Filtered and sorted employees
   const filteredEmployees = useMemo(() => {
     let result = [...employees];
@@ -3414,6 +3456,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (employeeFilters.status) result = result.filter(e => e.status === employeeFilters.status);
     if (employeeFilters.branch) result = result.filter(e => e.branch === employeeFilters.branch);
     result.sort((a, b) => {
+      // Terminated employees always sink to the bottom, regardless of the
+      // active sort field/order — everyone still on staff should never have
+      // to scroll past former employees to find each other.
+      const terminatedDiff = (a.status === "terminated" ? 1 : 0) - (b.status === "terminated" ? 1 : 0);
+      if (terminatedDiff !== 0) return terminatedDiff;
       let compareVal = 0;
       if (employeeFilters.sortBy === "name") compareVal = a.name.localeCompare(b.name);
       else if (employeeFilters.sortBy === "startDate") compareVal = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
@@ -4213,11 +4260,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <option value="desc">Descending</option>
               </select>
             </div>
-            {(employeeFilters.search || employeeFilters.status || employeeFilters.branch) && (
-              <button onClick={() => setEmployeeFilters({ search: "", status: "", branch: "", sortBy: "name", sortOrder: "asc" })} className="btn text-sm px-3 mb-0.5">Clear Filters</button>
+            {(employeeFilters.search || employeeFilters.status !== "active" || employeeFilters.branch) && (
+              <button onClick={() => setEmployeeFilters({ search: "", status: "active", branch: "", sortBy: "name", sortOrder: "asc" })} className="btn text-sm px-3 mb-0.5">Clear Filters</button>
             )}
             <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-              {filteredEmployees.length}{(employeeFilters.search || employeeFilters.status || employeeFilters.branch) ? ` of ${employees.length}` : ""} employees
+              {filteredEmployees.length}{(employeeFilters.search || employeeFilters.status !== "active" || employeeFilters.branch) ? ` of ${employees.length}` : ""} employees
             </span>
           </div>
         </div>
@@ -4228,19 +4275,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Name</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Start Date</th>
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Email</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Phone</th>
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Position</th>
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Start Date</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Address</th>
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Warnings</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Remaining PTO</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase" title="Sick Leave remaining">SL</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase" title="Vacation Leave remaining">VL</th>
                 <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Termination</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Employment Status</th>
+                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Account Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredEmployees.length === 0 ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : employees.length === 0 ? "No employees found." : "No employees match these filters."}</td></tr>
+                <tr><td colSpan={13} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : employees.length === 0 ? "No employees found." : "No employees match these filters."}</td></tr>
               ) : (
                 filteredEmployees.map((employee) => (
                   <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
@@ -4249,16 +4300,29 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {employee.name}
                       </a>
                     </td>
+                    <td className="px-3 py-2 text-muted-foreground">{employee.startDate || "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{employee.email}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{employee.phone || "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position}</td>
                     <td className="px-3 py-2 text-muted-foreground">{employee.branch || "—"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{employee.startDate || "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{employee.address || "—"}</td>
                     <td className="px-3 py-2">
                       {(approvedWarningCountByProfile.get(employee.id) ?? 0) > 0 ? (
                         <span className="bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded text-xs font-semibold">{approvedWarningCountByProfile.get(employee.id)}</span>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {(() => {
+                        const sick = remainingSickByProfile.get(employee.id);
+                        if (!sick) return <span className="text-muted-foreground text-xs">—</span>;
+                        return (
+                          <span className="bg-teal-500/20 text-teal-300 px-2 py-1 rounded text-xs font-semibold">
+                            {sick.remaining}/{sick.allowance}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2">
                       {(() => {
@@ -4278,6 +4342,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <div className="text-xs text-yellow-300">{employee.terminationReason || "N/A"}</div>
                         </div>
                       ) : <span>—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={employee.employmentType}
+                        onChange={(e) => void handleUpdateEmploymentType(employee.id, e.target.value as "trainee" | "regular")}
+                        className="text-xs font-semibold px-2 py-1 rounded border-0 bg-slate-700 text-slate-100"
+                      >
+                        <option value="regular">Regular</option>
+                        <option value="trainee">Trainee</option>
+                      </select>
                     </td>
                     <td className="px-3 py-2">
                       <select

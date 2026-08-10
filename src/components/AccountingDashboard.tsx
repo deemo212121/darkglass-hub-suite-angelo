@@ -46,7 +46,7 @@ import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/sup
 import { getEmployeeInfoByProfileIds, getCompanyUsers, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
-import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   getTechRepairRates,
   getTechCompletedRepairCounts,
@@ -228,8 +228,10 @@ function rollBackToWeekday(d: Date): Date {
 // an existing run (recomputing it in place).
 //
 // A PTO day only counts toward pay if it was actually approved (pending
-// requests haven't been decided yet) and isn't the "unpaid" type (that one's
-// unpaid by definition — see ptoRequestsInYear in pto.ts, same exclusion).
+// requests haven't been decided yet) and is a paid leave type (see
+// isPaidPtoType in pto.ts) — "unpaid" is unpaid by definition, and Sick
+// Leave is always unpaid too, drawing against its own separate allowance
+// instead of vacation PTO's.
 // It's credited at the employee's scheduled NET hours for that day
 // (resolveScheduledNetHours — same working_hours/meal_minutes-aware
 // calculation used for meal-break eligibility), clipped to the payroll
@@ -282,7 +284,7 @@ function computeHoursMap(
 
   if (!periodStart || !periodEnd) return hoursMap;
   for (const pto of ptoRequests) {
-    if (pto.status !== "approved" || pto.ptoType === "unpaid") continue;
+    if (pto.status !== "approved" || !isPaidPtoType(pto.ptoType)) continue;
     const emp = employeeById.get(pto.profileId);
     if (!emp) continue;
     const offDays = new Set(emp.offDays ?? []);

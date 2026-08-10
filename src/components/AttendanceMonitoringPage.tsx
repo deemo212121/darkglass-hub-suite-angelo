@@ -911,7 +911,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   const ptoFormCreatedAt = profiles.find((p) => p.id === ptoForm.profileId)?.created_at ?? null;
-  const ptoFormEligible = !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
+  // Sick Leave has no 1-year wait — it's available from day 1 — so the
+  // vacation-PTO eligibility gate only applies to every other leave type.
+  const ptoFormEligible = ptoForm.ptoType === "sick" || !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
   const ptoFormEligibleOn = ptoEligibleDate(ptoFormHireDate, ptoFormCreatedAt);
 
   const handleSubmitPtoRequest = async () => {
@@ -919,7 +921,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       alert("Please fill in employee, start date, and end date.");
       return;
     }
-    if (!isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
+    if (ptoForm.ptoType !== "sick" && !isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
       alert(`${profileName(ptoForm.profileId)} isn't eligible for PTO yet — employees need 1 year of tenure first. Eligible starting ${ptoFormEligibleOn}.`);
       return;
     }
@@ -2163,7 +2165,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <option key={p.id} value={p.id}>{p.display_name || p.email}</option>
                     ))}
                   </select>
-                  {ptoForm.profileId && !ptoFormEligible && (
+                  {ptoForm.profileId && ptoForm.ptoType !== "sick" && !ptoFormEligible && (
                     <p className="text-xs text-amber-300 mt-1">
                       Not yet eligible for PTO — needs 1 year of tenure first (eligible starting {ptoFormEligibleOn}).
                     </p>
