@@ -163,22 +163,35 @@ function SubModule() {
   // primary role alone doesn't already pass any of these three gates —
   // avoids an extra query on every ungated page load.
   //
+  // Raw override only (no Dashboard hardcoded-default folded in) — whether
+  // an admin has explicitly set this exact (module, submodule)'s allowed
+  // roles via Accessibility Management's Module Access by Role grid. When
+  // one exists it's AUTHORITATIVE and bypasses the CSR-department
+  // restriction below (isSubmoduleAllowed already covers both the
+  // module-level and submodule-level CSR checks in one call) — an admin
+  // who explicitly checked a role's box means it, even for a normally
+  // CSR-restricted role. Without an override, the CSR restriction (and,
+  // for Dashboard, its own hardcoded per-submodule default) still applies
+  // exactly as before this system existed.
+  const explicitModuleOverride = getModuleRoleGate(mod.slug, sub.slug);
   // moduleAllowedRoles covers every module, not just Dashboard: the
   // Dashboard module additionally has a hardcoded default per submodule
   // (getDashboardRoleGate, DASHBOARD_ROLE_GATES) for when there's no
   // company override; every other module has no hardcoded default, so
   // null here (no override) means open to every role, same as before this
   // system existed. This is purely additive on top of the admin-module/
-  // user-management/company-settings/CSR gates below — it can only narrow
-  // access further, never grant access past one of those.
-  const moduleAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : getModuleRoleGate(mod.slug, sub.slug);
+  // user-management/company-settings gates below — it can only narrow
+  // access further there, never grant access past one of those.
+  const moduleAllowedRoles = mod.slug === "dashboard" ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
   const roleGrantsQuick = !moduleAllowedRoles || hasDashboardAccess(moduleAllowedRoles, role, []);
   const adminGrantsQuick = mod.slug !== "admin" || hasDashboardAccess(ADMIN_MODULE_ROLES, role, []);
   const userMgmtGrantsQuick = sub.custom !== "user-management" || hasDashboardAccess(USER_MANAGEMENT_ROLES, role, []);
   // CSR restriction is the mirror case — restricted based on primary role
   // alone (quick, no extraRoles) means a secondary non-CSR role could still
-  // lift it, so that also needs extraRoles resolved before deciding.
-  const csrGrantsQuick = !isCsrRestrictedRole(role);
+  // lift it, so that also needs extraRoles resolved before deciding. An
+  // explicit override settles it immediately regardless of role, same as
+  // the bypass below.
+  const csrGrantsQuick = Boolean(explicitModuleOverride) || !isCsrRestrictedRole(role);
   // company-settings is a RESTRICTION relative to the general admin-module
   // gate (plain ADMIN must NOT get in, only the per-company SUPERADMIN role)
   // so it always needs extraRoles resolved, not just when the quick check fails.
@@ -203,8 +216,9 @@ function SubModule() {
 
   // CSR Agents/Team Leaders get a narrow allow-list (their own Dashboard
   // tools + Tickets) — this is what actually stops someone from bypassing
-  // the hidden tiles by typing the URL directly.
-  if (!isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
+  // the hidden tiles by typing the URL directly. Skipped entirely when an
+  // admin has explicitly overridden this exact submodule's roles.
+  if (!explicitModuleOverride && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
     return (
       <>
         <AppHeader />

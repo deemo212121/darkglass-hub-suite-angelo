@@ -212,7 +212,18 @@ function ModuleIndex() {
     return <Outlet />;
   }
 
-  if (!isModuleAllowed(role, m.slug, extraRoles)) {
+  // A whole-module CSR block (e.g. Parts, Claims) still yields if an admin
+  // explicitly granted this role one of the module's submodules via
+  // Accessibility Management's Module Access by Role grid — otherwise
+  // that override could never actually be reached, since the tile grid
+  // page itself would refuse to render before the per-submodule filtering
+  // below even runs.
+  const hasSubmoduleOverrideForRole = m.submodules.some((s: SubModuleDef) => {
+    const allowed = getModuleRoleGate(m.slug, s.slug);
+    return allowed && hasDashboardAccess(allowed, role, extraRoles);
+  });
+
+  if (!isModuleAllowed(role, m.slug, extraRoles) && !hasSubmoduleOverrideForRole) {
     return (
       <>
         <AppHeader />
@@ -417,7 +428,13 @@ function ModuleIndex() {
                 const allowed = getDashboardRoleGate(s.slug);
                 return !allowed || hasDashboardAccess(allowed, role, extraRoles);
               })
-              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
+              // An explicit override (Accessibility Management's Module
+              // Access by Role grid) is authoritative and bypasses the
+              // CSR-department restriction — an admin who checked a role's
+              // box for this submodule means it, even for a normally
+              // CSR-restricted role. Without one, the CSR restriction
+              // applies exactly as before this system existed.
+              .filter((s: SubModuleDef) => Boolean(getModuleRoleGate(m.slug, s.slug)) || isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
@@ -440,7 +457,7 @@ function ModuleIndex() {
                 const allowed = getModuleRoleGate(m.slug, s.slug);
                 return !allowed || hasDashboardAccess(allowed, role, extraRoles);
               })
-              .filter((s: SubModuleDef) => isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
+              .filter((s: SubModuleDef) => Boolean(getModuleRoleGate(m.slug, s.slug)) || isSubmoduleAllowed(role, m.slug, s.slug, extraRoles))
               .map((s: SubModuleDef) => (
               <Link
                 key={s.slug}
