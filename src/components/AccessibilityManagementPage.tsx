@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, RefreshCw, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronDown, RefreshCw, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { MODULES } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
@@ -97,6 +97,11 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // display on untouched rows) so hydrateModuleRoleGates never mistakes a
   // merely-displayed default for a real override.
   const rawOverridesRef = useRef<Record<string, string[]>>({});
+  // Which modules' submodule rows are expanded — every module starts
+  // collapsed (just its one header row) so the ~74-row grid across all 6
+  // modules doesn't force a long scroll before you reach the one module
+  // you actually came to edit.
+  const [expandedGateModules, setExpandedGateModules] = useState<Set<string>>(new Set());
 
   // Every submodule across every module — grouped by module for the grid
   // below. A row with no override (and, for Dashboard, no hardcoded
@@ -359,10 +364,11 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
         <div className="mt-10 mb-4">
           <h2 className="text-xl font-semibold text-white">Module Access by Role</h2>
           <p className="text-sm text-slate-400 mt-1">
-            Check a box to let that role open the submodule (from its tile grid, and directly by URL). A row you
-            haven't edited yet shows the built-in default — every role for most submodules, or the Dashboard's own
-            built-in list for the few that have one. Changing any box here replaces that submodule's whole list,
-            company-wide, immediately. Super Admin can always open every submodule regardless of this grid.
+            Click a module name to expand or collapse its submodules — every module starts collapsed. Check a box to
+            let that role open the submodule (from its tile grid, and directly by URL). A row you haven't edited yet
+            shows the built-in default — every role for most submodules, or the Dashboard's own built-in list for the
+            few that have one. Changing any box here replaces that submodule's whole list, company-wide, immediately.
+            Super Admin can always open every submodule regardless of this grid.
           </p>
         </div>
 
@@ -402,49 +408,70 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                   </td>
                 </tr>
               ) : (
-                MODULES.flatMap((m) => [
-                  <tr key={`mod-${m.slug}`} className="border-b border-white/10 bg-white/5">
-                    <td
-                      colSpan={1 + ROLE_OPTIONS.length}
-                      className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-300 sticky left-0 bg-slate-900"
-                    >
-                      {m.label}
-                    </td>
-                  </tr>,
-                  ...m.submodules.map((s) => {
-                    const key = `${m.slug}:${s.slug}`;
-                    const allowed = new Set(dashboardGates[key] ?? []);
-                    return (
-                      <tr key={key} className="border-b border-white/5 hover:bg-white/5">
-                        <td
-                          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-                          title={s.title}
+                MODULES.flatMap((m) => {
+                  const isModuleExpanded = expandedGateModules.has(m.slug);
+                  const headerRow = (
+                    <tr key={`mod-${m.slug}`} className="border-b border-white/10 bg-white/5">
+                      <td colSpan={1 + ROLE_OPTIONS.length} className="p-0 sticky left-0 bg-slate-900">
+                        <button
+                          type="button"
+                          data-testid="gate-module-row"
+                          data-module-slug={m.slug}
+                          onClick={() =>
+                            setExpandedGateModules((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(m.slug)) next.delete(m.slug);
+                              else next.add(m.slug);
+                              return next;
+                            })
+                          }
+                          aria-expanded={isModuleExpanded}
+                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
                         >
-                          {s.title}
-                        </td>
-                        {ROLE_OPTIONS.map((r) => {
-                          const checked = allowed.has(r.value);
-                          const cellKey = `${key}:${r.value}`;
-                          const cellSaving = savingGateCell === cellKey;
-                          return (
-                            <td key={r.value} className="px-2 py-2 text-center">
-                              {cellSaving ? (
-                                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-                              ) : (
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(e) => void handleGateToggle(m.slug, s.slug, r.value, e.target.checked)}
-                                  className="h-4 w-4 accent-blue-500"
-                                />
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  }),
-                ])
+                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isModuleExpanded ? "rotate-180" : ""}`} />
+                          {m.label}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                  if (!isModuleExpanded) return [headerRow];
+                  return [
+                    headerRow,
+                    ...m.submodules.map((s) => {
+                      const key = `${m.slug}:${s.slug}`;
+                      const allowed = new Set(dashboardGates[key] ?? []);
+                      return (
+                        <tr key={key} data-testid="gate-submodule-row" className="border-b border-white/5 hover:bg-white/5">
+                          <td
+                            className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+                            title={s.title}
+                          >
+                            {s.title}
+                          </td>
+                          {ROLE_OPTIONS.map((r) => {
+                            const checked = allowed.has(r.value);
+                            const cellKey = `${key}:${r.value}`;
+                            const cellSaving = savingGateCell === cellKey;
+                            return (
+                              <td key={r.value} className="px-2 py-2 text-center">
+                                {cellSaving ? (
+                                  <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => void handleGateToggle(m.slug, s.slug, r.value, e.target.checked)}
+                                    className="h-4 w-4 accent-blue-500"
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    }),
+                  ];
+                })
               )}
             </tbody>
           </table>
