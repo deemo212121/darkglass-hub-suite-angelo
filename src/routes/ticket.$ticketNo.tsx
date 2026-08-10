@@ -7094,16 +7094,12 @@ function TicketDetailsPage() {
             {/* Visit Log */}
             <div id="section-visit-log" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
-              <div className="space-y-4 text-sm">
+              <div className="flex flex-wrap gap-6 text-sm">
                 <div>
                   <label className="text-slate-500 font-semibold">Phone</label>
                   <div className="text-white mt-1">{ticket?.homePhone || ticket?.cellPhone || "—"}</div>
                 </div>
-                <div>
-                  <label className="text-slate-500 font-semibold">Chat</label>
-                  <button className="text-blue-400 hover:text-blue-300 font-semibold">Open Chat</button>
-                </div>
-                <div>
+                <div className="min-w-[200px]">
                   <div className="flex items-center justify-between gap-2">
                     <label className="text-slate-500 font-semibold">Redo Ticket #</label>
                     {!editingRedoTicket && (
