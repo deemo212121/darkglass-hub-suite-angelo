@@ -7093,6 +7093,15 @@ function TicketDetailsPage() {
 
             {/* Visit Log */}
             <div id="section-visit-log" className="scroll-mt-28">
+              <div className="mb-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-5">
+                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-300">
+                  Problem Description
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-slate-200">
+                  {ticket?.problemDescription?.trim() ||
+                    "No problem description on file for this work order."}
+                </div>
+              </div>
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
               <div className="flex flex-wrap gap-6 text-sm">
                 <div>
@@ -7168,15 +7177,6 @@ function TicketDetailsPage() {
                     Running Notes
                   </button>
                 )}
-              </div>
-              <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
-                  Problem Description
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
-                  {ticket?.problemDescription?.trim() ||
-                    "No problem description on file for this work order."}
-                </div>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                 {visitFormMode === "view" ? (
