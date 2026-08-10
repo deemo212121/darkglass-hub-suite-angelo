@@ -61,8 +61,10 @@ function CentralClock() {
 
 function getInitials(value: string | null) {
   if (!value) return "U";
-  const localPart = value.split("@")[0] ?? value;
-  const parts = localPart.split(/[._-]/).filter(Boolean);
+  // Only strip an @domain if this is actually an email (a real display
+  // name like "Angelo Mendoza" has no "@" and shouldn't be touched here).
+  const localPart = value.includes("@") ? value.split("@")[0] ?? value : value;
+  const parts = localPart.split(/[\s._-]/).filter(Boolean);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   return localPart.slice(0, 2).toUpperCase();
 }
@@ -90,7 +92,10 @@ function loadEmployeePhoto(email: string | null) {
 }
 
 export function AppHeader() {
-  const { email, companyId, companyLoginAlias, logout, ready } = useAuth();
+  const { email, displayName, companyId, companyLoginAlias, logout, ready } = useAuth();
+  // Full name (first + last) when we have one, falling back to email only
+  // for accounts that somehow don't have a display name set.
+  const nameDisplay = displayName || email;
   // Prefer the short login alias (e.g. "USAPP") over the raw legacy_code
   // ("COMP001") when one's set for this company; falls back to companyId
   // for the companies that don't have an alias configured yet.
@@ -141,11 +146,11 @@ export function AppHeader() {
                     {photoDataUrl ? (
                       <img src={photoDataUrl} alt="Uploaded profile photo" className="h-full w-full object-cover" />
                     ) : (
-                      getInitials(email)
+                      getInitials(nameDisplay)
                     )}
                   </span>
                   <span className="hidden sm:flex flex-col items-start leading-tight">
-                    <span className="text-foreground text-sm truncate max-w-[180px]">{email}</span>
+                    <span className="text-foreground text-sm truncate max-w-[180px]">{nameDisplay}</span>
                     <span className="text-muted-foreground text-[11px]">Company {companyDisplay}</span>
                   </span>
                   <ChevronDown className="h-4 w-4 text-muted-foreground group-data-[state=open]:rotate-180 transition-transform" />
@@ -162,11 +167,11 @@ export function AppHeader() {
                       {photoDataUrl ? (
                         <img src={photoDataUrl} alt="Uploaded profile photo" className="h-full w-full object-cover" />
                       ) : (
-                        getInitials(email)
+                        getInitials(nameDisplay)
                       )}
                     </span>
                     <div className="leading-tight min-w-0">
-                      <div className="text-sm font-medium truncate">{email}</div>
+                      <div className="text-sm font-medium truncate">{nameDisplay}</div>
                       <div className="text-[11px] text-muted-foreground font-normal">Company {companyDisplay}</div>
                     </div>
                   </div>

@@ -1,9 +1,12 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
-import { ChevronLeft, Save } from "lucide-react";
+import { ChevronLeft, Save, Check } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
+import { loadOpenedTickets, markTicketOpened } from "@/lib/openedTickets";
+
+const DAY_OPTIONS = ["7 days", "30 days", "60 days", "90 days", "120 days", "180 days", "365 days"];
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -97,12 +100,57 @@ export function ClaimList({ mod, sub }: Props) {
   const [dateType, setDateType] = useState("Complete Date");
   const [startDate, setStartDate] = useState(ds(-7));
   const [endDate, setEndDate] = useState(ds(0));
+  const [dayRange, setDayRange] = useState("7 days");
   const [includeUnclaimed, setIncludeUnclaimed] = useState(false);
   const [includePartInfo, setIncludePartInfo] = useState(false);
   const [changeToStatus, setChangeToStatus] = useState("");
   const [search, setSearch] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [rows, setRows] = useState(ALL_ROWS);
+  // "Already opened" checkmark — a personal, per-browser mark (see
+  // openedTickets.ts), not a shared/DB-backed status.
+  const [openedTicketNos, setOpenedTicketNos] = useState<Set<string>>(() => loadOpenedTickets());
+  const markOpened = (t: string) => setOpenedTicketNos((prev) => markTicketOpened(t, prev));
+
+  const handleDayChange = (val: string) => {
+    setDayRange(val);
+    const days = parseInt(val, 10);
+    if (!Number.isFinite(days)) return;
+    setStartDate(ds(-days));
+    setEndDate(ds(0));
+  };
+
+  // Same popup-block-aware bulk open as Need Claim List's "Open All
+  // Filtered" — browsers only guarantee ONE window.open() per user gesture,
+  // so the rest of a synchronous loop gets silently blocked even from a
+  // real click handler. Staggering them a beat apart lets a few more
+  // through, and any that still get blocked are reported afterward instead
+  // of leaving the user guessing why only one tab showed up.
+  const onOpenAllFiltered = () => {
+    if (filtered.length === 0) return;
+    if (
+      filtered.length > 20 &&
+      !window.confirm(`This opens ${filtered.length} tickets in new tabs — continue?`)
+    ) {
+      return;
+    }
+    let blockedCount = 0;
+    filtered.forEach((r, i) => {
+      setTimeout(() => {
+        const win = window.open(`/ticket/${encodeURIComponent(r.ticketNo)}`, "_blank", "noopener,noreferrer");
+        if (!win) blockedCount++;
+        else markOpened(r.ticketNo);
+      }, i * 60);
+    });
+    setTimeout(() => {
+      if (blockedCount > 0) {
+        alert(
+          `Your browser blocked ${blockedCount} of ${filtered.length} tickets as popups. ` +
+            `Look for a popup-blocked icon in the address bar and choose "Always allow popups from this site," then click Open All Filtered again.`
+        );
+      }
+    }, filtered.length * 60 + 300);
+  };
 
   const locD = usePortal(locOpen); const locL = useRef<HTMLDivElement>(null);
   useEffect(()=>{ const fn=(e:MouseEvent)=>{ const t=e.target as Node; if(locOpen&&!locD.ref.current?.contains(t)&&!locL.current?.contains(t))setLocOpen(false); }; document.addEventListener("mousedown",fn); return()=>document.removeEventListener("mousedown",fn); },[locOpen]);
@@ -185,6 +233,9 @@ export function ClaimList({ mod, sub }: Props) {
                 <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-32"/>
                 <span className="text-muted-foreground text-xs">~</span>
                 <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-32"/>
+                <select value={dayRange} onChange={e=>handleDayChange(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  {DAY_OPTIONS.map(d=><option key={d} value={d}>{d}</option>)}
+                </select>
               </div>
             </div>
             <div className="flex flex-col gap-1">
@@ -209,6 +260,14 @@ export function ClaimList({ mod, sub }: Props) {
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-muted-foreground"><span className="text-foreground font-medium">{filtered.length}</span> records found</span>
         <div className="flex items-center gap-2">
+          <button
+            onClick={onOpenAllFiltered}
+            disabled={filtered.length === 0}
+            title="Open every ticket currently shown in a new tab"
+            className="px-3 py-1 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40"
+          >
+            Open All Filtered ({filtered.length})
+          </button>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="search in result" className="glass-input text-xs py-1 px-2 rounded-md w-36"/>
         </div>
       </div>
@@ -259,7 +318,10 @@ export function ClaimList({ mod, sub }: Props) {
                   <td className="px-2 py-1.5"><input type="checkbox" checked={selectedRows.has(r.id)} onChange={()=>toggleRow(r.id)} className="accent-blue-500"/></td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <div className="flex items-center gap-1">
-                      <Link to="/ticket/$ticketNo" params={{ticketNo:r.ticketNo}} className="font-mono text-blue-400 hover:text-blue-300 hover:underline text-xs">{r.ticketNo}</Link>
+                      {openedTicketNos.has(r.ticketNo) && (
+                        <Check className="h-3 w-3 text-emerald-400 shrink-0" aria-label="Already opened" />
+                      )}
+                      <Link to="/ticket/$ticketNo" params={{ticketNo:r.ticketNo}} onClick={()=>markOpened(r.ticketNo)} className="font-mono text-blue-400 hover:text-blue-300 hover:underline text-xs">{r.ticketNo}</Link>
                       <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0"/>
                     </div>
                   </td>

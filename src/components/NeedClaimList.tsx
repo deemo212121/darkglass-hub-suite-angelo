@@ -20,6 +20,10 @@ import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 import { getCompanyTicketClaimDetails, upsertTicketClaimDetails, type TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import { PreClaimModal } from "@/components/PreClaimModal";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import { loadOpenedTickets, markTicketOpened } from "@/lib/openedTickets";
+import { resolveTierCode } from "@/lib/tierCodes";
+import { Check } from "lucide-react";
 
 interface Props {
   mod: ModuleDef;
@@ -74,7 +78,7 @@ function usePortalPosition(open: boolean) {
   return { ref, pos };
 }
 
-const DAY_OPTIONS = ["30 days", "60 days", "90 days", "120 days", "180 days", "365 days"];
+const DAY_OPTIONS = ["7 days", "30 days", "60 days", "90 days", "120 days", "180 days", "365 days"];
 const PRE_CLAIM_STATUSES = ["Holding", "Need Claim", "Claim Not Needed", "Claimed"];
 
 // Statuses we treat as "needs claim review" — the ticket is finished
@@ -155,6 +159,12 @@ function wtyCode(warranty: string): string {
   return v.slice(0, 3).toUpperCase();
 }
 
+/** Same lookup + "N/A" fallback as the ticket detail page's General Information > Tier Code field. */
+function tierCodeForTicket(t: Ticket): string {
+  const tier = resolveTierCode(t.account, t.zip, t.accountNo);
+  return tier && tier.code && tier.code.toLowerCase() !== "base" ? tier.code : "N/A";
+}
+
 interface ClaimRow {
   ticket: Ticket;
   partsCount: number;
@@ -200,6 +210,11 @@ export function NeedClaimList({ mod, sub }: Props) {
   // that reset on every reload.
   const [claimDetailsByTicketId, setClaimDetailsByTicketId] = useState<Map<string, TicketClaimDetails>>(new Map());
   const [preClaimTicketNo, setPreClaimTicketNo] = useState<string | null>(null);
+
+  // "Already opened" checkmark — a personal, per-browser mark (see
+  // openedTickets.ts), not a shared/DB-backed status.
+  const [openedTicketNos, setOpenedTicketNos] = useState<Set<string>>(() => loadOpenedTickets());
+  const markOpened = (ticketNo: string) => setOpenedTicketNos((prev) => markTicketOpened(ticketNo, prev));
 
   const locDropdown = usePortalPosition(locOpen);
   const locListRef = useRef<HTMLDivElement>(null);
@@ -323,9 +338,55 @@ export function NeedClaimList({ mod, sub }: Props) {
     });
   }, [tickets, partCounts, rowOverrides, claimDetailsByTicketId]);
 
+  // Declared here (rather than down with the rest of the mileage-fetch
+  // logic below) so columnValueGetters/filtered above can reference it —
+  // the effect that actually POPULATES it still lives further down, using
+  // `filtered` once it exists; only the state itself needs to exist first.
+  const [mileageByTicket, setMileageByTicket] = useState<Record<string, number | null>>({});
+
+  // ── Per-column Excel-style filters (funnel icon in each header) ──
+  // Every real data column gets one; Claim # (always a placeholder "—"),
+  // the verify checkbox, and Actions don't since there's nothing to filter.
+  const COLUMN_FILTER_KEYS = [
+    "location", "ticketNo", "wty", "status", "technician", "product", "compCancel",
+    "mileage", "parts", "redo", "claimTo", "tierCode", "preClaimStatus", "claimNote", "tat",
+  ] as const;
+  type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
+
+  const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, Set<string>>>(() => {
+    const init = {} as Record<ColumnFilterKey, Set<string>>;
+    for (const k of COLUMN_FILTER_KEYS) init[k] = new Set<string>();
+    return init;
+  });
+  const updateColumnFilter = (key: ColumnFilterKey, next: Set<string>) =>
+    setColumnFilters((prev) => ({ ...prev, [key]: next }));
+
+  const columnValueGetters: Record<ColumnFilterKey, (r: ClaimRow) => string> = {
+    location: (r) => r.ticket.location || "",
+    ticketNo: (r) => r.ticket.ticketNo || "",
+    wty: (r) => wtyCode(r.ticket.warranty),
+    status: (r) => r.ticket.status || "",
+    technician: (r) => r.ticket.technician || "",
+    product: (r) => (r.ticket.productType || r.ticket.product || "").toUpperCase() || "",
+    compCancel: (r) => r.compCancelIso || "",
+    mileage: (r) => {
+      const m = mileageByTicket[r.ticket.ticketNo];
+      return m == null ? "" : `${m.toFixed(1)} mi`;
+    },
+    parts: (r) => (r.partsCount > 0 ? String(r.partsCount) : ""),
+    redo: (r) => r.ticket.redo || "",
+    claimTo: (r) => r.ticket.account || r.ticket.claimCompany || "",
+    tierCode: (r) => tierCodeForTicket(r.ticket),
+    preClaimStatus: (r) => r.preClaimStatus || "",
+    claimNote: (r) => r.claimNote || "",
+    tat: (r) => `${r.aging} d`,
+  };
+
   // ── Filtered view ──
   const filtered = useMemo(() => {
-    return rows.filter(({ ticket: t, compCancelIso }) => {
+    return rows.filter((row) => {
+      const t = row.ticket;
+      const compCancelIso = row.compCancelIso;
       // Location filter
       if (location && t.location !== location) return false;
 
@@ -369,6 +430,15 @@ export function NeedClaimList({ mod, sub }: Props) {
           .toLowerCase();
         if (!blob.includes(q)) return false;
       }
+
+      // Per-column funnel filters
+      const matchesColumns = COLUMN_FILTER_KEYS.every((key) => {
+        const selected = columnFilters[key];
+        if (!selected || selected.size === 0) return true;
+        return selected.has(columnValueGetters[key](row));
+      });
+      if (!matchesColumns) return false;
+
       return true;
     });
   }, [
@@ -381,7 +451,67 @@ export function NeedClaimList({ mod, sub }: Props) {
     cancelled,
     claimed,
     search,
+    columnFilters,
+    mileageByTicket,
   ]);
+
+  // Build option lists per column from the full row set **before** that
+  // column's own filter is applied (but after every other active filter) —
+  // so opening a funnel still shows every value present in rows that pass
+  // everything else. Mirrors Excel's autofilter UX (same convention as
+  // TicketList.tsx's COLUMN_FILTER_KEYS pattern).
+  const buildOptionsExcluding = (excludeKey: ColumnFilterKey): string[] => {
+    const values = new Set<string>();
+    for (const row of rows) {
+      const t = row.ticket;
+      if (location && t.location !== location) continue;
+      if (ticketSearch && !t.ticketNo.toLowerCase().includes(ticketSearch.toLowerCase())) continue;
+      if (startDate && row.compCancelIso && row.compCancelIso < startDate) continue;
+      if (endDate && row.compCancelIso && row.compCancelIso > endDate) continue;
+      const status = String(t.status || "").toLowerCase();
+      const isClaimedRow = status.includes("claim");
+      const isCancelledRow = status.includes("cancel");
+      const isReady = status.includes("ready to complete") || status.includes("back ordered");
+      const allOff = !readyToComplete && !cancelled && !claimed;
+      if (!allOff) {
+        const matches = (readyToComplete && isReady) || (cancelled && isCancelledRow) || (claimed && isClaimedRow);
+        if (!matches) continue;
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        const blob = [t.ticketNo, t.location, t.technician, t.product, t.productType, t.account, t.claimCompany]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!blob.includes(q)) continue;
+      }
+      const matchesOtherCols = COLUMN_FILTER_KEYS.every((key) => {
+        if (key === excludeKey) return true;
+        const sel = columnFilters[key];
+        if (!sel || sel.size === 0) return true;
+        return sel.has(columnValueGetters[key](row));
+      });
+      if (!matchesOtherCols) continue;
+      values.add(columnValueGetters[excludeKey](row));
+    }
+    return Array.from(values);
+  };
+
+  const columnOptions = useMemo(() => {
+    const out = {} as Record<ColumnFilterKey, string[]>;
+    for (const key of COLUMN_FILTER_KEYS) out[key] = buildOptionsExcluding(key);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, columnFilters, location, ticketSearch, startDate, endDate, readyToComplete, cancelled, claimed, search, mileageByTicket]);
+
+  const renderColFilter = (key: ColumnFilterKey, label: string) => (
+    <TicketColumnFilter
+      options={columnOptions[key] || []}
+      selected={columnFilters[key] || new Set()}
+      onChange={(next) => updateColumnFilter(key, next)}
+      label={`Filter by ${label}`}
+    />
+  );
 
   // ── Office-to-customer mileage ──
   // Real driving distance, same calculation the ticket detail page shows
@@ -393,7 +523,6 @@ export function NeedClaimList({ mod, sub }: Props) {
   // gives `filtered` a new array reference) never re-fetches a ticket
   // that's already resolved or still in flight.
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
-  const [mileageByTicket, setMileageByTicket] = useState<Record<string, number | null>>({});
   const mileageStartedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -475,6 +604,47 @@ export function NeedClaimList({ mod, sub }: Props) {
 
   // ── Status-dot helper ──
   const dotColor = (d: 0 | 1 | 2) => (d === 0 ? "" : d === 1 ? "bg-orange-400" : "bg-red-500");
+
+  // ── Open every currently-filtered ticket in its own tab ── e.g. filter to
+  // "7 days" then open all of them at once instead of clicking each row.
+  // Browsers can block a burst of window.open calls, but this runs inside a
+  // real click handler so each call still counts as user-initiated.
+  const onOpenAllFiltered = () => {
+    if (filtered.length === 0) return;
+    if (
+      filtered.length > 20 &&
+      !window.confirm(`This opens ${filtered.length} tickets in new tabs — continue?`)
+    ) {
+      return;
+    }
+    // Browsers only ever guarantee ONE window.open() per user gesture — every
+    // one after that in a synchronous loop gets treated as an unrequested
+    // popup and silently blocked, even though this whole thing runs inside a
+    // real click handler. Staggering them a beat apart lets a few more
+    // through in some browsers, but the real fix is detecting what actually
+    // got blocked (window.open returns null for those) and telling the user
+    // to allow popups for this site instead of leaving them guessing why
+    // only one tab showed up.
+    let blockedCount = 0;
+    filtered.forEach((r, i) => {
+      setTimeout(() => {
+        const win = window.open(`/ticket/${encodeURIComponent(r.ticket.ticketNo)}`, "_blank", "noopener,noreferrer");
+        if (!win) blockedCount++;
+        else markOpened(r.ticket.ticketNo);
+      }, i * 60);
+    });
+    // Checked once, after every staggered attempt above has had its turn —
+    // not right after the first blocked one, which would report a
+    // still-in-progress (too-low) count for a large batch.
+    setTimeout(() => {
+      if (blockedCount > 0) {
+        alert(
+          `Your browser blocked ${blockedCount} of ${filtered.length} tickets as popups. ` +
+            `Look for a popup-blocked icon in the address bar and choose "Always allow popups from this site," then click Open All Filtered again.`
+        );
+      }
+    }, filtered.length * 60 + 300);
+  };
 
   // ── Auto-claim handler (selected rows only) ──
   const onAutoClaim = () => {
@@ -666,6 +836,14 @@ export function NeedClaimList({ mod, sub }: Props) {
             >
               Auto Claim ({selectedIds.size})
             </button>
+            <button
+              onClick={onOpenAllFiltered}
+              disabled={filtered.length === 0}
+              title="Open every ticket currently shown in a new tab"
+              className="px-3 py-1.5 rounded text-sm font-medium bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40"
+            >
+              Open All Filtered ({filtered.length})
+            </button>
           </div>
         </div>
       </div>
@@ -691,10 +869,10 @@ export function NeedClaimList({ mod, sub }: Props) {
       {/* Table */}
       <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
       <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg">
-        <table className="w-full min-w-max text-xs">
+        <table className="w-full min-w-max text-[11px]">
           <thead>
             <tr className="border-b border-white/10 bg-white/5">
-              <th className="px-2 py-3 w-8">
+              <th className="px-1 py-1.5 w-6">
                 <input
                   type="checkbox"
                   checked={allChecked}
@@ -702,30 +880,34 @@ export function NeedClaimList({ mod, sub }: Props) {
                   className="accent-blue-500"
                 />
               </th>
-              {[
-                "Location",
-                "Ticket No",
-                "Wty",
-                "Status",
-                "Technician",
-                "Product",
-                "Comp/Cancel",
-                "Mileage",
-                "Parts",
-                "REDO",
-                "Claim To",
-                "Claim #",
-                "",
-                "Pre-Claim Status",
-                "Claim Note",
-                "TAT",
-                "Actions",
-              ].map((h, i) => (
+              {([
+                ["Location", "location"],
+                ["Ticket No", "ticketNo"],
+                ["Wty", "wty"],
+                ["Status", "status"],
+                ["Technician", "technician"],
+                ["Product", "product"],
+                ["Comp/Cancel", "compCancel"],
+                ["Mileage", "mileage"],
+                ["Parts", "parts"],
+                ["REDO", "redo"],
+                ["Claim To", "claimTo"],
+                ["Tier Code", "tierCode"],
+                ["Claim #", null],
+                ["", null],
+                ["Pre-Claim Status", "preClaimStatus"],
+                ["Claim Note", "claimNote"],
+                ["TAT", "tat"],
+                ["Actions", null],
+              ] as [string, ColumnFilterKey | null][]).map(([h, key], i) => (
                 <th
                   key={i}
-                  className="px-2 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap"
+                  className="px-1 py-1.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap"
                 >
-                  {h}
+                  <span className="inline-flex items-center">
+                    {h}
+                    {key && renderColFilter(key, h)}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -733,7 +915,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={18} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={19} className="px-4 py-12 text-center text-muted-foreground">
                   {loading
                     ? "Loading tickets…"
                     : tickets.length === 0
@@ -750,7 +932,7 @@ export function NeedClaimList({ mod, sub }: Props) {
                     key={t.ticketNo}
                     className={`border-b border-white/5 hover:bg-white/5 ${selectedIds.has(t.ticketNo) ? "bg-blue-500/5" : idx % 2 !== 0 ? "bg-white/[0.02]" : ""}`}
                   >
-                    <td className="px-2 py-2">
+                    <td className="px-1 py-1">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(t.ticketNo)}
@@ -758,12 +940,16 @@ export function NeedClaimList({ mod, sub }: Props) {
                         className="accent-blue-500"
                       />
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap">{t.location || "—"}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">
+                    <td className="px-1 py-1 max-w-[70px] truncate" title={t.location || undefined}>{t.location || "—"}</td>
+                    <td className="px-1 py-1 whitespace-nowrap">
+                      {openedTicketNos.has(t.ticketNo) && (
+                        <Check className="inline-block h-3 w-3 text-emerald-400 mr-1 align-middle" aria-label="Already opened" />
+                      )}
                       <a
                         href={`/ticket/${encodeURIComponent(t.ticketNo)}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => markOpened(t.ticketNo)}
                         className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
                         title={`Open ${t.ticketNo} in a new tab`}
                       >
@@ -773,25 +959,25 @@ export function NeedClaimList({ mod, sub }: Props) {
                         <span className={`inline-block w-2 h-2 rounded-full ml-1 ${dotColor(dot)}`} />
                       )}
                     </td>
-                    <td className="px-2 py-2 text-center">{wtyCode(t.warranty)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                    <td className="px-1 py-1 text-center">{wtyCode(t.warranty)}</td>
+                    <td className="px-1 py-1 max-w-[110px] truncate text-muted-foreground" title={t.status || undefined}>
                       {t.status || "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap">{t.technician || "—"}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">
+                    <td className="px-1 py-1 max-w-[90px] truncate" title={t.technician || undefined}>{t.technician || "—"}</td>
+                    <td className="px-1 py-1 max-w-[80px] truncate" title={(t.productType || t.product || "").toUpperCase() || undefined}>
                       {(t.productType || t.product || "").toUpperCase() || "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
+                    <td className="px-1 py-1 whitespace-nowrap text-muted-foreground">
                       {r.compCancelIso || "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap text-center text-muted-foreground">
+                    <td className="px-1 py-1 whitespace-nowrap text-center text-muted-foreground">
                       {!(t.ticketNo in mileageByTicket)
                         ? "…"
                         : mileageByTicket[t.ticketNo] != null
                         ? `${mileageByTicket[t.ticketNo]!.toFixed(1)} mi`
                         : "—"}
                     </td>
-                    <td className="px-2 py-2 text-center">
+                    <td className="px-1 py-1 text-center">
                       {r.partsCount > 0 ? (
                         <a
                           href={`/ticket/${encodeURIComponent(t.ticketNo)}`}
@@ -806,12 +992,13 @@ export function NeedClaimList({ mod, sub }: Props) {
                         ""
                       )}
                     </td>
-                    <td className="px-2 py-2 text-center">{t.redo || ""}</td>
-                    <td className="px-2 py-2 whitespace-nowrap text-xs">
+                    <td className="px-1 py-1 text-center">{t.redo || ""}</td>
+                    <td className="px-1 py-1 max-w-[80px] truncate text-xs" title={t.account || t.claimCompany || undefined}>
                       {t.account || t.claimCompany || "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap text-xs">—</td>
-                    <td className="px-2 py-2">
+                    <td className="px-1 py-1 whitespace-nowrap text-xs">{tierCodeForTicket(t)}</td>
+                    <td className="px-1 py-1 whitespace-nowrap text-xs">—</td>
+                    <td className="px-1 py-1">
                       <input
                         type="checkbox"
                         className="accent-blue-500"
@@ -822,31 +1009,32 @@ export function NeedClaimList({ mod, sub }: Props) {
                         }
                       />
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-1 py-1">
                       <select
                         value={r.preClaimStatus}
                         disabled={savingClaimRowTicketNo === t.ticketNo}
                         onChange={(e) => void updateClaimDetails(t.ticketNo, { preClaimStatus: e.target.value })}
-                        className="glass-input text-xs py-0.5 px-1 rounded w-36 disabled:opacity-50"
+                        className="glass-input text-[10px] py-0.5 px-1 rounded w-24 disabled:opacity-50"
                       >
                         {PRE_CLAIM_STATUSES.map((s) => (
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-1 py-1">
                       <input
                         key={`note:${t.ticketNo}:${r.claimNote}`}
                         type="text"
                         defaultValue={r.claimNote}
                         disabled={savingClaimRowTicketNo === t.ticketNo}
                         onBlur={(e) => void updateClaimDetails(t.ticketNo, { claimNote: e.target.value })}
-                        className="glass-input text-xs py-0.5 px-1 rounded w-32 disabled:opacity-50"
+                        className="glass-input text-[10px] py-0.5 px-1 rounded w-20 disabled:opacity-50"
                         placeholder="Note"
+                        title={r.claimNote || undefined}
                       />
                     </td>
-                    <td className="px-2 py-2 text-center">{r.aging} d</td>
-                    <td className="px-2 py-2 whitespace-nowrap">
+                    <td className="px-1 py-1 text-center">{r.aging} d</td>
+                    <td className="px-1 py-1 whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => setPreClaimTicketNo(t.ticketNo)}
