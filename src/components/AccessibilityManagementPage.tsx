@@ -85,6 +85,12 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // `${profileId}:${roleCode}` of the one checkbox currently saving, so only
   // that cell shows a spinner/disables instead of freezing the whole grid.
   const [savingCell, setSavingCell] = useState<string | null>(null);
+  // Which Primary Role groups are expanded — every group starts collapsed
+  // (just its one header row) so browsing all 207+ users doesn't force a
+  // long scroll before you reach the group you actually came to edit.
+  // Only applies when not searching — a search always shows a flat matching
+  // list, so a collapsed group can never hide a result you typed for.
+  const [expandedRoleGroups, setExpandedRoleGroups] = useState<Set<string>>(new Set());
 
   // Dashboard-submodule role-gate grid (second section, below).
   const [dashboardGates, setDashboardGates] = useState<Record<string, string[]>>({});
@@ -137,6 +143,23 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     );
   }, [users, search]);
 
+  // Users grouped by Primary Role for the collapsible view (search bypasses
+  // this entirely — see expandedRoleGroups). Built from the real data, not
+  // ROLE_OPTIONS, since a primary role like SUPERADMIN is deliberately
+  // excluded from ROLE_OPTIONS but still needs its own group here.
+  const roleGroups = useMemo(() => {
+    const map = new Map<string, ProfileRow[]>();
+    for (const u of users) {
+      const code = normalizeRole(u.role);
+      const list = map.get(code);
+      if (list) list.push(u);
+      else map.set(code, [u]);
+    }
+    return Array.from(map.entries())
+      .map(([code, list]) => ({ code, label: ROLE_LABELS[code] || code || "—", users: list }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [users]);
+
   const handleToggle = async (user: ProfileRow, roleCode: string, checked: boolean) => {
     const primary = normalizeRole(user.role);
     if (roleCode === primary) return; // primary role isn't editable from this grid
@@ -158,6 +181,55 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
     } finally {
       setSavingCell(null);
     }
+  };
+
+  const renderUserRow = (user: ProfileRow) => {
+    const primary = normalizeRole(user.role);
+    const extraSet = new Set((user.extra_roles ?? []).map(normalizeRole));
+    return (
+      <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
+        <td
+          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+          title={user.display_name || user.email || undefined}
+        >
+          {user.display_name || user.email}
+        </td>
+        <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
+          {ROLE_LABELS[primary] || user.role || "—"}
+        </td>
+        {ROLE_OPTIONS.map((r) => {
+          const isPrimary = r.value === primary;
+          const checked = isPrimary || extraSet.has(r.value);
+          const cellKey = `${user.id}:${r.value}`;
+          const cellSaving = savingCell === cellKey;
+          return (
+            <td key={r.value} className="px-2 py-2 text-center">
+              {cellSaving ? (
+                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+              ) : (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={isPrimary}
+                  title={isPrimary ? "Primary role — change it from this user's profile page" : undefined}
+                  onChange={(e) => void handleToggle(user, r.value, e.target.checked)}
+                  className="h-4 w-4 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                />
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
+
+  const toggleRoleGroup = (code: string) => {
+    setExpandedRoleGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
   };
 
   const loadDashboardGates = async () => {
@@ -237,9 +309,11 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
 
         <div className="panel mb-4">
           <p className="text-sm text-slate-300">
-            Check a box to grant that role as an <span className="font-semibold text-white">additional</span>{" "}
-            (secondary) role — it stacks on top of, and never replaces, the primary role shown in its own column.
-            A user's primary role can only be changed on their own profile page.
+            Users are grouped by Primary Role, collapsed by default — click a group to expand it. Search for a name,
+            login, or email to bypass grouping and show a flat matching list instead. Check a box to grant that role
+            as an <span className="font-semibold text-white">additional</span> (secondary) role — it stacks on top
+            of, and never replaces, the primary role shown in its own column. A user's primary role can only be
+            changed on their own profile page.
           </p>
         </div>
 
@@ -310,51 +384,40 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                     Loading…
                   </td>
                 </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={2 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
-                    No users found.
-                  </td>
-                </tr>
+              ) : search.trim() ? (
+                // Searching always shows a flat matching list — a collapsed
+                // group could otherwise hide the very result you searched for.
+                filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={2 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
+                      No users found.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((user) => renderUserRow(user))
+                )
               ) : (
-                filtered.map((user) => {
-                  const primary = normalizeRole(user.role);
-                  const extraSet = new Set((user.extra_roles ?? []).map(normalizeRole));
-                  return (
-                    <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td
-                        className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
-                        title={user.display_name || user.email || undefined}
-                      >
-                        {user.display_name || user.email}
+                roleGroups.flatMap((group) => {
+                  const isExpanded = expandedRoleGroups.has(group.code);
+                  const headerRow = (
+                    <tr key={`role-${group.code}`} className="border-b border-white/10 bg-white/5">
+                      <td colSpan={2 + ROLE_OPTIONS.length} className="p-0 sticky left-0 bg-slate-900">
+                        <button
+                          type="button"
+                          data-testid="user-role-group-row"
+                          data-role-code={group.code}
+                          onClick={() => toggleRoleGroup(group.code)}
+                          aria-expanded={isExpanded}
+                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                          {group.label} ({group.users.length})
+                        </button>
                       </td>
-                      <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
-                        {ROLE_LABELS[primary] || user.role || "—"}
-                      </td>
-                      {ROLE_OPTIONS.map((r) => {
-                        const isPrimary = r.value === primary;
-                        const checked = isPrimary || extraSet.has(r.value);
-                        const cellKey = `${user.id}:${r.value}`;
-                        const cellSaving = savingCell === cellKey;
-                        return (
-                          <td key={r.value} className="px-2 py-2 text-center">
-                            {cellSaving ? (
-                              <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
-                            ) : (
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={isPrimary}
-                                title={isPrimary ? "Primary role — change it from this user's profile page" : undefined}
-                                onChange={(e) => void handleToggle(user, r.value, e.target.checked)}
-                                className="h-4 w-4 accent-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
                     </tr>
                   );
+                  if (!isExpanded) return [headerRow];
+                  return [headerRow, ...group.users.map((user) => renderUserRow(user))];
                 })
               )}
             </tbody>
