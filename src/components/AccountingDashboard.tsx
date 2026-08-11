@@ -430,22 +430,6 @@ function mileageStatusStyle(status: string, rows: RepairStatus[]): { color: stri
   return { color: row.color, fontWeight: row.fontBold ? 700 : undefined };
 }
 
-// Per-status color for the Mileage tab's Status column — sourced from the
-// Admin > Repair Statuses module's own admin-configured Description/Color
-// rows (per that page's own note: "CSS color for repair status will be
-// applied in To-do list, Ticket list, Work Planner, Work Calendar
-// (Monthly), and similar screens"), not a separate hardcoded copy. Colors
-// there are literal CSS color names (e.g. "Purple", "Teal"), so this
-// returns an inline style rather than a Tailwind class. Matching is
-// case-insensitive/trimmed against each row's Description field (the same
-// text as tickets.status, e.g. "CL-Claimed").
-function mileageStatusStyle(status: string): { color: string; fontWeight?: number } {
-  const key = (status || "").trim().toLowerCase();
-  const row = loadRepairStatusRows().find((r) => r.description.trim().toLowerCase() === key);
-  if (!row?.color) return { color: "#93c5fd" }; // default: same blue TicketList falls back to
-  return { color: row.color, fontWeight: row.fontBold ? 700 : undefined };
-}
-
 // Older payroll_line_items rows may have been recorded with currency: "PHP"
 // (native, pre-standardization) — convert only those; everything else (all
 // current rows use currency: "USD") is already a plain USD figure.

@@ -18,6 +18,7 @@ import { handleGmailRequest } from "./lib/server/gmailBridge";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
+import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

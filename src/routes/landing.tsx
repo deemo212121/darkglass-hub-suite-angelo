@@ -178,6 +178,34 @@ function Landing() {
     }
   };
 
+  const submitForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotForm.fullName || !forgotForm.username) {
+      setForgotMsg({ text: "Full name and username are required.", error: true });
+      return;
+    }
+    setForgotSubmitting(true);
+    setForgotMsg(null);
+    try {
+      const res = await fetch("/api/password-reset-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(forgotForm),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setForgotMsg({ text: data.error || "Failed to submit request.", error: true });
+        return;
+      }
+      setForgotMsg({ text: "Request submitted — IT has been notified and will reach out to you shortly." });
+      setForgotForm({ fullName: "", username: "", email: "" });
+    } catch (error: any) {
+      setForgotMsg({ text: error.message || "Failed to submit request.", error: true });
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
   // Restore the error message stashed right before the reload above, so it
   // isn't lost — read once and clear it so it doesn't reappear on a later,
   // unrelated reload.

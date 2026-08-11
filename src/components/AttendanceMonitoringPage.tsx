@@ -679,41 +679,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     });
   }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO]);
 
-  // Day-by-day breakdown behind the Custom Attendance Summary's Present/
-  // Absent/Late numbers — same day-iteration/off-day rules as customSummary
-  // above, just returning one row per day instead of an aggregate count.
-  // Only computed on demand (the modal is rarely open), so a plain function
-  // rather than a memo.
-  interface CustomDayDetail {
-    date: string;
-    checkIn: string;
-    mealStart: string;
-    mealEnd: string;
-    checkOut: string;
-    isLate: boolean;
-  }
-  const buildCustomDayDetails = (profileId: string): CustomDayDetail[] => {
-    const p = summaryProfiles.find((pr) => pr.id === profileId);
-    if (!p || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
-    const offDays = new Set<number>(p.off_days ?? []);
-    const start = new Date(customRangeStart + "T00:00:00");
-    const end = new Date(customRangeEnd + "T00:00:00");
-    const days: CustomDayDetail[] = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const iso = toISODate(d);
-      if (iso > todayISO) break;
-      if (offDays.has(d.getDay())) continue;
-      const entry = customEntriesByKey.get(`${p.id}|${iso}`);
-      const checkIn = entry?.checkIn || "";
-      const checkOut = entry?.checkOut || "";
-      const mealStart = entry?.mealStart || "";
-      const mealEnd = entry?.mealEnd || "";
-      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null);
-      days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
-    }
-    return days;
-  };
-
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
   // of a fixed week/month-to-date window. ----

@@ -294,35 +294,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Periodically re-mint the Supabase JWT before it expires. The minted
         // token has a 1h TTL; refresh every 45 min so long-open tabs never hit
         // "JWT expired" (which silently breaks all Supabase reads/writes).
-        // Guards against out-of-order onAuthStateChanged firings — e.g. a
-        // kickout's firebaseSignOut() is async, so its delayed "signed out"
-        // notification can arrive AFTER a fresh login's "signed in" one if
-        // the user logs back in quickly. Each firing captures its own
-        // generation number; if a NEWER firing has already landed by the
-        // time an older one finishes its awaits, the older one bails out
-        // instead of clobbering state a later event already established.
-        let authGeneration = 0;
-        // Coalesces overlapping session checks for the SAME Firebase uid —
-        // if a stray/duplicate onAuthStateChanged firing races the real
-        // login's own session-claim call, the second one reuses the
-        // first's in-flight result instead of running its own comparison.
-        // This is what previously let a still-in-flight claim look like a
-        // stale mismatch and immediately re-kick a device that had just
-        // logged back in.
-        const sessionCheckInFlight = new Map<string, Promise<boolean>>();
-        const runSessionCheck = (
-          firebaseUser: FirebaseUser,
-          isInteractiveLogin: boolean,
-          onSuperseded: () => void
-        ): Promise<boolean> => {
-          const existing = sessionCheckInFlight.get(firebaseUser.uid);
-          if (existing) return existing;
-          const promise = checkAndHandleSession(firebaseUser, isInteractiveLogin, onSuperseded).finally(() => {
-            sessionCheckInFlight.delete(firebaseUser.uid);
-          });
-          sessionCheckInFlight.set(firebaseUser.uid, promise);
-          return promise;
-        };
         let refreshTimer: ReturnType<typeof setInterval> | null = null;
         const startTokenRefresh = () => {
           if (refreshTimer) clearInterval(refreshTimer);

@@ -547,13 +547,20 @@ export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise
 
 /** Save the employee_info JSON for a profile (by profile id). */
 export async function saveProfileEmployeeInfo(profileId: string, info: EmployeeInfo): Promise<void> {
-  const { error } = await supabase
+  // .select("id") so an RLS-blocked update (returns { error: null }, 0 rows
+  // touched) throws instead of silently pretending to succeed — see
+  // updateCompanyUser's matching fix for the full rationale.
+  const { data, error } = await supabase
     .from("profiles")
     .update({ employee_info: info })
-    .eq("id", profileId);
+    .eq("id", profileId)
+    .select("id");
   if (error) {
     console.error("saveProfileEmployeeInfo error:", error.message);
     throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error("This change wasn't saved — you may not have permission to edit this profile.");
   }
 }
 
@@ -894,7 +901,13 @@ export async function updateCompanyUser(
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
   if (fields.employmentType !== undefined) payload.employment_type = fields.employmentType;
 
-  const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
+  // .select("id") makes Supabase return the rows actually touched — without
+  // it, an RLS policy silently blocking this update still comes back as
+  // { error: null }, no exception, and callers have no way to tell "saved"
+  // from "the database quietly ignored it". That's the exact shape of bug
+  // where an edit looks like it worked (optimistic UI update stays) but
+  // reverts the moment the page is reloaded and re-fetches the real value.
+  const { data, error } = await supabase.from("profiles").update(payload).eq("id", profileId).select("id");
   if (error) {
     console.error("updateCompanyUser error:", error.message);
     // Postgres unique_violation on (company_id, username) - surface this
@@ -904,6 +917,9 @@ export async function updateCompanyUser(
       throw new Error(`"${fields.username}" is already taken by another user in this company.`);
     }
     throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error("This change wasn't saved — you may not have permission to edit this profile.");
   }
 }
 

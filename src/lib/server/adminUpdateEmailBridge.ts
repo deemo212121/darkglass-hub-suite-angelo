@@ -21,9 +21,10 @@
  *     verifyFirebaseToken) to get their real Firebase uid — never trust a
  *     client-supplied "I am an admin" claim.
  *  3. We look up the caller's OWN profile via the Supabase REST API using
- *     the service-role key (bypasses RLS) to confirm their role is
- *     ADMIN/SUPERADMIN, and load the target profile to get its firebase_uid
- *     and confirm it's in the SAME company (cross-tenant safety).
+ *     the service-role key (bypasses RLS) to confirm their role (primary or
+ *     extra_roles) is ADMIN/SUPERADMIN/HR, and load the target profile to
+ *     get its firebase_uid and confirm it's in the SAME company (cross-
+ *     tenant safety).
  *  4. We call Identity Toolkit's accounts:update to change the target
  *     Firebase user's email. Only once that succeeds do we return success —
  *     the caller (client) is responsible for then updating profiles.email
@@ -59,7 +60,11 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
   return { supabaseUrl, supabaseServiceKey, firebaseProjectId, serviceAccountEmail, privateKey };
 }
 
-const ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN"]);
+// HR added alongside ADMIN/SUPERADMIN so HR can edit login emails directly
+// from the Master List's quick-edit popup (ReportHRDaily.tsx) — everywhere
+// else in this app that gates on "holds a role", primary OR extra_roles
+// both count, so this checks both too (see fetchProfile's select below).
+const ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
 
 // ---- base64url + JWT signing (see adminPasswordBridge.ts re: not sharing jotformBridge's cache) ----
 function bytesToB64url(bytes: Uint8Array): string {
@@ -114,13 +119,18 @@ async function getIdentityToolkitAccessToken(serviceAccountEmail: string, privat
 interface ProfileLookup {
   id: string;
   role: string;
+  extra_roles: string[] | null;
   company_id: string;
   firebase_uid: string | null;
 }
 
+function hasAdminRole(p: ProfileLookup): boolean {
+  return [p.role, ...(p.extra_roles ?? [])].some((r) => ADMIN_ROLES.has(String(r || "").toUpperCase()));
+}
+
 async function fetchProfile(env: EnvBag, filter: { firebase_uid: string } | { id: string }): Promise<ProfileLookup | null> {
   const [[field, value]] = Object.entries(filter);
-  const url = `${env.supabaseUrl}/rest/v1/profiles?${field}=eq.${encodeURIComponent(value)}&select=id,role,company_id,firebase_uid&limit=1`;
+  const url = `${env.supabaseUrl}/rest/v1/profiles?${field}=eq.${encodeURIComponent(value)}&select=id,role,extra_roles,company_id,firebase_uid&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Profile lookup failed (${res.status}): ${await res.text()}`);
   const rows = (await res.json()) as ProfileLookup[];
@@ -161,10 +171,10 @@ export async function handleAdminUpdateEmailRequest(request: Request, env?: Reco
     // 1. Confirm the caller is really who their ID token says they are.
     const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
 
-    // 2. Confirm the caller holds ADMIN/SUPERADMIN via their OWN profile row
-    //    (never trust a client-supplied role) and load the target's row.
+    // 2. Confirm the caller holds ADMIN/SUPERADMIN/HR via their OWN profile
+    //    row (never trust a client-supplied role) and load the target's row.
     const callerProfile = await fetchProfile(envBag, { firebase_uid: claims.sub });
-    if (!callerProfile || !ADMIN_ROLES.has(String(callerProfile.role || "").toUpperCase())) {
+    if (!callerProfile || !hasAdminRole(callerProfile)) {
       return json({ error: "Not authorized to change user emails" }, 403);
     }
     const targetProfile = await fetchProfile(envBag, { id: targetProfileId });

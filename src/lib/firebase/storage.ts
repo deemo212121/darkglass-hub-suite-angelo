@@ -342,6 +342,51 @@ export async function uploadWarningForm(companyId: string, employeeName: string,
   return getDownloadURL(snapshot.ref);
 }
 
+/**
+ * Upload a generated Employee Promotion / Role Change Form PDF — same
+ * pattern as uploadWarningForm above.
+ */
+export async function uploadPromotionForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/promotion-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "promotion-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Upload a generated 4th Warning — Manager's Action Plan Form PDF — same
+ * pattern as uploadWarningForm above.
+ */
+export async function uploadActionPlanForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/action-plan-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "action-plan-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * Upload a generated Notice of Termination PDF — same pattern as
+ * uploadWarningForm above.
+ */
+export async function uploadTerminationForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/termination-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "termination-form")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadW8benForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

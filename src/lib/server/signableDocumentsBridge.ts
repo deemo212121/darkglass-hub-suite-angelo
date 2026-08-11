@@ -199,6 +199,20 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
     if (!(signatureFile instanceof File) || !(pdfFile instanceof File)) {
       return json({ error: "Missing signature or PDF file." }, 400);
     }
+    // Only the Manager's Action Plan Form's "manager" slot sends this — the
+    // recipient fills in the plan sections themselves alongside signing
+    // (see SignActionPlanFormPage.tsx/ExternalSignActionPlanFormPage.tsx),
+    // unlike every other document type here where HR pre-fills everything
+    // and the recipient only signs.
+    const formDataPatchRaw = formData.get("formData");
+    let formDataPatch: Record<string, unknown> | undefined;
+    if (typeof formDataPatchRaw === "string") {
+      try {
+        formDataPatch = JSON.parse(formDataPatchRaw);
+      } catch {
+        return json({ error: "Malformed formData patch." }, 400);
+      }
+    }
 
     const accessToken = await getGoogleAccessToken(envBag.serviceAccountEmail, envBag.privateKey);
     const stamp = Date.now();
@@ -223,16 +237,29 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
     const patchRes = await fetch(`${envBag.supabaseUrl}/rest/v1/hr_signable_documents?id=eq.${encodeURIComponent(doc.id)}`, {
       method: "PATCH",
       headers: { apikey: envBag.supabaseServiceKey, Authorization: `Bearer ${envBag.supabaseServiceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ signatures, status: "signed", pdf_url: pdfUrl, signed_at: signedAt }),
+      body: JSON.stringify({
+        signatures,
+        status: "signed",
+        pdf_url: pdfUrl,
+        signed_at: signedAt,
+        ...(formDataPatch ? { form_data: formDataPatch } : {}),
+      }),
     });
     if (!patchRes.ok) throw new Error(`hr_signable_documents update failed (${patchRes.status}): ${await patchRes.text()}`);
 
     try {
       const formTitle = (doc.form_data as { employeeName?: string })?.employeeName ?? "an employee";
+      const DOC_TYPE_LABELS: Record<string, { name: string; tab: string }> = {
+        warning_form: { name: "Employee Warning Form", tab: "warningForm" },
+        promotion_form: { name: "Employee Promotion / Role Change Form", tab: "promotionForm" },
+        action_plan_form: { name: "Manager's Action Plan Form", tab: "actionPlanForm" },
+        termination_form: { name: "Notice of Termination", tab: "terminationForm" },
+      };
+      const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,
-        body: `Employee Warning Form for ${formTitle} has been signed.`,
-        link: `/m/dashboard/hr-dashboard?tab=warningForm`,
+        body: `${docLabel.name} for ${formTitle} has been signed.`,
+        link: `/m/dashboard/hr-dashboard?tab=${docLabel.tab}`,
       };
       const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
         fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),
