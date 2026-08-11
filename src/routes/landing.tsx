@@ -25,6 +25,13 @@ function Landing() {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // "Forgot password?" — there's no self-service email reset in this app;
+  // this just queues a request for IT/HR to see and follow up on directly
+  // (see LoginSecurityPage.tsx's "Password Reset Requests" tab).
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotForm, setForgotForm] = useState({ fullName: "", username: "", email: "" });
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState<{ text: string; error?: boolean } | null>(null);
   // The company ID the user typed at login, validated reactively once the auth
   // context finishes loading the profile (avoids the race of re-querying with a
   // fixed delay). Cleared after a successful validation.
@@ -171,6 +178,35 @@ function Landing() {
     }
   };
 
+  const submitForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotForm.fullName.trim() || !forgotForm.username.trim()) {
+      setForgotMsg({ text: "Name and username are required.", error: true });
+      return;
+    }
+    setForgotSubmitting(true);
+    setForgotMsg(null);
+    try {
+      const res = await fetch("/api/password-reset-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName: forgotForm.fullName,
+          username: forgotForm.username,
+          email: forgotForm.email,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to submit request.");
+      setForgotMsg({ text: "Request submitted — IT/HR will follow up with you directly." });
+      setForgotForm({ fullName: "", username: "", email: "" });
+    } catch (error: any) {
+      setForgotMsg({ text: error.message || "Failed to submit request.", error: true });
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
   // Restore the error message stashed right before the reload above, so it
   // isn't lost — read once and clear it so it doesn't reappear on a later,
   // unrelated reload.
@@ -278,15 +314,24 @@ function Landing() {
                 disabled={submitting}
               />
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input 
-                type="checkbox" 
-                checked={form.remember} 
-                onChange={(e) => setForm({ ...form, remember: e.target.checked })}
-                disabled={submitting}
-              />
-              Remember my credentials
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.remember}
+                  onChange={(e) => setForm({ ...form, remember: e.target.checked })}
+                  disabled={submitting}
+                />
+                Remember my credentials
+              </label>
+              <button
+                type="button"
+                onClick={() => { setOpen(false); setForgotOpen(true); }}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                Forgot password?
+              </button>
+            </div>
             {err && (
               <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded p-3">
                 {err}
@@ -298,6 +343,76 @@ function Landing() {
               disabled={submitting || loading}
             >
               {submitting ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Forgot Password Modal — no self-service email reset in this app;
+          this just queues a request for IT/HR to see and follow up on
+          directly, see LoginSecurityPage.tsx's "Password Reset Requests" tab. */}
+      <Dialog open={forgotOpen} onOpenChange={(v) => { setForgotOpen(v); if (!v) setForgotMsg(null); }}>
+        <DialogContent className="bg-card border-white/10">
+          <DialogHeader>
+            <DialogTitle className="font-display">Forgot Password</DialogTitle>
+            <DialogDescription>
+              Submit your details and IT will reach out to help reset your password.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitForgotPassword} className="space-y-4">
+            <div className="text-xs text-blue-300 bg-blue-500/10 border border-blue-500/30 rounded p-3">
+              This creates an IT support ticket under your name — IT will be notified immediately and will contact you to reset your password.
+            </div>
+            <label className="block text-sm">
+              <span className="text-muted-foreground text-xs font-semibold uppercase">Full Name</span>
+              <input
+                className="glass-input mt-1 w-full"
+                type="text"
+                value={forgotForm.fullName}
+                onChange={(e) => setForgotForm({ ...forgotForm, fullName: e.target.value })}
+                placeholder="Your full name"
+                disabled={forgotSubmitting}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground text-xs font-semibold uppercase">Account Username</span>
+              <input
+                className="glass-input mt-1 w-full"
+                type="text"
+                value={forgotForm.username}
+                onChange={(e) => setForgotForm({ ...forgotForm, username: e.target.value })}
+                placeholder="Your login username"
+                disabled={forgotSubmitting}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="text-muted-foreground text-xs font-semibold uppercase">Email</span>
+              <input
+                className="glass-input mt-1 w-full"
+                type="email"
+                value={forgotForm.email}
+                onChange={(e) => setForgotForm({ ...forgotForm, email: e.target.value })}
+                placeholder="you@example.com"
+                disabled={forgotSubmitting}
+              />
+            </label>
+            {forgotMsg && (
+              <div
+                className={`text-sm rounded p-3 border ${
+                  forgotMsg.error
+                    ? "text-red-400 bg-red-500/10 border-red-500/30"
+                    : "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+                }`}
+              >
+                {forgotMsg.text}
+              </div>
+            )}
+            <button
+              type="submit"
+              className="btn btn-primary w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={forgotSubmitting}
+            >
+              {forgotSubmitting ? "Submitting..." : "Submit Request"}
             </button>
           </form>
         </DialogContent>

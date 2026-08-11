@@ -17,6 +17,7 @@ import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
 import { handleGmailRequest } from "./lib/server/gmailBridge";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
+import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 
 type ServerEntry = {
@@ -124,6 +125,10 @@ export default {
     if (url.pathname === "/api/login-lockout") {
       const merged = await resolveServerEnv(env);
       return await handleLoginLockoutRequest(request, merged);
+    }
+    if (url.pathname === "/api/password-reset-request") {
+      const merged = await resolveServerEnv(env);
+      return await handlePasswordResetRequest(request, merged);
     }
     if (url.pathname === "/api/servicepower") {
       const merged = await resolveServerEnv(env);

@@ -56,6 +56,7 @@ import { lookupZip } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
+import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import {
   parseServicePerformed,
   composeServicePerformed,
@@ -75,7 +76,8 @@ type View =
   | "timecard"
   | "clockinteam"
   | "parts"
-  | "sheets";
+  | "sheets"
+  | "itsupport";
 type DetailTab = "general" | "tracking" | "parts" | "billing";
 
 // Repair-status options the tech can pick from when editing a visit row
@@ -228,6 +230,7 @@ export function MobileTechApp() {
       "payroll",
       "parts",
       "sheets",
+      "itsupport",
     ];
     if (stored && (known as string[]).includes(stored)) {
       return stored as View;
@@ -464,6 +467,7 @@ export function MobileTechApp() {
         onOpenTimecard={() => setView("timecard")}
         showClockInTeam={isAttendanceManagerTierRole(role, extraRoles)}
         onOpenClockInTeam={() => setView("clockinteam")}
+        onOpenItSupport={() => setView("itsupport")}
         onSwitchToDesktop={() => {
           setDesktopOverride(true);
           navigate({ to: "/home", replace: true });
@@ -564,6 +568,10 @@ export function MobileTechApp() {
           <MobileClockInTeamView profileId={profileId} />
         )}
 
+        {view === "itsupport" && (
+          <MobileItSupportView userName={headerName} />
+        )}
+
         {/* home / parts sub-views still reachable but not in bottom nav — redirect to tickets */}
         {view === "home" && (
           <MobileHomeView
@@ -606,6 +614,7 @@ function AppHeaderMobile({
   onOpenTimecard,
   showClockInTeam,
   onOpenClockInTeam,
+  onOpenItSupport,
   onSwitchToDesktop,
   onLogout,
 }: {
@@ -616,6 +625,7 @@ function AppHeaderMobile({
   onOpenTimecard: () => void;
   showClockInTeam: boolean;
   onOpenClockInTeam: () => void;
+  onOpenItSupport: () => void;
   onSwitchToDesktop: () => void;
   onLogout: () => void;
 }) {
@@ -677,6 +687,13 @@ function AppHeaderMobile({
                   👥 Clock In Team
                 </button>
               )}
+              <button
+                type="button"
+                className="mtech-app-profile-timecard"
+                onClick={() => { setMenu(false); onOpenItSupport(); }}
+              >
+                🎫 IT Support
+              </button>
               <button
                 type="button"
                 className="mtech-app-profile-timecard"
@@ -3566,6 +3583,143 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const IT_TICKET_PRIORITIES: ItTicketPriority[] = ["low", "normal", "high", "urgent"];
+const IT_TICKET_STATUS_COLORS: Record<ItTicketRow["status"], { bg: string; fg: string }> = {
+  open: { bg: "rgba(59,130,246,0.18)", fg: "#93c5fd" },
+  in_progress: { bg: "rgba(234,179,8,0.18)", fg: "#fde047" },
+  resolved: { bg: "rgba(16,185,129,0.18)", fg: "#6ee7b7" },
+  closed: { bg: "rgba(100,116,139,0.25)", fg: "#cbd5e1" },
+};
+const IT_TICKET_STATUS_LABELS: Record<ItTicketRow["status"], string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+// Same underlying data/RLS as the desktop "My Profile → IT Support" page
+// (src/routes/it-tickets.tsx) — submit a ticket and see your own tickets'
+// status/resolution notes, just styled for the mobile shell instead of
+// linking out to the desktop-chrome-wrapped route.
+function MobileItSupportView({ userName }: { userName: string }) {
+  const [tickets, setTickets] = useState<ItTicketRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [subject, setSubject] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<ItTicketPriority>("normal");
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setTickets(await getItTickets());
+    } catch (e) {
+      console.error("it support: load tickets failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const submit = async () => {
+    if (!subject.trim() || !description.trim()) {
+      setMsg("Subject and description are required.");
+      return;
+    }
+    setSubmitting(true);
+    setMsg("");
+    try {
+      await createItTicket({ subject: subject.trim(), description: description.trim(), priority, createdByName: userName });
+      setSubject("");
+      setDescription("");
+      setPriority("normal");
+      setMsg("Ticket submitted.");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to submit ticket.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setMsg(""), 3000);
+    }
+  };
+
+  return (
+    <div className="mtech-scroll">
+      <div className="mtech-payroll-heading">
+        <div className="mtech-payroll-name">IT Support</div>
+        <div className="mtech-payroll-sub">Submit a ticket and track your own requests</div>
+      </div>
+
+      <div className="mtech-panel" style={{ marginTop: 0 }}>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Subject</div>
+        <input
+          className="mtech-bill-input full"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder="What's the issue?"
+        />
+
+        <div className="mtech-section-title">Priority</div>
+        <select
+          className="mtech-bill-input full"
+          value={priority}
+          onChange={(e) => setPriority(e.target.value as ItTicketPriority)}
+        >
+          {IT_TICKET_PRIORITIES.map((p) => (
+            <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>
+          ))}
+        </select>
+
+        <div className="mtech-section-title">Description</div>
+        <textarea
+          className="mtech-bill-input full"
+          rows={4}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Describe what's happening…"
+        />
+
+        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+          {submitting ? "Submitting…" : "Submit Ticket"}
+        </button>
+        {msg && <div className="mtech-save-msg">{msg}</div>}
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9", margin: "0.4rem 0 0.1rem" }}>My Tickets</div>
+      {loading ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>Loading tickets…</div>
+      ) : tickets.length === 0 ? (
+        <div className="mtech-muted" style={{ color: "#94a3b8" }}>No tickets submitted yet.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {tickets.map((t) => (
+            <div key={t.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">{t.subject}</div>
+                <div className="mtech-payroll-status" style={{ background: IT_TICKET_STATUS_COLORS[t.status].bg, color: IT_TICKET_STATUS_COLORS[t.status].fg }}>
+                  {IT_TICKET_STATUS_LABELS[t.status]}
+                </div>
+              </div>
+              <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
+                <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{t.description}</p>
+                {t.resolutionNotes && (
+                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>IT note: {t.resolutionNotes}</p>
+                )}
+                <p className="mtech-muted" style={{ padding: 0 }}>
+                  Submitted {new Date(t.createdAt).toLocaleDateString()} · {t.priority[0].toUpperCase() + t.priority.slice(1)} priority
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
