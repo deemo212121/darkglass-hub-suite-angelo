@@ -142,7 +142,7 @@ export async function notifyRequesterOfPullDecision(payload: {
     if (!payload.requesterId) return;
     const qtyLabel = `${payload.qty} unit${payload.qty === 1 ? "" : "s"}`;
     const body = payload.approved
-      ? `Part ${payload.partNo} for Ticket ${payload.ticketNo} is Approved. Your Truck Stock request (${qtyLabel}) is now PO Made.`
+      ? `Part ${payload.partNo} for Ticket ${payload.ticketNo} is Approved. Your Truck Stock request (${qtyLabel}) is now PO Made and in transit.`
       : `Part ${payload.partNo} for Ticket ${payload.ticketNo} is Rejected.` +
         `${payload.reason ? ` Reason: ${payload.reason}` : ""} Please order it from a distributor instead.`;
     await createNotification({
@@ -154,6 +154,32 @@ export async function notifyRequesterOfPullDecision(payload: {
     });
   } catch (err) {
     console.warn("[truckStockNotify] notifyRequesterOfPullDecision skipped:", err);
+  }
+}
+
+/** Ping the requester once the ticket's own branch confirms the pulled part actually arrived. Fire-and-forget. */
+export async function notifyRequesterOfPullReceived(payload: {
+  requesterId: string | null;
+  partNo: string;
+  qty: number;
+  ticketNo: string;
+  branch: string;
+  receiverName?: string | null;
+  receiverId?: string | null;
+}): Promise<void> {
+  try {
+    if (!payload.requesterId) return;
+    const qtyLabel = `${payload.qty} unit${payload.qty === 1 ? "" : "s"}`;
+    const body = `${qtyLabel} of ${payload.partNo} for Ticket ${payload.ticketNo} arrived from ${payload.branch} — Part Ready.`;
+    await createNotification({
+      recipientId: payload.requesterId,
+      senderId: payload.receiverId ?? null,
+      senderName: payload.receiverName || "Parts Manager",
+      body,
+      linkTo: `/ticket/${payload.ticketNo}`,
+    });
+  } catch (err) {
+    console.warn("[truckStockNotify] notifyRequesterOfPullReceived skipped:", err);
   }
 }
 

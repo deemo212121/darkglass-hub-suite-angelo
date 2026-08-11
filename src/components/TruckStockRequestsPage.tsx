@@ -9,11 +9,15 @@
  * leaving/entering their branch in one place — nothing falls through the
  * cracks between "used on a job" and "sent to restock another branch."
  *
- * The two kinds still have genuinely different mechanics under the hood:
+ * The two kinds still have genuinely different mechanics under the hood,
+ * but both now share the same 4-stage "where is the part right now"
+ * status: pending -> approved (in transit) -> received (complete), or
+ * rejected at the pending stage.
  *   - Pull: approving stamps the ticket's Part Transaction line PO Made
- *     (same INH-… auto PO number the old immediate-pull path used) — a
- *     pull has no separate "received" step, approval IS completion,
- *     since the part is being installed, not shelved.
+ *     (same INH-… auto PO number the old immediate-pull path used), but
+ *     that's not completion — the part still has to physically reach
+ *     the TICKET's own branch. That branch confirms Mark Received,
+ *     which promotes the Part Transaction line PO Made -> Part Ready.
  *   - Transfer: approving only marks it "in transit" — the destination
  *     branch has to separately confirm Mark Received (the point its own
  *     Truck Stock quantity actually increments) before it's complete.
@@ -22,10 +26,10 @@
  *
  * Visible to everyone with Part Inventory access (a requester needs to
  * see their own request's status, not just whoever can approve it).
- * Approve/Reject/Mark Received only render for whoever can actually act
- * on that row's relevant branch (canApproveTruckStockPull) — the source
- * branch's Parts Manager for a pending pull or pending transfer... no,
- * see below for exactly which branch gates which row type.
+ * Approve/Reject only render for the SOURCE branch's Parts Manager (the
+ * one giving up the stock); Mark Received only renders for the
+ * DESTINATION branch's Parts Manager (a transfer's explicit toBranch,
+ * or a pull's ticket.location) — see canActOn below.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -37,6 +41,7 @@ import { getPartById, updateTicketPart, logTicketAuditEntry } from "@/lib/supaba
 import { getTruckStock, incrementTruckStock, type TruckStockRow } from "@/lib/supabase/truckStock";
 import {
   notifyRequesterOfPullDecision,
+  notifyRequesterOfPullReceived,
   notifyRequesterOfTransferDecision,
   notifyRequesterOfTransferReceived,
   canApproveTruckStockPull,
@@ -45,6 +50,7 @@ import {
   getTruckStockPullRequests,
   approveTruckStockPullRequest,
   rejectTruckStockPullRequest,
+  markTruckStockPullRequestReceived,
   type TruckStockPullRequestRow,
 } from "@/lib/supabase/truckStockRequests";
 import {
@@ -82,11 +88,12 @@ function fromPull(r: TruckStockPullRequestRow): UnifiedRow {
   return {
     id: r.id,
     kind: "pull",
-    bucket: r.status === "pending" ? "pending" : r.status === "approved" ? "completed" : "rejected",
+    bucket: r.status === "pending" ? "pending" : r.status === "approved" ? "in_transit" : r.status === "received" ? "completed" : "rejected",
     partNo: r.partNo,
     quantity: r.quantity,
     branch: r.branch,
-    toBranch: null,
+    // Destination = the ticket's own branch, i.e. wherever it'll actually be used — not the same as `branch` above (the source it's being pulled FROM).
+    toBranch: r.ticketBranch || null,
     storageLocation: r.storageLocation,
     ticketNo: r.ticketNo,
     requestedByName: r.requestedByName,
@@ -94,8 +101,8 @@ function fromPull(r: TruckStockPullRequestRow): UnifiedRow {
     reviewedByName: r.reviewedByName,
     reviewedAt: r.reviewedAt,
     rejectionReason: r.rejectionReason,
-    receivedByName: "",
-    receivedAt: null,
+    receivedByName: r.receivedByName,
+    receivedAt: r.receivedAt,
     pull: r,
     transfer: null,
   };
@@ -154,20 +161,28 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
       });
   }, [uid]);
 
-  // Which branch gates a row's actions: a pull's only branch (where stock
-  // is decremented — that IS the source), or a transfer's destination
-  // (pending approval and mark-received both belong to whoever's
-  // accepting the stock, not whoever's giving it up).
-  const canActOn = (row: UnifiedRow) => canApproveTruckStockPull(role, extraRoles, myAssignedBranch, row.kind === "pull" ? row.branch : (row.toBranch as string));
+  // Which branch gates a row's actions. Approve/Reject (pending) always
+  // belongs to the SOURCE branch giving up the stock — for a pull that's
+  // row.branch itself; for a transfer, the source is also where it's
+  // reserved from, but review is gated to the destination instead (see
+  // toBranch below — a transfer's approval already meant "I'll accept
+  // this," decided by 0164's design). Mark Received (in_transit) always
+  // belongs to the DESTINATION — row.toBranch for both kinds now that a
+  // pull's toBranch is the ticket's own branch.
+  const canActOn = (row: UnifiedRow) =>
+    subTab === "pending"
+      ? canApproveTruckStockPull(role, extraRoles, myAssignedBranch, row.kind === "pull" ? row.branch : (row.toBranch as string))
+      : canApproveTruckStockPull(role, extraRoles, myAssignedBranch, (row.toBranch as string) ?? row.branch);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [pp, pa, pr, tp, ta, tr, tRec, s] = await Promise.all([
+      const [pp, pa, pr, pRec, tp, ta, tr, tRec, s] = await Promise.all([
         getTruckStockPullRequests("pending"),
         getTruckStockPullRequests("approved"),
         getTruckStockPullRequests("rejected"),
+        getTruckStockPullRequests("received"),
         getTruckStockTransferRequests("pending"),
         getTruckStockTransferRequests("approved"),
         getTruckStockTransferRequests("rejected"),
@@ -175,7 +190,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
         getTruckStock(),
       ]);
       setRowsAll([
-        ...pp.map(fromPull), ...pa.map(fromPull), ...pr.map(fromPull),
+        ...pp.map(fromPull), ...pa.map(fromPull), ...pr.map(fromPull), ...pRec.map(fromPull),
         ...tp.map(fromTransfer), ...ta.map(fromTransfer), ...tr.map(fromTransfer), ...tRec.map(fromTransfer),
       ]);
       setStock(s);
@@ -332,24 +347,60 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
   };
 
   const handleMarkReceived = async (row: UnifiedRow) => {
-    if (!row.transfer) return;
     setBusyId(row.id);
     try {
-      const req = row.transfer;
-      // Parts are now physically at the destination branch — this is the
-      // one point where the destination's on-hand quantity actually goes up.
-      await incrementTruckStock({ branch: req.toBranch, partNo: req.partNo, qty: req.quantity });
-      await markTruckStockTransferReceived(req.id, myProfileId);
-      void notifyRequesterOfTransferReceived({
-        requesterId: req.requestedBy,
-        partNo: req.partNo,
-        qty: req.quantity,
-        fromBranch: req.fromBranch,
-        toBranch: req.toBranch,
-        receiverName: displayName,
-        receiverId: myProfileId,
-        requestId: req.id,
-      });
+      if (row.kind === "pull" && row.pull) {
+        const req = row.pull;
+        // The part has now physically reached the ticket's branch — promote
+        // the Part Transaction line the rest of the way, same as a real
+        // Marcone PO promotes to Part Ready on physical arrival. Only if it's
+        // still PO Made: someone may have manually moved it on since approval
+        // (Used, Cancelled, etc.), and that manual call shouldn't be clobbered.
+        const part = await getPartById(req.partId);
+        if (part && part.status === "PO Made") {
+          const today = new Date().toISOString().slice(0, 10);
+          const noteAdd = `Received at ${req.ticketBranch || "destination branch"} on ${today}.`;
+          await updateTicketPart(req.partId, {
+            ...part,
+            status: "Part Ready",
+            note: part.note ? `${part.note}\n${noteAdd}` : noteAdd,
+          });
+          await logTicketAuditEntry({
+            ticketId: req.ticketId,
+            action: "Truck Stock pull received",
+            field: "Status",
+            beforeValue: "PO Made",
+            afterValue: "Part Ready",
+            changedBy: myProfileId,
+          });
+        }
+        await markTruckStockPullRequestReceived(req.id, myProfileId);
+        void notifyRequesterOfPullReceived({
+          requesterId: req.requestedBy,
+          partNo: req.partNo,
+          qty: req.quantity,
+          ticketNo: req.ticketNo,
+          branch: req.branch,
+          receiverName: displayName,
+          receiverId: myProfileId,
+        });
+      } else if (row.transfer) {
+        const req = row.transfer;
+        // Parts are now physically at the destination branch — this is the
+        // one point where the destination's on-hand quantity actually goes up.
+        await incrementTruckStock({ branch: req.toBranch, partNo: req.partNo, qty: req.quantity });
+        await markTruckStockTransferReceived(req.id, myProfileId);
+        void notifyRequesterOfTransferReceived({
+          requesterId: req.requestedBy,
+          partNo: req.partNo,
+          qty: req.quantity,
+          fromBranch: req.fromBranch,
+          toBranch: req.toBranch,
+          receiverName: displayName,
+          receiverId: myProfileId,
+          requestId: req.id,
+        });
+      }
       await load();
     } catch (err) {
       alert(`Failed to mark received: ${err instanceof Error ? err.message : String(err)}`);
@@ -463,7 +514,10 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                     <td className="px-3 py-2 text-right font-semibold">{r.quantity}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.kind === "pull" ? (
-                        <>{r.branch}{r.storageLocation ? ` @ ${r.storageLocation}` : ""}</>
+                        <>
+                          {r.branch}{r.storageLocation ? ` @ ${r.storageLocation}` : ""}
+                          {r.toBranch ? <> <span className="text-slate-500">→</span> {r.toBranch}</> : null}
+                        </>
                       ) : (
                         <>{r.branch} <span className="text-slate-500">→</span> {r.toBranch}</>
                       )}
