@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { getLocationRanking, getOverallStatus, getTechRanking, getTickets } from "@/lib/db-api";
 import type { DashboardOverallStatus, LocationRankingRecord, ModuleDef, SubModuleDef, TechRankingRecord, Ticket } from "@/lib/db";
+import { useAuth } from "@/lib/auth";
 
 type ForecastRow = {
   location: string;
@@ -25,6 +26,12 @@ function nextDates(days: number) {
 }
 
 export function RepairForecastPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
+  // Prefer the company's short login alias (e.g. "USIHS") over the raw
+  // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
+  // uses. companyId itself is left untouched everywhere else (RLS, storage
+  // paths, etc.) — this only changes what's shown to the user here.
+  const { companyLoginAlias } = useAuth();
+  const companyDisplay = companyLoginAlias || companyId;
   const [forecastDays, setForecastDays] = useState(3);
   const [maxConfirm, setMaxConfirm] = useState(10);
   const [autoRefresh, setAutoRefresh] = useState("1");
@@ -92,7 +99,7 @@ export function RepairForecastPage({ mod, sub, companyId }: { mod: ModuleDef; su
   const lastModified = overallStatus?.dateRange.end ?? "—";
   const totalForecastCells = rows.reduce((sum, row) => sum + row.values.length, 0);
   const overLimitCells = rows.reduce((sum, row) => sum + row.values.filter((value) => value.overLimit).length, 0);
-  const summaryLabel = companyId ? `Live data: ${tickets.length} ticket(s) for company ${companyId}.` : `Live data: ${tickets.length} ticket(s).`;
+  const summaryLabel = companyDisplay ? `Live data: ${tickets.length} ticket(s) for company ${companyDisplay}.` : `Live data: ${tickets.length} ticket(s).`;
 
   return (
     <div className="min-h-screen flex flex-col">

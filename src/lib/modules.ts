@@ -92,6 +92,14 @@ const dashboardMod: ModuleDef = {
       }),
     },
     {
+      slug: "triage-dashboard",
+      title: "Triage Dashboard",
+      description: "Same daily activity breakdown as the Daily Activity Report, scoped to Technical Support and Technical Support Managers only.",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "overall-status",
       title: "Overall Status",
       description: "View system-wide status and health metrics.",

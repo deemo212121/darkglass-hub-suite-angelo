@@ -22,14 +22,12 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTickets, getTicketAuditLog } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
-import { normalizeRole } from "@/lib/roleLabels";
+import { isTriageRole } from "@/lib/roleLabels";
 
-const TRIAGE_ROLES = new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]);
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 
 function isTriageProfile(p: ProfileRow): boolean {
-  if (TRIAGE_ROLES.has(normalizeRole(p.role))) return true;
-  return (p.extra_roles || []).some((r) => TRIAGE_ROLES.has(normalizeRole(r)));
+  return isTriageRole(p.role);
 }
 function isTriageStatus(status: string | undefined | null): boolean {
   return String(status || "").trim().toLowerCase().startsWith("tr-");

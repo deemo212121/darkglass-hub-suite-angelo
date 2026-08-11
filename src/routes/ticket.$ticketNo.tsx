@@ -6085,7 +6085,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Call Service Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 className="font-semibold text-slate-300">Call Service Information</h4>
                   <div className="flex items-center gap-2">

@@ -18,7 +18,7 @@ function Landing() {
   const [form, setForm] = useState({ 
     emailOrUsername: "jdage7@gmail.com", 
     password: "", 
-    company: "COMP001",
+    company: "USIHS",
     remember: true 
   });
   const [err, setErr] = useState<string | null>(null);

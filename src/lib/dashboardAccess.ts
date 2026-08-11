@@ -11,6 +11,11 @@ import { getModuleRoleGate } from "./moduleAccess";
  */
 export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "daily-activity": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_MANAGER", "HR", "MANAGER", "SENIOR_MANAGER"],
+  // Same slice of the Daily Activity Report, restricted to Technical Support
+  // itself (TRIAGE_USER/TRIAGE_MANAGER) plus the same oversight roles above —
+  // a Technical Support agent can see their own team's activity here even
+  // though they can't open the company-wide daily-activity tile.
+  "triage-dashboard": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "HR", "MANAGER", "SENIOR_MANAGER", "TRIAGE_USER", "TRIAGE_MANAGER"],
   "overall-status": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "MANAGER", "SENIOR_MANAGER"],
   "accounting-dashboard": ["ADMIN", "FINANCE"],
   // Manager-tier roles (see ATTENDANCE_MANAGER_TIER_ROLES_ARRAY) are scoped to

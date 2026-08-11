@@ -4,6 +4,7 @@ import { Footer } from "@/components/Footer";
 import { OverallStatusPage } from "@/components/OverallStatusPage";
 import { RepairForecastPage } from "@/components/RepairForecastPage";
 import { DailyActivityPage } from "@/components/DailyActivityPage";
+import { TriageDashboardPage } from "@/components/TriageDashboardPage";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
@@ -388,6 +389,8 @@ function SubModule() {
         ? <RepairForecastPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "daily-activity"
         ? <DailyActivityPage mod={mod} sub={sub} companyId={companyId} />
+        : sub.slug === "triage-dashboard"
+        ? <TriageDashboardPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "expense-tracking"
         ? <ExpenseTrackingPage mod={mod} sub={sub} />
         : sub.custom === "part-return-status"
