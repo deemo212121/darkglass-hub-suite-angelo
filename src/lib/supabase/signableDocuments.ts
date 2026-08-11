@@ -1,8 +1,9 @@
 import { supabase } from "./client";
 import { deleteAgentNote } from "./csrAgentNotes";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9";
-export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "promotion_form" | "action_plan_form" | "termination_form";
+/** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
+export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
 
 export interface SignatureEntry {

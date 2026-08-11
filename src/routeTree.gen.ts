@@ -25,8 +25,14 @@ import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TicketsMapRouteImport } from './routes/tickets.map'
 import { Route as TicketTicketNoRouteImport } from './routes/ticket.$ticketNo'
+import { Route as SignTerminationFormDocIdRouteImport } from './routes/sign-termination-form.$docId'
+import { Route as SignTerminationExternalDocIdRouteImport } from './routes/sign-termination-external.$docId'
+import { Route as SignPromotionFormDocIdRouteImport } from './routes/sign-promotion-form.$docId'
+import { Route as SignPromotionExternalDocIdRouteImport } from './routes/sign-promotion-external.$docId'
 import { Route as SignExternalDocIdRouteImport } from './routes/sign-external.$docId'
 import { Route as SignDocumentDocIdRouteImport } from './routes/sign-document.$docId'
+import { Route as SignActionPlanFormDocIdRouteImport } from './routes/sign-action-plan-form.$docId'
+import { Route as SignActionPlanExternalDocIdRouteImport } from './routes/sign-action-plan-external.$docId'
 import { Route as MModuleRouteImport } from './routes/m.$module'
 import { Route as FillW9DocIdRouteImport } from './routes/fill-w9.$docId'
 import { Route as FillW8benDocIdRouteImport } from './routes/fill-w8ben.$docId'
@@ -120,6 +126,29 @@ const TicketTicketNoRoute = TicketTicketNoRouteImport.update({
   path: '/ticket/$ticketNo',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignTerminationFormDocIdRoute =
+  SignTerminationFormDocIdRouteImport.update({
+    id: '/sign-termination-form/$docId',
+    path: '/sign-termination-form/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SignTerminationExternalDocIdRoute =
+  SignTerminationExternalDocIdRouteImport.update({
+    id: '/sign-termination-external/$docId',
+    path: '/sign-termination-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SignPromotionFormDocIdRoute = SignPromotionFormDocIdRouteImport.update({
+  id: '/sign-promotion-form/$docId',
+  path: '/sign-promotion-form/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignPromotionExternalDocIdRoute =
+  SignPromotionExternalDocIdRouteImport.update({
+    id: '/sign-promotion-external/$docId',
+    path: '/sign-promotion-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SignExternalDocIdRoute = SignExternalDocIdRouteImport.update({
   id: '/sign-external/$docId',
   path: '/sign-external/$docId',
@@ -130,6 +159,17 @@ const SignDocumentDocIdRoute = SignDocumentDocIdRouteImport.update({
   path: '/sign-document/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignActionPlanFormDocIdRoute = SignActionPlanFormDocIdRouteImport.update({
+  id: '/sign-action-plan-form/$docId',
+  path: '/sign-action-plan-form/$docId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignActionPlanExternalDocIdRoute =
+  SignActionPlanExternalDocIdRouteImport.update({
+    id: '/sign-action-plan-external/$docId',
+    path: '/sign-action-plan-external/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const MModuleRoute = MModuleRouteImport.update({
   id: '/m/$module',
   path: '/m/$module',
@@ -216,8 +256,14 @@ export interface FileRoutesByFullPath {
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
+  '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
+  '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
+  '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
+  '/sign-termination-form/$docId': typeof SignTerminationFormDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -248,8 +294,14 @@ export interface FileRoutesByTo {
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
+  '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
+  '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
+  '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
+  '/sign-termination-form/$docId': typeof SignTerminationFormDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -281,8 +333,14 @@ export interface FileRoutesById {
   '/fill-w8ben/$docId': typeof FillW8benDocIdRoute
   '/fill-w9/$docId': typeof FillW9DocIdRoute
   '/m/$module': typeof MModuleRouteWithChildren
+  '/sign-action-plan-external/$docId': typeof SignActionPlanExternalDocIdRoute
+  '/sign-action-plan-form/$docId': typeof SignActionPlanFormDocIdRoute
   '/sign-document/$docId': typeof SignDocumentDocIdRoute
   '/sign-external/$docId': typeof SignExternalDocIdRoute
+  '/sign-promotion-external/$docId': typeof SignPromotionExternalDocIdRoute
+  '/sign-promotion-form/$docId': typeof SignPromotionFormDocIdRoute
+  '/sign-termination-external/$docId': typeof SignTerminationExternalDocIdRoute
+  '/sign-termination-form/$docId': typeof SignTerminationFormDocIdRoute
   '/ticket/$ticketNo': typeof TicketTicketNoRoute
   '/tickets/map': typeof TicketsMapRoute
   '/m/$module/$submodule': typeof MModuleSubmoduleRouteWithChildren
@@ -315,8 +373,14 @@ export interface FileRouteTypes {
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
     | '/m/$module'
+    | '/sign-action-plan-external/$docId'
+    | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-promotion-external/$docId'
+    | '/sign-promotion-form/$docId'
+    | '/sign-termination-external/$docId'
+    | '/sign-termination-form/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -347,8 +411,14 @@ export interface FileRouteTypes {
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
     | '/m/$module'
+    | '/sign-action-plan-external/$docId'
+    | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-promotion-external/$docId'
+    | '/sign-promotion-form/$docId'
+    | '/sign-termination-external/$docId'
+    | '/sign-termination-form/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -379,8 +449,14 @@ export interface FileRouteTypes {
     | '/fill-w8ben/$docId'
     | '/fill-w9/$docId'
     | '/m/$module'
+    | '/sign-action-plan-external/$docId'
+    | '/sign-action-plan-form/$docId'
     | '/sign-document/$docId'
     | '/sign-external/$docId'
+    | '/sign-promotion-external/$docId'
+    | '/sign-promotion-form/$docId'
+    | '/sign-termination-external/$docId'
+    | '/sign-termination-form/$docId'
     | '/ticket/$ticketNo'
     | '/tickets/map'
     | '/m/$module/$submodule'
@@ -412,8 +488,14 @@ export interface RootRouteChildren {
   FillW8benDocIdRoute: typeof FillW8benDocIdRoute
   FillW9DocIdRoute: typeof FillW9DocIdRoute
   MModuleRoute: typeof MModuleRouteWithChildren
+  SignActionPlanExternalDocIdRoute: typeof SignActionPlanExternalDocIdRoute
+  SignActionPlanFormDocIdRoute: typeof SignActionPlanFormDocIdRoute
   SignDocumentDocIdRoute: typeof SignDocumentDocIdRoute
   SignExternalDocIdRoute: typeof SignExternalDocIdRoute
+  SignPromotionExternalDocIdRoute: typeof SignPromotionExternalDocIdRoute
+  SignPromotionFormDocIdRoute: typeof SignPromotionFormDocIdRoute
+  SignTerminationExternalDocIdRoute: typeof SignTerminationExternalDocIdRoute
+  SignTerminationFormDocIdRoute: typeof SignTerminationFormDocIdRoute
   TicketTicketNoRoute: typeof TicketTicketNoRoute
   TicketsMapRoute: typeof TicketsMapRoute
 }
@@ -532,6 +614,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TicketTicketNoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sign-termination-form/$docId': {
+      id: '/sign-termination-form/$docId'
+      path: '/sign-termination-form/$docId'
+      fullPath: '/sign-termination-form/$docId'
+      preLoaderRoute: typeof SignTerminationFormDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-termination-external/$docId': {
+      id: '/sign-termination-external/$docId'
+      path: '/sign-termination-external/$docId'
+      fullPath: '/sign-termination-external/$docId'
+      preLoaderRoute: typeof SignTerminationExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-promotion-form/$docId': {
+      id: '/sign-promotion-form/$docId'
+      path: '/sign-promotion-form/$docId'
+      fullPath: '/sign-promotion-form/$docId'
+      preLoaderRoute: typeof SignPromotionFormDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-promotion-external/$docId': {
+      id: '/sign-promotion-external/$docId'
+      path: '/sign-promotion-external/$docId'
+      fullPath: '/sign-promotion-external/$docId'
+      preLoaderRoute: typeof SignPromotionExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sign-external/$docId': {
       id: '/sign-external/$docId'
       path: '/sign-external/$docId'
@@ -544,6 +654,20 @@ declare module '@tanstack/react-router' {
       path: '/sign-document/$docId'
       fullPath: '/sign-document/$docId'
       preLoaderRoute: typeof SignDocumentDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-action-plan-form/$docId': {
+      id: '/sign-action-plan-form/$docId'
+      path: '/sign-action-plan-form/$docId'
+      fullPath: '/sign-action-plan-form/$docId'
+      preLoaderRoute: typeof SignActionPlanFormDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-action-plan-external/$docId': {
+      id: '/sign-action-plan-external/$docId'
+      path: '/sign-action-plan-external/$docId'
+      fullPath: '/sign-action-plan-external/$docId'
+      preLoaderRoute: typeof SignActionPlanExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/m/$module': {
@@ -691,8 +815,14 @@ const rootRouteChildren: RootRouteChildren = {
   FillW8benDocIdRoute: FillW8benDocIdRoute,
   FillW9DocIdRoute: FillW9DocIdRoute,
   MModuleRoute: MModuleRouteWithChildren,
+  SignActionPlanExternalDocIdRoute: SignActionPlanExternalDocIdRoute,
+  SignActionPlanFormDocIdRoute: SignActionPlanFormDocIdRoute,
   SignDocumentDocIdRoute: SignDocumentDocIdRoute,
   SignExternalDocIdRoute: SignExternalDocIdRoute,
+  SignPromotionExternalDocIdRoute: SignPromotionExternalDocIdRoute,
+  SignPromotionFormDocIdRoute: SignPromotionFormDocIdRoute,
+  SignTerminationExternalDocIdRoute: SignTerminationExternalDocIdRoute,
+  SignTerminationFormDocIdRoute: SignTerminationFormDocIdRoute,
   TicketTicketNoRoute: TicketTicketNoRoute,
   TicketsMapRoute: TicketsMapRoute,
 }

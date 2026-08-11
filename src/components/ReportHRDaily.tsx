@@ -35,7 +35,8 @@ import {
   type CvForwardDetail,
 } from "@/lib/supabase/hrCandidates";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, addAgentNote, deleteAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
-import { parseBranchAccess } from "@/lib/locations";
+import { parseBranchAccess, LOCATIONS } from "@/lib/locations";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { OnboardingApplicantDocuments } from "./OnboardingApplicantDocuments";
 import { getOnboardingDocumentCategoriesByProfileIds } from "@/lib/supabase/onboardingDocuments";
 import {
@@ -45,7 +46,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadW8benForm, uploadW4Form } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl as loadImageDataUrl } from "@/lib/pdfCapture";
 import {
   createSignableDocument,
@@ -59,13 +60,19 @@ import {
 } from "@/lib/supabase/signableDocuments";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
+import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormDocxBlob } from "@/lib/promotionFormDocx";
+import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData, type ActionPlanSignatureSlot } from "@/lib/actionPlanFormTemplate";
+import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
+import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData, type TerminationSignatureSlot } from "@/lib/terminationFormTemplate";
+import { buildTerminationFormDocxBlob } from "@/lib/terminationFormDocx";
 import type { W8benFormData, W8benAddress } from "@/lib/w8benFormTemplate";
 import { fillW8benPdf } from "@/lib/w8benPdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W9FormData } from "@/lib/w9FormTemplate";
 import { fillW9Pdf } from "@/lib/w9PdfFill";
-import { logActivity } from "@/lib/supabase/hrActivityLog";
+import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
@@ -558,7 +565,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -571,7 +578,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1894,17 +1901,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       branch: employee.branch,
     }));
     setWarnEmployeeDropdownOpen(false);
+    setAddPrevWarnOpen(false);
+    setAddPrevWarnError(null);
   };
 
   // Frozen snapshot for the currently-selected employee — approved warnings only (the official record), most recent first, capped at the 3 slots the paper form has.
+  // Sorts/displays by occurredAt when set (backfilled pre-system warnings — see handleAddPreviousWarning below) so a
+  // historical warning entered today doesn't look like the most recent one and bump a genuinely recent warning out of the top 3.
   const warnPreviousWarnings = useMemo(() => {
     if (!warnForm.employeeId) return [];
     return allNotes
       .filter((n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && n.status === "approved")
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((a, b) => (b.occurredAt || b.createdAt).localeCompare(a.occurredAt || a.createdAt))
       .slice(0, 3)
-      .map((n) => ({ cause: n.note, date: n.createdAt, issuedBy: n.createdByName || "—" }));
+      .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: n.createdByName || "—" }));
   }, [allNotes, warnForm.employeeId]);
+
+  // ── Backfill a pre-system warning (issued before this app's warning workflow existed) ──
+  const [addPrevWarnOpen, setAddPrevWarnOpen] = useState(false);
+  const [addPrevWarnDate, setAddPrevWarnDate] = useState(todayStr);
+  const [addPrevWarnReason, setAddPrevWarnReason] = useState("");
+  const [addPrevWarnSaving, setAddPrevWarnSaving] = useState(false);
+  const [addPrevWarnError, setAddPrevWarnError] = useState<string | null>(null);
+  const handleAddPreviousWarning = async () => {
+    if (!warnForm.employeeId || !addPrevWarnDate || !addPrevWarnReason.trim()) {
+      setAddPrevWarnError("Date and reason are required.");
+      return;
+    }
+    setAddPrevWarnSaving(true);
+    setAddPrevWarnError(null);
+    try {
+      await addAgentNote({
+        agentProfileId: warnForm.employeeId,
+        type: "warning",
+        note: addPrevWarnReason.trim(),
+        occurredAt: new Date(addPrevWarnDate + "T00:00:00").toISOString(),
+        fastTrackToApproved: true,
+      });
+      setAllNotes(await getAllAgentNotes());
+      setAddPrevWarnOpen(false);
+      setAddPrevWarnDate(todayStr);
+      setAddPrevWarnReason("");
+    } catch (error) {
+      setAddPrevWarnError(error instanceof Error ? error.message : "Failed to add warning.");
+    } finally {
+      setAddPrevWarnSaving(false);
+    }
+  };
 
   const buildWarnFormData = (recipientSlot: SignatureSlot, recipientName: string): WarningFormData => ({
     employeeId: warnForm.employeeId,
@@ -2886,6 +2929,1213 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setReassignSentLink(null);
   };
 
+  // ── Generate Employee Promotion / Role Change Form ──────────────────
+  // Same shape as the Employee Warning Form above — field layout mirrors
+  // src/assets/Employee Promotion or Role Change.pdf exactly. Document-only:
+  // confirming does NOT write back to the employee's profile (Position/
+  // Department/Tier stay whatever HR separately sets in Master List) — a
+  // signed paper trail, not a data-mutating action.
+  const [promoForm, setPromoForm] = useState({
+    employeeId: "",
+    employeeName: "",
+    currentPosition: "",
+    department: "",
+    dateOfHire: "",
+    roleChangeType: {
+      promotion: false,
+      positionTitleChange: false,
+      departmentTransfer: false,
+      technicianTierRaise: false,
+      other: false,
+      otherText: "",
+    },
+    newPositionTitle: "",
+    newDepartment: "",
+    effectiveDate: todayStr,
+    performance: {
+      meetsExpectations: false,
+      exceedsExpectations: false,
+      leadershipDemonstrated: false,
+      trainingCompleted: false,
+      other: false,
+      otherText: "",
+    },
+  });
+  const updatePromoField = <K extends keyof typeof promoForm>(field: K, value: (typeof promoForm)[K]) =>
+    setPromoForm((prev) => ({ ...prev, [field]: value }));
+  const toggleRoleChangeType = (key: keyof typeof promoForm.roleChangeType) =>
+    setPromoForm((prev) => ({ ...prev, roleChangeType: { ...prev.roleChangeType, [key]: !prev.roleChangeType[key] } }));
+  const togglePerformance = (key: keyof typeof promoForm.performance) =>
+    setPromoForm((prev) => ({ ...prev, performance: { ...prev.performance, [key]: !prev.performance[key] } }));
+
+  const [promoEmployeeDropdownOpen, setPromoEmployeeDropdownOpen] = useState(false);
+  const filteredPromoEmployeeOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
+  };
+  const selectPromoEmployee = (employee: { id: string; name: string; position: string; branch: string; startDate: string }) => {
+    setPromoForm((prev) => ({
+      ...prev,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      currentPosition: ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position,
+      department: employee.branch,
+      dateOfHire: employee.startDate || "",
+    }));
+    setPromoEmployeeDropdownOpen(false);
+  };
+
+  const buildPromoFormData = (recipientSlot: PromotionSignatureSlot, recipientName: string): PromotionFormData => ({
+    employeeId: promoForm.employeeId,
+    employeeName: promoForm.employeeName,
+    currentPosition: promoForm.currentPosition,
+    department: promoForm.department,
+    dateOfHire: promoForm.dateOfHire,
+    roleChangeType: promoForm.roleChangeType,
+    newPositionTitle: promoForm.newPositionTitle,
+    newDepartment: promoForm.newDepartment,
+    effectiveDate: promoForm.effectiveDate,
+    performance: promoForm.performance,
+    recipientSlot,
+    recipientName,
+    recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
+  });
+
+  const [promoLogoDataUrl, setPromoLogoDataUrl] = useState("");
+  const [promoPreviewOpen, setPromoPreviewOpen] = useState(false);
+  const [promoGenerating, setPromoGenerating] = useState(false);
+  const [promoRecipientId, setPromoRecipientId] = useState("");
+  const [promoRecipientSearch, setPromoRecipientSearch] = useState("");
+  const [promoRecipientDropdownOpen, setPromoRecipientDropdownOpen] = useState(false);
+  const [promoRecipientSlot, setPromoRecipientSlot] = useState<PromotionSignatureSlot>("manager");
+  const [promoSending, setPromoSending] = useState(false);
+  const [promoSendError, setPromoSendError] = useState<string | null>(null);
+  const [promoSendMode, setPromoSendMode] = useState<"teammate" | "external">("teammate");
+  const [promoExternalName, setPromoExternalName] = useState("");
+  const [promoSentLink, setPromoSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [promoSentLinkCopied, setPromoSentLinkCopied] = useState(false);
+  const filteredPromoRecipients = useMemo(() => {
+    const q = promoRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, promoRecipientSearch]);
+
+  const handleOpenPromoPreview = async () => {
+    setPromoGenerating(true);
+    try {
+      setPromoLogoDataUrl(await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      setPromoRecipientId("");
+      setPromoRecipientSearch("");
+      setPromoSendMode("teammate");
+      setPromoExternalName("");
+      setPromoSendError(null);
+      setPromoSentLink(null);
+      setPromoPreviewOpen(true);
+    } finally {
+      setPromoGenerating(false);
+    }
+  };
+
+  const handleDownloadPromoForm = () => {
+    const previewData = buildPromoFormData(promoRecipientSlot, "");
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Employee Promotion / Role Change Form</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#fff;}${promotionFormStyles}@media print{@page{margin:0;}}</style></head><body>${buildPromotionFormBodyMarkup(previewData, promoLogoDataUrl, {})}</body></html>`;
+    openPrintWindow(html);
+  };
+
+  const [promoDocxGenerating, setPromoDocxGenerating] = useState(false);
+  const handleDownloadPromoFormWord = async () => {
+    setPromoDocxGenerating(true);
+    try {
+      const previewData = buildPromoFormData(promoRecipientSlot, "");
+      const blob = await buildPromotionFormDocxBlob(previewData, promoLogoDataUrl);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Employee Promotion Form - ${previewData.employeeName || "Untitled"}.docx`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } finally {
+      setPromoDocxGenerating(false);
+    }
+  };
+
+  const [sentPromotionForms, setSentPromotionForms] = useState<SignableDocument[]>([]);
+  const loadSentPromotionForms = async () => {
+    try {
+      setSentPromotionForms(await getSignableDocuments("promotion_form"));
+    } catch (err) {
+      console.error("Failed to load sent promotion forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "promotionForm") void loadSentPromotionForms();
+  }, [activeTab]);
+
+  const [promoViewDoc, setPromoViewDoc] = useState<SignableDocument | null>(null);
+  const handleViewPromoForm = async (doc: SignableDocument) => {
+    if (!promoLogoDataUrl) {
+      setPromoLogoDataUrl(await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+    }
+    setPromoViewDoc(doc);
+  };
+
+  const handleDownloadPromoFormPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const employeeName = (doc.formData as unknown as PromotionFormData).employeeName || "promotion-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Employee Promotion Form - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleCopyPromotionFormLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "sign-promotion-form" : "sign-promotion-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleSendPromotionForm = async () => {
+    if (!promoForm.employeeName.trim() || !promoRecipientId || !uid) return;
+    setPromoSending(true);
+    setPromoSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === promoRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const formData = buildPromoFormData(promoRecipientSlot, recipient.name);
+      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(formData, promoLogoDataUrl, {}), promotionFormStyles);
+      const pdfUrl = await uploadPromotionForm(companyId ?? "", promoForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "promotion_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientId: promoRecipientId,
+        recipientSlot: promoRecipientSlot,
+        pdfUrl,
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, promoRecipientId);
+      const signLink = `${getAppUrl()}/sign-promotion-form/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `🎉 Employee Promotion / Role Change Form for ${promoForm.employeeName} needs your signature. Review and sign here: ${signLink}`,
+      });
+
+      void logActivity({ action: "promotion_form_sent", targetType: "employee", targetId: promoForm.employeeId, targetLabel: promoForm.employeeName, details: { to: recipient.name, slot: promoRecipientSlot } });
+
+      setPromoSentLink({ link: signLink, recipientName: recipient.name });
+      await loadSentPromotionForms();
+    } catch (err) {
+      setPromoSendError(err instanceof Error ? err.message : "Failed to send promotion form.");
+    } finally {
+      setPromoSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out. */
+  const handleGenerateExternalPromotionLink = async () => {
+    if (!promoForm.employeeName.trim() || !promoExternalName.trim()) return;
+    setPromoSending(true);
+    setPromoSendError(null);
+    try {
+      const formData = buildPromoFormData(promoRecipientSlot, promoExternalName.trim());
+      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(formData, promoLogoDataUrl, {}), promotionFormStyles);
+      const pdfUrl = await uploadPromotionForm(companyId ?? "", promoForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "promotion_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientName: promoExternalName.trim(),
+        recipientSlot: promoRecipientSlot,
+        pdfUrl,
+      });
+
+      void logActivity({ action: "promotion_form_sent", targetType: "employee", targetId: promoForm.employeeId, targetLabel: promoForm.employeeName, details: { to: promoExternalName.trim(), slot: promoRecipientSlot, external: true } });
+
+      setPromoSentLink({ link: `${getAppUrl()}/sign-promotion-external/${doc.id}`, recipientName: promoExternalName.trim() });
+      await loadSentPromotionForms();
+    } catch (err) {
+      setPromoSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setPromoSending(false);
+    }
+  };
+
+  const handleCopyPromoSentLink = async () => {
+    if (!promoSentLink) return;
+    try {
+      await navigator.clipboard.writeText(promoSentLink.link);
+      setPromoSentLinkCopied(true);
+      setTimeout(() => setPromoSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleClosePromoPreview = () => {
+    setPromoPreviewOpen(false);
+    setPromoSentLink(null);
+    setPromoForm({
+      employeeId: "",
+      employeeName: "",
+      currentPosition: "",
+      department: "",
+      dateOfHire: "",
+      roleChangeType: { promotion: false, positionTitleChange: false, departmentTransfer: false, technicianTierRaise: false, other: false, otherText: "" },
+      newPositionTitle: "",
+      newDepartment: "",
+      effectiveDate: todayStr,
+      performance: { meetsExpectations: false, exceedsExpectations: false, leadershipDemonstrated: false, trainingCompleted: false, other: false, otherText: "" },
+    });
+  };
+
+  // ── Sent Promotion Forms tracking table actions ──
+  const [promoActionBusyId, setPromoActionBusyId] = useState<string | null>(null);
+  const [promoActionError, setPromoActionError] = useState<string | null>(null);
+
+  /** Document-only (per design — see this section's header comment): confirming just finalizes the record, it never writes back to the employee's profile. agentNoteId is always null here — this form has nothing to do with the warnings system. */
+  const handleConfirmPromotionForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Confirm this promotion / role change form? This finalizes it as the official signed record.")) return;
+    setPromoActionBusyId(doc.id);
+    setPromoActionError(null);
+    try {
+      await confirmSignableDocument(doc.id, null);
+      await loadSentPromotionForms();
+      const data = doc.formData as unknown as PromotionFormData;
+      void logActivity({ action: "promotion_form_confirmed", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setPromoActionError(err instanceof Error ? err.message : "Failed to confirm promotion form.");
+    } finally {
+      setPromoActionBusyId(null);
+    }
+  };
+
+  const handleCancelPromotionForm = async (doc: SignableDocument) => {
+    const isRevert = doc.status === "confirmed";
+    const message = isRevert
+      ? "Revert this confirmed promotion form? It goes back to voided — it was never applied to the employee's profile in the first place, so there's nothing else to undo."
+      : "Cancel this promotion form? This voids it entirely.";
+    if (!window.confirm(message)) return;
+    setPromoActionBusyId(doc.id);
+    setPromoActionError(null);
+    try {
+      await cancelSignableDocument(doc.id);
+      await loadSentPromotionForms();
+      const data = doc.formData as unknown as PromotionFormData;
+      void logActivity({ action: isRevert ? "promotion_form_reverted" : "promotion_form_cancelled", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setPromoActionError(err instanceof Error ? err.message : `Failed to ${isRevert ? "revert" : "cancel"} promotion form.`);
+    } finally {
+      setPromoActionBusyId(null);
+    }
+  };
+
+  const handleDeletePromotionForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this promotion form? This can't be undone.")) return;
+    setPromoActionBusyId(doc.id);
+    setPromoActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      setSentPromotionForms((prev) => prev.filter((d) => d.id !== doc.id));
+      const data = doc.formData as unknown as PromotionFormData;
+      void logActivity({ action: "promotion_form_deleted", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setPromoActionError(err instanceof Error ? err.message : "Failed to delete promotion form.");
+    } finally {
+      setPromoActionBusyId(null);
+    }
+  };
+
+  const [promoReassignDialog, setPromoReassignDialog] = useState<SignableDocument | null>(null);
+  const [promoReassignRecipientId, setPromoReassignRecipientId] = useState("");
+  const [promoReassignRecipientSearch, setPromoReassignRecipientSearch] = useState("");
+  const [promoReassignRecipientDropdownOpen, setPromoReassignRecipientDropdownOpen] = useState(false);
+  const [promoReassignSlot, setPromoReassignSlot] = useState<PromotionSignatureSlot>("senior_manager");
+  const [promoReassignMode, setPromoReassignMode] = useState<"teammate" | "external">("teammate");
+  const [promoReassignExternalName, setPromoReassignExternalName] = useState("");
+  const [promoReassignSentLink, setPromoReassignSentLink] = useState<string | null>(null);
+  const [promoReassignSentLinkCopied, setPromoReassignSentLinkCopied] = useState(false);
+  const filteredPromoReassignRecipients = useMemo(() => {
+    const q = promoReassignRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, promoReassignRecipientSearch]);
+
+  const handleSendPromoToNextRecipient = async () => {
+    if (!promoReassignDialog || !uid) return;
+    const employeeName = (promoReassignDialog.formData as unknown as PromotionFormData).employeeName || "the employee";
+
+    if (promoReassignMode === "external") {
+      if (!promoReassignExternalName.trim()) return;
+      setPromoActionBusyId(promoReassignDialog.id);
+      setPromoActionError(null);
+      try {
+        await reassignSignableDocument(promoReassignDialog.id, { recipientName: promoReassignExternalName.trim() }, promoReassignSlot);
+        void logActivity({ action: "promotion_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: promoReassignExternalName.trim(), slot: promoReassignSlot, external: true } });
+        setPromoReassignSentLink(`${getAppUrl()}/sign-promotion-external/${promoReassignDialog.id}`);
+        await loadSentPromotionForms();
+      } catch (err) {
+        setPromoActionError(err instanceof Error ? err.message : "Failed to reassign.");
+      } finally {
+        setPromoActionBusyId(null);
+      }
+      return;
+    }
+
+    if (!promoReassignRecipientId) return;
+    setPromoActionBusyId(promoReassignDialog.id);
+    setPromoActionError(null);
+    try {
+      const recipient = employees.find((e) => e.id === promoReassignRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      await reassignSignableDocument(promoReassignDialog.id, { recipientId: promoReassignRecipientId, recipientName: recipient.name }, promoReassignSlot);
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, promoReassignRecipientId);
+      const signLink = `${getAppUrl()}/sign-promotion-form/${promoReassignDialog.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `🎉 Employee Promotion / Role Change Form for ${employeeName} needs your signature. Review and sign here: ${signLink}`,
+      });
+
+      void logActivity({ action: "promotion_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: recipient.name, slot: promoReassignSlot } });
+
+      setPromoReassignDialog(null);
+      setPromoReassignRecipientId("");
+      setPromoReassignRecipientSearch("");
+      await loadSentPromotionForms();
+    } catch (err) {
+      setPromoActionError(err instanceof Error ? err.message : "Failed to send to next recipient.");
+    } finally {
+      setPromoActionBusyId(null);
+    }
+  };
+
+  const handleCopyPromoReassignSentLink = async () => {
+    if (!promoReassignSentLink) return;
+    try {
+      await navigator.clipboard.writeText(promoReassignSentLink);
+      setPromoReassignSentLinkCopied(true);
+      setTimeout(() => setPromoReassignSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleClosePromoReassignDialog = () => {
+    setPromoReassignDialog(null);
+    setPromoReassignRecipientId("");
+    setPromoReassignRecipientSearch("");
+    setPromoReassignMode("teammate");
+    setPromoReassignExternalName("");
+    setPromoReassignSentLink(null);
+  };
+
+  // ── Generate 4th Warning — Manager's Action Plan Form ────────────────
+  // Unlike the Warning Form and Promotion Form above, HR only fills the
+  // identifying fields here (Employee/Branch/Position/Date) and picks the
+  // Manager to route it to — the 5 numbered plan sections and Manager
+  // Comments are intentionally left blank at send time and get filled in
+  // by the Manager themselves on their sign page (SignActionPlanFormPage.tsx),
+  // right alongside signing. Document-only (per design, same as the
+  // Promotion Form) — confirming never writes back to the employee's
+  // warning record.
+  const [actionPlanForm, setActionPlanForm] = useState({
+    employeeId: "",
+    employeeName: "",
+    branch: "",
+    position: "",
+    date: todayStr,
+  });
+  const updateActionPlanField = <K extends keyof typeof actionPlanForm>(field: K, value: (typeof actionPlanForm)[K]) =>
+    setActionPlanForm((prev) => ({ ...prev, [field]: value }));
+
+  const [actionPlanEmployeeDropdownOpen, setActionPlanEmployeeDropdownOpen] = useState(false);
+  const filteredActionPlanEmployeeOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
+  };
+  const selectActionPlanEmployee = (employee: { id: string; name: string; position: string; branch: string }) => {
+    setActionPlanForm((prev) => ({
+      ...prev,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      position: ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position,
+      branch: employee.branch,
+    }));
+    setActionPlanEmployeeDropdownOpen(false);
+  };
+
+  const buildActionPlanFormData = (recipientSlot: ActionPlanSignatureSlot, recipientName: string): ActionPlanFormData => ({
+    employeeId: actionPlanForm.employeeId,
+    employeeName: actionPlanForm.employeeName,
+    branch: actionPlanForm.branch,
+    position: actionPlanForm.position,
+    date: actionPlanForm.date,
+    coachingPlan: "",
+    monitoringPlan: "",
+    additionalTraining: "",
+    performanceExpectations: "",
+    consequences: "",
+    managerComments: "",
+    recipientSlot,
+    recipientName,
+    recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
+  });
+
+  // Same 3-image letterhead as the Certificate of Employment (logo + ribbon
+  // header, contact-info footer graphic) — see coeImages above.
+  const [actionPlanImages, setActionPlanImages] = useState({ logo: "", ribbon: "", footer: "" });
+  const [actionPlanPreviewOpen, setActionPlanPreviewOpen] = useState(false);
+  const [actionPlanGenerating, setActionPlanGenerating] = useState(false);
+  const [actionPlanRecipientId, setActionPlanRecipientId] = useState("");
+  const [actionPlanRecipientSearch, setActionPlanRecipientSearch] = useState("");
+  const [actionPlanRecipientDropdownOpen, setActionPlanRecipientDropdownOpen] = useState(false);
+  const [actionPlanRecipientSlot, setActionPlanRecipientSlot] = useState<ActionPlanSignatureSlot>("manager");
+  const [actionPlanSending, setActionPlanSending] = useState(false);
+  const [actionPlanSendError, setActionPlanSendError] = useState<string | null>(null);
+  const [actionPlanSendMode, setActionPlanSendMode] = useState<"teammate" | "external">("teammate");
+  const [actionPlanExternalName, setActionPlanExternalName] = useState("");
+  const [actionPlanSentLink, setActionPlanSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [actionPlanSentLinkCopied, setActionPlanSentLinkCopied] = useState(false);
+  const filteredActionPlanRecipients = useMemo(() => {
+    const q = actionPlanRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, actionPlanRecipientSearch]);
+
+  const handleOpenActionPlanPreview = async () => {
+    setActionPlanGenerating(true);
+    try {
+      const [logoDataUrl, ribbonDataUrl, footerDataUrl] = await Promise.all([
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-ribbon.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-footer.png")),
+      ]);
+      setActionPlanImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
+      setActionPlanRecipientId("");
+      setActionPlanRecipientSearch("");
+      setActionPlanSendMode("teammate");
+      setActionPlanExternalName("");
+      setActionPlanSendError(null);
+      setActionPlanSentLink(null);
+      setActionPlanPreviewOpen(true);
+    } finally {
+      setActionPlanGenerating(false);
+    }
+  };
+
+  const handleDownloadActionPlanForm = () => {
+    const previewData = buildActionPlanFormData(actionPlanRecipientSlot, "");
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Manager's Action Plan Form</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#fff;}${actionPlanFormStyles}@media print{@page{margin:0;}}</style></head><body>${buildActionPlanFormBodyMarkup(previewData, actionPlanImages.logo, actionPlanImages.ribbon, actionPlanImages.footer, {})}</body></html>`;
+    openPrintWindow(html);
+  };
+
+  const [actionPlanDocxGenerating, setActionPlanDocxGenerating] = useState(false);
+  const handleDownloadActionPlanFormWord = async () => {
+    setActionPlanDocxGenerating(true);
+    try {
+      const previewData = buildActionPlanFormData(actionPlanRecipientSlot, "");
+      const blob = await buildActionPlanFormDocxBlob(previewData, actionPlanImages.logo, actionPlanImages.ribbon, actionPlanImages.footer);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Manager Action Plan Form - ${previewData.employeeName || "Untitled"}.docx`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } finally {
+      setActionPlanDocxGenerating(false);
+    }
+  };
+
+  const [sentActionPlanForms, setSentActionPlanForms] = useState<SignableDocument[]>([]);
+  const loadSentActionPlanForms = async () => {
+    try {
+      setSentActionPlanForms(await getSignableDocuments("action_plan_form"));
+    } catch (err) {
+      console.error("Failed to load sent action plan forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "actionPlanForm") void loadSentActionPlanForms();
+  }, [activeTab]);
+
+  const [actionPlanViewDoc, setActionPlanViewDoc] = useState<SignableDocument | null>(null);
+  const handleViewActionPlanForm = async (doc: SignableDocument) => {
+    if (!actionPlanImages.logo) {
+      const [logoDataUrl, ribbonDataUrl, footerDataUrl] = await Promise.all([
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-ribbon.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-footer.png")),
+      ]);
+      setActionPlanImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
+    }
+    setActionPlanViewDoc(doc);
+  };
+
+  const handleDownloadActionPlanFormPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const employeeName = (doc.formData as unknown as ActionPlanFormData).employeeName || "action-plan-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Manager Action Plan Form - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleCopyActionPlanFormLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "sign-action-plan-form" : "sign-action-plan-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleSendActionPlanForm = async () => {
+    if (!actionPlanForm.employeeName.trim() || !actionPlanRecipientId || !uid) return;
+    setActionPlanSending(true);
+    setActionPlanSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === actionPlanRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const formData = buildActionPlanFormData(actionPlanRecipientSlot, recipient.name);
+      const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, actionPlanImages.logo, actionPlanImages.ribbon, actionPlanImages.footer, {}), actionPlanFormStyles);
+      const pdfUrl = await uploadActionPlanForm(companyId ?? "", actionPlanForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "action_plan_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientId: actionPlanRecipientId,
+        recipientSlot: actionPlanRecipientSlot,
+        pdfUrl,
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, actionPlanRecipientId);
+      const signLink = `${getAppUrl()}/sign-action-plan-form/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 4th Warning — Manager's Action Plan Form for ${actionPlanForm.employeeName} needs your input and signature. Review and complete it here: ${signLink}`,
+      });
+
+      void logActivity({ action: "action_plan_form_sent", targetType: "employee", targetId: actionPlanForm.employeeId, targetLabel: actionPlanForm.employeeName, details: { to: recipient.name, slot: actionPlanRecipientSlot } });
+
+      setActionPlanSentLink({ link: signLink, recipientName: recipient.name });
+      await loadSentActionPlanForms();
+    } catch (err) {
+      setActionPlanSendError(err instanceof Error ? err.message : "Failed to send action plan form.");
+    } finally {
+      setActionPlanSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out. */
+  const handleGenerateExternalActionPlanLink = async () => {
+    if (!actionPlanForm.employeeName.trim() || !actionPlanExternalName.trim()) return;
+    setActionPlanSending(true);
+    setActionPlanSendError(null);
+    try {
+      const formData = buildActionPlanFormData(actionPlanRecipientSlot, actionPlanExternalName.trim());
+      const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, actionPlanImages.logo, actionPlanImages.ribbon, actionPlanImages.footer, {}), actionPlanFormStyles);
+      const pdfUrl = await uploadActionPlanForm(companyId ?? "", actionPlanForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "action_plan_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientName: actionPlanExternalName.trim(),
+        recipientSlot: actionPlanRecipientSlot,
+        pdfUrl,
+      });
+
+      void logActivity({ action: "action_plan_form_sent", targetType: "employee", targetId: actionPlanForm.employeeId, targetLabel: actionPlanForm.employeeName, details: { to: actionPlanExternalName.trim(), slot: actionPlanRecipientSlot, external: true } });
+
+      setActionPlanSentLink({ link: `${getAppUrl()}/sign-action-plan-external/${doc.id}`, recipientName: actionPlanExternalName.trim() });
+      await loadSentActionPlanForms();
+    } catch (err) {
+      setActionPlanSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setActionPlanSending(false);
+    }
+  };
+
+  const handleCopyActionPlanSentLink = async () => {
+    if (!actionPlanSentLink) return;
+    try {
+      await navigator.clipboard.writeText(actionPlanSentLink.link);
+      setActionPlanSentLinkCopied(true);
+      setTimeout(() => setActionPlanSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCloseActionPlanPreview = () => {
+    setActionPlanPreviewOpen(false);
+    setActionPlanSentLink(null);
+    setActionPlanForm({ employeeId: "", employeeName: "", branch: "", position: "", date: todayStr });
+  };
+
+  // ── Sent Action Plan Forms tracking table actions ──
+  const [actionPlanActionBusyId, setActionPlanActionBusyId] = useState<string | null>(null);
+  const [actionPlanActionError, setActionPlanActionError] = useState<string | null>(null);
+
+  /** Document-only (per design — see this section's header comment): confirming just finalizes the record, it never writes back to the employee's warning record. agentNoteId is always null here. */
+  const handleConfirmActionPlanForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Confirm this action plan form? This finalizes it as the official signed record.")) return;
+    setActionPlanActionBusyId(doc.id);
+    setActionPlanActionError(null);
+    try {
+      await confirmSignableDocument(doc.id, null);
+      await loadSentActionPlanForms();
+      const data = doc.formData as unknown as ActionPlanFormData;
+      void logActivity({ action: "action_plan_form_confirmed", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setActionPlanActionError(err instanceof Error ? err.message : "Failed to confirm action plan form.");
+    } finally {
+      setActionPlanActionBusyId(null);
+    }
+  };
+
+  const handleCancelActionPlanForm = async (doc: SignableDocument) => {
+    const isRevert = doc.status === "confirmed";
+    const message = isRevert
+      ? "Revert this confirmed action plan form? It goes back to voided — it was never applied to the employee's warning record in the first place, so there's nothing else to undo."
+      : "Cancel this action plan form? This voids it entirely.";
+    if (!window.confirm(message)) return;
+    setActionPlanActionBusyId(doc.id);
+    setActionPlanActionError(null);
+    try {
+      await cancelSignableDocument(doc.id);
+      await loadSentActionPlanForms();
+      const data = doc.formData as unknown as ActionPlanFormData;
+      void logActivity({ action: isRevert ? "action_plan_form_reverted" : "action_plan_form_cancelled", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setActionPlanActionError(err instanceof Error ? err.message : `Failed to ${isRevert ? "revert" : "cancel"} action plan form.`);
+    } finally {
+      setActionPlanActionBusyId(null);
+    }
+  };
+
+  const handleDeleteActionPlanForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this action plan form? This can't be undone.")) return;
+    setActionPlanActionBusyId(doc.id);
+    setActionPlanActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      setSentActionPlanForms((prev) => prev.filter((d) => d.id !== doc.id));
+      const data = doc.formData as unknown as ActionPlanFormData;
+      void logActivity({ action: "action_plan_form_deleted", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setActionPlanActionError(err instanceof Error ? err.message : "Failed to delete action plan form.");
+    } finally {
+      setActionPlanActionBusyId(null);
+    }
+  };
+
+  const [actionPlanReassignDialog, setActionPlanReassignDialog] = useState<SignableDocument | null>(null);
+  const [actionPlanReassignRecipientId, setActionPlanReassignRecipientId] = useState("");
+  const [actionPlanReassignRecipientSearch, setActionPlanReassignRecipientSearch] = useState("");
+  const [actionPlanReassignRecipientDropdownOpen, setActionPlanReassignRecipientDropdownOpen] = useState(false);
+  const [actionPlanReassignSlot, setActionPlanReassignSlot] = useState<ActionPlanSignatureSlot>("senior_manager");
+  const [actionPlanReassignMode, setActionPlanReassignMode] = useState<"teammate" | "external">("teammate");
+  const [actionPlanReassignExternalName, setActionPlanReassignExternalName] = useState("");
+  const [actionPlanReassignSentLink, setActionPlanReassignSentLink] = useState<string | null>(null);
+  const [actionPlanReassignSentLinkCopied, setActionPlanReassignSentLinkCopied] = useState(false);
+  const filteredActionPlanReassignRecipients = useMemo(() => {
+    const q = actionPlanReassignRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, actionPlanReassignRecipientSearch]);
+
+  const handleSendActionPlanToNextRecipient = async () => {
+    if (!actionPlanReassignDialog || !uid) return;
+    const employeeName = (actionPlanReassignDialog.formData as unknown as ActionPlanFormData).employeeName || "the employee";
+
+    if (actionPlanReassignMode === "external") {
+      if (!actionPlanReassignExternalName.trim()) return;
+      setActionPlanActionBusyId(actionPlanReassignDialog.id);
+      setActionPlanActionError(null);
+      try {
+        await reassignSignableDocument(actionPlanReassignDialog.id, { recipientName: actionPlanReassignExternalName.trim() }, actionPlanReassignSlot);
+        void logActivity({ action: "action_plan_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: actionPlanReassignExternalName.trim(), slot: actionPlanReassignSlot, external: true } });
+        setActionPlanReassignSentLink(`${getAppUrl()}/sign-action-plan-external/${actionPlanReassignDialog.id}`);
+        await loadSentActionPlanForms();
+      } catch (err) {
+        setActionPlanActionError(err instanceof Error ? err.message : "Failed to reassign.");
+      } finally {
+        setActionPlanActionBusyId(null);
+      }
+      return;
+    }
+
+    if (!actionPlanReassignRecipientId) return;
+    setActionPlanActionBusyId(actionPlanReassignDialog.id);
+    setActionPlanActionError(null);
+    try {
+      const recipient = employees.find((e) => e.id === actionPlanReassignRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      await reassignSignableDocument(actionPlanReassignDialog.id, { recipientId: actionPlanReassignRecipientId, recipientName: recipient.name }, actionPlanReassignSlot);
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, actionPlanReassignRecipientId);
+      const signLink = `${getAppUrl()}/sign-action-plan-form/${actionPlanReassignDialog.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 4th Warning — Manager's Action Plan Form for ${employeeName} needs your signature. Review and sign here: ${signLink}`,
+      });
+
+      void logActivity({ action: "action_plan_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: recipient.name, slot: actionPlanReassignSlot } });
+
+      setActionPlanReassignDialog(null);
+      setActionPlanReassignRecipientId("");
+      setActionPlanReassignRecipientSearch("");
+      await loadSentActionPlanForms();
+    } catch (err) {
+      setActionPlanActionError(err instanceof Error ? err.message : "Failed to send to next recipient.");
+    } finally {
+      setActionPlanActionBusyId(null);
+    }
+  };
+
+  const handleCopyActionPlanReassignSentLink = async () => {
+    if (!actionPlanReassignSentLink) return;
+    try {
+      await navigator.clipboard.writeText(actionPlanReassignSentLink);
+      setActionPlanReassignSentLinkCopied(true);
+      setTimeout(() => setActionPlanReassignSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCloseActionPlanReassignDialog = () => {
+    setActionPlanReassignDialog(null);
+    setActionPlanReassignRecipientId("");
+    setActionPlanReassignRecipientSearch("");
+    setActionPlanReassignMode("teammate");
+    setActionPlanReassignExternalName("");
+    setActionPlanReassignSentLink(null);
+  };
+
+  // ── Generate Notice of Termination Form ──────────────────────────────
+  // Same shape as the Warning Form — HR fills every field, all 4 recipients
+  // only sign to acknowledge. Field layout mirrors src/assets/Termination
+  // Notice Form.pdf exactly. Document-only (per design) — confirming never
+  // writes back to the employee's Status/Termination Date on their profile.
+  const [terminationForm, setTerminationForm] = useState({
+    employeeId: "",
+    employeeName: "",
+    effectiveDate: todayStr,
+    reason: "",
+  });
+  const updateTerminationField = <K extends keyof typeof terminationForm>(field: K, value: (typeof terminationForm)[K]) =>
+    setTerminationForm((prev) => ({ ...prev, [field]: value }));
+
+  const [terminationEmployeeDropdownOpen, setTerminationEmployeeDropdownOpen] = useState(false);
+  const filteredTerminationEmployeeOptions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q)) : sorted;
+  };
+  const selectTerminationEmployee = (employee: { id: string; name: string }) => {
+    setTerminationForm((prev) => ({ ...prev, employeeId: employee.id, employeeName: employee.name }));
+    setTerminationEmployeeDropdownOpen(false);
+  };
+
+  const buildTerminationFormData = (recipientSlot: TerminationSignatureSlot, recipientName: string): TerminationFormData => ({
+    employeeId: terminationForm.employeeId,
+    employeeName: terminationForm.employeeName,
+    effectiveDate: terminationForm.effectiveDate,
+    reason: terminationForm.reason,
+    recipientSlot,
+    recipientName,
+    recipientNames: recipientName ? { [recipientSlot]: recipientName } : undefined,
+  });
+
+  // Same 3-image letterhead as the Certificate of Employment / Manager's
+  // Action Plan Form (logo + ribbon header, contact-info footer graphic).
+  const [terminationImages, setTerminationImages] = useState({ logo: "", ribbon: "", footer: "" });
+  const [terminationPreviewOpen, setTerminationPreviewOpen] = useState(false);
+  const [terminationGenerating, setTerminationGenerating] = useState(false);
+  const [terminationRecipientId, setTerminationRecipientId] = useState("");
+  const [terminationRecipientSearch, setTerminationRecipientSearch] = useState("");
+  const [terminationRecipientDropdownOpen, setTerminationRecipientDropdownOpen] = useState(false);
+  const [terminationRecipientSlot, setTerminationRecipientSlot] = useState<TerminationSignatureSlot>("employee");
+  const [terminationSending, setTerminationSending] = useState(false);
+  const [terminationSendError, setTerminationSendError] = useState<string | null>(null);
+  const [terminationSendMode, setTerminationSendMode] = useState<"teammate" | "external">("teammate");
+  const [terminationExternalName, setTerminationExternalName] = useState("");
+  const [terminationSentLink, setTerminationSentLink] = useState<{ link: string; recipientName: string } | null>(null);
+  const [terminationSentLinkCopied, setTerminationSentLinkCopied] = useState(false);
+  const filteredTerminationRecipients = useMemo(() => {
+    const q = terminationRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, terminationRecipientSearch]);
+
+  const handleOpenTerminationPreview = async () => {
+    setTerminationGenerating(true);
+    try {
+      const [logoDataUrl, ribbonDataUrl, footerDataUrl] = await Promise.all([
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-ribbon.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-footer.png")),
+      ]);
+      setTerminationImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
+      setTerminationRecipientId("");
+      setTerminationRecipientSearch("");
+      setTerminationSendMode("teammate");
+      setTerminationExternalName("");
+      setTerminationSendError(null);
+      setTerminationSentLink(null);
+      setTerminationPreviewOpen(true);
+    } finally {
+      setTerminationGenerating(false);
+    }
+  };
+
+  const handleDownloadTerminationForm = () => {
+    const previewData = buildTerminationFormData(terminationRecipientSlot, "");
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Notice of Termination</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#fff;}${terminationFormStyles}@media print{@page{margin:0;}}</style></head><body>${buildTerminationFormBodyMarkup(previewData, terminationImages.logo, terminationImages.ribbon, terminationImages.footer, {})}</body></html>`;
+    openPrintWindow(html);
+  };
+
+  const [terminationDocxGenerating, setTerminationDocxGenerating] = useState(false);
+  const handleDownloadTerminationFormWord = async () => {
+    setTerminationDocxGenerating(true);
+    try {
+      const previewData = buildTerminationFormData(terminationRecipientSlot, "");
+      const blob = await buildTerminationFormDocxBlob(previewData, terminationImages.logo, terminationImages.ribbon, terminationImages.footer);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Termination Notice - ${previewData.employeeName || "Untitled"}.docx`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } finally {
+      setTerminationDocxGenerating(false);
+    }
+  };
+
+  const [sentTerminationForms, setSentTerminationForms] = useState<SignableDocument[]>([]);
+  const loadSentTerminationForms = async () => {
+    try {
+      setSentTerminationForms(await getSignableDocuments("termination_form"));
+    } catch (err) {
+      console.error("Failed to load sent termination forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "terminationForm") void loadSentTerminationForms();
+  }, [activeTab]);
+
+  const [terminationViewDoc, setTerminationViewDoc] = useState<SignableDocument | null>(null);
+  const handleViewTerminationForm = async (doc: SignableDocument) => {
+    if (!terminationImages.logo) {
+      const [logoDataUrl, ribbonDataUrl, footerDataUrl] = await Promise.all([
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-ribbon.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-footer.png")),
+      ]);
+      setTerminationImages({ logo: logoDataUrl, ribbon: ribbonDataUrl, footer: footerDataUrl });
+    }
+    setTerminationViewDoc(doc);
+  };
+
+  const handleDownloadTerminationFormPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const employeeName = (doc.formData as unknown as TerminationFormData).employeeName || "termination-form";
+    try {
+      const res = await fetch(doc.pdfUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `Termination Notice - ${employeeName}.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(doc.pdfUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleCopyTerminationFormLink = async (doc: SignableDocument) => {
+    try {
+      const path = doc.recipientId ? "sign-termination-form" : "sign-termination-external";
+      await navigator.clipboard.writeText(`${getAppUrl()}/${path}/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleSendTerminationForm = async () => {
+    if (!terminationForm.employeeName.trim() || !terminationRecipientId || !uid) return;
+    setTerminationSending(true);
+    setTerminationSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === terminationRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+
+      const formData = buildTerminationFormData(terminationRecipientSlot, recipient.name);
+      const pdfBlob = await captureHtmlToPdfBlob(buildTerminationFormBodyMarkup(formData, terminationImages.logo, terminationImages.ribbon, terminationImages.footer, {}), terminationFormStyles);
+      const pdfUrl = await uploadTerminationForm(companyId ?? "", terminationForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "termination_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientId: terminationRecipientId,
+        recipientSlot: terminationRecipientSlot,
+        pdfUrl,
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, terminationRecipientId);
+      const signLink = `${getAppUrl()}/sign-termination-form/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Notice of Termination for ${terminationForm.employeeName} needs your signature. Review and sign here: ${signLink}`,
+      });
+
+      void logActivity({ action: "termination_form_sent", targetType: "employee", targetId: terminationForm.employeeId, targetLabel: terminationForm.employeeName, details: { to: recipient.name, slot: terminationRecipientSlot } });
+
+      setTerminationSentLink({ link: signLink, recipientName: recipient.name });
+      await loadSentTerminationForms();
+    } catch (err) {
+      setTerminationSendError(err instanceof Error ? err.message : "Failed to send termination form.");
+    } finally {
+      setTerminationSending(false);
+    }
+  };
+
+  /** No AHS profile to tie this to, so no DM — the link itself (shown in the same post-send confirmation view) is the only way the recipient finds out. */
+  const handleGenerateExternalTerminationLink = async () => {
+    if (!terminationForm.employeeName.trim() || !terminationExternalName.trim()) return;
+    setTerminationSending(true);
+    setTerminationSendError(null);
+    try {
+      const formData = buildTerminationFormData(terminationRecipientSlot, terminationExternalName.trim());
+      const pdfBlob = await captureHtmlToPdfBlob(buildTerminationFormBodyMarkup(formData, terminationImages.logo, terminationImages.ribbon, terminationImages.footer, {}), terminationFormStyles);
+      const pdfUrl = await uploadTerminationForm(companyId ?? "", terminationForm.employeeName, pdfBlob);
+
+      const doc = await createSignableDocument({
+        documentType: "termination_form",
+        formData: formData as unknown as Record<string, any>,
+        recipientName: terminationExternalName.trim(),
+        recipientSlot: terminationRecipientSlot,
+        pdfUrl,
+      });
+
+      void logActivity({ action: "termination_form_sent", targetType: "employee", targetId: terminationForm.employeeId, targetLabel: terminationForm.employeeName, details: { to: terminationExternalName.trim(), slot: terminationRecipientSlot, external: true } });
+
+      setTerminationSentLink({ link: `${getAppUrl()}/sign-termination-external/${doc.id}`, recipientName: terminationExternalName.trim() });
+      await loadSentTerminationForms();
+    } catch (err) {
+      setTerminationSendError(err instanceof Error ? err.message : "Failed to generate link.");
+    } finally {
+      setTerminationSending(false);
+    }
+  };
+
+  const handleCopyTerminationSentLink = async () => {
+    if (!terminationSentLink) return;
+    try {
+      await navigator.clipboard.writeText(terminationSentLink.link);
+      setTerminationSentLinkCopied(true);
+      setTimeout(() => setTerminationSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCloseTerminationPreview = () => {
+    setTerminationPreviewOpen(false);
+    setTerminationSentLink(null);
+    setTerminationForm({ employeeId: "", employeeName: "", effectiveDate: todayStr, reason: "" });
+  };
+
+  // ── Sent Termination Forms tracking table actions ──
+  const [terminationActionBusyId, setTerminationActionBusyId] = useState<string | null>(null);
+  const [terminationActionError, setTerminationActionError] = useState<string | null>(null);
+
+  /** Document-only (per design — see this section's header comment): confirming just finalizes the record, it never writes back to the employee's Status/Termination Date. agentNoteId is always null here — this form has nothing to do with the warnings system. */
+  const handleConfirmTerminationForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Confirm this termination notice? This finalizes it as the official signed record.")) return;
+    setTerminationActionBusyId(doc.id);
+    setTerminationActionError(null);
+    try {
+      await confirmSignableDocument(doc.id, null);
+      await loadSentTerminationForms();
+      const data = doc.formData as unknown as TerminationFormData;
+      void logActivity({ action: "termination_form_confirmed", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setTerminationActionError(err instanceof Error ? err.message : "Failed to confirm termination form.");
+    } finally {
+      setTerminationActionBusyId(null);
+    }
+  };
+
+  const handleCancelTerminationForm = async (doc: SignableDocument) => {
+    const isRevert = doc.status === "confirmed";
+    const message = isRevert
+      ? "Revert this confirmed termination notice? It goes back to voided — it was never applied to the employee's profile in the first place, so there's nothing else to undo."
+      : "Cancel this termination notice? This voids it entirely.";
+    if (!window.confirm(message)) return;
+    setTerminationActionBusyId(doc.id);
+    setTerminationActionError(null);
+    try {
+      await cancelSignableDocument(doc.id);
+      await loadSentTerminationForms();
+      const data = doc.formData as unknown as TerminationFormData;
+      void logActivity({ action: isRevert ? "termination_form_reverted" : "termination_form_cancelled", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setTerminationActionError(err instanceof Error ? err.message : `Failed to ${isRevert ? "revert" : "cancel"} termination form.`);
+    } finally {
+      setTerminationActionBusyId(null);
+    }
+  };
+
+  const handleDeleteTerminationForm = async (doc: SignableDocument) => {
+    if (!window.confirm("Permanently delete this termination notice? This can't be undone.")) return;
+    setTerminationActionBusyId(doc.id);
+    setTerminationActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      setSentTerminationForms((prev) => prev.filter((d) => d.id !== doc.id));
+      const data = doc.formData as unknown as TerminationFormData;
+      void logActivity({ action: "termination_form_deleted", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setTerminationActionError(err instanceof Error ? err.message : "Failed to delete termination form.");
+    } finally {
+      setTerminationActionBusyId(null);
+    }
+  };
+
+  const [terminationReassignDialog, setTerminationReassignDialog] = useState<SignableDocument | null>(null);
+  const [terminationReassignRecipientId, setTerminationReassignRecipientId] = useState("");
+  const [terminationReassignRecipientSearch, setTerminationReassignRecipientSearch] = useState("");
+  const [terminationReassignRecipientDropdownOpen, setTerminationReassignRecipientDropdownOpen] = useState(false);
+  const [terminationReassignSlot, setTerminationReassignSlot] = useState<TerminationSignatureSlot>("manager");
+  const [terminationReassignMode, setTerminationReassignMode] = useState<"teammate" | "external">("teammate");
+  const [terminationReassignExternalName, setTerminationReassignExternalName] = useState("");
+  const [terminationReassignSentLink, setTerminationReassignSentLink] = useState<string | null>(null);
+  const [terminationReassignSentLinkCopied, setTerminationReassignSentLinkCopied] = useState(false);
+  const filteredTerminationReassignRecipients = useMemo(() => {
+    const q = terminationReassignRecipientSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => a.name.localeCompare(b.name));
+    return q ? sorted.filter((e) => e.name.toLowerCase().includes(q) || (ROLE_LABELS[normalizeRole(e.position)] ?? e.position).toLowerCase().includes(q)) : sorted;
+  }, [employees, terminationReassignRecipientSearch]);
+
+  const handleSendTerminationToNextRecipient = async () => {
+    if (!terminationReassignDialog || !uid) return;
+    const employeeName = (terminationReassignDialog.formData as unknown as TerminationFormData).employeeName || "the employee";
+
+    if (terminationReassignMode === "external") {
+      if (!terminationReassignExternalName.trim()) return;
+      setTerminationActionBusyId(terminationReassignDialog.id);
+      setTerminationActionError(null);
+      try {
+        await reassignSignableDocument(terminationReassignDialog.id, { recipientName: terminationReassignExternalName.trim() }, terminationReassignSlot);
+        void logActivity({ action: "termination_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: terminationReassignExternalName.trim(), slot: terminationReassignSlot, external: true } });
+        setTerminationReassignSentLink(`${getAppUrl()}/sign-termination-external/${terminationReassignDialog.id}`);
+        await loadSentTerminationForms();
+      } catch (err) {
+        setTerminationActionError(err instanceof Error ? err.message : "Failed to reassign.");
+      } finally {
+        setTerminationActionBusyId(null);
+      }
+      return;
+    }
+
+    if (!terminationReassignRecipientId) return;
+    setTerminationActionBusyId(terminationReassignDialog.id);
+    setTerminationActionError(null);
+    try {
+      const recipient = employees.find((e) => e.id === terminationReassignRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      await reassignSignableDocument(terminationReassignDialog.id, { recipientId: terminationReassignRecipientId, recipientName: recipient.name }, terminationReassignSlot);
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, terminationReassignRecipientId);
+      const signLink = `${getAppUrl()}/sign-termination-form/${terminationReassignDialog.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📄 Notice of Termination for ${employeeName} needs your signature. Review and sign here: ${signLink}`,
+      });
+
+      void logActivity({ action: "termination_form_reassigned", targetType: "employee", targetLabel: employeeName, details: { to: recipient.name, slot: terminationReassignSlot } });
+
+      setTerminationReassignDialog(null);
+      setTerminationReassignRecipientId("");
+      setTerminationReassignRecipientSearch("");
+      await loadSentTerminationForms();
+    } catch (err) {
+      setTerminationActionError(err instanceof Error ? err.message : "Failed to send to next recipient.");
+    } finally {
+      setTerminationActionBusyId(null);
+    }
+  };
+
+  const handleCopyTerminationReassignSentLink = async () => {
+    if (!terminationReassignSentLink) return;
+    try {
+      await navigator.clipboard.writeText(terminationReassignSentLink);
+      setTerminationReassignSentLinkCopied(true);
+      setTimeout(() => setTerminationReassignSentLinkCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleCloseTerminationReassignDialog = () => {
+    setTerminationReassignDialog(null);
+    setTerminationReassignRecipientId("");
+    setTerminationReassignRecipientSearch("");
+    setTerminationReassignMode("teammate");
+    setTerminationReassignExternalName("");
+    setTerminationReassignSentLink(null);
+  };
+
   /**
    * Plain CSV can't carry color — there's no such thing as a "colored cell"
    * in comma-separated text. Excel (and Sheets) will happily open an HTML
@@ -3510,13 +4760,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevStatus = employee?.status;
     try {
       const info = (await getProfileEmployeeInfo(id)) || {};
       await saveProfileEmployeeInfo(id, { ...info, employmentStatus: newStatus, employmentStatusDate: today });
       await updateCompanyUser(id, { isActive: newStatus === "active" });
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "terminated" || newStatus === "resigned" ? today : e.terminationDate } : e)));
-      const employeeName = employees.find((e) => e.id === id)?.name;
-      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employeeName, details: { status: newStatus } });
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update employment status.");
     }
@@ -3641,16 +4892,74 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Master List's "Start Date" column — writes employee_info.hireDate (same
   // record persistEmployeeStatus above reads/merges), not a profiles column.
   const handleUpdateStartDate = async (id: string, value: string) => {
-    const prevValue = employees.find((e) => e.id === id)?.startDate ?? "";
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.startDate ?? "";
     setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: value } : e)));
     try {
       const info = (await getProfileEmployeeInfo(id)) || {};
       await saveProfileEmployeeInfo(id, { ...info, hireDate: value });
+      void logActivity({ action: "employee_start_date_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
     } catch (err) {
       console.error("Failed to save start date:", err);
       setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: prevValue } : e)));
     }
   };
+
+  const handleUpdatePhone = async (id: string, value: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.phone ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, phone: value } : e)));
+    try {
+      await updateCompanyUser(id, { phoneNumber: value });
+      void logActivity({ action: "employee_phone_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
+    } catch (err) {
+      console.error("Failed to save phone number:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, phone: prevValue } : e)));
+    }
+  };
+
+  const handleUpdateBranch = async (id: string, value: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.branch ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, branch: value } : e)));
+    try {
+      await updateCompanyUser(id, { assignedBranch: value });
+      void logActivity({ action: "employee_branch_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
+    } catch (err) {
+      console.error("Failed to save branch:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, branch: prevValue } : e)));
+    }
+  };
+
+  // Single free-text field, same as the table/popup display already treats
+  // it — overwrites address1 and clears city/state so the join in
+  // loadEmployees's mapping (`[address1, city, state].filter(Boolean).join`)
+  // never shows a stale city/state stuck onto a freshly-typed full address.
+  const handleUpdateAddress = async (id: string, value: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.address ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, address: value } : e)));
+    try {
+      const info = (await getProfileEmployeeInfo(id)) || {};
+      await saveProfileEmployeeInfo(id, { ...info, address1: value, city: "", state: "" });
+      void logActivity({ action: "employee_address_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
+    } catch (err) {
+      console.error("Failed to save address:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, address: prevValue } : e)));
+    }
+  };
+
+  // Email is the real Firebase Auth login credential (not just contact
+  // info), so changing it goes through /api/admin-update-email first — same
+  // flow as the full employee detail page (see
+  // m.$module.$submodule.$userId.tsx's canEditEmail/handleSave), except HR
+  // is also allowed here (see that endpoint's ADMIN_ROLES) since this is
+  // specifically the Master List's quick-edit popup. The actual update call
+  // lives in handleSaveMasterListDetail below (part of the popup's single
+  // "Save Changes" batch, not a standalone per-field commit) — only once
+  // the Firebase Auth update succeeds does profiles.email itself get
+  // updated, so the two never end up desynced from a partial failure.
+  const canEditEmployeeEmail = [myRole, ...(myExtraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR"].includes(String(r || "").toUpperCase()));
 
   // ── Onboarding Documents: per-employee checklist, persisted on
   // employee_info (same flexible JSON field bank info/address/etc. already
@@ -3853,6 +5162,120 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // navigating away — full stats are still one click further via the
   // "View full profile" link inside it.
   const [masterListDetailEmployee, setMasterListDetailEmployee] = useState<Employee | null>(null);
+  // Recent-edit history shown at the bottom of that popup — every field
+  // edit made from either the popup or the table itself logs here (see
+  // handleUpdatePhone/handleUpdateAddress/handleUpdateBranch/
+  // handleUpdateEmployeeEmail/handleUpdateStartDate/persistEmployeeStatus),
+  // so this is a real audit trail, not a popup-only note.
+  const [masterListDetailActivity, setMasterListDetailActivity] = useState<HrActivityLogEntry[]>([]);
+  const [masterListDetailActivityLoading, setMasterListDetailActivityLoading] = useState(false);
+  // The popup edits a local draft and only persists on "Save Changes" — the
+  // table's own columns stay onBlur-instant (that's intentional, requested
+  // separately), but this popup previously auto-committed per field on blur
+  // too, which made it unclear whether an edit (e.g. the Email field) had
+  // actually gone through until the popup was reopened. An explicit save
+  // gives one clear success/failure result for everything changed at once.
+  interface MasterListDetailDraft {
+    status: EmploymentStatus;
+    startDate: string;
+    branch: string;
+    phone: string;
+    email: string;
+    address: string;
+  }
+  const [popupDraft, setPopupDraft] = useState<MasterListDetailDraft | null>(null);
+  const [popupSaving, setPopupSaving] = useState(false);
+  const [popupSaveError, setPopupSaveError] = useState<string | null>(null);
+  const [popupSaveSuccess, setPopupSaveSuccess] = useState(false);
+  const draftFromEmployee = (employee: Employee): MasterListDetailDraft => ({
+    status: employee.status,
+    startDate: employee.startDate || "",
+    branch: employee.branch || "",
+    phone: employee.phone || "",
+    email: employee.email,
+    address: employee.address || "",
+  });
+  const openMasterListDetail = async (employee: Employee) => {
+    setMasterListDetailEmployee(employee);
+    setPopupDraft(draftFromEmployee(employee));
+    setPopupSaveError(null);
+    setPopupSaveSuccess(false);
+    setMasterListDetailActivityLoading(true);
+    try {
+      setMasterListDetailActivity(await getActivityLog({ targetId: employee.id, limit: 15 }));
+    } catch (err) {
+      console.error("Failed to load employee activity log:", err);
+      setMasterListDetailActivity([]);
+    } finally {
+      setMasterListDetailActivityLoading(false);
+    }
+  };
+
+  const handleSaveMasterListDetail = async () => {
+    if (!masterListDetailEmployee || !popupDraft) return;
+    const id = masterListDetailEmployee.id;
+    const original = employees.find((e) => e.id === id) ?? masterListDetailEmployee;
+    setPopupSaving(true);
+    setPopupSaveError(null);
+    setPopupSaveSuccess(false);
+    try {
+      const patch: Partial<Employee> = {};
+
+      // Terminated/Resigned routes through the existing confirm dialog,
+      // which persists (and logs) on its own once confirmed — everything
+      // else here commits directly.
+      if (popupDraft.status !== original.status) {
+        handleUpdateEmployeeStatus(id, popupDraft.status);
+      }
+      if (popupDraft.startDate !== (original.startDate || "")) {
+        const info = (await getProfileEmployeeInfo(id)) || {};
+        await saveProfileEmployeeInfo(id, { ...info, hireDate: popupDraft.startDate });
+        void logActivity({ action: "employee_start_date_changed", targetType: "employee", targetId: id, targetLabel: original.name, details: { from: original.startDate, to: popupDraft.startDate } });
+        patch.startDate = popupDraft.startDate;
+      }
+      if (popupDraft.branch !== (original.branch || "")) {
+        await updateCompanyUser(id, { assignedBranch: popupDraft.branch });
+        void logActivity({ action: "employee_branch_changed", targetType: "employee", targetId: id, targetLabel: original.name, details: { from: original.branch, to: popupDraft.branch } });
+        patch.branch = popupDraft.branch;
+      }
+      if (popupDraft.phone !== (original.phone || "")) {
+        await updateCompanyUser(id, { phoneNumber: popupDraft.phone });
+        void logActivity({ action: "employee_phone_changed", targetType: "employee", targetId: id, targetLabel: original.name, details: { from: original.phone, to: popupDraft.phone } });
+        patch.phone = popupDraft.phone;
+      }
+      if (popupDraft.address !== (original.address || "")) {
+        const info = (await getProfileEmployeeInfo(id)) || {};
+        await saveProfileEmployeeInfo(id, { ...info, address1: popupDraft.address, city: "", state: "" });
+        void logActivity({ action: "employee_address_changed", targetType: "employee", targetId: id, targetLabel: original.name, details: { from: original.address, to: popupDraft.address } });
+        patch.address = popupDraft.address;
+      }
+      const trimmedEmail = popupDraft.email.trim();
+      if (canEditEmployeeEmail && trimmedEmail && trimmedEmail !== original.email) {
+        const idToken = await firebaseAuth?.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+        const res = await fetch("/api/admin-update-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, targetProfileId: id, newEmail: trimmedEmail }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "Failed to update login email");
+        await updateCompanyUser(id, { email: trimmedEmail });
+        void logActivity({ action: "employee_email_changed", targetType: "employee", targetId: id, targetLabel: original.name, details: { from: original.email, to: trimmedEmail } });
+        patch.email = trimmedEmail;
+      }
+
+      if (Object.keys(patch).length > 0) {
+        setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      }
+      setPopupSaveSuccess(true);
+      setMasterListDetailActivity(await getActivityLog({ targetId: id, limit: 15 }));
+    } catch (err) {
+      setPopupSaveError(err instanceof Error ? err.message : "Failed to save changes.");
+    } finally {
+      setPopupSaving(false);
+    }
+  };
 
   // Declared here (rather than down with the rest of the Leaders tab state)
   // so the department-resolution fallback just below can use it — the
@@ -4377,6 +5800,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
         { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
         { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
+        { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
+        { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
+        { key: "terminationForm", label: "Termination Notice Form", count: 0, icon: FileText },
         { key: "w8ben", label: "W-8 / W-9 / W-4 Forms", count: 0, icon: Landmark },
       ] as const,
     }] : []),
@@ -5267,15 +6693,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-2 py-1 font-medium whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => setMasterListDetailEmployee(employee)}
+                          onClick={() => void openMasterListDetail(employee)}
                           className="text-left text-blue-300/90 hover:text-blue-300 hover:underline transition cursor-pointer"
                           title={`View ${employee.name}'s details`}
                         >
                           {employee.name}
                         </button>
                       </td>
-                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{employee.phone || "—"}</td>
-                      <td className="px-2 py-1 text-muted-foreground max-w-[110px] truncate" title={employee.address || ""}>{employee.address || "—"}</td>
+                      <td className="px-2 py-1">
+                        <input
+                          type="text"
+                          defaultValue={employee.phone || ""}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v !== (employee.phone || "")) void handleUpdatePhone(employee.id, v);
+                          }}
+                          placeholder="—"
+                          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        <input
+                          type="text"
+                          defaultValue={employee.address || ""}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v !== (employee.address || "")) void handleUpdateAddress(employee.id, v);
+                          }}
+                          title={employee.address || ""}
+                          placeholder="—"
+                          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
+                        />
+                      </td>
                       <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-1">
@@ -7047,7 +8496,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
         {warnForm.employeeId && (
           <div className="px-4 pb-2">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Previous Warning(s) Issued (auto-filled)</p>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Previous Warning(s) Issued (auto-filled)</p>
+              <button
+                type="button"
+                onClick={() => { setAddPrevWarnOpen((v) => !v); setAddPrevWarnError(null); }}
+                className="text-[10px] font-semibold text-blue-400 hover:text-blue-300"
+              >
+                {addPrevWarnOpen ? "Cancel" : "+ Add previous warning"}
+              </button>
+            </div>
             {warnPreviousWarnings.length === 0 ? (
               <p className="text-xs text-muted-foreground">No prior approved warnings on record for this employee.</p>
             ) : (
@@ -7058,6 +8516,46 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   </li>
                 ))}
               </ul>
+            )}
+            {addPrevWarnOpen && (
+              <div className="mt-2 p-3 rounded-md border border-white/10 bg-white/[0.03] space-y-2">
+                <p className="text-[10px] text-muted-foreground">
+                  For a warning issued before this system existed (paper form, verbal, etc.) — logs it as an approved record on this employee's file with its real date.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-2 items-start">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date it happened</label>
+                    <input
+                      type="date"
+                      value={addPrevWarnDate}
+                      max={todayStr}
+                      onChange={(e) => setAddPrevWarnDate(e.target.value)}
+                      className="glass-input text-sm py-1.5 px-3 rounded-md"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
+                    <input
+                      type="text"
+                      value={addPrevWarnReason}
+                      onChange={(e) => setAddPrevWarnReason(e.target.value)}
+                      placeholder="e.g. Excessive tardiness — 3 unexcused lates in June"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md"
+                    />
+                  </div>
+                </div>
+                {addPrevWarnError && <p className="text-xs text-red-400">{addPrevWarnError}</p>}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleAddPreviousWarning}
+                    disabled={addPrevWarnSaving}
+                    className="btn text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {addPrevWarnSaving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -7136,7 +8634,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               <button
                                 type="button"
                                 disabled={busy}
-                                onClick={() => { setReassignDialog(doc); setReassignRecipientId(""); setReassignRecipientSearch(""); setReassignSlot(doc.recipientSlot); setReassignMode("teammate"); setReassignExternalName(""); setReassignSentLink(null); }}
+                                onClick={() => { setReassignDialog(doc); setReassignRecipientId(""); setReassignRecipientSearch(""); setReassignSlot(doc.recipientSlot as SignatureSlot); setReassignMode("teammate"); setReassignExternalName(""); setReassignSentLink(null); }}
                                 className="btn text-[10px] px-2 py-1 disabled:opacity-50"
                               >
                                 {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
@@ -7185,6 +8683,659 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             disabled={busy}
                             onClick={() => handleDeleteWarningForm(doc)}
                             title="Permanently delete this warning form"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {/* ── Generate Employee Promotion / Role Change Form ── */}
+      {activeTab === "promotionForm" && (
+      <>
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Employee Promotion / Role Change Form</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Fill in the fields below. Sending logs the form and routes it through however many signers it needs — it comes back to you automatically once fully signed.</p>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee Name</label>
+            <input
+              type="text"
+              value={promoForm.employeeName}
+              onChange={(e) => { updatePromoField("employeeName", e.target.value); updatePromoField("employeeId", ""); setPromoEmployeeDropdownOpen(true); }}
+              onFocus={() => setPromoEmployeeDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setPromoEmployeeDropdownOpen(false), 150)}
+              placeholder="Search an employee…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {promoEmployeeDropdownOpen && (
+              <div className="absolute z-10 top-full mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                {filteredPromoEmployeeOptions(promoForm.employeeName).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching employees.</p>
+                ) : (
+                  filteredPromoEmployeeOptions(promoForm.employeeName).map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => selectPromoEmployee(e)}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${promoForm.employeeId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Current Position</label>
+            <input type="text" value={promoForm.currentPosition} onChange={(e) => updatePromoField("currentPosition", e.target.value)} placeholder="Auto-fills from employee" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Department/Branch</label>
+            <input type="text" value={promoForm.department} onChange={(e) => updatePromoField("department", e.target.value)} placeholder="Auto-fills from employee" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date of Hire</label>
+            <input type="date" value={promoForm.dateOfHire} onChange={(e) => updatePromoField("dateOfHire", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+
+        <div className="px-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Role Change Details</label>
+            <div className="flex flex-col gap-1.5">
+              {([
+                ["promotion", "Promotion"],
+                ["positionTitleChange", "Position Title Change"],
+                ["departmentTransfer", "Department Transfer"],
+                ["technicianTierRaise", "Technician Tier Raise"],
+              ] as const).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => toggleRoleChangeType(key)} className="flex items-center gap-1.5 text-sm text-left">
+                  <span className="text-base">{promoForm.roleChangeType[key] ? "☑" : "☐"}</span> {label}
+                </button>
+              ))}
+              <button type="button" onClick={() => toggleRoleChangeType("other")} className="flex items-center gap-1.5 text-sm text-left">
+                <span className="text-base">{promoForm.roleChangeType.other ? "☑" : "☐"}</span> Other:
+              </button>
+              {promoForm.roleChangeType.other && (
+                <input
+                  type="text"
+                  value={promoForm.roleChangeType.otherText}
+                  onChange={(e) => setPromoForm((prev) => ({ ...prev, roleChangeType: { ...prev.roleChangeType, otherText: e.target.value } }))}
+                  placeholder="Specify…"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                />
+              )}
+            </div>
+            <div className="mt-3 flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">New Position Title</label>
+              <input type="text" value={promoForm.newPositionTitle} onChange={(e) => updatePromoField("newPositionTitle", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="mt-2 flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">New Department/Branch</label>
+              <input type="text" value={promoForm.newDepartment} onChange={(e) => updatePromoField("newDepartment", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="mt-2 flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
+              <input type="date" value={promoForm.effectiveDate} onChange={(e) => updatePromoField("effectiveDate", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Performance &amp; Qualification Summary (For Direct Manager)</label>
+            <div className="flex flex-col gap-1.5">
+              {([
+                ["meetsExpectations", "Meets performance expectations"],
+                ["exceedsExpectations", "Exceeds performance expectations"],
+                ["leadershipDemonstrated", "Leadership capability demonstrated"],
+                ["trainingCompleted", "Required training completed"],
+              ] as const).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => togglePerformance(key)} className="flex items-center gap-1.5 text-sm text-left">
+                  <span className="text-base">{promoForm.performance[key] ? "☑" : "☐"}</span> {label}
+                </button>
+              ))}
+              <button type="button" onClick={() => togglePerformance("other")} className="flex items-center gap-1.5 text-sm text-left">
+                <span className="text-base">{promoForm.performance.other ? "☑" : "☐"}</span> Other justification:
+              </button>
+              {promoForm.performance.other && (
+                <input
+                  type="text"
+                  value={promoForm.performance.otherText}
+                  onChange={(e) => setPromoForm((prev) => ({ ...prev, performance: { ...prev.performance, otherText: e.target.value } }))}
+                  placeholder="Specify…"
+                  className="glass-input text-sm py-1.5 px-3 rounded-md"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4 py-4 border-t border-white/10 flex justify-end mt-4">
+          <button
+            onClick={handleOpenPromoPreview}
+            disabled={promoGenerating || !promoForm.employeeName.trim()}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" /> {promoGenerating ? "Loading…" : "Preview & Send"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Sent Promotion Forms tracking ── */}
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Promotion Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's profile automatically.</p>
+        </div>
+        {promoActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{promoActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentPromotionForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No promotion forms sent yet.</td></tr>
+              ) : (
+                sentPromotionForms.map((doc) => {
+                  const data = doc.formData as unknown as PromotionFormData;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = promoActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        <button type="button" onClick={() => handleViewPromoForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                          {data.employeeName}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "signed" ? "bg-blue-500/20 text-blue-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyPromotionFormLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {(doc.status === "pending_signature" || doc.status === "signed") && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => { setPromoReassignDialog(doc); setPromoReassignRecipientId(""); setPromoReassignRecipientSearch(""); setPromoReassignSlot(doc.recipientSlot as PromotionSignatureSlot); setPromoReassignMode("teammate"); setPromoReassignExternalName(""); setPromoReassignSentLink(null); }}
+                                className="btn text-[10px] px-2 py-1 disabled:opacity-50"
+                              >
+                                {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
+                              </button>
+                              {doc.status === "signed" && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleConfirmPromotionForm(doc)}
+                                  className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                                >
+                                  Confirm
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleCancelPromotionForm(doc)}
+                                className="btn text-[10px] px-2 py-1 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleCancelPromotionForm(doc)}
+                              className="btn text-[10px] px-2 py-1 text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-50"
+                            >
+                              Revert
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadPromoFormPdf(doc)}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeletePromotionForm(doc)}
+                            title="Permanently delete this promotion form"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {/* ── Generate 4th Warning — Manager's Action Plan Form ── */}
+      {activeTab === "actionPlanForm" && (
+      <>
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Manager's Action Plan Form</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Fill in the employee's identifying details and pick the Manager to route it to. The Manager fills in the actual action plan themselves when they open it to sign — it comes back to you automatically once fully signed.</p>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee Name</label>
+            <input
+              type="text"
+              value={actionPlanForm.employeeName}
+              onChange={(e) => { updateActionPlanField("employeeName", e.target.value); updateActionPlanField("employeeId", ""); setActionPlanEmployeeDropdownOpen(true); }}
+              onFocus={() => setActionPlanEmployeeDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setActionPlanEmployeeDropdownOpen(false), 150)}
+              placeholder="Search an employee…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {actionPlanEmployeeDropdownOpen && (
+              <div className="absolute z-10 top-full mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                {filteredActionPlanEmployeeOptions(actionPlanForm.employeeName).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching employees.</p>
+                ) : (
+                  filteredActionPlanEmployeeOptions(actionPlanForm.employeeName).map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => selectActionPlanEmployee(e)}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${actionPlanForm.employeeId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
+            <input type="text" value={actionPlanForm.branch} onChange={(e) => updateActionPlanField("branch", e.target.value)} placeholder="Auto-fills from employee" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Position</label>
+            <input type="text" value={actionPlanForm.position} onChange={(e) => updateActionPlanField("position", e.target.value)} placeholder="Auto-fills from employee" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date</label>
+            <input type="date" value={actionPlanForm.date} onChange={(e) => updateActionPlanField("date", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+
+        <div className="px-4 py-4 border-t border-white/10 flex justify-end mt-4">
+          <button
+            onClick={handleOpenActionPlanPreview}
+            disabled={actionPlanGenerating || !actionPlanForm.employeeName.trim()}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" /> {actionPlanGenerating ? "Loading…" : "Preview & Send"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Sent Action Plan Forms tracking ── */}
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Action Plan Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's warning record automatically.</p>
+        </div>
+        {actionPlanActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionPlanActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentActionPlanForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No action plan forms sent yet.</td></tr>
+              ) : (
+                sentActionPlanForms.map((doc) => {
+                  const data = doc.formData as unknown as ActionPlanFormData;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = actionPlanActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        <button type="button" onClick={() => handleViewActionPlanForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                          {data.employeeName}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "signed" ? "bg-blue-500/20 text-blue-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyActionPlanFormLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {(doc.status === "pending_signature" || doc.status === "signed") && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => { setActionPlanReassignDialog(doc); setActionPlanReassignRecipientId(""); setActionPlanReassignRecipientSearch(""); setActionPlanReassignSlot(doc.recipientSlot as ActionPlanSignatureSlot); setActionPlanReassignMode("teammate"); setActionPlanReassignExternalName(""); setActionPlanReassignSentLink(null); }}
+                                className="btn text-[10px] px-2 py-1 disabled:opacity-50"
+                              >
+                                {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
+                              </button>
+                              {doc.status === "signed" && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleConfirmActionPlanForm(doc)}
+                                  className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                                >
+                                  Confirm
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleCancelActionPlanForm(doc)}
+                                className="btn text-[10px] px-2 py-1 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleCancelActionPlanForm(doc)}
+                              className="btn text-[10px] px-2 py-1 text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-50"
+                            >
+                              Revert
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadActionPlanFormPdf(doc)}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteActionPlanForm(doc)}
+                            title="Permanently delete this action plan form"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {/* ── Generate Notice of Termination Form ── */}
+      {activeTab === "terminationForm" && (
+      <>
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Generate Notice of Termination</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Fill in the fields below. Sending logs the notice and routes it through however many signers it needs to acknowledge receipt — it comes back to you automatically once fully signed.</p>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee Name</label>
+            <input
+              type="text"
+              value={terminationForm.employeeName}
+              onChange={(e) => { updateTerminationField("employeeName", e.target.value); updateTerminationField("employeeId", ""); setTerminationEmployeeDropdownOpen(true); }}
+              onFocus={() => setTerminationEmployeeDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setTerminationEmployeeDropdownOpen(false), 150)}
+              placeholder="Search an employee…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {terminationEmployeeDropdownOpen && (
+              <div className="absolute z-10 top-full mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                {filteredTerminationEmployeeOptions(terminationForm.employeeName).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching employees.</p>
+                ) : (
+                  filteredTerminationEmployeeOptions(terminationForm.employeeName).map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => selectTerminationEmployee(e)}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${terminationForm.employeeId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
+            <input type="date" value={terminationForm.effectiveDate} onChange={(e) => updateTerminationField("effectiveDate", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+          </div>
+        </div>
+
+        <div className="px-4 pb-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reason for Termination</label>
+            <textarea value={terminationForm.reason} onChange={(e) => updateTerminationField("reason", e.target.value)} rows={4} placeholder="Detailed reason…" className="glass-input text-sm py-1.5 px-3 rounded-md resize-y" />
+          </div>
+        </div>
+
+        <div className="px-4 py-4 border-t border-white/10 flex justify-end">
+          <button
+            onClick={handleOpenTerminationPreview}
+            disabled={terminationGenerating || !terminationForm.employeeName.trim()}
+            className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" /> {terminationGenerating ? "Loading…" : "Preview & Send"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Sent Termination Forms tracking ── */}
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Termination Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track signature status. Confirming finalizes the record as signed; cancelling voids it. Document-only — nothing here changes the employee's Status automatically.</p>
+        </div>
+        {terminationActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Employee</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Issued By</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Sent</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sentTerminationForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No termination forms sent yet.</td></tr>
+              ) : (
+                sentTerminationForms.map((doc) => {
+                  const data = doc.formData as unknown as TerminationFormData;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = terminationActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        <button type="button" onClick={() => handleViewTerminationForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                          {data.employeeName}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "signed" ? "bg-blue-500/20 text-blue-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyTerminationFormLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {(doc.status === "pending_signature" || doc.status === "signed") && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => { setTerminationReassignDialog(doc); setTerminationReassignRecipientId(""); setTerminationReassignRecipientSearch(""); setTerminationReassignSlot(doc.recipientSlot as TerminationSignatureSlot); setTerminationReassignMode("teammate"); setTerminationReassignExternalName(""); setTerminationReassignSentLink(null); }}
+                                className="btn text-[10px] px-2 py-1 disabled:opacity-50"
+                              >
+                                {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
+                              </button>
+                              {doc.status === "signed" && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleConfirmTerminationForm(doc)}
+                                  className="btn text-[10px] px-2 py-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                                >
+                                  Confirm
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleCancelTerminationForm(doc)}
+                                className="btn text-[10px] px-2 py-1 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleCancelTerminationForm(doc)}
+                              className="btn text-[10px] px-2 py-1 text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-50"
+                            >
+                              Revert
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadTerminationFormPdf(doc)}
+                              className="text-blue-300 hover:text-blue-200 underline text-xs"
+                            >
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeleteTerminationForm(doc)}
+                            title="Permanently delete this termination form"
                             className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -8149,6 +10300,880 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+      {/* Reassign the recipient for a Promotion Form — either redirecting a not-yet-signed document, or forwarding an already-signed one to the next stage in the chain. */}
+      {promoReassignDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            {promoReassignSentLink ? (
+              <>
+                <h3 className="text-lg font-bold mb-2">Link Generated</h3>
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5 mb-3">
+                  <p className="text-sm font-semibold text-green-300">Reassigned to {promoReassignExternalName}</p>
+                  <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy this link and send it any way you like.</p>
+                </div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                <div className="flex gap-2 mt-1 mb-4">
+                  <input type="text" readOnly value={promoReassignSentLink} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyPromoReassignSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{promoReassignSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleClosePromoReassignDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-2">{promoReassignDialog.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {promoReassignDialog.status === "signed" ? "Forward" : "Redirect"} <span className="font-semibold text-white">{(promoReassignDialog.formData as unknown as PromotionFormData).employeeName}</span>'s promotion form to another signer.
+                </p>
+
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit mb-3">
+                  <button type="button" onClick={() => setPromoReassignMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${promoReassignMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setPromoReassignMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${promoReassignMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {promoReassignMode === "teammate" ? (
+                  <>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1 mb-3">
+                      <input
+                        type="text"
+                        value={promoReassignRecipientSearch}
+                        onChange={(e) => { setPromoReassignRecipientSearch(e.target.value); setPromoReassignRecipientId(""); setPromoReassignRecipientDropdownOpen(true); }}
+                        onFocus={() => setPromoReassignRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setPromoReassignRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {promoReassignRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredPromoReassignRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredPromoReassignRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setPromoReassignRecipientId(e.id);
+                                  setPromoReassignRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setPromoReassignRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${promoReassignRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mb-3">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={promoReassignExternalName}
+                      onChange={(e) => setPromoReassignExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                  </div>
+                )}
+
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                <select value={promoReassignSlot} onChange={(e) => setPromoReassignSlot(e.target.value as PromotionSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-4">
+                  <option value="manager">Direct Manager</option>
+                  <option value="senior_manager">Senior Manager</option>
+                  <option value="hr_staff">HR</option>
+                  <option value="executive">Executive</option>
+                  <option value="employee">Employee</option>
+                </select>
+                {promoActionError && (
+                  <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{promoActionError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={handleClosePromoReassignDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                  <button
+                    onClick={handleSendPromoToNextRecipient}
+                    disabled={(promoReassignMode === "teammate" ? !promoReassignRecipientId : !promoReassignExternalName.trim()) || promoActionBusyId === promoReassignDialog.id}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {promoActionBusyId === promoReassignDialog.id ? (promoReassignMode === "teammate" ? "Sending…" : "Generating…") : (promoReassignMode === "teammate" ? "Send" : "Generate Link")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sent Promotion Forms — view-only preview of the form as it stands right now (whatever signatures exist so far) */}
+      {promoViewDoc && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-6xl h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <div>
+                <h3 className="text-base font-bold">{(promoViewDoc.formData as unknown as PromotionFormData).employeeName} — Promotion / Role Change Form</h3>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Issued by {promoViewDoc.createdByName ?? "—"}</p>
+              </div>
+              <button onClick={() => setPromoViewDoc(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-white/5 flex justify-center">
+              <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
+                <style dangerouslySetInnerHTML={{ __html: promotionFormStyles }} />
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: buildPromotionFormBodyMarkup(promoViewDoc.formData as unknown as PromotionFormData, promoLogoDataUrl, promoViewDoc.signatures),
+                  }}
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
+              {promoViewDoc.pdfUrl && (
+                <a href={promoViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+              )}
+              <button onClick={() => setPromoViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employee Promotion / Role Change Form — preview, pick who signs which line, send for signature */}
+      {promoPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Employee Promotion / Role Change Form — Preview</h3>
+              <button onClick={handleClosePromoPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <div className="lg:col-span-2 overflow-x-auto bg-white/5 rounded-md p-4 flex justify-center">
+                <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
+                  <style dangerouslySetInnerHTML={{ __html: promotionFormStyles }} />
+                  <div
+                    dangerouslySetInnerHTML={{
+                      __html: buildPromotionFormBodyMarkup(
+                        buildPromoFormData(promoRecipientSlot, promoSendMode === "external" ? promoExternalName : employees.find((e) => e.id === promoRecipientId)?.name || ""),
+                        promoLogoDataUrl,
+                        {}
+                      ),
+                    }}
+                  />
+                </div>
+              </div>
+
+              {promoSentLink ? (
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-sm font-semibold text-green-300">Sent to {promoSentLink.recipientName}</p>
+                    <p className="text-xs text-muted-foreground mt-1">They've also been notified in AHS Messages. Copy the link below to send it any other way too — email, Slack, text — so they can open it and fill in their signature.</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                    <div className="flex gap-2 mt-1">
+                      <input type="text" readOnly value={promoSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                      <button onClick={handleCopyPromoSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{promoSentLinkCopied ? "Copied!" : "Copy"}</button>
+                    </div>
+                  </div>
+                  <button onClick={handleClosePromoPreview} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-auto">Done</button>
+                </div>
+              ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+                  <button type="button" onClick={() => setPromoSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${promoSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setPromoSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${promoSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {promoSendMode === "teammate" ? (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={promoRecipientSearch}
+                        onChange={(e) => {
+                          setPromoRecipientSearch(e.target.value);
+                          setPromoRecipientId("");
+                          setPromoRecipientDropdownOpen(true);
+                        }}
+                        onFocus={() => setPromoRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setPromoRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {promoRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredPromoRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredPromoRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setPromoRecipientId(e.id);
+                                  setPromoRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setPromoRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${promoRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={promoExternalName}
+                      onChange={(e) => setPromoExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and sign without logging in.</p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                  <select value={promoRecipientSlot} onChange={(e) => setPromoRecipientSlot(e.target.value as PromotionSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1">
+                    <option value="manager">Direct Manager</option>
+                    <option value="senior_manager">Senior Manager</option>
+                    <option value="hr_staff">HR</option>
+                    <option value="executive">Executive</option>
+                    <option value="employee">Employee</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-2 mt-auto">
+                  {promoSendError && (
+                    <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{promoSendError}</p>
+                  )}
+                  {promoSendMode === "teammate" ? (
+                    <button
+                      onClick={handleSendPromotionForm}
+                      disabled={!promoRecipientId || promoSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {promoSending ? "Sending…" : "Send for Signature"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleGenerateExternalPromotionLink}
+                      disabled={!promoExternalName.trim() || promoSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {promoSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  )}
+                  <button onClick={handleDownloadPromoForm} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Download PDF instead
+                  </button>
+                  <button onClick={handleDownloadPromoFormWord} disabled={promoDocxGenerating} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5 disabled:opacity-50">
+                    <Download className="h-3.5 w-3.5" /> {promoDocxGenerating ? "Generating…" : "Download as Word Document"}
+                  </button>
+                  <button onClick={handleClosePromoPreview} className="btn text-sm px-4 py-2">Cancel</button>
+                </div>
+              </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reassign the recipient for an Action Plan Form — either redirecting a not-yet-signed document, or forwarding an already-signed one to the next stage in the chain. */}
+      {actionPlanReassignDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            {actionPlanReassignSentLink ? (
+              <>
+                <h3 className="text-lg font-bold mb-2">Link Generated</h3>
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5 mb-3">
+                  <p className="text-sm font-semibold text-green-300">Reassigned to {actionPlanReassignExternalName}</p>
+                  <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy this link and send it any way you like.</p>
+                </div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                <div className="flex gap-2 mt-1 mb-4">
+                  <input type="text" readOnly value={actionPlanReassignSentLink} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyActionPlanReassignSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{actionPlanReassignSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleCloseActionPlanReassignDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-2">{actionPlanReassignDialog.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {actionPlanReassignDialog.status === "signed" ? "Forward" : "Redirect"} <span className="font-semibold text-white">{(actionPlanReassignDialog.formData as unknown as ActionPlanFormData).employeeName}</span>'s action plan form to another signer.
+                </p>
+
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit mb-3">
+                  <button type="button" onClick={() => setActionPlanReassignMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${actionPlanReassignMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setActionPlanReassignMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${actionPlanReassignMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {actionPlanReassignMode === "teammate" ? (
+                  <>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1 mb-3">
+                      <input
+                        type="text"
+                        value={actionPlanReassignRecipientSearch}
+                        onChange={(e) => { setActionPlanReassignRecipientSearch(e.target.value); setActionPlanReassignRecipientId(""); setActionPlanReassignRecipientDropdownOpen(true); }}
+                        onFocus={() => setActionPlanReassignRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setActionPlanReassignRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {actionPlanReassignRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredActionPlanReassignRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredActionPlanReassignRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setActionPlanReassignRecipientId(e.id);
+                                  setActionPlanReassignRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setActionPlanReassignRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${actionPlanReassignRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mb-3">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={actionPlanReassignExternalName}
+                      onChange={(e) => setActionPlanReassignExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                  </div>
+                )}
+
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                <select value={actionPlanReassignSlot} onChange={(e) => setActionPlanReassignSlot(e.target.value as ActionPlanSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-4">
+                  <option value="manager">Manager</option>
+                  <option value="senior_manager">Senior Manager</option>
+                  <option value="hr_staff">HR/Management</option>
+                </select>
+                {actionPlanActionError && (
+                  <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{actionPlanActionError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={handleCloseActionPlanReassignDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                  <button
+                    onClick={handleSendActionPlanToNextRecipient}
+                    disabled={(actionPlanReassignMode === "teammate" ? !actionPlanReassignRecipientId : !actionPlanReassignExternalName.trim()) || actionPlanActionBusyId === actionPlanReassignDialog.id}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {actionPlanActionBusyId === actionPlanReassignDialog.id ? (actionPlanReassignMode === "teammate" ? "Sending…" : "Generating…") : (actionPlanReassignMode === "teammate" ? "Send" : "Generate Link")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sent Action Plan Forms — view-only preview of the form as it stands right now (whatever content/signatures exist so far) */}
+      {actionPlanViewDoc && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-6xl h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <div>
+                <h3 className="text-base font-bold">{(actionPlanViewDoc.formData as unknown as ActionPlanFormData).employeeName} — Manager's Action Plan Form</h3>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Issued by {actionPlanViewDoc.createdByName ?? "—"}</p>
+              </div>
+              <button onClick={() => setActionPlanViewDoc(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-white/5 flex justify-center">
+              <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
+                <style dangerouslySetInnerHTML={{ __html: actionPlanFormStyles }} />
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: buildActionPlanFormBodyMarkup(actionPlanViewDoc.formData as unknown as ActionPlanFormData, actionPlanImages.logo, actionPlanImages.ribbon, actionPlanImages.footer, actionPlanViewDoc.signatures),
+                  }}
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
+              {actionPlanViewDoc.pdfUrl && (
+                <a href={actionPlanViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+              )}
+              <button onClick={() => setActionPlanViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manager's Action Plan Form — preview, pick who signs which line, send for signature */}
+      {actionPlanPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Manager's Action Plan Form — Preview</h3>
+              <button onClick={handleCloseActionPlanPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <div className="lg:col-span-2 overflow-x-auto bg-white/5 rounded-md p-4 flex justify-center">
+                <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
+                  <style dangerouslySetInnerHTML={{ __html: actionPlanFormStyles }} />
+                  <div
+                    dangerouslySetInnerHTML={{
+                      __html: buildActionPlanFormBodyMarkup(
+                        buildActionPlanFormData(actionPlanRecipientSlot, actionPlanSendMode === "external" ? actionPlanExternalName : employees.find((e) => e.id === actionPlanRecipientId)?.name || ""),
+                        actionPlanImages.logo,
+                        actionPlanImages.ribbon,
+                        actionPlanImages.footer,
+                        {}
+                      ),
+                    }}
+                  />
+                </div>
+              </div>
+
+              {actionPlanSentLink ? (
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-sm font-semibold text-green-300">Sent to {actionPlanSentLink.recipientName}</p>
+                    <p className="text-xs text-muted-foreground mt-1">They've also been notified in AHS Messages. Copy the link below to send it any other way too — email, Slack, text — so they can open it, fill in the plan, and sign.</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                    <div className="flex gap-2 mt-1">
+                      <input type="text" readOnly value={actionPlanSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                      <button onClick={handleCopyActionPlanSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{actionPlanSentLinkCopied ? "Copied!" : "Copy"}</button>
+                    </div>
+                  </div>
+                  <button onClick={handleCloseActionPlanPreview} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-auto">Done</button>
+                </div>
+              ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+                  <button type="button" onClick={() => setActionPlanSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${actionPlanSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setActionPlanSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${actionPlanSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {actionPlanSendMode === "teammate" ? (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={actionPlanRecipientSearch}
+                        onChange={(e) => {
+                          setActionPlanRecipientSearch(e.target.value);
+                          setActionPlanRecipientId("");
+                          setActionPlanRecipientDropdownOpen(true);
+                        }}
+                        onFocus={() => setActionPlanRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setActionPlanRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {actionPlanRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredActionPlanRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredActionPlanRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setActionPlanRecipientId(e.id);
+                                  setActionPlanRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setActionPlanRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${actionPlanRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={actionPlanExternalName}
+                      onChange={(e) => setActionPlanExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it, fill in the plan, and sign without logging in.</p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                  <select value={actionPlanRecipientSlot} onChange={(e) => setActionPlanRecipientSlot(e.target.value as ActionPlanSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1">
+                    <option value="manager">Manager</option>
+                    <option value="senior_manager">Senior Manager</option>
+                    <option value="hr_staff">HR/Management</option>
+                  </select>
+                  {actionPlanRecipientSlot === "manager" && (
+                    <p className="text-[10px] text-muted-foreground mt-1">The Manager slot is the one who fills in the actual coaching/monitoring/consequences plan — send this one first.</p>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-2 mt-auto">
+                  {actionPlanSendError && (
+                    <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionPlanSendError}</p>
+                  )}
+                  {actionPlanSendMode === "teammate" ? (
+                    <button
+                      onClick={handleSendActionPlanForm}
+                      disabled={!actionPlanRecipientId || actionPlanSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {actionPlanSending ? "Sending…" : "Send for Signature"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleGenerateExternalActionPlanLink}
+                      disabled={!actionPlanExternalName.trim() || actionPlanSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {actionPlanSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  )}
+                  <button onClick={handleDownloadActionPlanForm} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Download PDF instead
+                  </button>
+                  <button onClick={handleDownloadActionPlanFormWord} disabled={actionPlanDocxGenerating} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5 disabled:opacity-50">
+                    <Download className="h-3.5 w-3.5" /> {actionPlanDocxGenerating ? "Generating…" : "Download as Word Document"}
+                  </button>
+                  <button onClick={handleCloseActionPlanPreview} className="btn text-sm px-4 py-2">Cancel</button>
+                </div>
+              </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reassign the recipient for a Termination Form — either redirecting a not-yet-signed document, or forwarding an already-signed one to the next stage in the chain. */}
+      {terminationReassignDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            {terminationReassignSentLink ? (
+              <>
+                <h3 className="text-lg font-bold mb-2">Link Generated</h3>
+                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5 mb-3">
+                  <p className="text-sm font-semibold text-green-300">Reassigned to {terminationReassignExternalName}</p>
+                  <p className="text-xs text-muted-foreground mt-1">No AHS account needed — copy this link and send it any way you like.</p>
+                </div>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                <div className="flex gap-2 mt-1 mb-4">
+                  <input type="text" readOnly value={terminationReassignSentLink} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                  <button onClick={handleCopyTerminationReassignSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{terminationReassignSentLinkCopied ? "Copied!" : "Copy"}</button>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleCloseTerminationReassignDialog} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white">Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-2">{terminationReassignDialog.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {terminationReassignDialog.status === "signed" ? "Forward" : "Redirect"} <span className="font-semibold text-white">{(terminationReassignDialog.formData as unknown as TerminationFormData).employeeName}</span>'s termination notice to another signer.
+                </p>
+
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit mb-3">
+                  <button type="button" onClick={() => setTerminationReassignMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${terminationReassignMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setTerminationReassignMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${terminationReassignMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {terminationReassignMode === "teammate" ? (
+                  <>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1 mb-3">
+                      <input
+                        type="text"
+                        value={terminationReassignRecipientSearch}
+                        onChange={(e) => { setTerminationReassignRecipientSearch(e.target.value); setTerminationReassignRecipientId(""); setTerminationReassignRecipientDropdownOpen(true); }}
+                        onFocus={() => setTerminationReassignRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setTerminationReassignRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {terminationReassignRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredTerminationReassignRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredTerminationReassignRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setTerminationReassignRecipientId(e.id);
+                                  setTerminationReassignRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setTerminationReassignRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${terminationReassignRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mb-3">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={terminationReassignExternalName}
+                      onChange={(e) => setTerminationReassignExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                  </div>
+                )}
+
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                <select value={terminationReassignSlot} onChange={(e) => setTerminationReassignSlot(e.target.value as TerminationSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1 mb-4">
+                  <option value="employee">Employee</option>
+                  <option value="manager">Manager</option>
+                  <option value="senior_manager">Senior Manager</option>
+                  <option value="hr_staff">HR Staff</option>
+                </select>
+                {terminationActionError && (
+                  <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{terminationActionError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={handleCloseTerminationReassignDialog} className="btn text-sm px-4 py-2">Cancel</button>
+                  <button
+                    onClick={handleSendTerminationToNextRecipient}
+                    disabled={(terminationReassignMode === "teammate" ? !terminationReassignRecipientId : !terminationReassignExternalName.trim()) || terminationActionBusyId === terminationReassignDialog.id}
+                    className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  >
+                    {terminationActionBusyId === terminationReassignDialog.id ? (terminationReassignMode === "teammate" ? "Sending…" : "Generating…") : (terminationReassignMode === "teammate" ? "Send" : "Generate Link")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sent Termination Forms — view-only preview of the form as it stands right now (whatever signatures exist so far) */}
+      {terminationViewDoc && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-6xl h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <div>
+                <h3 className="text-base font-bold">{(terminationViewDoc.formData as unknown as TerminationFormData).employeeName} — Notice of Termination</h3>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Issued by {terminationViewDoc.createdByName ?? "—"}</p>
+              </div>
+              <button onClick={() => setTerminationViewDoc(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-white/5 flex justify-center">
+              <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
+                <style dangerouslySetInnerHTML={{ __html: terminationFormStyles }} />
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: buildTerminationFormBodyMarkup(terminationViewDoc.formData as unknown as TerminationFormData, terminationImages.logo, terminationImages.ribbon, terminationImages.footer, terminationViewDoc.signatures),
+                  }}
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
+              {terminationViewDoc.pdfUrl && (
+                <a href={terminationViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
+              )}
+              <button onClick={() => setTerminationViewDoc(null)} className="btn text-sm px-4 py-2">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notice of Termination — preview, pick who signs which line, send for signature */}
+      {terminationPreviewOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
+              <h3 className="text-base font-bold">Notice of Termination — Preview</h3>
+              <button onClick={handleCloseTerminationPreview} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <div className="lg:col-span-2 overflow-x-auto bg-white/5 rounded-md p-4 flex justify-center">
+                <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
+                  <style dangerouslySetInnerHTML={{ __html: terminationFormStyles }} />
+                  <div
+                    dangerouslySetInnerHTML={{
+                      __html: buildTerminationFormBodyMarkup(
+                        buildTerminationFormData(terminationRecipientSlot, terminationSendMode === "external" ? terminationExternalName : employees.find((e) => e.id === terminationRecipientId)?.name || ""),
+                        terminationImages.logo,
+                        terminationImages.ribbon,
+                        terminationImages.footer,
+                        {}
+                      ),
+                    }}
+                  />
+                </div>
+              </div>
+
+              {terminationSentLink ? (
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                    <p className="text-sm font-semibold text-green-300">Sent to {terminationSentLink.recipientName}</p>
+                    <p className="text-xs text-muted-foreground mt-1">They've also been notified in AHS Messages. Copy the link below to send it any other way too — email, Slack, text — so they can open it and sign.</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Sign link</label>
+                    <div className="flex gap-2 mt-1">
+                      <input type="text" readOnly value={terminationSentLink.link} onFocus={(e) => e.target.select()} className="glass-input text-xs py-1.5 px-3 rounded-md flex-1" />
+                      <button onClick={handleCopyTerminationSentLink} className="btn text-xs px-3 py-1.5 shrink-0">{terminationSentLinkCopied ? "Copied!" : "Copy"}</button>
+                    </div>
+                  </div>
+                  <button onClick={handleCloseTerminationPreview} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-auto">Done</button>
+                </div>
+              ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex rounded-md overflow-hidden border border-white/15 h-7.5 w-fit">
+                  <button type="button" onClick={() => setTerminationSendMode("teammate")} className={`px-3 text-xs font-medium transition-colors ${terminationSendMode === "teammate" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>AHS Teammate</button>
+                  <button type="button" onClick={() => setTerminationSendMode("external")} className={`px-3 text-xs font-medium transition-colors border-l border-white/15 ${terminationSendMode === "external" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"}`}>External Link</button>
+                </div>
+
+                {terminationSendMode === "teammate" ? (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient</label>
+                    <div className="relative mt-1">
+                      <input
+                        type="text"
+                        value={terminationRecipientSearch}
+                        onChange={(e) => {
+                          setTerminationRecipientSearch(e.target.value);
+                          setTerminationRecipientId("");
+                          setTerminationRecipientDropdownOpen(true);
+                        }}
+                        onFocus={() => setTerminationRecipientDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setTerminationRecipientDropdownOpen(false), 150)}
+                        placeholder="Search a teammate…"
+                        className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
+                      />
+                      {terminationRecipientDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-white/15 bg-slate-800 shadow-lg">
+                          {filteredTerminationRecipients.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                          ) : (
+                            filteredTerminationRecipients.map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  setTerminationRecipientId(e.id);
+                                  setTerminationRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                                  setTerminationRecipientDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${terminationRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                              >
+                                {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient name</label>
+                    <input
+                      type="text"
+                      value={terminationExternalName}
+                      onChange={(e) => setTerminationExternalName(e.target.value)}
+                      placeholder="Type their name…"
+                      className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">No AHS account needed — you'll get a link to send them any way you like (email, Slack, text), and they can open it and sign without logging in.</p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Signing as</label>
+                  <select value={terminationRecipientSlot} onChange={(e) => setTerminationRecipientSlot(e.target.value as TerminationSignatureSlot)} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1">
+                    <option value="employee">Employee</option>
+                    <option value="manager">Manager</option>
+                    <option value="senior_manager">Senior Manager</option>
+                    <option value="hr_staff">HR Staff</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-2 mt-auto">
+                  {terminationSendError && (
+                    <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{terminationSendError}</p>
+                  )}
+                  {terminationSendMode === "teammate" ? (
+                    <button
+                      onClick={handleSendTerminationForm}
+                      disabled={!terminationRecipientId || terminationSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {terminationSending ? "Sending…" : "Send for Signature"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleGenerateExternalTerminationLink}
+                      disabled={!terminationExternalName.trim() || terminationSending}
+                      className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {terminationSending ? "Generating…" : "Generate Link"}
+                    </button>
+                  )}
+                  <button onClick={handleDownloadTerminationForm} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Download PDF instead
+                  </button>
+                  <button onClick={handleDownloadTerminationFormWord} disabled={terminationDocxGenerating} className="btn text-sm px-4 py-2 flex items-center justify-center gap-1.5 disabled:opacity-50">
+                    <Download className="h-3.5 w-3.5" /> {terminationDocxGenerating ? "Generating…" : "Download as Word Document"}
+                  </button>
+                  <button onClick={handleCloseTerminationPreview} className="btn text-sm px-4 py-2">Cancel</button>
+                </div>
+              </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Jotform Submission Details — floating modal, blurred backdrop */}
       {selectedSubmission && (
         <div
@@ -8321,34 +11346,144 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
       )}
-      {/* Master List — clicking a name pops this up instead of navigating away; "View full profile" inside still opens the full stats page. */}
-      {masterListDetailEmployee && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setMasterListDetailEmployee(null)}>
-          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">{masterListDetailEmployee.name}</h3>
-            <p className="text-xs text-muted-foreground mb-4">{resolveMasterListPosition(masterListDetailEmployee)} · {resolveSpecificDepartment(masterListDetailEmployee)}</p>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Status</dt><dd className="capitalize">{masterListDetailEmployee.status}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Start Date</dt><dd>{masterListDetailEmployee.startDate || "—"}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Branch</dt><dd>{masterListDetailEmployee.branch || "—"}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Phone</dt><dd>{masterListDetailEmployee.phone || "—"}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Email</dt><dd className="truncate max-w-[220px]" title={masterListDetailEmployee.email}>{masterListDetailEmployee.email}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-muted-foreground shrink-0">Address</dt><dd className="text-right">{masterListDetailEmployee.address || "—"}</dd></div>
-            </dl>
-            <div className="flex justify-end gap-2 mt-5">
+      {/* Master List — clicking a name pops this up instead of navigating away; "View full profile" inside still opens the full stats page. Edits here are a local draft until "Save Changes" is clicked — one explicit save, one clear result, instead of a silent per-field auto-commit that made it unclear whether e.g. an email change had actually gone through. */}
+      {masterListDetailEmployee && popupDraft && (() => {
+        const detail = masterListDetailEmployee;
+        const closeDetail = () => { setMasterListDetailEmployee(null); setPopupDraft(null); };
+        const setDraft = <K extends keyof MasterListDetailDraft>(field: K, value: MasterListDetailDraft[K]) =>
+          setPopupDraft((prev) => (prev ? { ...prev, [field]: value } : prev));
+        const fieldLabel = "text-[10px] font-semibold text-muted-foreground uppercase tracking-wide";
+        const fieldInput = "glass-input text-sm py-1.5 px-3 rounded-md w-full";
+        return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closeDetail}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 pt-6 pb-4 border-b border-white/10 shrink-0">
+              <h3 className="text-lg font-bold mb-1">{detail.name}</h3>
+              <p className="text-xs text-muted-foreground">{resolveMasterListPosition(detail)} · {resolveSpecificDepartment(detail)}</p>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-4 flex-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className={fieldLabel}>Status</label>
+                  <select
+                    value={popupDraft.status}
+                    onChange={(e) => setDraft("status", e.target.value as EmploymentStatus)}
+                    className={`${fieldInput} capitalize`}
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="terminated">Terminated</option>
+                    <option value="resigned">Resigned</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className={fieldLabel}>Start Date</label>
+                  <input
+                    type="date"
+                    value={popupDraft.startDate}
+                    onChange={(e) => setDraft("startDate", e.target.value)}
+                    className={fieldInput}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className={fieldLabel}>Branch</label>
+                  <select
+                    value={popupDraft.branch}
+                    onChange={(e) => setDraft("branch", e.target.value)}
+                    className={fieldInput}
+                  >
+                    <option value="">—</option>
+                    {!(LOCATIONS as readonly string[]).includes(popupDraft.branch) && popupDraft.branch && <option value={popupDraft.branch}>{popupDraft.branch}</option>}
+                    {LOCATIONS.map((loc) => <option key={loc} value={loc}>{loc}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className={fieldLabel}>Phone</label>
+                  <input
+                    type="text"
+                    value={popupDraft.phone}
+                    onChange={(e) => setDraft("phone", e.target.value)}
+                    placeholder="—"
+                    className={fieldInput}
+                  />
+                </div>
+                <div className="col-span-2 flex flex-col gap-1">
+                  <label className={fieldLabel}>Email {canEditEmployeeEmail ? "" : "(Admin/SuperAdmin/HR only)"}</label>
+                  {canEditEmployeeEmail ? (
+                    <input
+                      type="email"
+                      value={popupDraft.email}
+                      onChange={(e) => setDraft("email", e.target.value)}
+                      className={fieldInput}
+                    />
+                  ) : (
+                    <p className="text-sm truncate" title={popupDraft.email}>{popupDraft.email}</p>
+                  )}
+                </div>
+                <div className="col-span-2 flex flex-col gap-1">
+                  <label className={fieldLabel}>Address</label>
+                  <input
+                    type="text"
+                    value={popupDraft.address}
+                    onChange={(e) => setDraft("address", e.target.value)}
+                    placeholder="—"
+                    className={fieldInput}
+                  />
+                </div>
+              </div>
+
+              {popupSaveError && (
+                <p className="text-xs text-red-400 mt-3">{popupSaveError}</p>
+              )}
+              {popupSaveSuccess && !popupSaveError && (
+                <p className="text-xs text-green-400 mt-3">Saved.</p>
+              )}
+
+              <div className="mt-5 pt-4 border-t border-white/10">
+                <p className={`${fieldLabel} mb-2`}>Recent Activity</p>
+                {masterListDetailActivityLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading…</p>
+                ) : masterListDetailActivity.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No changes logged for this employee yet.</p>
+                ) : (
+                  <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {masterListDetailActivity.map((entry) => (
+                      <li key={entry.id} className="text-xs text-muted-foreground">
+                        <span className="text-foreground">{activityActionLabel(entry.action)}</span>
+                        {entry.details?.from !== undefined && entry.details?.to !== undefined && (
+                          <span> — "{String(entry.details.from) || "—"}" → "{String(entry.details.to) || "—"}"</span>
+                        )}
+                        <span> · {entry.actorName || "Someone"} · {new Date(entry.createdAt).toLocaleString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-white/10 shrink-0">
               <a
-                href={`/csr-agent/${masterListDetailEmployee.id}`}
+                href={`/csr-agent/${detail.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white"
               >
                 View full profile
               </a>
-              <button onClick={() => setMasterListDetailEmployee(null)} className="btn text-sm px-4 py-2">Close</button>
+              <button onClick={closeDetail} className="btn text-sm px-4 py-2">Close</button>
+              <button
+                onClick={handleSaveMasterListDetail}
+                disabled={popupSaving}
+                className="btn text-sm px-4 py-2 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+              >
+                {popupSaving ? "Saving…" : "Save Changes"}
+              </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {/* EOD detail popover — lists candidate names/dates behind a Scheduled Interviews / Active Trainees count badge */}
       {hiringDetailDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setHiringDetailDialog(null)}>

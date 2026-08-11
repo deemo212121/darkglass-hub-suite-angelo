@@ -41,6 +41,8 @@ export interface CsrAgentNote {
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
+  /** When the incident actually happened, for warnings backfilled from before this system existed. Null for normal entries — use createdAt for those (see occurredAtOrCreatedAt below). */
+  occurredAt: string | null;
   managerReviewedBy: string | null;
   managerReviewedByName: string | null;
   managerReviewedAt: string | null;
@@ -49,7 +51,7 @@ export interface CsrAgentNote {
   reviewedAt: string | null;
 }
 
-const SELECT = "id, employee_profile_id, type, ticket_no, note, status, created_at, created_by, manager_reviewed_by, manager_reviewed_at, reviewed_by, reviewed_at, author:created_by (display_name, username), manager_reviewer:manager_reviewed_by (display_name, username), reviewer:reviewed_by (display_name, username)";
+const SELECT = "id, employee_profile_id, type, ticket_no, note, status, created_at, occurred_at, created_by, manager_reviewed_by, manager_reviewed_at, reviewed_by, reviewed_at, author:created_by (display_name, username), manager_reviewer:manager_reviewed_by (display_name, username), reviewer:reviewed_by (display_name, username)";
 
 function fromRow(r: any): CsrAgentNote {
   return {
@@ -62,6 +64,7 @@ function fromRow(r: any): CsrAgentNote {
     createdBy: r.created_by,
     createdByName: r.author?.display_name || r.author?.username || null,
     createdAt: r.created_at,
+    occurredAt: r.occurred_at,
     managerReviewedBy: r.manager_reviewed_by,
     managerReviewedByName: r.manager_reviewer?.display_name || r.manager_reviewer?.username || null,
     managerReviewedAt: r.manager_reviewed_at,
@@ -130,7 +133,7 @@ export async function getPendingAgentNotes(): Promise<CsrAgentNote[]> {
  * transitions `reviewAgentNote` always uses, just chained immediately
  * after insert.
  */
-export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; fastTrackToApproved?: boolean; fastTrackToManagerApproved?: boolean }): Promise<string> {
+export async function addAgentNote(input: { agentProfileId: string; type: "warning" | "mistake"; ticketNo?: string; note: string; occurredAt?: string; fastTrackToApproved?: boolean; fastTrackToManagerApproved?: boolean }): Promise<string> {
   const { data, error } = await supabase
     .from(TABLE)
     .insert({
@@ -138,6 +141,7 @@ export async function addAgentNote(input: { agentProfileId: string; type: "warni
       type: input.type,
       ticket_no: input.ticketNo?.trim() || null,
       note: input.note.trim(),
+      occurred_at: input.occurredAt || null,
     })
     .select("id")
     .single();
