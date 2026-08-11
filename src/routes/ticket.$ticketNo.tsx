@@ -8871,6 +8871,7 @@ function TicketDetailsPage() {
         open={truckStockModal.open}
         onClose={() => setTruckStockModal({ open: false, parts: [] })}
         ticketNo={ticketNo}
+        ticketBranch={ticket?.location || ""}
         parts={truckStockModal.parts.map((p) => ({
           id: p.id,
           partNo: p.partNo,
