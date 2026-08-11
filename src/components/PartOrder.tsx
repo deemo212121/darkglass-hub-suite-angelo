@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Download } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import {
   getPartOrderRows,
@@ -11,6 +11,7 @@ import {
 import { marconeLookupPart } from "@/lib/marconeApi";
 import { useAuth } from "@/lib/auth";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { exportToCSV } from "@/lib/csvExport";
 
 export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { ready: authReady } = useAuth();
@@ -78,6 +79,25 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         }));
     });
   }, [filteredOrders]);
+
+  const handleExport = () => {
+    if (filteredOrders.length === 0) return;
+    exportToCSV(
+      "part_order",
+      ["Ticket #", "Location", "Status", "Part Dist.", "Part No", "Description", "ETA", "Request Qty", "Avail Qty"],
+      filteredOrders.map((order) => [
+        order.ticketNo,
+        order.location,
+        order.status,
+        order.partDist,
+        order.partNo,
+        order.description,
+        order.eta && order.eta.trim() !== "" ? order.eta : "",
+        order.requestQty,
+        availByPartNo[order.partNo] ?? "",
+      ]),
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -148,12 +168,21 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
 
           {/* Order Count */}
-          <div className="mt-6 mb-4">
+          <div className="mt-6 mb-4 flex items-center justify-between gap-4">
             <div className="text-sm font-semibold text-blue-300">
               {loading
                 ? "Loading…"
                 : `${filteredOrders.length} part${filteredOrders.length === 1 ? '' : 's'} need${filteredOrders.length === 1 ? 's' : ''} PO${location ? ` in ${location}` : ''}`}
             </div>
+            <button
+              onClick={handleExport}
+              disabled={filteredOrders.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition"
+              title="Export the visible rows to CSV"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
           </div>
 
           {loadError ? (
