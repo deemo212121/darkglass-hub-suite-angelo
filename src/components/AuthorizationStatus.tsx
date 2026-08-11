@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -73,6 +74,7 @@ export function AuthorizationStatus({ mod, sub }: Props) {
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const locD = usePortal(locOpen); const locL = useRef<HTMLDivElement>(null);
   const authD = usePortal(authStatus!==""); 
@@ -106,12 +108,8 @@ export function AuthorizationStatus({ mod, sub }: Props) {
   ];
 
   return (
-    <main className="max-w-[1800px] mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Authorization Status</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Authorization Status</h1>
@@ -165,8 +163,9 @@ export function AuthorizationStatus({ mod, sub }: Props) {
       </div>
 
       {/* Table */}
-      <div className="panel overflow-x-auto p-0">
-        <table className="w-full text-xs">
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
+      <div ref={tableScrollRef} className="panel overflow-x-auto p-0">
+        <table className="w-full min-w-max text-xs">
           <thead>
             {/* Row 1 header */}
             <tr className="border-b border-white/10 bg-white/5">
@@ -230,5 +229,6 @@ export function AuthorizationStatus({ mod, sub }: Props) {
         ))}
       </div>
     </main>
+    </div>
   );
 }

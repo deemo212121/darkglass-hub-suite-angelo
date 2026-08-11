@@ -12,12 +12,12 @@
  *  - getTechAssignedCounts: same period, but every assigned visit
  *    regardless of outcome — for the Assigned/Completed/Ratio columns.
  *  - getTechRedoTickets / getTechSecondCounts: the Tech Activity Report
- *    modal's Redo list and "Two Tech" (second_technician, migration 0136)
+ *    modal's Redo list and "Two Tech" (second_technician, migration 0126)
  *    cross-reference count.
- *  - tech_manual_pay_items (migration 0135): LDT count, mileage, training
+ *  - tech_manual_pay_items (migration 0125): LDT count, mileage, training
  *    value, and OW Incentive % entered directly by Finance per technician
  *    per period — there's no ticket/visit data to auto-count these from.
- *  - tech_custom_pay_items (migration 0137): freeform "(custom program)"
+ *  - tech_custom_pay_items (migration 0127): freeform "(custom program)"
  *    bonus lines, any number per technician per period.
  */
 
@@ -46,9 +46,9 @@ export const REPAIR_TYPES = [
  * Tickets") on the Tech Activity Report modal.
  */
 export const BASE_RATE_TYPES = ["Completed Tickets"];
-/** Entered by Finance directly per technician per period (migration 0135) — not auto-counted from a completed visit's repair_type. */
+/** Entered by Finance directly per technician per period (migration 0125) — not auto-counted from a completed visit's repair_type. */
 export const MANUAL_PAY_TYPES = ["LDT", "Mileage", "Training Paid"];
-/** Auto-counted like REPAIR_TYPES, but keyed off visits.second_technician (migration 0136) rather than repair_type. */
+/** Auto-counted like REPAIR_TYPES, but keyed off visits.second_technician (migration 0126) rather than repair_type. */
 export const CROSS_REFERENCE_TYPES = ["Two Tech"];
 /** "MCA Threshold" stores a plain minimum-completed-ticket count (not a dollar amount) in the same `amount` column; "MCA Bonus" is the flat $ paid when it's met. */
 export const ACHIEVEMENT_BONUS_TYPES = ["MCA Threshold", "MCA Bonus"];
@@ -211,7 +211,7 @@ export async function getTechCompletedRepairCounts(
   const [{ data: ticketRows, error: tErr }, { data: excludedRows, error: exErr }] = await Promise.all([
     supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
     // Tickets Finance has put on hold for payroll via the Mileage tab's On
-    // Hold action (migration 0144) — while flagged, a ticket that's
+    // Hold action (migration 0148) — while flagged, a ticket that's
     // genuinely completed still never counts toward pay, but it's
     // reversible. Same "skip this ticket_id" treatment as redo below.
     supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
@@ -570,7 +570,7 @@ export async function deleteTechCustomPayItem(id: string): Promise<void> {
 /**
  * Finance's manual correction of an auto-counted category (a REPAIR_TYPES
  * entry or "Two Tech") for one technician/period, when the live count from
- * visits data is wrong or incomplete — migration 0139. When present, this
+ * visits data is wrong or incomplete — migration 0133. When present, this
  * takes precedence over the live count everywhere that category's pay is
  * computed, both on the Tech Activity Report and the main Tech Payroll
  * table's Total Net.

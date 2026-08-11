@@ -205,7 +205,7 @@ export function NeedClaimList({ mod, sub }: Props) {
   // modal's DB work) — stays UI-only like before.
   const [rowOverrides, setRowOverrides] = useState<Record<string, { claimVerified?: boolean }>>({});
   // Pre-Claim Status / Claim Note now come from ticket_claim_details
-  // (migration 0141) via the Pre-Claim modal, keyed by the ticket's
+  // (migration 0135) via the Pre-Claim modal, keyed by the ticket's
   // internal UUID (Ticket._id) — replaces what used to be pure useState
   // that reset on every reload.
   const [claimDetailsByTicketId, setClaimDetailsByTicketId] = useState<Map<string, TicketClaimDetails>>(new Map());
@@ -309,7 +309,7 @@ export function NeedClaimList({ mod, sub }: Props) {
       // change → schedule date → call received date.
       const date =
         parseFlexibleDate(t.statusChangedAt) ||
-        parseFlexibleDate(t.scheduleDate) ||
+        parseFlexibleDate(t.schedule) ||
         parseFlexibleDate(t.callReceivedDate) ||
         parseFlexibleDate(t.created);
       const compCancelIso = date ? toIsoDay(date) : "";
@@ -367,7 +367,7 @@ export function NeedClaimList({ mod, sub }: Props) {
     wty: (r) => wtyCode(r.ticket.warranty),
     status: (r) => r.ticket.status || "",
     technician: (r) => r.ticket.technician || "",
-    product: (r) => (r.ticket.productType || r.ticket.product || "").toUpperCase() || "",
+    product: (r) => (r.ticket.productType || "").toUpperCase() || "",
     compCancel: (r) => r.compCancelIso || "",
     mileage: (r) => {
       const m = mileageByTicket[r.ticket.ticketNo];
@@ -420,7 +420,6 @@ export function NeedClaimList({ mod, sub }: Props) {
           t.ticketNo,
           t.location,
           t.technician,
-          t.product,
           t.productType,
           t.account,
           t.claimCompany,
@@ -479,7 +478,7 @@ export function NeedClaimList({ mod, sub }: Props) {
       }
       if (search) {
         const q = search.toLowerCase();
-        const blob = [t.ticketNo, t.location, t.technician, t.product, t.productType, t.account, t.claimCompany]
+        const blob = [t.ticketNo, t.location, t.technician, t.productType, t.account, t.claimCompany]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -671,13 +670,6 @@ export function NeedClaimList({ mod, sub }: Props) {
   return (
     <div className="min-h-screen flex flex-col">
     <main className="flex-1 max-w-[1800px] mx-auto w-full px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link>
-        <span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">Claim</Link>
-        <span>›</span>
-        <span className="text-foreground font-medium">{sub.title}</span>
-      </div>
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{ module: mod.slug }} className="btn">
           <ChevronLeft className="h-4 w-4" />
@@ -964,8 +956,8 @@ export function NeedClaimList({ mod, sub }: Props) {
                       {t.status || "—"}
                     </td>
                     <td className="px-1 py-1 max-w-[90px] truncate" title={t.technician || undefined}>{t.technician || "—"}</td>
-                    <td className="px-1 py-1 max-w-[80px] truncate" title={(t.productType || t.product || "").toUpperCase() || undefined}>
-                      {(t.productType || t.product || "").toUpperCase() || "—"}
+                    <td className="px-1 py-1 max-w-[80px] truncate" title={(t.productType || "").toUpperCase() || undefined}>
+                      {(t.productType || "").toUpperCase() || "—"}
                     </td>
                     <td className="px-1 py-1 whitespace-nowrap text-muted-foreground">
                       {r.compCancelIso || "—"}

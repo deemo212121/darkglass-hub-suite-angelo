@@ -131,7 +131,7 @@ export function LoginSecurityPage({ mod, sub }: Props) {
         getCompanyLoginEvents(),
         getLoginLockoutHistory(),
       ]);
-      setProfiles(userRows);
+      setProfiles(userRows.filter((u) => u.is_active !== false));
       setEvents(loginRows);
       setLockoutHistory(lockoutRows);
     } catch (err) {

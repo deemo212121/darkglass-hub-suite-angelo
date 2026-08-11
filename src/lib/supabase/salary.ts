@@ -54,7 +54,8 @@ export async function getSalaryHistory(profileId: string): Promise<SalaryEntryRo
     .from("salary_entries")
     .select(SELECT_COLUMNS)
     .eq("profile_id", profileId)
-    .order("effective_date", { ascending: false });
+    .order("effective_date", { ascending: false })
+    .order("created_at", { ascending: false });
   if (error) {
     console.error("getSalaryHistory error:", error.message);
     return [];
@@ -68,7 +69,8 @@ export async function getCompanySalaryEntries(): Promise<SalaryEntryRow[]> {
     .from("salary_entries")
     .select(SELECT_COLUMNS)
     .not("profile_id", "is", null)
-    .order("effective_date", { ascending: false });
+    .order("effective_date", { ascending: false })
+    .order("created_at", { ascending: false });
   if (error) {
     console.error("getCompanySalaryEntries error:", error.message);
     return [];
@@ -104,12 +106,31 @@ export async function addSalaryEntry(input: {
   }
 }
 
-/** The full entry effective on a given date, from a (not-necessarily-sorted) history — null if nothing is effective yet. Use this (rather than rateEffectiveOn) whenever the caller needs to branch on compensationType. */
+/**
+ * The full entry effective on a given date, from a (not-necessarily-sorted)
+ * history — null if nothing is effective yet. Use this (rather than
+ * rateEffectiveOn) whenever the caller needs to branch on compensationType.
+ *
+ * Editing a day's rate (Attendance table's inline edit, or Add Rate Change)
+ * always INSERTS a new row rather than updating one in place — so the same
+ * effectiveDate can end up with several rows (e.g. corrected twice in one
+ * sitting). When effectiveDate ties, the most recently CREATED entry wins
+ * (falls back to array order for two rows with an identical createdAt,
+ * which practically never happens) — otherwise a stale duplicate could win
+ * arbitrarily depending on how the DB happened to order the tie, making an
+ * edit look like it silently did nothing.
+ */
 export function entryEffectiveOn(history: SalaryEntryRow[], date: string): SalaryEntryRow | null {
   let best: SalaryEntryRow | null = null;
   for (const entry of history) {
     if (entry.effectiveDate > date) continue;
-    if (!best || entry.effectiveDate > best.effectiveDate) best = entry;
+    if (
+      !best ||
+      entry.effectiveDate > best.effectiveDate ||
+      (entry.effectiveDate === best.effectiveDate && entry.createdAt > best.createdAt)
+    ) {
+      best = entry;
+    }
   }
   return best;
 }

@@ -1,13 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
-import { Save, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Save, Lock, Eye, EyeOff, Loader2, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
+
+// Canonical department list for the Department dropdown (admin-tier
+// self-edit only — see ACCOUNT_FIELD_EDIT_ROLES below).
+const DEPARTMENT_OPTIONS = ["Admin", "BizOps", "Branch Manager", "Claims", "IT", "Parts", "Technician", "Triage", "Executives"];
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
 const SCHEDULE_EDIT_ROLES = new Set([
@@ -33,11 +37,21 @@ export const Route = createFileRoute("/profile")({
 type Profile = {
   firstName: string;
   lastName: string;
+  email: string;
   phone: string;
   department: string;
+  role: string;
   officeLocation: string;
   poInitials: string;
 };
+
+// Own-account fields (Email, Role, Department) are locked for regular
+// employees — only admin-tier accounts can self-edit them here. SUPERSUPERADMIN
+// is excluded from the ROLE dropdown's own OPTIONS (see roleOptions below), not
+// from being able to open this gate — the platform role never reaches /profile
+// in practice (redirected to /superadmin), but excluding it here too costs
+// nothing.
+const ACCOUNT_FIELD_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
 interface WeekDay {
   dayNum: number;
@@ -67,21 +81,42 @@ const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "S
 const DAYS_OF_WEEK_INDEX = [1, 2, 3, 4, 5, 6, 0];
 const DAY_NAME_BY_INDEX = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+/** One line of the new-password requirements checklist — the check mark only shows once that requirement is actually met. */
+function PasswordRequirement({ met, label }: { met: boolean; label: string }) {
+  return (
+    <li className={`flex items-center gap-1.5 ${met ? "text-emerald-400" : "text-muted-foreground"}`}>
+      <span className="grid place-items-center h-3.5 w-3.5 shrink-0">{met && <Check className="h-3.5 w-3.5" />}</span>
+      {label}
+    </li>
+  );
+}
+
 function ProfilePage() {
   const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
+  // Email is the real Firebase Auth login credential (changed via
+  // /api/admin-update-email, same as the admin-side user editor), and Role
+  // determines every permission check in the app — both are locked down to
+  // admin-tier accounts editing their OWN profile, not opened up for everyone.
+  const canEditAccountFields = ACCOUNT_FIELD_EDIT_ROLES.has(String(role || "").toUpperCase());
   // Timezone is locked tighter than Check-In/Out Time — HR sets it from
   // Master List (bulk, company-wide view of who's on which zone); the only
   // edit allowed directly on someone's own My Profile is a SUPERADMIN
   // override, not the broader SCHEDULE_EDIT_ROLES list.
   const canEditTimezone = normalizeRole(role) === "SUPERADMIN";
   const [profileId, setProfileId] = useState<string | null>(null);
+  // Compared against profile.email in save() to know whether the Firebase
+  // Auth update call is needed at all — same convention as the admin-side
+  // user editor (m.$module.$submodule.$userId.tsx).
+  const [originalEmail, setOriginalEmail] = useState("");
 
   const [profile, setProfile] = useState<Profile>({
     firstName: "",
     lastName: "",
+    email: "",
     phone: "",
     department: "",
+    role: "",
     officeLocation: "",
     poInitials: "",
   });
@@ -144,12 +179,25 @@ function ProfilePage() {
         if (cancelled || !p) return;
         setProfileId(p.profileId);
         void loadPasswordChangeLog(p.profileId);
-        const [firstName, ...rest] = p.displayName.trim().split(/\s+/);
+        // profiles has no separate first/last name columns — just one
+        // displayName string — so this split is inherently a guess. Last
+        // word = last name (everything before it = first name) rather than
+        // the reverse: a multi-word FIRST/given name ("Jhon Norban") is far
+        // more common than a multi-word surname, so this direction loses
+        // less information on the far more common case. Guessing the other
+        // way meant every save-then-reload round-trip silently moved words
+        // from First into Last.
+        const nameParts = p.displayName.trim().split(/\s+/).filter(Boolean);
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
+        const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(" ") : (nameParts[0] || "");
+        setOriginalEmail(p.email || "");
         setProfile({
-          firstName: p.displayName ? firstName : "",
-          lastName: rest.join(" "),
+          firstName,
+          lastName,
+          email: p.email || "",
           phone: p.phoneNumber,
           department: p.department,
+          role: p.role || "",
           officeLocation: p.assignedBranch,
           poInitials: p.poInitials,
         });
@@ -182,10 +230,31 @@ function ProfilePage() {
     }
     setSaving(true);
     try {
+      // Email is the real Firebase Auth login credential — update it there
+      // FIRST via the same admin-only server endpoint the admin-side user
+      // editor uses, and only fold the new address into the Supabase update
+      // below once that succeeds, so profiles.email and Firebase Auth never
+      // end up desynced from a partial failure.
+      const emailChanged = canEditAccountFields && profile.email.trim() !== originalEmail.trim();
+      if (emailChanged) {
+        const { auth: firebaseAuthInstance } = await import("@/lib/firebase/config");
+        const idToken = await firebaseAuthInstance?.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+        const res = await fetch("/api/admin-update-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, targetProfileId: profileId, newEmail: profile.email.trim() }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "Failed to update login email");
+      }
+
       await updateCompanyUser(profileId, {
         displayName: [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim(),
+        ...(emailChanged ? { email: profile.email.trim() } : {}),
         phoneNumber: profile.phone,
         department: profile.department,
+        ...(canEditAccountFields ? { role: profile.role as any } : {}),
         assignedBranch: profile.officeLocation,
         poInitials: profile.poInitials,
         ...(canEditSchedule
@@ -197,6 +266,7 @@ function ProfilePage() {
           : {}),
         ...(canEditTimezone ? { scheduleTimezone: requiredSchedule.scheduleTimezone } : {}),
       });
+      if (emailChanged) setOriginalEmail(profile.email.trim());
       setSaved("Profile saved.");
       void logModuleActivity({
         module: "user-management",
@@ -258,9 +328,21 @@ function ProfilePage() {
     }
   };
 
+  const passwordChecks = useMemo(
+    () => ({
+      length: password.next.length >= 8,
+      upper: /[A-Z]/.test(password.next),
+      lower: /[a-z]/.test(password.next),
+      symbol: /[^A-Za-z0-9]/.test(password.next),
+    }),
+    [password.next]
+  );
+  const passwordMeetsRequirements =
+    passwordChecks.length && passwordChecks.upper && passwordChecks.lower && passwordChecks.symbol;
+
   const changePassword = async () => {
-    if (!password.next || password.next.length < 6) {
-      setSaved("New password must be at least 6 characters.");
+    if (!passwordMeetsRequirements) {
+      setSaved("New password must be 8+ characters and include an uppercase letter, a lowercase letter, and a symbol.");
       return;
     }
     if (password.next !== password.confirm) {
@@ -407,13 +489,53 @@ function ProfilePage() {
           {field("Last name", "lastName")}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Email</span>
-            <input className="glass-input opacity-70" type="email" value={email ?? ""} disabled title="Contact an admin to change your login email" />
+            <input
+              className={`glass-input ${canEditAccountFields ? "" : "opacity-70"}`}
+              type="email"
+              value={canEditAccountFields ? profile.email : (email ?? "")}
+              onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+              disabled={!canEditAccountFields}
+              title={canEditAccountFields ? undefined : "Contact an admin to change your login email"}
+            />
           </label>
           {field("Phone", "phone", "tel")}
-          {field("Department", "department")}
+          {canEditAccountFields ? (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-muted-foreground">Department</span>
+              <select
+                value={profile.department}
+                onChange={(e) => setProfile({ ...profile, department: e.target.value })}
+                className="glass-input"
+              >
+                <option value="">Select a department</option>
+                {DEPARTMENT_OPTIONS.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+                {profile.department && !DEPARTMENT_OPTIONS.includes(profile.department) && (
+                  <option value={profile.department}>{profile.department}</option>
+                )}
+              </select>
+            </label>
+          ) : (
+            field("Department", "department")
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Role</span>
-            <input className="glass-input opacity-70" type="text" value={ROLE_LABELS[normalizeRole(role)] || role || ""} disabled />
+            {canEditAccountFields ? (
+              <select
+                value={profile.role}
+                onChange={(e) => setProfile({ ...profile, role: e.target.value })}
+                className="glass-input"
+              >
+                {Object.entries(ROLE_LABELS)
+                  .filter(([code]) => code !== "SUPERSUPERADMIN")
+                  .map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+              </select>
+            ) : (
+              <input className="glass-input opacity-70" type="text" value={ROLE_LABELS[normalizeRole(role)] || role || ""} disabled />
+            )}
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Office Location</span>
@@ -580,6 +702,12 @@ function ProfilePage() {
                 {showPassword.next ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs pt-1">
+              <PasswordRequirement met={passwordChecks.upper} label="Uppercase 1 required" />
+              <PasswordRequirement met={passwordChecks.lower} label="Lower Case 1 required" />
+              <PasswordRequirement met={passwordChecks.symbol} label="Symbol 1 required" />
+              <PasswordRequirement met={passwordChecks.length} label="8 characters or more" />
+            </ul>
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Confirm new password</span>
@@ -603,7 +731,11 @@ function ProfilePage() {
           </label>
         </div>
         <div className="flex flex-wrap items-start gap-4">
-          <button className="btn btn-primary disabled:opacity-50" onClick={changePassword} disabled={changingPassword}>
+          <button
+            className="btn btn-primary disabled:opacity-50"
+            onClick={changePassword}
+            disabled={changingPassword || !passwordMeetsRequirements || !password.current || password.next !== password.confirm}
+          >
             {changingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {changingPassword ? "Updating…" : "Update password"}
           </button>

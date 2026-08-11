@@ -7,18 +7,21 @@
  * just inside the authenticated chrome.
  */
 import { ShieldAlert, X } from "lucide-react";
-import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 
 export function SessionKickedOutBanner() {
   const { kickedOut, dismissKickedOut } = useAuth();
-  const navigate = useNavigate();
 
   if (!kickedOut) return null;
 
+  // Hard reload rather than a client-side navigate — same convention as the
+  // manual Logout menu item (Header.tsx). Being kicked out means another
+  // device just claimed this session; a soft SPA navigate would leave this
+  // tab's whole React tree (and any in-memory state built on the old
+  // session) alive underneath the login page instead of starting clean.
   const goToLogin = () => {
     dismissKickedOut();
-    navigate({ to: "/landing" });
+    window.location.href = "/landing";
   };
 
   return (

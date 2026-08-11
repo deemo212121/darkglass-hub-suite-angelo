@@ -20,8 +20,8 @@ import {
   Wrench,
   MapPin,
   Trash2,
-  X,
   Activity,
+  X,
   Ban,
 } from "lucide-react";
 import {
@@ -37,7 +37,7 @@ import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
-import { loadRows as loadRepairStatusRows } from "@/components/RepairStatusesPage";
+import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
@@ -46,7 +46,7 @@ import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/sup
 import { getEmployeeInfoByProfileIds, getCompanyUsers, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
-import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   getTechRepairRates,
   getTechCompletedRepairCounts,
@@ -58,7 +58,6 @@ import {
   getTechCategoryOverrides,
   upsertTechCategoryOverride,
   techRateFor as techRateForRates,
-  DEFAULT_REPAIR_TYPE,
   type TechRepairRate,
   type TechRepairCount,
   type TechManualPayItem,
@@ -72,7 +71,7 @@ import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type Gmail
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { listTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
-import { renderPayslipBodyHtml, PAYSLIP_STYLES, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
+import { renderPayslipBodyHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 
@@ -101,6 +100,7 @@ export interface SupabaseEmployee {
   role?: string;
   extraRoles?: string[] | null;
   assigned_branch?: string;
+  email?: string;
   offDays?: number[];
   requiredCheckIn?: string;
   requiredCheckOut?: string;
@@ -119,6 +119,7 @@ interface SalaryEntry {
   compensation_type: "hourly" | "fixed";
   hourly_rate: number;
   annual_salary: number | null;
+  created_at: string;
 }
 
 interface TimecardEntry {
@@ -227,8 +228,10 @@ function rollBackToWeekday(d: Date): Date {
 // an existing run (recomputing it in place).
 //
 // A PTO day only counts toward pay if it was actually approved (pending
-// requests haven't been decided yet) and isn't the "unpaid" type (that one's
-// unpaid by definition — see ptoRequestsInYear in pto.ts, same exclusion).
+// requests haven't been decided yet) and is a paid leave type (see
+// isPaidPtoType in pto.ts) — "unpaid" is unpaid by definition, and Sick
+// Leave is always unpaid too, drawing against its own separate allowance
+// instead of vacation PTO's.
 // It's credited at the employee's scheduled NET hours for that day
 // (resolveScheduledNetHours — same working_hours/meal_minutes-aware
 // calculation used for meal-break eligibility), clipped to the payroll
@@ -281,7 +284,7 @@ function computeHoursMap(
 
   if (!periodStart || !periodEnd) return hoursMap;
   for (const pto of ptoRequests) {
-    if (pto.status !== "approved" || pto.ptoType === "unpaid") continue;
+    if (pto.status !== "approved" || !isPaidPtoType(pto.ptoType)) continue;
     const emp = employeeById.get(pto.profileId);
     if (!emp) continue;
     const offDays = new Set(emp.offDays ?? []);
@@ -408,7 +411,23 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
 // but every amount is converted (see EXCHANGE_RATE) before it reaches this
 // formatter so nothing in the UI shows ₱.
 function fmt(amount: number) {
-  return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Per-status color for the Mileage tab's Status column — sourced from the
+// Admin > Repair Statuses module's own admin-configured rows (real
+// Supabase-backed config, repairStatuses.ts) instead of a separate
+// hardcoded copy. Colors there are hex strings from a color-picker input
+// (e.g. "#800080"), already valid CSS `color` values as-is. Matching is
+// case-insensitive/trimmed against each row's description field (the same
+// text as tickets.status, e.g. "CL-Claimed"). `rows` is fetched once into
+// component state (see repairStatusRows) rather than read synchronously
+// here, since the real source is a Supabase table, not localStorage.
+function mileageStatusStyle(status: string, rows: RepairStatus[]): { color: string; fontWeight?: number } {
+  const key = (status || "").trim().toLowerCase();
+  const row = rows.find((r) => r.description.trim().toLowerCase() === key);
+  if (!row?.color) return { color: "#93c5fd" }; // default: same blue TicketList falls back to
+  return { color: row.color, fontWeight: row.fontBold ? 700 : undefined };
 }
 
 // Per-status color for the Mileage tab's Status column — sourced from the
@@ -491,7 +510,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [techRepairRates, setTechRepairRates] = useState<TechRepairRate[]>([]);
   const [techRepairCounts, setTechRepairCounts] = useState<TechRepairCount[]>([]);
-  const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
   // Assigned (not just completed) visit counts, and Finance's manually
   // entered LDT/Mileage/Training values — both for the same genStart/genEnd
   // period as techRepairCounts above. See the effect below.
@@ -499,6 +517,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [techSecondCounts, setTechSecondCounts] = useState<Map<string, number>>(new Map());
   const [techManualPayItems, setTechManualPayItems] = useState<TechManualPayItem[]>([]);
   const [techCategoryOverrides, setTechCategoryOverrides] = useState<TechCategoryOverride[]>([]);
+  const [mileageEntries, setMileageEntries] = useState<MileageEntry[]>([]);
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -541,6 +560,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageBranchFilter, setMileageBranchFilter] = useState("");
   const [mileageNameFilter, setMileageNameFilter] = useState("");
 
+  // Admin > Repair Statuses config — fetched once so the Mileage tab's
+  // Status column can color-code by the same admin-configured colors
+  // instead of a hardcoded map (see mileageStatusStyle above).
+  const [repairStatusRows, setRepairStatusRows] = useState<RepairStatus[]>([]);
+
   // ── Mileage tab: auto-sync-from-completed-tickets state ─────────────────
   // No date range — always all-time, matching Overall Status's Tech
   // Completion Rate table with its date pickers left empty. Every completed
@@ -548,7 +572,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
   const [syncingMileage, setSyncingMileage] = useState(false);
   const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
-  // Tickets whose technician text matched no known technician — even after
+  // Tickets whose technician text didn't match ANY technician — even after
   // trim/lowercase, so a real name mismatch (not just a role issue) shows
   // up as something fixable instead of just silently not syncing. Starts
   // collapsed to a one-line summary (mileageUnmatchedExpanded) since this
@@ -591,9 +615,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         ptoRes,
         techRatesRes,
         mileageRes,
+        repairStatusRes,
       ] = await Promise.all([
-        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
-        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary").not("profile_id", "is", null).order("effective_date", { ascending: false }),
+        supabase.from("profiles").select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded").neq("role", "SUPERSUPERADMIN"),
+        supabase.from("salary_entries").select("profile_id,effective_date,compensation_type,hourly_rate,annual_salary,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
         supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
@@ -602,6 +627,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         getTechRepairRates().catch((err) => { console.error("Failed to load tech repair rates:", err); return [] as TechRepairRate[]; }),
         // Best-effort — Mileage tab just shows empty tables if this fails.
         getMileageEntries().catch((err) => { console.error("Failed to load mileage entries:", err); return [] as MileageEntry[]; }),
+        // Best-effort — Mileage tab's Status column just falls back to the
+        // default blue color for everyone if this fails.
+        getRepairStatuses().catch((err) => { console.error("Failed to load repair statuses:", err); return [] as RepairStatus[]; }),
       ]);
 
       for (const res of [empRes, salRes, runsRes, lineRes, auditRes]) {
@@ -610,6 +638,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setPtoRequests(ptoRes);
       setTechRepairRates(techRatesRes);
       setMileageEntries(mileageRes);
+      setRepairStatusRows(repairStatusRes);
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
@@ -648,6 +677,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         role: p.role,
         extraRoles: p.extra_roles ?? null,
         assigned_branch: p.assigned_branch,
+        email: p.email ?? undefined,
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
@@ -807,11 +837,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
-  // Latest salary entry per employee (salaryEntries is already ordered by
-  // effective_date desc, so the first hit per profile is the current one).
+  // Latest salary entry per employee. salaryEntries is ordered by
+  // effective_date desc then created_at desc, but re-compared explicitly
+  // here rather than just taking the first hit per profile — editing a
+  // day's rate (Attendance table inline edit, or Add Rate Change) always
+  // INSERTS a new row instead of updating one in place, so the same
+  // effective_date can end up with several rows (e.g. corrected twice in
+  // one sitting). Ties on effective_date are broken by created_at (the
+  // most recently entered correction wins) so a stale duplicate can never
+  // outrank a fresh edit — same tie-break as entryEffectiveOn (salary.ts).
   const latestCompMap = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
-    if (!latestCompMap.has(se.profile_id)) {
+    const existing = latestCompMap.get(se.profile_id);
+    if (
+      !existing ||
+      se.effective_date > existing.effective_date ||
+      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+    ) {
       latestCompMap.set(se.profile_id, se);
     }
   }
@@ -1229,8 +1271,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     try {
       // Scoped to whichever nation tab is selected — the other nation's
       // employees (and excluded employees' own missing clock-outs) never
-      // factor into this generate action at all.
-      const nationIncludedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+      // factor into this generate action at all. Technicians (Tech Payroll)
+      // are also excluded from this specific check — they're paid per
+      // completed repair ticket, not by clocked hours, so a missing
+      // clock-out on their timecard has no effect on their pay and
+      // shouldn't block generating payroll for anyone.
+      const nationIncludedIds = new Set(
+        nationIncludedPayrollRows.filter((r) => !isTechRole(r.employee)).map((r) => r.employee.id)
+      );
       const nationTimecardEntries = timecardEntries.filter((tc) => nationIncludedIds.has(tc.profile_id || tc.employee_id || ""));
       const missingTimeouts = findMissingTimeouts(nationTimecardEntries, employees);
       if (missingTimeouts.length > 0) {
@@ -1484,6 +1532,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           };
         });
     })();
+    const counts = dailyRows.length;
+    const totalHours = dailyRows.reduce((s, r) => s + r.hours, 0);
+    const average = counts > 0 ? totalHours / counts : 0;
+    const myPtoRequests = ptoRequests.filter((r) => r.profileId === row.employee.id);
+    const offDays = offDaysInRange(row.employee.offDays ?? [], genStart, genEnd);
+    const ptoUsed = ptoDaysInRange(myPtoRequests, genStart, genEnd, false);
+    const sickLeave = ptoDaysInRange(myPtoRequests, genStart, genEnd, true);
+    const workingHoursLabel =
+      row.employee.requiredCheckIn && row.employee.requiredCheckOut
+        ? `${formatClockTime(row.employee.requiredCheckIn)} - ${formatClockTime(row.employee.requiredCheckOut)}`
+        : "—";
+    const breakLabel = row.employee.mealMinutes ? `${row.employee.mealMinutes} mins Break` : "—";
     const payslipData: EmployeePayslipData = {
       name: row.employee.full_name,
       department: row.employee.department || "",
@@ -1495,6 +1555,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // payroll_line_items row, which has its own stored net_pay) — gross
       // and net are the same until a real run tracks that separately.
       netPay: row.grossPayUSD,
+      email: row.employee.email || "—",
+      hireDate: employeeInfoByProfileId.get(row.employee.id)?.hireDate || "—",
+      workingHoursLabel,
+      breakLabel,
+      hourlyRate: row.hourlyRateUSD,
+      compensationType: row.compensationType,
+      annualSalary: row.annualSalary,
+      counts,
+      totalHours,
+      average,
+      offDays,
+      ptoUsed,
+      sickLeave,
+      totalDays: offDays + ptoUsed,
+      // Same reason as netPay above — Extra/Notes are entered on a saved
+      // payroll_line_items row (migration 0111) after a run is finalized;
+      // this live-preview row has neither yet.
+      extraPay: 0,
+      notes: "",
+      // Same US/PH split already derived onto SupabaseEmployee.country.
+      isUS: row.employee.country !== "PH",
     };
     const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
     return blobToBase64(pdfBlob);
@@ -2991,7 +3072,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
-                            <td className="px-3 py-2.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
+                            <td className="px-3 py-2.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus, repairStatusRows) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
                             <td className="px-3 py-2.5">
                               {!entry.ticketNo ? (
                                 <span className="text-slate-500">—</span>
@@ -3108,9 +3189,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </tr>
                   ) : (
                     payrollRuns.map((run) => (
-                      <>
+                      <Fragment key={run.id}>
                         <tr
-                          key={run.id}
                           className="border-b border-white/5 hover:bg-white/5 cursor-pointer"
                           onClick={() => toggleRun(run.id)}
                         >
@@ -3282,7 +3362,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     ))
                   )}
                 </tbody>
@@ -3304,6 +3384,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
           graceMinutes={payGraceMinutesFor(detailEmployee.country, normalizeRole(detailEmployee.role) === "TECHNICIAN")}
+          initialStart={genStart || undefined}
+          initialEnd={genEnd || undefined}
           onClose={() => setDetailEmployee(null)}
           onRateChanged={fetchData}
         />
@@ -3397,7 +3479,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <span className="text-slate-500">—</span>
                                 )}
                               </td>
-                              <td className="px-2 py-1.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
+                              <td className="px-2 py-1.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus, repairStatusRows) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.branch}</td>
                               <td className="px-2 py-1.5 text-slate-300">{entry.address}</td>
                               <td className="px-2 py-1.5 text-right text-slate-300">{entry.totalMileage}</td>

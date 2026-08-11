@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Staff List reference data — Current Staff (branch-manager summary) and
 -- Tier Level (pay-rate table), generated from "Staff List.xlsx". Run
--- once in the Supabase SQL Editor, AFTER migration 0154 (which drops
+-- once in the Supabase SQL Editor, AFTER migration 0162 (which drops
 -- staff_list_roster — the per-person roster is now a live view of
 -- Master List/profiles instead, see staff_list_backfill.sql for
 -- carrying over the 4 Excel-only per-person fields it can't provide).

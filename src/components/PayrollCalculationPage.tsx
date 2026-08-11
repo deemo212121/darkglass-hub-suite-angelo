@@ -399,6 +399,8 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           mealMinutes={detailProfile.meal_minutes}
           offDays={detailProfile.off_days || undefined}
           graceMinutes={payGraceMinutesFor(profileCountry(detailProfile), normalizeRole(detailProfile.role) === "TECHNICIAN")}
+          initialStart={startDate || undefined}
+          initialEnd={endDate || undefined}
           onClose={() => setDetailProfile(null)}
           onRateChanged={load}
         />

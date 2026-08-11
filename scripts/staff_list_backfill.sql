@@ -2,7 +2,7 @@
 -- Staff List backfill — writes the 4 Excel-only fields (personal_email,
 -- tier_level, work_phone, staff_note) onto EXISTING profiles rows,
 -- matched by display_name. Run once in the Supabase SQL Editor, AFTER
--- migration 0154.
+-- migration 0162.
 --
 -- Matches by name only (case/whitespace-insensitive) — if two different
 -- people at different branches happen to share an exact display name,

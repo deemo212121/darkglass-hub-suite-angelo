@@ -1,5 +1,5 @@
 /**
- * Online/Idle/Offline presence (migration 0155) — shared by every page
+ * Online/Idle/Offline presence (migration 0163) — shared by every page
  * that shows it (Team Messenger, Attendance Monitoring; deliberately NOT
  * Master List, which doesn't need it). Works off the raw snake_case
  * shape already present on ProfileRow (getCompanyUsers() populates

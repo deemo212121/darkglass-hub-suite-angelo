@@ -1,5 +1,5 @@
 /**
- * General Information — branch management directory (migration 0126).
+ * General Information — branch management directory (migration 0139).
  * Replaces an external spreadsheet: per-branch role assignments, regional
  * groupings, and top-level leadership titles. Edited on the "General
  * Information" page (Dashboard module).

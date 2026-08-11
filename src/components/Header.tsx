@@ -107,7 +107,7 @@ function loadEmployeePhoto(email: string | null) {
 
 export function AppHeader() {
   const { email, displayName, companyId, companyLoginAlias, logout, ready, uid } = useAuth();
-  // Online/Idle/Offline presence (migration 0155) — mounted once here since
+  // Online/Idle/Offline presence (migration 0163) — mounted once here since
   // AppHeader renders on every authenticated page.
   usePresenceHeartbeat();
   // Full name (first + last) when we have one, falling back to email only

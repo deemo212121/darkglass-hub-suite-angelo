@@ -1,10 +1,10 @@
 /**
  * Dashboard "Staff List" submodule — Current Staff (branch-manager
- * summary, migration 0153) and Tier Level (pay-rate table, 0153) are
+ * summary, migration 0161) and Tier Level (pay-rate table, 0161) are
  * their own small reference tables, seeded once from the user's
  * "Staff List.xlsx" workbook via scripts/staff_list_seed.sql.
  *
- * The per-branch PERSON roster is NOT a table here — see migration 0154:
+ * The per-branch PERSON roster is NOT a table here — see migration 0162:
  * it's a live view of the same profiles Master List already manages
  * (StaffListPage.tsx groups getCompanyUsers() by assigned_branch), so a
  * new hire in User Management shows up automatically with no separate

@@ -95,6 +95,16 @@ function SuperAdminDashboard() {
   };
 
   useEffect(() => {
+    // The child route (/superadmin/company/$companyId) owns its own guard
+    // and its own data loading entirely — this effect (hooks always run
+    // regardless of which JSX branch the component ends up returning, so
+    // this can't just be skipped by the `<Outlet />` check below) must stay
+    // out of its way completely. Without this, this effect's own
+    // navigate({ to: "/" }) / loadData() still fire in the background on
+    // every visit to the child page too, and the two components' guards
+    // racing each other in an unpredictable order could bounce a real
+    // SUPERSUPERADMIN off the child page before it ever got to render.
+    if (location.pathname.startsWith("/superadmin/company/")) return;
     // Wait for auth to actually resolve before deciding — on a fresh mount
     // (hard refresh, or a new tab) `role` is still null until Firebase/
     // Supabase finish resolving. Deciding too early (this used to run once
@@ -112,7 +122,7 @@ function SuperAdminDashboard() {
     }
     console.log("SuperSuperAdmin access granted");
     loadData();
-  }, [ready, role]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, role, location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadData = async () => {
     try {

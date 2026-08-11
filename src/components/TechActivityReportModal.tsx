@@ -31,7 +31,7 @@ interface Props {
     value: string
   ) => Promise<void>;
   savingManualKey: string | null;
-  /** Corrects an auto-counted category's Value (a REPAIR_TYPES entry or "Two Tech") — see tech_category_overrides, migration 0139. */
+  /** Corrects an auto-counted category's Value (a REPAIR_TYPES entry or "Two Tech") — see tech_category_overrides, migration 0133. */
   onCategoryOverrideBlur: (profileId: string, category: string, value: string) => Promise<void>;
   savingCategoryOverrideKey: string | null;
   onClose: () => void;

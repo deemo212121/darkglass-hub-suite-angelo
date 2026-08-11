@@ -334,7 +334,21 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                       <input type="checkbox" checked={item.qtyReceived > 0} readOnly aria-label={`Received status for ${item.id}`} className="cursor-not-allowed" />
                     </td>
                     <td className="px-4 py-3 font-mono text-[10px] text-slate-300" title={item.id}>{item.id.slice(0, 8)}</td>
-                    <td className="px-4 py-3 text-slate-300">{item.poNo}</td>
+                    <td className="px-4 py-3 text-slate-300">
+                      {item.ticketNo ? (
+                        <Link
+                          to="/ticket/$ticketNo"
+                          params={{ ticketNo: item.ticketNo }}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          {item.poNo}
+                        </Link>
+                      ) : (
+                        item.poNo
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-slate-300">{item.partFrom}</td>
                     <td className="px-4 py-3 text-slate-300">{item.poDate}</td>
                     <td className="px-4 py-3 text-slate-300">{item.orderNo || "—"}</td>
@@ -371,7 +385,21 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                         </a>
                       ) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-300">{item.ticketNo}</td>
+                    <td className="px-4 py-3 text-slate-300">
+                      {item.ticketNo ? (
+                        <Link
+                          to="/ticket/$ticketNo"
+                          params={{ ticketNo: item.ticketNo }}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          {item.ticketNo}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className={`px-4 py-3 font-semibold ${ticketStatusClass(item.ticketStatus)}`}>{item.ticketStatus}</td>
                     <td className="px-4 py-3 text-slate-300">{item.tech || "—"}</td>
                     <td className="px-4 py-3 text-slate-300">{item.schedule || "—"}</td>

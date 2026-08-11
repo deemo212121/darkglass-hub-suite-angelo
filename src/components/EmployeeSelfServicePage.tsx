@@ -21,6 +21,8 @@ import {
   ptoYearWindow,
   ptoDaysUsed,
   ptoRequestsInYear,
+  sickYearWindow,
+  sickRequestsInYear,
   weekdayCount,
   type PtoRequestRow,
   type PtoType,
@@ -46,8 +48,14 @@ import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { ROLE_LABELS } from "@/lib/roleLabels";
-import { formatClockTime, type PayslipDailyRow } from "@/lib/payslipTemplate";
-import { perCutoffSalary } from "@/lib/supabase/salary";
+import {
+  formatClockTime,
+  offDaysInRange,
+  ptoDaysInRange,
+  renderPayslipFullHtml,
+  type PayslipDailyRow,
+  type EmployeePayslipData,
+} from "@/lib/payslipTemplate";
 
 interface AttendanceRecord {
   date: string;
@@ -88,75 +96,6 @@ function isCheckOutBeforeCheckIn(checkIn: string, checkOut: string): boolean {
   return !!checkIn && !!checkOut && checkOut <= checkIn;
 }
 
-// Calendar days within [start, end] whose day-of-week is one of the
-// employee's scheduled off days — for the payslip's "Off Days" row.
-function offDaysInRange(offDays: number[], start: string, end: string): number {
-  const offSet = new Set(offDays);
-  let count = 0;
-  const s = new Date(start + "T00:00:00");
-  const e = new Date(end + "T00:00:00");
-  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-    if (offSet.has(d.getDay())) count++;
-  }
-  return count;
-}
-
-// Calendar days of approved PTO (clipped to [start, end]) of a given leave
-// type — used to split the payslip's "PTO Leave Used" (isSick=false) from
-// "Sick Leave" (isSick=true). Distinct from pto.ts's ptoDaysUsed/
-// ptoRequestsInYear, which track the annual accrual window and don't split
-// sick leave out from the rest.
-function ptoDaysInRange(requests: PtoRequestRow[], start: string, end: string, isSick: boolean): number {
-  let days = 0;
-  for (const r of requests) {
-    if (r.status !== "approved") continue;
-    if ((r.ptoType === "sick") !== isSick) continue;
-    const overlapStart = r.startDate > start ? r.startDate : start;
-    const overlapEnd = r.endDate < end ? r.endDate : end;
-    if (overlapStart > overlapEnd) continue;
-    const d1 = new Date(overlapStart + "T00:00:00");
-    const d2 = new Date(overlapEnd + "T00:00:00");
-    days += Math.round((d2.getTime() - d1.getTime()) / 86_400_000) + 1;
-  }
-  return days;
-}
-
-interface EmployeePayslipData {
-  name: string;
-  department: string;
-  period: string;
-  generatedDate: string;
-  dailyRows: PayslipDailyRow[];
-  grossPay: number;
-  netPay: number;
-  email: string;
-  hireDate: string;
-  workingHoursLabel: string;
-  breakLabel: string;
-  hourlyRate: number;
-  /** "fixed" means this payslip was a flat per-cutoff salary payout, not hours × hourlyRate — see migration 0119. */
-  compensationType: "hourly" | "fixed";
-  /** Only set when compensationType is "fixed". */
-  annualSalary: number | null;
-  /** Total duty days — days actually worked in this period. */
-  counts: number;
-  /** Total hours worked in this period. */
-  totalHours: number;
-  /** Average hours worked per duty day. */
-  average: number;
-  offDays: number;
-  ptoUsed: number;
-  sickLeave: number;
-  /** offDays + ptoUsed only. */
-  totalDays: number;
-  /** Finance-entered bonus/add-on — see migration 0111. */
-  extraPay: number;
-  /** Finance-entered note for this specific payslip — see migration 0111. */
-  notes: string;
-  /** US employees (assigned_branch !== "Philippines") have a 13% tax withheld; PH employees don't show a Tax line at all. */
-  isUS: boolean;
-}
-
 const ATTENDANCE_DAILY: AttendanceRecord[] = [
   { date: "2026-06-04", clockIn: "8:00 AM", clockOut: "5:00 PM", hoursWorked: 9, status: "completed" },
   { date: "2026-06-03", clockIn: "7:55 AM", clockOut: "5:15 PM", hoursWorked: 9.33, status: "completed" },
@@ -171,362 +110,6 @@ const LOGIN_LOGOUT_HISTORY: LoginLogoutRecord[] = [
   { date: "2026-06-03", time: "7:55 AM", type: "login" },
   { date: "2026-06-03", time: "5:15 PM", type: "logout" },
 ];
-
-function generatePayslipHTML(employee: EmployeePayslipData): string {
-  const currentDate = new Date().toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-
-  // US employees only — 13% withheld from Total. PH employees show no Tax
-  // line at all (tax stays 0, row is omitted below).
-  const tax = employee.isUS ? employee.grossPay * 0.13 : 0;
-  const grandTotal = employee.grossPay - tax + employee.extraPay;
-
-  return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Payslip - ${employee.name}</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: white;
-      padding: 10px;
-    }
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: white;
-      border: 1px solid #e5e7eb;
-      padding: 20px;
-    }
-    .header {
-      display: flex;
-      flex-direction: row;
-      gap: 15px;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 20px;
-      padding: 15px;
-      border-bottom: 2px solid #1e40af;
-      background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
-      border-radius: 8px;
-      position: relative;
-    }
-    .header h1 {
-      color: white;
-      font-size: 28px;
-      margin-bottom: 0;
-      letter-spacing: 1px;
-    }
-    .payslip-info {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 15px;
-      margin-bottom: 15px;
-    }
-    .info-section {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .info-section label {
-      font-size: 11px;
-      color: #6b7280;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-    .info-section span {
-      font-size: 13px;
-      color: #1f2937;
-      font-weight: 500;
-    }
-    .employee-highlight {
-      background: #eff6ff;
-      border-left: 4px solid #1e40af;
-      padding: 10px;
-      border-radius: 4px;
-    }
-    .employee-highlight .info-section label {
-      color: #1e40af;
-      font-weight: 700;
-    }
-    .employee-highlight .info-section span {
-      font-size: 16px;
-      font-weight: 700;
-      color: #1e40af;
-    }
-    .table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 20px;
-    }
-    .table th {
-      background: #f3f4f6;
-      color: #1f2937;
-      padding: 8px;
-      text-align: left;
-      font-weight: 600;
-      font-size: 12px;
-      border: 1px solid #e5e7eb;
-    }
-    .table td {
-      padding: 8px;
-      border: 1px solid #e5e7eb;
-      font-size: 12px;
-      color: #374151;
-    }
-    .table tr:nth-child(even) {
-      background: #fafafa;
-    }
-    .summary-section {
-      margin-top: 15px;
-      border-top: 2px solid #e5e7eb;
-      padding-top: 10px;
-    }
-    .summary-row {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 10px;
-      align-items: center;
-      padding: 6px 0;
-      border-bottom: 1px solid #e5e7eb;
-    }
-    .summary-row.gross {
-      background: #f0f9ff;
-      border: 1px solid #bfdbfe;
-      border-radius: 4px;
-      padding: 10px;
-      margin: 8px 0;
-      font-weight: 600;
-      font-size: 14px;
-      color: #1e40af;
-    }
-    .summary-row.total {
-      background: #1e40af;
-      color: white;
-      border-radius: 4px;
-      padding: 12px;
-      margin: 8px 0;
-      font-weight: 700;
-      font-size: 16px;
-    }
-    .summary-row.total .amount {
-      text-align: right;
-      font-size: 18px;
-    }
-    .amount {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid #e5e7eb;
-      color: #6b7280;
-      font-size: 11px;
-    }
-    @media print {
-      body {
-        background: white;
-        padding: 0;
-      }
-      .container {
-        border: none;
-        padding: 20px;
-      }
-      .header {
-        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%) !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-      table {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-      .summary-row.gross {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-      .summary-row.total {
-        background: #1e40af !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <div style="text-align: center; width: 100%;">
-        <h1>PAYSLIP</h1>
-      </div>
-    </div>
-
-    <div class="payslip-info">
-      <div class="employee-highlight">
-        <div class="info-section">
-          <label>Employee Name</label>
-          <span>${employee.name}</span>
-        </div>
-        <div class="info-section" style="margin-top: 15px;">
-          <label>Department</label>
-          <span>${employee.department || "—"}</span>
-        </div>
-        <div class="info-section" style="margin-top: 15px;">
-          <label>Email</label>
-          <span>${employee.email}</span>
-        </div>
-      </div>
-      <div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-          <div class="info-section">
-            <label>Payslip Date</label>
-            <span>${employee.generatedDate || currentDate}</span>
-          </div>
-          <div class="info-section">
-            <label>Start Date</label>
-            <span>${employee.hireDate}</span>
-          </div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
-          <div class="info-section">
-            <label>Period</label>
-            <span>${employee.period}</span>
-          </div>
-          <div class="info-section">
-            <label>Working Hours</label>
-            <span>${employee.workingHoursLabel}</span>
-          </div>
-        </div>
-        <div class="info-section" style="margin-top: 15px;">
-          <label>Break Time</label>
-          <span>${employee.breakLabel}</span>
-        </div>
-      </div>
-    </div>
-
-    <table class="table" style="margin-bottom: 20px;">
-      <thead>
-        <tr>
-          <th style="text-align: right;">Rate</th>
-          <th style="text-align: right;">Counts (Duty Days)</th>
-          <th style="text-align: right;">Hours</th>
-          <th style="text-align: right;">Average</th>
-          <th style="text-align: right;">Off Days</th>
-          <th style="text-align: right;">PTO Leave Used</th>
-          <th style="text-align: right;">Sick Leave</th>
-          <th style="text-align: right;">Total Days</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="amount">${employee.compensationType === "fixed" && employee.annualSalary ? `$${employee.annualSalary.toLocaleString()}/yr ($${perCutoffSalary(employee.annualSalary).toFixed(2)}/cutoff)` : `$${employee.hourlyRate.toFixed(2)}`}</td>
-          <td class="amount">${employee.counts}</td>
-          <td class="amount">${employee.totalHours.toFixed(2)}</td>
-          <td class="amount">${employee.average.toFixed(2)}</td>
-          <td class="amount">${employee.offDays}</td>
-          <td class="amount">${employee.ptoUsed}</td>
-          <td class="amount">${employee.sickLeave}</td>
-          <td class="amount">${employee.totalDays}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="summary-section">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Time In</th>
-            <th>Meal In</th>
-            <th>Meal Out</th>
-            <th>Time Out</th>
-            <th style="text-align: right;">Working Hours</th>
-            <th style="text-align: right;">Rate</th>
-            <th style="text-align: right;">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${employee.dailyRows.length > 0 ? employee.dailyRows.map((r) => `
-          <tr>
-            <td>${r.date}</td>
-            <td>${formatClockTime(r.clockIn)}</td>
-            <td>${formatClockTime(r.mealStart)}</td>
-            <td>${formatClockTime(r.mealEnd)}</td>
-            <td>${formatClockTime(r.clockOut)}</td>
-            <td class="amount">${r.hours.toFixed(2)}</td>
-            <td class="amount">$${r.rate.toFixed(2)}</td>
-            <td class="amount">$${r.amount.toFixed(2)}</td>
-          </tr>
-          `).join('') : `
-          <tr>
-            <td colspan="8" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
-          </tr>
-          `}
-        </tbody>
-        <tfoot>
-          <tr style="font-weight: 700; background: #f3f4f6;">
-            <td colspan="7">Total</td>
-            <td class="amount">$${employee.grossPay.toFixed(2)}</td>
-          </tr>
-        </tfoot>
-      </table>
-
-      <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>Total</div>
-        <div class="amount">$${employee.grossPay.toFixed(2)}</div>
-      </div>
-
-      ${employee.isUS ? `
-      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>Tax (13%)</div>
-        <div class="amount">-$${tax.toFixed(2)}</div>
-      </div>
-      ` : ''}
-
-      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>Extra</div>
-        <div class="amount">$${employee.extraPay.toFixed(2)}</div>
-      </div>
-
-      <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>GRAND TOTAL</div>
-        <div class="amount">$${grandTotal.toFixed(2)}</div>
-      </div>
-    </div>
-
-    ${employee.notes ? `
-    <div style="margin-top: 15px; padding: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px;">
-      <div style="font-size: 11px; font-weight: 700; color: #92400e; text-transform: uppercase; margin-bottom: 4px;">Notes</div>
-      <div style="font-size: 12px; color: #78350f; white-space: pre-wrap;">${employee.notes}</div>
-    </div>
-    ` : ''}
-
-    <div class="footer">
-      <p style="margin: 0; margin-bottom: 10px;">This is an electronically generated payslip. No signature is required.</p>
-      <p style="margin: 0;">© ${new Date().getFullYear()} Admin Hub Solutions. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-  `;
-}
 
 export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef; }) {
   const { email, uid, role, extraRoles, displayName } = useAuth();
@@ -543,7 +126,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [selectedPayslipId, setSelectedPayslipId] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState<"pto" | "dispute" | "correction" | "inquiry">("pto");
+  const [modalType, setModalType] = useState<"pto" | "sick" | "dispute" | "correction" | "inquiry">("pto");
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
   // Real Supabase-backed attendance for the My Attendance tab.
   const [liveAttendance, setLiveAttendance] = useState<AttendanceRow[]>([]);
@@ -567,8 +150,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [responseNote, setResponseNote] = useState<Record<string, string>>({});
-  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
-  const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | null>(null);
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+  const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
   const [formData, setFormData] = useState({
     leaveType: "Vacation",
@@ -708,7 +291,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         : "HR: pending";
       items.push({
         id: `pto-${r.id}`,
-        type: "PTO Request",
+        type: r.ptoType === "sick" ? "Sick Leave Request" : "PTO Request",
         status: r.status === "denied" ? "rejected" : r.status === "cancelled" ? "closed" : r.status,
         submittedDate: r.createdAt.slice(0, 10),
         details: `${PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}: ${r.startDate} to ${r.endDate} (${r.hoursRequested}h)${r.reason ? ` - ${r.reason}` : ""}\n${managerLine} | ${hrLine}`,
@@ -770,6 +353,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const myPtoYearRequestIds = useMemo(
     () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
     [myPtoYearRequests]
+  );
+
+  // Sick Leave: its own flat 5-days-a-year allowance (never increments like
+  // vacation PTO does), available from day 1 of employment — no 1-year wait,
+  // and always unpaid (see isPaidPtoType in pto.ts) so it never draws
+  // against, or gets confused with, the vacation PTO allowance above.
+  const mySickYear = sickYearWindow(myHireDate, myCreatedAt);
+  const mySickYearRequests = useMemo(
+    () => (mySickYear ? sickRequestsInYear(myPtoRequests, mySickYear) : []),
+    [myPtoRequests, mySickYear]
+  );
+  const mySickUsed = mySickYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const mySickRemaining = mySickYear ? Math.max(0, mySickYear.allowance - mySickUsed) : 0;
+  const mySickYearRequestIds = useMemo(
+    () => new Set(mySickYearRequests.map((r) => `pto-${r.id}`)),
+    [mySickYearRequests]
   );
 
   // Deep link from a bell-icon notification straight into a specific tab
@@ -919,7 +518,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           const ptoTypeMap: Record<string, PtoType> = {
             Vacation: "vacation",
-            "Sick Leave": "sick",
             Personal: "personal",
           };
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
@@ -951,6 +549,56 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   senderId: myProfileId,
                   senderName: displayName || "Employee",
                   body: `🗓️ New PTO Request from ${displayName || "an employee"} needs your approval: ${formData.leaveType}, ${formData.startDate} to ${formData.endDate}.`,
+                  linkTo: "/m/dashboard/employee-self-service?tab=manage",
+                }).catch((err) => console.error("Failed to notify", r.id, err))
+              )
+            );
+          }
+          break;
+        }
+        case "sick": {
+          if (!formData.startDate || !formData.endDate) {
+            alert("Please select start and end dates");
+            setSubmitting(false);
+            return;
+          }
+          // No 1-year eligibility gate here — Sick Leave is available from
+          // day 1 of employment, unlike vacation PTO above.
+          const requestedDays = weekdayCount(formData.startDate, formData.endDate);
+          if (mySickYear && requestedDays > mySickRemaining) {
+            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${mySickRemaining} of ${mySickYear.allowance} Sick Leave day(s) left for Year ${mySickYear.tenureYear} (resets ${mySickYear.end}).`);
+            setSubmitting(false);
+            return;
+          }
+          const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
+          const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
+          await createPtoRequest({
+            profileId: myProfileId,
+            ptoType: "sick",
+            startDate: formData.startDate,
+            endDate: formData.endDate,
+            reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || employee?.role || "N/A"} - ${formData.details}`,
+            requestedBy: myProfileId,
+            managerId: managerProfile?.id ?? null,
+          });
+          // Same manager + HR (or fallback Admin) notification pattern as
+          // vacation PTO — Sick Leave goes through the same approval pipeline,
+          // it just doesn't draw against the same allowance or get paid.
+          {
+            const recipients = new Map<string, ProfileRow>();
+            if (managerProfile && managerProfile.id !== myProfileId) recipients.set(managerProfile.id, managerProfile);
+            for (const p of companyProfiles) {
+              if (p.id === myProfileId) continue;
+              const primary = (p.role || "").toUpperCase();
+              if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
+            }
+            await Promise.all(
+              Array.from(recipients.values()).map((r) =>
+                createNotification({
+                  recipientId: r.id,
+                  senderId: myProfileId,
+                  senderName: displayName || "Employee",
+                  body: `🤒 New Sick Leave Request from ${displayName || "an employee"} needs your approval: ${formData.startDate} to ${formData.endDate}.`,
                   linkTo: "/m/dashboard/employee-self-service?tab=manage",
                 }).catch((err) => console.error("Failed to notify", r.id, err))
               )
@@ -1621,7 +1269,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div className="grid gap-4 md:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <button
                 type="button"
                 onClick={() => setSummaryModal("pto")}
@@ -1633,6 +1281,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryModal("sick")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-teal-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Sick Leave Remaining</p>
+                <p className="text-2xl font-bold text-teal-300">
+                  {mySickYear ? `${mySickRemaining} of ${mySickYear.allowance}` : "—"}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {mySickYear ? `Year ${mySickYear.tenureYear} · resets ${mySickYear.end}` : "—"}
                 </p>
               </button>
               <button
@@ -1687,6 +1348,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 PTO Request
               </button>
               <button
+                type="button"
+                onClick={() => { setModalType("sick"); setShowModal(true); }}
+                className="px-4 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Sick Leave Request
+              </button>
+              <button
                 onClick={() => { setModalType("dispute"); setShowModal(true); }}
                 className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
@@ -1721,6 +1390,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 >
                   <option value="all">All Types</option>
                   <option value="PTO Request">PTO Request</option>
+                  <option value="Sick Leave Request">Sick Leave Request</option>
                   <option value="Time Correction">Time Correction</option>
                   <option value="Attendance Dispute">Attendance Dispute</option>
                   <option value="Payroll Inquiry">Payroll Inquiry</option>
@@ -2023,6 +1693,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-bold text-white">
                     {modalType === "pto" && "Submit PTO Request"}
+                    {modalType === "sick" && "Submit Sick Leave Request"}
                     {modalType === "dispute" && "Submit Attendance Dispute"}
                     {modalType === "correction" && "Submit Time Correction Request"}
                     {modalType === "inquiry" && "Submit Payroll Inquiry"}
@@ -2036,20 +1707,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </div>
 
                 <div className="space-y-3">
-                  {modalType === "pto" && (
+                  {(modalType === "pto" || modalType === "sick") && (
                     <>
-                      <div>
-                        <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
-                        <select 
-                          value={formData.leaveType}
-                          onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
-                          className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                        >
-                          <option>Vacation</option>
-                          <option>Sick Leave</option>
-                          <option>Personal</option>
-                        </select>
-                      </div>
+                      {modalType === "pto" && (
+                        <div>
+                          <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
+                          <select
+                            value={formData.leaveType}
+                            onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                          >
+                            <option>Vacation</option>
+                            <option>Personal</option>
+                          </select>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
@@ -2222,6 +1894,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       {summaryModal && (() => {
         const titles: Record<typeof summaryModal & string, string> = {
           pto: `PTO Requests — Year ${myPtoYear?.tenureYear ?? "—"}`,
+          sick: `Sick Leave Requests — Year ${mySickYear?.tenureYear ?? "—"}`,
           pending: "Pending Requests",
           approved: "Approved Requests",
           rejected: "Rejected Requests",
@@ -2230,7 +1903,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         const items =
           summaryModal === "pto"
             ? myRequests.filter((r) => myPtoYearRequestIds.has(r.id))
-            : filteredMyRequests.filter((r) => r.status === summaryModal);
+            : summaryModal === "sick"
+              ? myRequests.filter((r) => mySickYearRequestIds.has(r.id))
+              : filteredMyRequests.filter((r) => r.status === summaryModal);
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSummaryModal(null)}>
             <div
@@ -2295,7 +1970,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               ) : (
                 <iframe
                   ref={iframeRef}
-                  srcDoc={generatePayslipHTML(payslipData)}
+                  srcDoc={renderPayslipFullHtml(payslipData)}
                   className="w-full h-full border-none"
                   title="Payslip"
                 />

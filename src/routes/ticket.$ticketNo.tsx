@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ChevronDown } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady } from "@/lib/firebase/config";
 import { useIsPhone } from "@/lib/device";
@@ -17,6 +17,7 @@ import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns
 import { resolveTierCode } from "@/lib/tierCodes";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
+import type { TechnicianOption } from "@/lib/supabase/users";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
 import {
   buildSquaretradeUrlFromToken,
@@ -82,6 +83,25 @@ const CLAIM_COMPANY_OPTIONS = [
   "ONPOINT WARRANTY", "SAFEWARE", "SERVICE POWER", "Speed Queen", "SQUARE TRADE", "SS",
   "SS 4930403", "SS 6488757",
 ];
+
+// Part Transaction's "Dist." (distributor) options. Most are national/
+// company-wide, but a location can have its own dedicated distributor
+// branch instead — when it does, only that location's own entries show,
+// not the generic list too (e.g. Birmingham and Montgomery both route
+// through the same shared Marcone/Encompass branch, so their tickets
+// should only ever see those two, never the unrelated national ones).
+const UNIVERSAL_PART_DISTRIBUTORS = [
+  "AIG", "Electrolux", "Encompass", "GE", "LG", "Marcone-162468", "Midea",
+  "Miele", "NSA", "OW", "SB", "Sharp", "SP", "Squaretrade", "SS",
+];
+const LOCATION_PART_DISTRIBUTORS: Record<string, string[]> = {
+  Birmingham: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
+  Montgomery: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
+};
+
+function partDistOptionsForLocation(location: string | null | undefined): string[] {
+  return LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? UNIVERSAL_PART_DISTRIBUTORS;
+}
 
 // Map a ServicePower "Warranty Info" value to our AHS Warranty Type dropdown.
 //  - Sales fulfillment  -> In warranty
@@ -1991,29 +2011,31 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
-  // Load photo count for Claims Readiness Checklist (ADMIN/CLAIMS/BIZOPS only).
+  // Load photo count for the Claims Readiness checklist — visible to every
+  // role now, so this loads for everyone, not just Admin/Claims/BizOps.
   // Uses listTicketPhotos from Firebase Storage — non-blocking, best-effort.
   const [ticketPhotoCount, setTicketPhotoCount] = useState<number | null>(null);
   useEffect(() => {
-    const r = String(currentUserRole || "").toUpperCase();
-    const canSeeChecklist = [
-      "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
-      "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
-    ].includes(r);
-    if (!canSeeChecklist || !authReady) return;
+    if (!authReady) return;
     let cancelled = false;
     (async () => {
       try {
         const { listTicketPhotos } = await import("@/lib/firebase/storage");
         const cid = currentCompanyId || "COMP001";
-        const photos = await listTicketPhotos(cid, ticketNo);
+        // TicketPhotos.tsx (the Attachments tab and Mobile Tech App) both
+        // upload under category "service" — .../tickets/{ticketNo}/service/…
+        // — not the bare ticket folder, so this has to match that same
+        // subpath or listAll() finds nothing (subfolders are prefixes, not
+        // items) and the checklist always reads "no photos" even when there
+        // are some.
+        const photos = await listTicketPhotos(cid, `${ticketNo}/service`);
         if (!cancelled) setTicketPhotoCount(photos.length);
       } catch {
         if (!cancelled) setTicketPhotoCount(0);
       }
     })();
     return () => { cancelled = true; };
-  }, [ticketNo, currentUserRole, authReady, currentCompanyId]);
+  }, [ticketNo, authReady, currentCompanyId]);
 
   // Load ticket from centralized system
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
@@ -4085,73 +4107,35 @@ function TicketDetailsPage() {
   // extra_roles the same way.
 
   // Live technician list for the Add Visit / Edit Schedule dropdowns —
-  // every Supabase profile that has TECHNICIAN as primary role OR in
-  // extra_roles, so multi-role users like Daven Hodge (BizOps + Tech)
-  // show up in the technician picker. De-duplicated, sorted
-  // alphabetically.
-  const [companyTechUsers, setCompanyTechUsers] = useState<string[]>([]);
+  // every ACTIVE technician (primary role TECHNICIAN/TECHNICIAN_MANAGER, or
+  // either in extra_roles, so multi-role users like Daven Hodge (BizOps +
+  // Tech) show up), sourced from getCompanyTechnicians() — the same
+  // is_active-filtered roster used by Work Planner and every other
+  // technician picker in the app. The ticket's own currently-assigned
+  // technician is always folded in, even if they're no longer an active
+  // TECHNICIAN-role user, so an existing assignment never silently
+  // disappears from its own dropdown.
+  const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
   useEffect(() => {
     if (!authReady) return;
     let cancelled = false;
     (async () => {
       try {
-        const { getCompanyUsers } = await import("@/lib/supabase/users");
-        const rows = await getCompanyUsers();
-        if (cancelled) return;
-        const names = new Set<string>();
-        for (const u of rows as any[]) {
-          const primary = String(u?.role ?? "").toUpperCase();
-          const extras = ((u?.extra_roles as string[] | null | undefined) ?? []).map((r) =>
-            String(r ?? "").toUpperCase(),
-          );
-          if (primary === "TECHNICIAN" || extras.includes("TECHNICIAN")) {
-            const name = String(u?.display_name || u?.username || u?.email || "").trim();
-            if (name) names.add(name);
-          }
-        }
-        setCompanyTechUsers(Array.from(names));
+        const { getCompanyTechnicians } = await import("@/lib/supabase/users");
+        const rows = await getCompanyTechnicians();
+        if (!cancelled) setLiveTechnicians(rows);
       } catch (err) {
-        console.warn("technician user list load failed:", err);
-        if (!cancelled) setCompanyTechUsers([]);
+        console.warn("technician roster load failed:", err);
+        if (!cancelled) setLiveTechnicians([]);
       }
     })();
     return () => { cancelled = true; };
   }, [authReady]);
   const technicianOptions = useMemo(() => {
-    // De-duplicate the Supabase-driven names (and fold in the ticket's
-    // currently-assigned technician, even if they're no longer an active
-    // TECHNICIAN-role user, so an existing assignment never silently
-    // disappears from its own dropdown). The key is aggressive enough to
-    // collapse common variants of the same person (case, whitespace,
-    // middle initials, email local part, trailing "(Tech)" markers) so a
-    // name like "Daven Hodge" vs "Daven J Hodge" renders once. We keep
-    // the longer/more-formal string (usually the display_name) as the
-    // canonical label.
-    const canonicalKey = (n: string) =>
-      String(n || "")
-        .toLowerCase()
-        .replace(/@.*$/g, "") // drop email domain
-        .replace(/\(.*?\)/g, "") // drop parenthetical tags
-        .replace(/[^a-z\s]/g, " ") // strip punctuation
-        .replace(/\b[a-z]\b/g, "") // strip single-letter middle initials
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const chosen = new Map<string, string>();
-    const add = (raw: string) => {
-      const t = String(raw || "").trim();
-      if (!t) return;
-      const key = canonicalKey(t);
-      if (!key) return;
-      const existing = chosen.get(key);
-      if (!existing || t.length > existing.length) {
-        chosen.set(key, t);
-      }
-    };
-    for (const n of companyTechUsers) add(n);
-    add(ticket?.technician || "");
-    return Array.from(chosen.values()).sort((a, b) => a.localeCompare(b));
-  }, [companyTechUsers, ticket?.technician]);
+    const names = new Set<string>(liveTechnicians.map((t) => t.name));
+    if (ticket?.technician) names.add(ticket.technician);
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [liveTechnicians, ticket?.technician]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
@@ -4168,24 +4152,18 @@ function TicketDetailsPage() {
   // locked. Adding brand-new rows is also blocked when the lock is on.
   const partsEditDisabled = isTicketPartLocked && !isClaimsRole && !isNaveen;
 
-  // Claim Transaction section visibility. Only the Claims department and
-  // Admin / Manager / Branch-level roles can see (or interact with) the
-  // claim transaction grid. Everyone else — CSR, technician, parts, triage
-  // — never sees the section. Naveen also retained as an explicit allow
-  // by name (matches the Part-lock allow-list semantics so the two
-  // surfaces stay symmetrical).
+  // Claim Transaction section visibility — deliberately narrow: only
+  // Super Admin and the Claims department can see (or interact with) the
+  // claim transaction grid. Everyone else, including plain Admin/Manager/
+  // Branch-level roles, never sees the section. Naveen also retained as an
+  // explicit allow by name (matches the Part-lock allow-list semantics so
+  // the two surfaces stay symmetrical).
   const CLAIM_VIEW_ROLES = useMemo(
     () => new Set([
       "CLAIMS",
       "CLAIMS_MANAGER",
-      "MANAGER",
-      "SENIOR_MANAGER",
-      "ADMIN",
+      "CLAIMS_TEAM_LEADER",
       "SUPERADMIN",
-      "BRANCH_MANAGER",
-      "SENIOR_BRANCH_MANAGER",
-      "BIZOPS_MANAGER",
-      "BIZOPS_SENIOR_MANAGER",
     ]),
     [],
   );
@@ -4202,6 +4180,110 @@ function TicketDetailsPage() {
     );
   }, [currentUserRole, currentUserExtraRoles, CLAIM_VIEW_ROLES, isNaveen]);
 
+  // Claims Readiness — what's missing before this ticket can go to Claims.
+  // Visible to EVERY role (not just Admin/Claims/BizOps) since the whole
+  // point is helping whoever's working the ticket see what's left, not
+  // gatekeeping the information. Computed once here so both the compact
+  // header alert (next to the ticket actions) and the full checklist
+  // further down the page read the same values.
+  const claimsReadiness = useMemo(() => {
+    if (!ticket) return null;
+
+    // NOTE: ticket.problemDescription is the customer's original
+    // complaint, auto-populated from NSA/ServicePower at sync time — it
+    // exists before any service happens, so it can't be used as evidence a
+    // technician documented their work.
+    const hasServiceNotes = Boolean(
+      visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
+    );
+    const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
+      partRows.some(p => (p as any).inTracking);
+    const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
+      const s = String((p as any).status || "").toLowerCase();
+      return s && s !== "tech pickup" && s !== "need po" && s !== "";
+    });
+    // Same-day: the most recent visit must have been created/updated on
+    // the same calendar day as the visit's schedule date. Also passes if
+    // there's no visit yet (nothing to check).
+    const hasSameDayUpdate = (() => {
+      if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
+      const latest = visitLogEntries[0];
+      const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
+      if (!schedDate) return true; // no date set — can't evaluate
+      const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
+      if (!ts) return false;
+      const updatedDay = new Date(ts).toISOString().slice(0, 10);
+      const onTime = updatedDay === schedDate;
+      // Also check if photos were uploaded (if we have a photo count and
+      // the visit was today, photos being present means same-day upload is
+      // satisfied)
+      const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
+      const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
+      return onTime || photosSatisfied;
+    })();
+    // Warranty case — check if case number / warranty agent note is present
+    const warrantyStatuses = [
+      "unsuccessful repair", "infestation", "physical damage",
+      "unrepairable", "model/serial mismatch", "no fault found",
+    ];
+    const needsWarrantyCall = visitLogEntries.some(v => {
+      const rs = String((v as any).repairStatus || "").toLowerCase();
+      return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
+    });
+    const hasWarrantyCase = !needsWarrantyCall || Boolean(
+      visitLogEntries.some(v =>
+        (v as any).note?.toLowerCase().includes("case") ||
+        (v as any).note?.toLowerCase().includes("agent")
+      )
+    );
+
+    const items = [
+      {
+        label: "Warranty Call (if required)",
+        done: hasWarrantyCase,
+        detail: needsWarrantyCall
+          ? "Special scenario detected — ensure case number & agent name are in visit notes"
+          : "Not required for this ticket",
+        skip: !needsWarrantyCall,
+      },
+      {
+        label: "Service Notes Complete",
+        done: hasServiceNotes,
+        detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
+      },
+      {
+        label: "Required Photos Uploaded",
+        done: hasPhotos,
+        detail: ticketPhotoCount === null
+          ? "Checking photo count…"
+          : ticketPhotoCount > 0
+            ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
+            : "No photos found — work order, model/serial tag, installed parts, damage proof required",
+      },
+      {
+        label: "Part Status Correct",
+        done: hasCorrectPartStatus,
+        detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
+        // No parts ordered yet is a genuine "nothing to check" state, same
+        // as Warranty Call's skip — not evidence anything was actually
+        // verified correct.
+        skip: partRows.length === 0,
+      },
+      {
+        label: "Same-Day Updates",
+        done: hasSameDayUpdate,
+        detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
+        // No visit yet means there's nothing to have been "same-day" about
+        // — not evidence anything was verified.
+        skip: visitLogEntries.length === 0,
+      },
+    ];
+
+    const allDone = items.every(i => i.skip || i.done);
+    const doneCount = items.filter(i => i.skip || i.done).length;
+    return { items, allDone, doneCount };
+  }, [ticket, visitLogEntries, partRows, ticketPhotoCount]);
+
   // CSR-only accounts (agents, team leaders, CSR managers) should see
   // the Part Transaction table but not the write-side toolbar (View
   // Log / Sync Parts from Notes / Truck Stock / Submit POs / Update).
@@ -4216,27 +4298,39 @@ function TicketDetailsPage() {
     ]),
     [],
   );
+  // Triage identifies the part a repair needs, so they can add/edit parts on
+  // an open ticket — but unlike PART_LOCK_BYPASS_ROLES above, they do NOT
+  // bypass the post-claim lock; once a ticket is Claimed / Data Closed it's
+  // still Parts/Claims/Manager-only. Kept as its own set (rather than folded
+  // into PART_LOCK_BYPASS_ROLES) specifically so the lock-bypass stays
+  // untouched for Triage.
+  const TRIAGE_PART_ROLES = useMemo(
+    () => new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]),
+    [],
+  );
   const canUsePartToolbar = useMemo(() => {
     if (isNaveen) return true;
     const primary = String(currentUserRole || "").toUpperCase();
     const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
     // If they hold ANY non-CSR role we consider valid for parts, allow it.
-    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r))) return true;
+    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r) || TRIAGE_PART_ROLES.has(r))) return true;
     // If the user is *only* a CSR-family role, hide the toolbar.
     if (allRoles.every((r) => CSR_ONLY_ROLES.has(r) || !r)) return false;
-    // Everyone else (Technician, Triage, Dispatcher, etc.) also loses
-    // the toolbar per current business rule.
+    // Everyone else (Technician, Dispatcher, etc.) also loses the toolbar
+    // per current business rule.
     return false;
-  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, CSR_ONLY_ROLES]);
+  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, TRIAGE_PART_ROLES, CSR_ONLY_ROLES]);
 
-  // Split of PART_LOCK_BYPASS_ROLES into two disjoint tiers — everyone in
-  // that set can still SEE the Part Transaction toolbar (canUsePartToolbar,
-  // unchanged above), but which specific actions they can actually use now
-  // depends on which tier they're in. Team Leaders/Admins procure (Submit
-  // POs); the day-to-day Parts/Claims/Manager tier maintains the part
-  // records themselves (add/edit/delete/Update). Neither tier overlaps the
-  // other — a mixed-role user (e.g. primary ADMIN + extra_roles PARTS_MANAGER)
-  // gets the union of both, same as every other multi-role check in this file.
+  // Split of PART_LOCK_BYPASS_ROLES (plus Triage, see TRIAGE_PART_ROLES
+  // above) into two disjoint tiers — everyone who can see the Part
+  // Transaction toolbar (canUsePartToolbar) falls into one of these, but
+  // which specific actions they can actually use depends on which tier
+  // they're in. Team Leaders/Admins procure (Submit POs); the day-to-day
+  // Parts/Claims/Manager tier — plus Triage, who identifies the part during
+  // diagnosis — maintains the part records themselves (add/edit/delete/
+  // Update). Neither tier overlaps the other — a mixed-role user (e.g.
+  // primary ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same
+  // as every other multi-role check in this file.
   const PARTS_ORDER_ONLY_ROLES = useMemo(
     () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
     [],
@@ -4253,6 +4347,8 @@ function TicketDetailsPage() {
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
       "BIZOPS_SENIOR_MANAGER",
+      "TRIAGE_USER",
+      "TRIAGE_MANAGER",
     ]),
     [],
   );
@@ -4923,6 +5019,9 @@ function TicketDetailsPage() {
   // Open a small modal, type a teammate's name (or pick from suggestions),
   // and DM them the ticket number.
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  // Claims Readiness compact alert, up near the ticket actions — see
+  // claimsReadiness memo for the underlying computation.
+  const [claimsReadinessPopoverOpen, setClaimsReadinessPopoverOpen] = useState(false);
   const [shareQuery, setShareQuery] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [shareContacts, setShareContacts] = useState<Array<{ id: string; display_name: string | null; email: string | null; role: string | null }>>([]);
@@ -5067,23 +5166,9 @@ function TicketDetailsPage() {
             {partDraft.partDist.startsWith("In-House (") ? (
               <option value={partDraft.partDist}>{partDraft.partDist}</option>
             ) : null}
-            <option>AIG</option>
-            <option>Electrolux</option>
-            <option>Encompass</option>
-            <option>Encompass-Birmingham / Montgomery</option>
-            <option>GE</option>
-            <option>LG</option>
-            <option>Marcone- Birmingham / Montgomery</option>
-            <option>Marcone-162468</option>
-            <option>Midea</option>
-            <option>Miele</option>
-            <option>NSA</option>
-            <option>OW</option>
-            <option>SB</option>
-            <option>Sharp</option>
-            <option>SP</option>
-            <option>Squaretrade</option>
-            <option>SS</option>
+            {partDistOptionsForLocation(ticket?.location).map((d) => (
+              <option key={d}>{d}</option>
+            ))}
           </select>
         </td>
         <td className="px-1 py-1.5">
@@ -5243,8 +5328,15 @@ function TicketDetailsPage() {
           tracking sub-section anchors into view. */}
       <TicketSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 bg-slate-950 py-6">
-        <div className="max-w-[1600px] mx-auto px-6">
-          <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
+        {/* Sticky positioning is anchored to the nearest ancestor that's
+            taller than this element itself — a dedicated wrapper div sized
+            exactly to this box's own height gives it nowhere to "stick"
+            (it scrolls away the instant its one-height-tall parent does).
+            So this box is a direct child of <main> (which spans the whole
+            page, well past this), not wrapped in its own solo container.
+            z-10, not z-20 — TicketSidebar's floating rail (fixed, z-20)
+            must stay above this box so its hover flyout isn't covered. */}
+        <div className="max-w-[1600px] mx-auto px-6 sticky top-[64px] z-10 bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
             <div className="mb-4 flex items-center gap-4">
               <label htmlFor="ticket-selector" className="text-slate-400 font-semibold whitespace-nowrap">Select Ticket:</label>
               <input
@@ -5276,7 +5368,44 @@ function TicketDetailsPage() {
               >
                 <Send className="h-4 w-4" />
               </button>
-              
+
+              {/* Claims Readiness — compact alert next to the ticket
+                  actions, showing what's missing before this ticket can go
+                  to Claims. Visible to everyone; click for the short list
+                  of what's left (the full checklist with detail text is
+                  further down the page). */}
+              {claimsReadiness && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setClaimsReadinessPopoverOpen((v) => !v)}
+                    title="Claims Readiness"
+                    className={`inline-flex items-center gap-1.5 rounded border p-2 text-xs font-semibold transition ${
+                      claimsReadiness.allDone
+                        ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                        : "border-amber-400/40 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                    }`}
+                  >
+                    <ClipboardCheck className="h-4 w-4" />
+                    {claimsReadiness.doneCount}/{claimsReadiness.items.length}
+                  </button>
+                  {claimsReadinessPopoverOpen && (
+                    <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/10 bg-slate-900 p-3 shadow-xl">
+                      <p className="text-xs font-semibold text-slate-200 mb-2">Claims Readiness</p>
+                      {claimsReadiness.allDone ? (
+                        <p className="text-xs text-emerald-300">✓ Ready for Claims</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {claimsReadiness.items.filter((item) => !item.skip && !item.done).map((item, i) => (
+                            <li key={i} className="text-xs text-rose-300">✗ {item.label}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Alert Messages Display - Inline beside controls. Only
                   alerts flagged "Show internally" clutter this view — a
                   mobile-popup-only alert stays out of the way here. */}
@@ -5322,11 +5451,11 @@ function TicketDetailsPage() {
               })()}
             </div>
             <div>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
-                
+
                 {ticket ? (
-                  <div className="text-sm text-slate-300 leading-relaxed">
+                  <div className="text-sm text-slate-300 leading-relaxed text-right">
                     <span className="text-slate-400">Account</span>{" "}
                     {(() => {
                       // Squaretrade tickets jump to the appointment-completion
@@ -5440,13 +5569,12 @@ function TicketDetailsPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                  <div className="w-full mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
                     No ticket data is available for this number yet.
                   </div>
                 )}
               </div>
             </div>
-          </div>
         </div>
 
         {/* Tabs replaced by the floating TicketSidebar — kept here as a
@@ -5624,7 +5752,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Remaining Customer Details */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <h4 className="font-semibold text-slate-300">Contact Details</h4>
                 {!isEditingCustomerInfo ? (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -5755,7 +5883,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Product Information */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h4 className="font-semibold text-slate-300">Product Information</h4>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -6214,7 +6342,7 @@ function TicketDetailsPage() {
               )}
 
               {/* Schedule Information */}
-              <div className="space-y-4 mb-8">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-slate-300">Schedule Information</h4>
                   {!isEditingScheduleInfo ? (
@@ -6447,142 +6575,39 @@ function TicketDetailsPage() {
                 </div>
               )}
 
-              {/* Claims Readiness Checklist — visible to Admin, BizOps, Claims roles only */}
-              {(() => {
-                const r = String(currentUserRole || "").toUpperCase();
-                const canSeeChecklist = [
-                  "SUPERADMIN","ADMIN","MANAGER","SENIOR_MANAGER","CLAIMS","CLAIMS_MANAGER",
-                  "BIZOPS_MANAGER","BIZOPS_SENIOR_MANAGER","FINANCE","SENIOR_BRANCH_MANAGER",
-                ].includes(r);
-                if (!canSeeChecklist || !ticket) return null;
-
-                // Evaluate each of the 5 requirements
-                // NOTE: ticket.problemDescription is the customer's original
-                // complaint, auto-populated from NSA/ServicePower at sync
-                // time — it exists before any service happens, so it can't
-                // be used as evidence a technician documented their work.
-                const hasServiceNotes = Boolean(
-                  visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
-                );
-                const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
-                  partRows.some(p => (p as any).inTracking);
-                const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
-                  const s = String((p as any).status || "").toLowerCase();
-                  return s && s !== "tech pickup" && s !== "need po" && s !== "";
-                });
-                // Same-day: the most recent visit must have been created/updated
-                // on the same calendar day as the visit's schedule date.
-                // Also passes if there's no visit yet (nothing to check).
-                const hasSameDayUpdate = (() => {
-                  if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
-                  const latest = visitLogEntries[0];
-                  const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
-                  if (!schedDate) return true; // no date set — can't evaluate
-                  // Check the visit's own created/updated timestamp
-                  const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
-                  if (!ts) return false;
-                  const updatedDay = new Date(ts).toISOString().slice(0, 10);
-                  const onTime = updatedDay === schedDate;
-                  // Also check if photos were uploaded (if we have a photo count and the
-                  // visit was today, photos being present means same-day upload is satisfied)
-                  const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
-                  const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
-                  return onTime || photosSatisfied;
-                })();
-                // Warranty case — check if case number / warranty agent note is present
-                const warrantyStatuses = [
-                  "unsuccessful repair", "infestation", "physical damage",
-                  "unrepairable", "model/serial mismatch", "no fault found",
-                ];
-                const needsWarrantyCall = visitLogEntries.some(v => {
-                  const rs = String((v as any).repairStatus || "").toLowerCase();
-                  return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
-                });
-                const hasWarrantyCase = !needsWarrantyCall || Boolean(
-                  visitLogEntries.some(v =>
-                    (v as any).note?.toLowerCase().includes("case") ||
-                    (v as any).note?.toLowerCase().includes("agent")
-                  )
-                );
-
-                const items = [
-                  {
-                    label: "Warranty Call (if required)",
-                    done: hasWarrantyCase,
-                    detail: needsWarrantyCall
-                      ? "Special scenario detected — ensure case number & agent name are in visit notes"
-                      : "Not required for this ticket",
-                    skip: !needsWarrantyCall,
-                  },
-                  {
-                    label: "Service Notes Complete",
-                    done: hasServiceNotes,
-                    detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
-                  },
-                  {
-                    label: "Required Photos Uploaded",
-                    done: hasPhotos,
-                    detail: ticketPhotoCount === null
-                      ? "Checking photo count…"
-                      : ticketPhotoCount > 0
-                        ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
-                        : "No photos found — work order, model/serial tag, installed parts, damage proof required",
-                  },
-                  {
-                    label: "Part Status Correct",
-                    done: hasCorrectPartStatus,
-                    detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
-                    // No parts ordered yet is a genuine "nothing to check"
-                    // state, same as Warranty Call's skip — not evidence
-                    // anything was actually verified correct.
-                    skip: partRows.length === 0,
-                  },
-                  {
-                    label: "Same-Day Updates",
-                    done: hasSameDayUpdate,
-                    detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
-                    // No visit yet means there's nothing to have been
-                    // "same-day" about — not evidence anything was verified.
-                    skip: visitLogEntries.length === 0,
-                  },
-                ];
-
-                const allDone = items.every(i => i.skip || i.done);
-                const doneCount = items.filter(i => i.skip || i.done).length;
-
-                return (
-                  <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
-                    <div className={`flex items-center justify-between px-4 py-3 ${allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
-                          {doneCount}/{items.length}
-                        </span>
-                      </div>
-                      {allDone ? (
-                        <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
-                      ) : (
-                        <span className="text-xs text-amber-400">{items.length - doneCount} item{items.length - doneCount !== 1 ? "s" : ""} pending</span>
-                      )}
+              {/* Claims Readiness Checklist — visible to every role, see claimsReadiness above */}
+              {claimsReadiness && (
+                <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
+                  <div className={`flex items-center justify-between px-4 py-3 ${claimsReadiness.allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${claimsReadiness.allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
+                        {claimsReadiness.doneCount}/{claimsReadiness.items.length}
+                      </span>
                     </div>
-                    <div className="divide-y divide-slate-800">
-                      {items.map((item, i) => (
-                        <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
-                          <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
-                            {item.skip ? "—" : item.done ? "✓" : "✗"}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
-                              {item.label}
-                            </div>
-                            <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    {claimsReadiness.allDone ? (
+                      <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
+                    ) : (
+                      <span className="text-xs text-amber-400">{claimsReadiness.items.length - claimsReadiness.doneCount} item{claimsReadiness.items.length - claimsReadiness.doneCount !== 1 ? "s" : ""} pending</span>
+                    )}
                   </div>
-                );
-              })()}
+                  <div className="divide-y divide-slate-800">
+                    {claimsReadiness.items.map((item, i) => (
+                      <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
+                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
+                          {item.skip ? "—" : item.done ? "✓" : "✗"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
+                            {item.label}
+                          </div>
+                          <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Servicer Notes */}
               <div className="space-y-4 pb-12">
@@ -6904,23 +6929,9 @@ function TicketDetailsPage() {
                               <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 <option value="">Dist.*</option>
                                 {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
-                                <option>AIG</option>
-                                <option>Electrolux</option>
-                                <option>Encompass</option>
-                                <option>Encompass-Birmingham / Montgomery</option>
-                                <option>GE</option>
-                                <option>LG</option>
-                                <option>Marcone- Birmingham / Montgomery</option>
-                                <option>Marcone-162468</option>
-                                <option>Midea</option>
-                                <option>Miele</option>
-                                <option>NSA</option>
-                                <option>OW</option>
-                                <option>SB</option>
-                                <option>Sharp</option>
-                                <option>SP</option>
-                                <option>Squaretrade</option>
-                                <option>SS</option>
+                                {partDistOptionsForLocation(ticket?.location).map((d) => (
+                                  <option key={d}>{d}</option>
+                                ))}
                               </select>
                             </td>
                             <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
@@ -7073,17 +7084,22 @@ function TicketDetailsPage() {
 
             {/* Visit Log */}
             <div id="section-visit-log" className="scroll-mt-28">
+              <div className="mb-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-5">
+                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-300">
+                  Problem Description
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-slate-200">
+                  {ticket?.problemDescription?.trim() ||
+                    "No problem description on file for this work order."}
+                </div>
+              </div>
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
-              <div className="space-y-4 text-sm">
+              <div className="flex flex-wrap gap-6 text-sm">
                 <div>
                   <label className="text-slate-500 font-semibold">Phone</label>
                   <div className="text-white mt-1">{ticket?.homePhone || ticket?.cellPhone || "—"}</div>
                 </div>
-                <div>
-                  <label className="text-slate-500 font-semibold">Chat</label>
-                  <button className="text-blue-400 hover:text-blue-300 font-semibold">Open Chat</button>
-                </div>
-                <div>
+                <div className="min-w-[200px]">
                   <div className="flex items-center justify-between gap-2">
                     <label className="text-slate-500 font-semibold">Redo Ticket #</label>
                     {!editingRedoTicket && (
@@ -7152,15 +7168,6 @@ function TicketDetailsPage() {
                     Running Notes
                   </button>
                 )}
-              </div>
-              <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-300">
-                  Problem Description
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
-                  {ticket?.problemDescription?.trim() ||
-                    "No problem description on file for this work order."}
-                </div>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                 {visitFormMode === "view" ? (

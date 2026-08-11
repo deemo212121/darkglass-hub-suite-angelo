@@ -7,7 +7,7 @@ import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, ROLE_OPTIONS, normalizeRole } from "@/lib/roleLabels";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -18,6 +18,14 @@ import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supaba
 function roleDisplay(role: string | null | undefined): string {
   if (!role) return "";
   return ROLE_LABELS[normalizeRole(role)] || role;
+}
+
+/** 0 = Super Admin, 1 = Admin, 2 = everyone else — for sorting the Hierarchy tree's root row so Super Admin always leads, then Admin, per the requested chart order. */
+function topTierRank(record: UserManagementRecord): number {
+  const role = normalizeRole(record.type);
+  if (role === "SUPERADMIN") return 0;
+  if (role === "ADMIN") return 1;
+  return 2;
 }
 
 type ViewMode = "list" | "hierarchy";
@@ -66,38 +74,14 @@ const LOCATIONS = [
   "Tallahassee", "Wilmington", "Philippines",
 ];
 
-// User types: { value stored as Firestore role, label shown in the dropdown }
-// Users can tick multiple — the first ticked value becomes the primary `role`
-// (used by RLS / legacy access checks); the rest go into `extra_roles`.
-const USER_TYPES: { value: string; label: string }[] = [
-  { value: "ADMIN", label: "Admin" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "SENIOR_MANAGER", label: "Senior Manager" },
-  { value: "CSR", label: "CSR" },
-  { value: "TECHNICIAN", label: "Technician" },
-  { value: "TECHNICIAN_MANAGER", label: "Tech Manager" },
-  { value: "DISPATCHER", label: "Dispatcher" },
-  { value: "TECHNICAL_DIRECTOR", label: "Technical Director" },
-  { value: "TECHNICAL_ASSISTANT_DIRECTOR", label: "Technical Assistant Director" },
-  { value: "CLAIMS", label: "Claims" },
-  { value: "HR", label: "HR" },
-  { value: "IT", label: "IT" },
-  { value: "PARTS", label: "Parts" },
-  { value: "FINANCE", label: "Finance" },
-  { value: "CSR_AGENT", label: "CSR Agent" },
-  { value: "CSR_TEAM_LEADER", label: "CSR Team Leader" },
-  { value: "CSR_MANAGER", label: "CSR Manager" },
-  { value: "BRANCH_MANAGER", label: "Branch Manager" },
-  { value: "SENIOR_BRANCH_MANAGER", label: "Senior Branch Manager" },
-  { value: "CLAIMS_MANAGER", label: "Claims Manager" },
-  { value: "CLAIMS_TEAM_LEADER", label: "Claims Team Leader" },
-  { value: "PARTS_MANAGER", label: "Parts Manager" },
-  { value: "PARTS_TEAM_LEADER", label: "Parts Team Leader" },
-  { value: "BIZOPS_MANAGER", label: "BizOps Manager" },
-  { value: "BIZOPS_SENIOR_MANAGER", label: "BizOps Senior Manager" },
-  { value: "TRIAGE_USER", label: "Technical Support" },
-  { value: "TRIAGE_MANAGER", label: "Technical Support Manager" },
-].sort((a, b) => a.label.localeCompare(b.label));
+// User types shown in the "Add New User" dropdown. Sourced from
+// ROLE_OPTIONS (src/lib/roleLabels.ts) instead of a separate hardcoded list
+// — this used to be its own array and had already drifted out of sync with
+// roleLabels.ts (e.g. missing CLAIMS_TEAM_LEADER), so a role added in one
+// place silently didn't show up in the other. Users can tick multiple —
+// the first ticked value becomes the primary `role` (used by RLS / legacy
+// access checks); the rest go into `extra_roles`.
+const USER_TYPES = ROLE_OPTIONS;
 
 // Sentinel for the "All Locations" entry in Branch Access. Picking this clears
 // every individual selection — the user can see every branch. Stored as-is so
@@ -421,40 +405,65 @@ const EMPTY_ANCESTORS: ReadonlySet<string> = new Set();
 
 /**
  * One row of the Hierarchy tree, recursing into its own direct reports.
- * A manager gets a filled dot + its children indented under a connecting
+ * A manager gets a chevron + its children indented under a connecting
  * line; a leaf (no reports) just gets a short tick mark — same visual
  * language as a standard file/org-chart tree. `ancestors` guards against a
  * bad manager chain (e.g. two people accidentally set as each other's
  * manager) recursing forever — free-text manager names have no DB
  * constraint stopping that.
+ *
+ * Root-level nodes (isRoot) start COLLAPSED — with up to ~200 people in
+ * one tree, a single huge branch (e.g. everyone under one Super Admin)
+ * would otherwise push every OTHER root far down the page before it even
+ * renders, making them impossible to find without first scrolling past
+ * the whole thing. Non-root nodes still default open, matching this
+ * tree's previous always-expanded behavior once you've opened a root.
  */
 function HierarchyTreeNode({
-  record, childrenByManagerName, moduleSlug, submoduleSlug, ancestors,
+  record, childrenByManagerName, moduleSlug, submoduleSlug, ancestors, isRoot, subtreeSize,
 }: {
   record: UserManagementRecord;
   childrenByManagerName: Map<string, UserManagementRecord[]>;
   moduleSlug: string;
   submoduleSlug: string;
   ancestors: ReadonlySet<string>;
+  isRoot?: boolean;
+  subtreeSize: (userName: string) => number;
 }) {
   const children = ancestors.has(record.userName) ? [] : (childrenByManagerName.get(record.userName) ?? []);
   const hasChildren = children.length > 0;
   const childAncestors = useMemo(() => new Set(ancestors).add(record.userName), [ancestors, record.userName]);
+  const [expanded, setExpanded] = useState(!isRoot);
 
   return (
     <div>
       <div className="flex items-center gap-2.5 py-1.5">
-        <div className="flex h-4 w-4 shrink-0 items-center justify-center">
-          {hasChildren ? <span className="h-2 w-2 rounded-full bg-blue-400" /> : <span className="h-px w-2.5 bg-white/25" />}
-        </div>
+        <button
+          type="button"
+          onClick={() => hasChildren && setExpanded((e) => !e)}
+          disabled={!hasChildren}
+          aria-label={hasChildren ? (expanded ? "Collapse" : "Expand") : undefined}
+          className="flex h-4 w-4 shrink-0 items-center justify-center disabled:cursor-default"
+        >
+          {hasChildren ? (
+            <ChevronDown className={`h-3 w-3 text-blue-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          ) : (
+            <span className="h-px w-2.5 bg-white/25" />
+          )}
+        </button>
         <div className="flex items-baseline gap-1.5 min-w-0">
           <UserLink moduleSlug={moduleSlug} submoduleSlug={submoduleSlug} userId={record.loginName}>
             {record.userName}
           </UserLink>
           <span className="text-xs text-slate-400 whitespace-nowrap">({roleDisplay(record.type)})</span>
+          {hasChildren && !expanded && (
+            <span className="text-xs text-slate-500 whitespace-nowrap">
+              — {subtreeSize(record.userName)} {subtreeSize(record.userName) === 1 ? "report" : "reports"} total
+            </span>
+          )}
         </div>
       </div>
-      {hasChildren && (
+      {hasChildren && expanded && (
         <div className="ml-[7px] border-l border-white/15 pl-[17px]">
           {children.map((child) => (
             <HierarchyTreeNode
@@ -464,6 +473,7 @@ function HierarchyTreeNode({
               moduleSlug={moduleSlug}
               submoduleSlug={submoduleSlug}
               ancestors={childAncestors}
+              subtreeSize={subtreeSize}
             />
           ))}
         </div>
@@ -781,6 +791,12 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [activeForHierarchy]);
 
+  // Built straight from manager_name — no synthetic edges. A root here
+  // only ever gets the reports it actually, really has. A Super Admin/Admin
+  // with a real manager (any role — a Super Admin can genuinely report to
+  // a Manager) nests there exactly like anyone else; role only decides
+  // where the ROOTS themselves sort (see hierarchyRoots), never whether
+  // someone with a real manager gets nested.
   const childrenByManagerName = useMemo(() => {
     const map = new Map<string, UserManagementRecord[]>();
     activeForHierarchy.forEach((record) => {
@@ -791,21 +807,40 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return map;
   }, [activeForHierarchy]);
 
-  // Roots with actual direct reports (real department heads) sort first,
-  // alphabetically among themselves; roots with no one under them at all
-  // (disconnected/unused accounts) sink to the bottom instead of
-  // interleaving alphabetically with the real org chart.
+  const subtreeSize = useMemo(() => {
+    const cache = new Map<string, number>();
+    const countBelow = (userName: string, seen: Set<string>): number => {
+      if (seen.has(userName)) return 0; // guard a bad manager cycle
+      if (cache.has(userName)) return cache.get(userName)!;
+      const nextSeen = new Set(seen).add(userName);
+      const kids = childrenByManagerName.get(userName) ?? [];
+      const total = kids.reduce((sum, kid) => sum + 1 + countBelow(kid.userName, nextSeen), 0);
+      cache.set(userName, total);
+      return total;
+    };
+    return (userName: string) => countBelow(userName, new Set());
+  }, [childrenByManagerName]);
+
+  // Roots (no manager set, or manager isn't a real active user in view) are
+  // NEVER nested under each other — that would show a false reporting line
+  // for people who don't actually report to that person; anyone with a
+  // real manager nests there regardless of their own role (see
+  // childrenByManagerName). Sorted Super Admin first, then Admin, per the
+  // requested chart order; within the same tier (and for everyone else)
+  // whoever has the biggest real reporting chain underneath them leads,
+  // then name.
   const hierarchyRoots = useMemo(
     () =>
       activeForHierarchy
         .filter((record) => !record.manager || !usersByName.has(record.manager))
         .sort((a, b) => {
-          const aHasChildren = (childrenByManagerName.get(a.userName)?.length ?? 0) > 0;
-          const bHasChildren = (childrenByManagerName.get(b.userName)?.length ?? 0) > 0;
-          if (aHasChildren !== bHasChildren) return aHasChildren ? -1 : 1;
+          const tierDiff = topTierRank(a) - topTierRank(b);
+          if (tierDiff !== 0) return tierDiff;
+          const diff = subtreeSize(b.userName) - subtreeSize(a.userName);
+          if (diff !== 0) return diff;
           return a.userName.localeCompare(b.userName);
         }),
-    [activeForHierarchy, usersByName, childrenByManagerName],
+    [activeForHierarchy, usersByName, subtreeSize],
   );
 
   // Manager dropdown candidates: real users with a manager-ish or admin
@@ -1262,6 +1297,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   moduleSlug={mod.slug}
                   submoduleSlug={sub.slug}
                   ancestors={EMPTY_ANCESTORS}
+                  subtreeSize={subtreeSize}
+                  isRoot
                 />
               ))
             )}
@@ -1471,7 +1508,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
               <div className="text-xs text-slate-400 pt-4 border-t border-white/10">
                 <p className="mb-2"><span className="font-semibold">Note:</span> Fields marked with * are required.</p>
-                <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyId || "N/A"}</span></p>
+                <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyLoginAlias || auth.companyId || "N/A"}</span></p>
                 <p className="mb-2">• Default password: <span className="text-blue-300 font-mono">Welcome2024!</span> (user should change on first login)</p>
                 <p>• Username will be auto-generated from display name (FirstName.LastName format)</p>
               </div>

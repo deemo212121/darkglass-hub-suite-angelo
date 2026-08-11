@@ -264,6 +264,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Set up Firebase Auth listener
         console.log("🔐 Setting up Firebase Auth listener...");
+        // Guards against out-of-order onAuthStateChanged firings — e.g. a
+        // kickout's firebaseSignOut() is async, so its delayed "signed out"
+        // notification can arrive AFTER a fresh login's "signed in" one if
+        // the user logs back in quickly. Each firing captures its own
+        // generation number; if a NEWER firing has already landed by the
+        // time an older one finishes its awaits, the older one bails out
+        // instead of clobbering state a later event already established.
+        let authGeneration = 0;
+        // Coalesces overlapping session checks for the SAME Firebase uid —
+        // if a stray/duplicate auth event (or the periodic/tab-focus/
+        // realtime paths below) races another in-flight check for the same
+        // uid, the second one reuses the first's in-flight result instead
+        // of running its own comparison against not-yet-committed data.
+        const sessionCheckInFlight = new Map<string, Promise<boolean>>();
+        const runSessionCheck = (
+          firebaseUser: FirebaseUser,
+          isInteractiveLogin: boolean,
+          onSuperseded: () => void
+        ): Promise<boolean> => {
+          const existing = sessionCheckInFlight.get(firebaseUser.uid);
+          if (existing) return existing;
+          const promise = checkAndHandleSession(firebaseUser, isInteractiveLogin, onSuperseded).finally(() => {
+            sessionCheckInFlight.delete(firebaseUser.uid);
+          });
+          sessionCheckInFlight.set(firebaseUser.uid, promise);
+          return promise;
+        };
         // Periodically re-mint the Supabase JWT before it expires. The minted
         // token has a 1h TTL; refresh every 45 min so long-open tabs never hit
         // "JWT expired" (which silently breaks all Supabase reads/writes).
@@ -417,6 +444,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setDisplayName(sbProfile.displayName);
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
+                  // Hydrate this company's per-module/submodule role-gate
+                  // overrides (migration 0151) — every getDashboardRoleGate()/
+                  // getModuleRoleGate() call site stays synchronous and just
+                  // starts seeing the customized list once this resolves.
+                  // Never blocks login; a submodule reads as "open to
+                  // everyone" (or the Dashboard's hardcoded default) until it does.
+                  void (async () => {
+                    try {
+                      const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
+                      const { hydrateModuleRoleGates } = await import("./moduleAccess");
+                      hydrateModuleRoleGates(await getModuleRoleGateOverrides());
+                    } catch (e) {
+                      console.warn("Module role gate override hydration skipped:", e);
+                    }
+                  })();
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
                   //   1. branch_access = "*" (admin set "All Locations") →
@@ -725,7 +767,7 @@ const PRESENCE_ACTIVITY_THROTTLE_MS = 30_000;
 const PRESENCE_ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"] as const;
 
 /**
- * Online/Idle/Offline presence (migration 0155) — self-contained on
+ * Online/Idle/Offline presence (migration 0163) — self-contained on
  * purpose, deliberately NOT threaded into AuthProvider's own effect
  * above: that effect already carries a lot of session-race-sensitive
  * logic (kickout detection, token refresh, single-session enforcement),

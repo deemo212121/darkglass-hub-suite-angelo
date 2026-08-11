@@ -23,6 +23,7 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
+import { formatClockTime } from "@/lib/payslipTemplate";
 import {
   getCompanyPtoRequests,
   createPtoRequest,
@@ -63,6 +64,9 @@ interface DailyRecord {
   isOffDay: boolean;
   /** Display name of whoever clocked this person in, if it wasn't themselves (a manager's proxy clock-in). */
   clockedInBy: string | null;
+  /** Scheduled shift times ("HH:MM", possibly "") — shown in the name popover, see requiredTimePopoverId. */
+  requiredCheckIn: string;
+  requiredCheckOut: string;
 }
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
@@ -133,7 +137,8 @@ function computeAlerts(
   requiredCheckOut: string,
   isOffDay: boolean,
   nowHHMM: string | null,
-  graceMinutes: number = ATTENDANCE_GRACE_MINUTES
+  graceMinutes: number = ATTENDANCE_GRACE_MINUTES,
+  workingHours?: number | null
 ): string[] {
   if (isOffDay) return [];
 
@@ -160,7 +165,15 @@ function computeAlerts(
     const paidCheckIn = requiredCheckIn ? applyGraceToCheckIn(checkIn, requiredCheckIn, graceMinutes) : checkIn;
     const paidCheckOut = requiredCheckOut ? roundCheckOutToSchedule(checkOut, requiredCheckOut) : checkOut;
     const worked = calcWorkedHours({ checkIn: paidCheckIn, checkOut: paidCheckOut, mealStart, mealEnd, notes: "" });
-    const requiredHours = requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
+    // `worked` already has the meal break subtracted (calcWorkedHours), so
+    // the target it's compared against needs to be the NET duty-hours
+    // figure too — the profile's own working_hours (already meal-excluded)
+    // when set. Falling back to the raw requiredCheckIn/requiredCheckOut
+    // span here would compare a meal-EXCLUSIVE worked total against a
+    // meal-INCLUSIVE required span, so anyone who takes their full
+    // scheduled lunch reads as "Under Time" by about the length of their
+    // lunch even after working their entire required shift.
+    const requiredHours = workingHours != null ? workingHours : requiredCheckIn && requiredCheckOut ? hoursDiff(requiredCheckIn, requiredCheckOut) : 8;
     if (worked - requiredHours > 0.25) alerts.push(`Over Time (${fmtHoursMinutes(worked)})`);
     else if (requiredHours - worked > 0.25) alerts.push(`Under Time (${fmtHoursMinutes(worked)})`);
   }
@@ -217,6 +230,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // punch (absent, or clocked in but not out yet) so the table only shows
   // employees whose attendance for the day is actually complete.
   const [completeOnly, setCompleteOnly] = useState(false);
+  // Daily Attendance Tracker — clicking an employee's name shows their
+  // scheduled shift (Required Check In/Out) right there instead of only
+  // linking out to their full profile. Keyed by the SAME id used for the
+  // row key (profileId, or profileId|date in date-range mode) so opening
+  // one person's popover on one date doesn't also open it for the same
+  // person on a different date. Only one open at a time — clicking the
+  // same name again, or a different name, closes/switches it.
+  const [requiredTimePopoverKey, setRequiredTimePopoverKey] = useState<string | null>(null);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
@@ -478,7 +499,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const rowNowHHMM = isToday ? (nowByTimezone[branchTz] ?? nowInTimezone(branchTz).hhmm) : null;
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
       const graceMinutes = payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes);
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -496,6 +517,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         alerts,
         isOffDay,
         clockedInBy: clockedInByName,
+        requiredCheckIn: p.required_check_in || "",
+        requiredCheckOut: p.required_check_out || "",
       };
     },
     [nowByTimezone, allProfileById]
@@ -646,40 +669,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (checkIn) present++;
         const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
         const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry, normalizeRole(p.role) === "TECHNICIAN");
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes, p.working_hours);
         if (alerts.some(isPenalizedLateAlert)) late++;
-      }
-      const absent = Math.max(0, workingDays - present);
-      const pct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 100;
-      const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
-      return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
-    });
-  }, [summaryProfiles, entriesByKey]);
-
-  // ---- Custom-range summary — same shape as monthlySummary above, just
-  // over whatever [customRangeStart, customRangeEnd] the user picked instead
-  // of a fixed week/month-to-date window. ----
-  const customSummary = useMemo(() => {
-    if (!customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
-    const start = new Date(customRangeStart + "T00:00:00");
-    const end = new Date(customRangeEnd + "T00:00:00");
-    return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
-      let workingDays = 0;
-      let present = 0;
-      let late = 0;
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const iso = toISODate(d);
-        if (iso > todayISO) break; // don't count days that haven't happened yet as absences
-        const dow = d.getDay();
-        if (offDays.has(dow)) continue;
-        workingDays++;
-        const entry = customEntriesByKey.get(`${p.id}|${iso}`);
-        const checkIn = entry?.checkIn || "";
-        const checkOut = entry?.checkOut || "";
-        if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null);
-        if (alerts.some((a) => a.includes("Late"))) late++;
       }
       const absent = Math.max(0, workingDays - present);
       const pct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 100;
@@ -718,6 +709,73 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const mealStart = entry?.mealStart || "";
       const mealEnd = entry?.mealEnd || "";
       const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null);
+      days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
+    }
+    return days;
+  };
+
+  // ---- Custom-range summary — same shape as monthlySummary above, just
+  // over whatever [customRangeStart, customRangeEnd] the user picked instead
+  // of a fixed week/month-to-date window. ----
+  const customSummary = useMemo(() => {
+    if (!customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
+    const start = new Date(customRangeStart + "T00:00:00");
+    const end = new Date(customRangeEnd + "T00:00:00");
+    return summaryProfiles.map((p) => {
+      const offDays = new Set<number>(p.off_days ?? []);
+      let workingDays = 0;
+      let present = 0;
+      let late = 0;
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const iso = toISODate(d);
+        if (iso > todayISO) break; // don't count days that haven't happened yet as absences
+        const dow = d.getDay();
+        if (offDays.has(dow)) continue;
+        workingDays++;
+        const entry = customEntriesByKey.get(`${p.id}|${iso}`);
+        const checkIn = entry?.checkIn || "";
+        const checkOut = entry?.checkOut || "";
+        if (checkIn) present++;
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
+        if (alerts.some((a) => a.includes("Late"))) late++;
+      }
+      const absent = Math.max(0, workingDays - present);
+      const pct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 100;
+      const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
+      return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
+    });
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO]);
+
+  // Day-by-day breakdown behind the Custom Attendance Summary's Present/
+  // Absent/Late numbers — same day-iteration/off-day rules as customSummary
+  // above, just returning one row per day instead of an aggregate count.
+  // Only computed on demand (the modal is rarely open), so a plain function
+  // rather than a memo.
+  interface CustomDayDetail {
+    date: string;
+    checkIn: string;
+    mealStart: string;
+    mealEnd: string;
+    checkOut: string;
+    isLate: boolean;
+  }
+  const buildCustomDayDetails = (profileId: string): CustomDayDetail[] => {
+    const p = summaryProfiles.find((pr) => pr.id === profileId);
+    if (!p || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
+    const offDays = new Set<number>(p.off_days ?? []);
+    const start = new Date(customRangeStart + "T00:00:00");
+    const end = new Date(customRangeEnd + "T00:00:00");
+    const days: CustomDayDetail[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = toISODate(d);
+      if (iso > todayISO) break;
+      if (offDays.has(d.getDay())) continue;
+      const entry = customEntriesByKey.get(`${p.id}|${iso}`);
+      const checkIn = entry?.checkIn || "";
+      const checkOut = entry?.checkOut || "";
+      const mealStart = entry?.mealStart || "";
+      const mealEnd = entry?.mealEnd || "";
+      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
       days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
     }
     return days;
@@ -889,7 +947,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   const ptoFormCreatedAt = profiles.find((p) => p.id === ptoForm.profileId)?.created_at ?? null;
-  const ptoFormEligible = !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
+  // Sick Leave has no 1-year wait — it's available from day 1 — so the
+  // vacation-PTO eligibility gate only applies to every other leave type.
+  const ptoFormEligible = ptoForm.ptoType === "sick" || !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
   const ptoFormEligibleOn = ptoEligibleDate(ptoFormHireDate, ptoFormCreatedAt);
 
   const handleSubmitPtoRequest = async () => {
@@ -897,7 +957,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       alert("Please fill in employee, start date, and end date.");
       return;
     }
-    if (!isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
+    if (ptoForm.ptoType !== "sick" && !isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
       alert(`${profileName(ptoForm.profileId)} isn't eligible for PTO yet — employees need 1 year of tenure first. Eligible starting ${ptoFormEligibleOn}.`);
       return;
     }
@@ -1317,16 +1377,41 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         {group.records.map((record) => (
                       <tr key={dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         {dateRangeActive && <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{record.date}</td>}
-                        <td className="px-3 py-3 text-white font-medium">
+                        <td className="px-3 py-3 text-white font-medium relative">
                           <span className="inline-flex items-center gap-2">
                             <span
                               className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}`}
                               title={PRESENCE_LABEL[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}
                             />
-                            <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const key = dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId;
+                                setRequiredTimePopoverKey((cur) => (cur === key ? null : key));
+                              }}
+                              className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer text-left"
+                            >
                               {record.name}
-                            </a>
+                            </button>
                           </span>
+                          {requiredTimePopoverKey === (dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId) && (
+                            <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border border-white/10 bg-slate-800 p-3 shadow-xl">
+                              <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Scheduled Shift</p>
+                              <p className="text-xs text-slate-200">
+                                {record.requiredCheckIn && record.requiredCheckOut
+                                  ? `${formatClockTime(record.requiredCheckIn)} – ${formatClockTime(record.requiredCheckOut)}`
+                                  : "No schedule set"}
+                              </p>
+                              <a
+                                href={`/employee/${record.profileId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-2 inline-block text-[11px] text-blue-400 hover:text-blue-300 hover:underline"
+                              >
+                                View full profile ↗
+                              </a>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>
@@ -2122,7 +2207,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <option key={p.id} value={p.id}>{p.display_name || p.email}</option>
                     ))}
                   </select>
-                  {ptoForm.profileId && !ptoFormEligible && (
+                  {ptoForm.profileId && ptoForm.ptoType !== "sick" && !ptoFormEligible && (
                     <p className="text-xs text-amber-300 mt-1">
                       Not yet eligible for PTO — needs 1 year of tenure first (eligible starting {ptoFormEligibleOn}).
                     </p>

@@ -346,6 +346,19 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </p>
             </div>
 
+            {selected.screenshotUrl && (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">Screenshot</label>
+                <a href={selected.screenshotUrl} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={selected.screenshotUrl}
+                    alt="Attached screenshot"
+                    className="max-h-64 rounded-lg border border-white/10 hover:border-blue-400/50 transition"
+                  />
+                </a>
+              </div>
+            )}
+
             {!canEdit ? (
               <>
                 <div className="grid grid-cols-2 gap-3 mb-2">

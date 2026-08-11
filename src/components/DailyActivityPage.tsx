@@ -5,7 +5,11 @@ import { ChevronLeft, Loader2, Search, SlidersHorizontal, X } from "lucide-react
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
+import { useAuth } from "@/lib/auth";
 import { getCompanyUsers } from "@/lib/supabase/users";
+import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
+import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTickets, getTicketAuditLog, type TicketAuditEntry } from "@/lib/supabase/tickets";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 
@@ -187,6 +191,7 @@ function formatDate(date: Date) {
 }
 
 export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null }) {
+  const { ready, uid } = useAuth();
   const [search, setSearch] = useState("");
   const [location, setLocation] = useState("ALL");
   // Defaults to the last 30 days rather than just "today" — a single-day
@@ -236,23 +241,35 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
   const [detailsVisibleBuckets, setDetailsVisibleBuckets] = useState<Set<ActionBucket>>(new Set(BUCKET_ORDER));
 
   const load = useCallback(async () => {
+    if (!ready || !uid) { setLoading(false); return; }
     try {
       setLoading(true);
       setError(null);
-      const [profiles, tickets, auditLog] = await Promise.all([
+      const [myProfileId, profiles, tickets, auditLog, csrComposition] = await Promise.all([
+        getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCompanyTickets(),
         getTicketAuditLog({ startDate: dateFrom || undefined, endDate: dateTo || undefined }),
+        getCsrTeamComposition().catch((): CsrTeamComposition | null => null),
       ]);
 
       const profileById = new Map(profiles.map((p) => [p.id, p]));
       const ticketMeta = new Map<string, string>();
       for (const t of tickets as any[]) if (t._id) ticketMeta.set(t._id, t.ticketNo);
 
+      // Manager-tier roles (Manager, BizOps Manager, CSR Manager, ...) only
+      // see their own activity plus their direct reports' here — same
+      // "my team" scoping already used on Attendance Monitoring. Returns
+      // null (unrestricted, everyone visible) for Admin/HR/Finance/SuperAdmin.
+      const myProfile = myProfileId ? profileById.get(myProfileId) ?? null : null;
+      const visibleProfileIds = myProfile ? visibleAttendanceProfileIds(myProfile, profiles, csrComposition) : null;
+      const visibleProfiles = visibleProfileIds ? profiles.filter((p) => visibleProfileIds.has(p.id)) : profiles;
+
       const byUser = new Map<string, ActivityRow>();
       for (const entry of auditLog) {
         const who = entry.changedBy;
         if (!who) continue;
+        if (visibleProfileIds && !visibleProfileIds.has(who)) continue;
         const profile = profileById.get(who);
         if (!profile || profile.is_active === false) continue;
         if (!byUser.has(who)) {
@@ -276,14 +293,14 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
       const nextRows = Array.from(byUser.values()).sort((a, b) => b.total - a.total);
       setRows(nextRows);
       setPendingCount(tickets.filter((t) => isPendingStatus(t.status)).length);
-      setLocationOptions(["ALL", ...mergeLocationOptions(LOCATIONS, profiles.map((p) => p.assigned_branch || ""))]);
+      setLocationOptions(["ALL", ...mergeLocationOptions(LOCATIONS, visibleProfiles.map((p) => p.assigned_branch || ""))]);
       setLastModified(new Date().toLocaleString());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load daily activity data.");
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, ready, uid]);
 
   useEffect(() => { load(); }, [load]);
 

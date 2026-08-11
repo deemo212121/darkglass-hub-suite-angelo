@@ -27,10 +27,34 @@ interface Employee {
   department: string;
   country: "US" | "PH";
 }
-interface SalaryEntry { profile_id: string; effective_date: string; hourly_rate: number }
+interface SalaryEntry { profile_id: string; effective_date: string; hourly_rate: number; created_at: string }
 interface TimecardEntry { profile_id: string | null; employee_id: string | null; check_in: string | null; check_out: string | null; meal_start: string | null; meal_end: string | null }
 interface PayrollRun { id: string; period_start: string; period_end: string; status: string; generated_at: string | null }
 interface PayrollLineItem { payroll_run_id: string; profile_id: string; gross_pay: number; currency: string }
+
+// Latest hourly rate per employee. Editing a day's rate (AccountingDashboard's
+// Attendance table inline edit, or Add Rate Change) always INSERTS a new
+// salary_entries row instead of updating one in place, so the same
+// effective_date can end up with several rows (e.g. corrected twice in one
+// sitting) — ties are broken by created_at (the most recently entered
+// correction wins) so a stale duplicate can never outrank a fresh edit. Same
+// tie-break as entryEffectiveOn (salary.ts).
+function buildLatestRateMap(salaryEntries: SalaryEntry[]): Map<string, number> {
+  const latest = new Map<string, SalaryEntry>();
+  for (const se of salaryEntries) {
+    const existing = latest.get(se.profile_id);
+    if (
+      !existing ||
+      se.effective_date > existing.effective_date ||
+      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+    ) {
+      latest.set(se.profile_id, se);
+    }
+  }
+  const rates = new Map<string, number>();
+  for (const [profileId, se] of latest) rates.set(profileId, se.hourly_rate);
+  return rates;
+}
 
 function rollBackToWeekday(d: Date): Date {
   const day = d.getDay();
@@ -76,7 +100,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         setError(null);
         const [empRes, salRes, runsRes, lineRes] = await Promise.all([
           supabase.from("profiles").select("id,display_name,username,role,assigned_branch").neq("role", "SUPERSUPERADMIN"),
-          supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate").not("profile_id", "is", null).order("effective_date", { ascending: false }),
+          supabase.from("salary_entries").select("profile_id,effective_date,hourly_rate,created_at").not("profile_id", "is", null).order("effective_date", { ascending: false }).order("created_at", { ascending: false }),
           supabase.from("payroll_runs").select("id,period_start,period_end,status,generated_at").order("generated_at", { ascending: false }),
           supabase.from("payroll_line_items").select("payroll_run_id,profile_id,gross_pay,currency"),
         ]);
@@ -112,8 +136,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   // Current live period preview — same "Last 14 days" convention as
   // AccountingDashboard.tsx's Overview tab, computed from real punches.
   const currentPeriod = useMemo(() => {
-    const latestRateMap = new Map<string, number>();
-    for (const se of salaryEntries) if (!latestRateMap.has(se.profile_id)) latestRateMap.set(se.profile_id, se.hourly_rate);
+    const latestRateMap = buildLatestRateMap(salaryEntries);
 
     const hoursMap = new Map<string, number>();
     for (const tc of timecardEntries) {
@@ -154,8 +177,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   // per-employee dollar figures, since this is a summary report rather than
   // the interactive per-employee payroll ledger (that stays on the Dashboard).
   const departmentBreakdown = useMemo(() => {
-    const latestRateMap = new Map<string, number>();
-    for (const se of salaryEntries) if (!latestRateMap.has(se.profile_id)) latestRateMap.set(se.profile_id, se.hourly_rate);
+    const latestRateMap = buildLatestRateMap(salaryEntries);
     const hoursMap = new Map<string, number>();
     for (const tc of timecardEntries) {
       const key = tc.profile_id || tc.employee_id;

@@ -67,9 +67,9 @@ interface BranchEmployee {
 
 /**
  * Dashboard "Staff List" submodule — Current Staff and Tier Level are
- * their own small reference tables (migration 0153); the per-branch
+ * their own small reference tables (migration 0161); the per-branch
  * PERSON roster below is a LIVE view of the same Master List/profiles
- * data (see migration 0154's header comment for why) — grouped by
+ * data (see migration 0162's header comment for why) — grouped by
  * assigned_branch, so a new hire added in User Management shows up here
  * automatically with no separate import step. personal_email, work_phone,
  * tier_level, and note are editable straight from here and write to the
@@ -89,7 +89,7 @@ export function StaffListPage({ mod: _mod, sub: _sub }: { mod: ModuleDef; sub: S
   // profile only has ONE assigned_branch (their own home branch) — so
   // matching purely on assigned_branch would only ever surface them
   // under that one branch. This is the Leaders tab's Technician
-  // hierarchy (migration 0146/0148/0149/0150): branchManagerName ->
+  // hierarchy (migration 0154/0156/0157/0158): branchManagerName ->
   // whichever Senior Branch Manager they report to, which correctly
   // covers every branch a senior manager actually oversees.
   const [seniorManagerByBranchManager, setSeniorManagerByBranchManager] = useState<Map<string, string>>(new Map());

@@ -68,7 +68,7 @@ import { fillW9Pdf } from "@/lib/w9PdfFill";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
-import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, type EmployeeRequestRow, type EmployeeRequestStatus } from "@/lib/supabase/employeeRequests";
@@ -174,11 +174,14 @@ interface Employee {
   country: "US" | "PH";
   birthday: string;
   address: string;
+  phone: string;
   ssn?: string;
   startDate: string;
   terminationDate?: string;
   terminationReason?: string;
   status: EmploymentStatus;
+  /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
+  employmentType: "trainee" | "regular";
   onboardingDocs: Record<string, boolean>;
   // Same off-day/required-shift fields Attendance Monitoring already uses
   // (profiles.off_days/required_check_in/required_check_out) — carried
@@ -202,8 +205,6 @@ interface Employee {
   // on top of their real/primary one — see "duplicate to another
   // department" next to the Department dropdown.
   extraDepartments: string[];
-  // profiles.phone_number — Master List's Phone column.
-  phone: string;
   // profiles.meal_minutes — same "Working Hours & Meal Time" field the
   // employee sets on their own My Profile page (see workingHours above).
   mealMinutes: number | null;
@@ -317,7 +318,7 @@ interface LeaderTreeNode {
 
 /**
  * Builds a reporting tree from a department's flat row list, using
- * reportsTo (migration 0146) to link a row to whichever OTHER row in the
+ * reportsTo (migration 0154) to link a row to whichever OTHER row in the
  * same department has that name. Rows with no reportsTo (or one that
  * doesn't resolve to anyone in this department) become roots — which is
  * every row for a department that doesn't use hierarchy at all, so callers
@@ -997,11 +998,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           country: PH_BRANCH_NAMES.has(p.assigned_branch || "") ? "PH" : "US",
           birthday: info.birthDate || "",
           address: [info.address1, info.city, info.state].filter(Boolean).join(", "),
+          phone: p.phone_number || "",
           ssn: info.employeeSsn || undefined,
           startDate: info.hireDate || p.created_at?.slice(0, 10) || "",
           terminationDate: info.employmentStatusDate || info.terminateDate || undefined,
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
+          employmentType: p.employment_type || "regular",
           onboardingDocs: info.onboardingDocs || {},
           offDays: p.off_days ?? [],
           requiredCheckIn: p.required_check_in || "",
@@ -1010,7 +1013,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           extraRoles: p.extra_roles ?? [],
           scheduleTimezone: p.schedule_timezone ?? "CST",
           extraDepartments: p.master_list_extra_departments ?? [],
-          phone: p.phone_number || "",
           mealMinutes: p.meal_minutes ?? null,
         };
       });
@@ -3526,6 +3528,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfirmDialog(null);
   };
 
+  // Trainee vs Regular — a separate classification from Account Status
+  // above, no confirmation needed (unlike terminating/resigning someone).
+  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular") => {
+    const employee = employees.find((e) => e.id === id);
+    const prevType = employee?.employmentType ?? "regular";
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: newType } : e)));
+    try {
+      await updateCompanyUser(id, { employmentType: newType });
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { employmentType: newType } });
+    } catch (err) {
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
+      setError(err instanceof Error ? err.message : "Failed to update employment type.");
+    }
+  };
+
   const handleCancelStatusChange = () => setConfirmDialog(null);
 
   // Master List's Department column dropdown (Unlisted/every other tab) —
@@ -3804,27 +3821,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [employees, ptoRequestsByProfile]);
 
-  // Master List's "Sick Leave" column — sick isn't a separate accrual
-  // bucket (see pto.ts's PtoType), it draws against the same allowance as
-  // vacation/personal, so there's no independent "available" figure for it
-  // specifically. This is just the "used" half, filtered to ptoType ===
-  // "sick" within the same current PTO-year window remainingPtoByProfile
-  // already computes — Master List pairs it with that shared remaining
-  // figure rather than inventing a second allowance that doesn't exist.
-  const sickUsedByProfile = useMemo(() => {
-    const map = new Map<string, number>();
+  // Remaining Sick Leave per employee — flat 5 days every tenure year
+  // (never increments), available from day 1 (no 1-year wait, unlike
+  // vacation PTO above) — same sickYearWindow/sickDaysUsed logic Employee
+  // Self-Service uses. Master List's "Sick Leave" column pairs this with
+  // its own allowance rather than the vacation-PTO figure above — Sick
+  // Leave is its own separate accrual bucket (see pto.ts's isPaidPtoType/
+  // sickYearWindow), not drawn from the same pool as vacation/personal.
+  const remainingSickByProfile = useMemo(() => {
+    const map = new Map<string, { remaining: number; allowance: number } | null>();
     for (const e of employees) {
-      const window = ptoYearWindow(e.startDate, null);
+      const window = sickYearWindow(e.startDate, null);
       if (!window) {
-        map.set(e.id, 0);
+        map.set(e.id, null);
         continue;
       }
-      const sickRequests = (ptoRequestsByProfile.get(e.id) ?? []).filter((r) => r.ptoType === "sick");
-      map.set(e.id, ptoDaysUsed(sickRequests, window));
+      const used = sickDaysUsed(ptoRequestsByProfile.get(e.id) ?? [], window);
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
     }
     return map;
   }, [employees, ptoRequestsByProfile]);
-
 
   // ── Master List — same staff roster as Employee Directory, but split
   // into sub-tabs by department instead of one flat table. Sub-tabs are
@@ -3972,7 +3988,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     "Tech Manager",
     "Technician",
   ];
-  /** Which of the 6 Current Technicians tiers this person is in, or null if they're not in that canonical group at all. Used both for sorting and for splitting the Master List into separate tier containers (see groupByDepartment). Tech Manager is kept separate from Branch Manager — they're different roles (see 0148's Technical Support split), not interchangeable titles. */
+  /** Which of the 6 Current Technicians tiers this person is in, or null if they're not in that canonical group at all. Used both for sorting and for splitting the Master List into separate tier containers (see groupByDepartment). Tech Manager is kept separate from Branch Manager — they're different roles (see 0156's Technical Support split), not interchangeable titles. */
   const currentTechniciansLabel = (e: Employee): string | null => {
     if (resolveMasterListDepartment(e) !== "Current Technicians") return null;
     const tier = leadersTierByName.get(e.name);
@@ -4111,7 +4127,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employees, masterListDept, masterListSearch, leadersDeptByName, leadersTierByName]);
 
-  // ── Leaders — a hand-maintained, drag-to-reorder roster (migration 0145),
+  // ── Leaders — a hand-maintained, drag-to-reorder roster (migration 0153),
   // NOT derived from profiles.role — several of these titles ("Assistant
   // Manager", "Senior Director", "Tech Manager ATL") aren't real role codes
   // in this app, so there's no reliable way to derive them. See
@@ -5135,7 +5151,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           // column + branch-grouped rows matches how HR actually tracks it,
           // unlike every other department tab.
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
-          const colCount = showBranchColumn ? 14 : 13;
+          const colCount = showBranchColumn ? 15 : 14;
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -5152,8 +5168,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.required_check_in / required_check_out, the Required Schedule shown on the employee's own My Profile page">Hours of Work</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.working_hours, a plain total distinct from the Required Schedule range">Total Work Hours</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time</th>
-                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick draws from the same PTO allowance as vacation/personal — this is just the sick-tagged portion of what's been used">Sick Leave (Used)</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick Leave is its own allowance, separate from vacation — flat 5 days/year, available from day 1">Sick Leave</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Employment Status</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
               </tr>
             </thead>
@@ -5214,7 +5231,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 };
                 const renderRow = (employee: Employee) => {
                   const pto = remainingPtoByProfile.get(employee.id);
-                  const sickUsed = sickUsedByProfile.get(employee.id) ?? 0;
+                  const sick = remainingSickByProfile.get(employee.id);
                   const warnings = approvedWarningCountByProfile.get(employee.id) ?? 0;
                   return (
                     <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
@@ -5370,11 +5387,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         />
                       </td>
                       <td className="px-2 py-1">
-                        {!pto ? (
-                          <span className="text-muted-foreground text-[10px]" title="Not yet eligible — PTO starts after 1 year of tenure.">—</span>
+                        {!sick ? (
+                          <span className="text-muted-foreground text-[10px]">—</span>
                         ) : (
-                          <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Sick days used / total PTO allowance — sick draws from the same shared pool as vacation/personal.">
-                            {Number.isInteger(sickUsed) ? sickUsed : sickUsed.toFixed(1)}/{pto.allowance}
+                          <span className="bg-teal-500/20 text-teal-300 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Remaining / Allowance">
+                            {sick.remaining}/{sick.allowance}
                           </span>
                         )}
                       </td>
@@ -5384,6 +5401,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         ) : (
                           <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{pto.remaining}/{pto.allowance}</span>
                         )}
+                      </td>
+                      <td className="px-2 py-1">
+                        <select
+                          value={employee.employmentType}
+                          onChange={(e) => void handleUpdateEmploymentType(employee.id, e.target.value as "trainee" | "regular")}
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 bg-slate-700 text-slate-100"
+                        >
+                          <option value="regular">Regular</option>
+                          <option value="trainee">Trainee</option>
+                        </select>
                       </td>
                       <td className="px-2 py-1">
                         {warnings > 0 ? <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{warnings}</span> : <span className="text-muted-foreground text-[10px]">—</span>}
@@ -5424,7 +5451,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </div>
       )}
 
-      {/* ── Leaders — hand-maintained, drag-to-reorder roster (0145). ── */}
+      {/* ── Leaders — hand-maintained, drag-to-reorder roster (0153). ── */}
       {activeTab === "leaders" && (
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">

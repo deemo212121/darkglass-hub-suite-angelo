@@ -25,7 +25,7 @@ export interface ExpenseRow {
   receiptPath: string | null;
   /** The Official Receipt / transaction number printed on the receipt itself — see migration 0132. */
   orNumber: string | null;
-  /** Origin/destination text, carried over from a Flash Tech trip's locations when auto-created — see migration 0133. */
+  /** Origin/destination text, carried over from a Flash Tech trip's locations when auto-created — see migration 0136. */
   fromLocation: string | null;
   toLocation: string | null;
   /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130. */

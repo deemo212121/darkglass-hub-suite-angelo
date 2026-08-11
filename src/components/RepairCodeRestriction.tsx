@@ -38,12 +38,8 @@ export function RepairCodeRestriction({ mod, sub }: Props) {
     setRows(prev => prev.map(r => r.code===code ? {...r, needPart:val} : r));
 
   return (
-    <main className="max-w-350 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{module:mod.slug}} className="hover:text-foreground">Claim</Link><span>›</span>
-        <span className="text-foreground font-medium">Repair Code Restriction</span>
-      </div>
+    <div className="min-h-screen flex flex-col">
+    <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 py-6">
       <div className="flex items-center gap-3 mb-5">
         <Link to="/m/$module" params={{module:mod.slug}} className="btn"><ChevronLeft className="h-4 w-4"/></Link>
         <h1 className="text-xl font-bold">Repair Code Restriction</h1>
@@ -81,5 +77,6 @@ export function RepairCodeRestriction({ mod, sub }: Props) {
         </table>
       </div>
     </main>
+    </div>
   );
 }

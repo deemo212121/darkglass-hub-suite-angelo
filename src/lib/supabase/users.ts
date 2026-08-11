@@ -34,7 +34,8 @@ export type UserRole =
   | "CSR_AGENT" | "CSR_TEAM_LEADER" | "CSR_MANAGER"
   | "BRANCH_MANAGER" | "SENIOR_BRANCH_MANAGER" | "CLAIMS_MANAGER"
   | "PARTS_MANAGER" | "PARTS_TEAM_LEADER" | "BIZOPS_MANAGER" | "BIZOPS_SENIOR_MANAGER" | "CLAIMS"
-  | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR" | "TECHNICAL_ASSISTANT_DIRECTOR" | "CLAIMS_TEAM_LEADER";
+  | "TRIAGE_USER" | "TRIAGE_MANAGER" | "TECHNICAL_DIRECTOR" | "TECHNICAL_ASSISTANT_DIRECTOR" | "CLAIMS_TEAM_LEADER"
+  | "SENIOR_DIRECTOR" | "ASSISTANT_MANAGER";
 
 export interface ProfileRow {
   id: string;
@@ -62,22 +63,24 @@ export interface ProfileRow {
   working_hours: number | null;
   /** How many minutes this person's meal break should be. Not enforced anywhere yet, just stored/shown. */
   meal_minutes: number | null;
-  /** Which zone required_check_in/required_check_out are actually in — "CST" or "EST". See migration 0147. */
+  /** Which zone required_check_in/required_check_out are actually in — "CST" or "EST". See migration 0155. */
   schedule_timezone: "CST" | "EST" | null;
-  /** Extra Master List department tabs this person also shows up under, on top of their real/primary one. See migration 0151. */
+  /** Extra Master List department tabs this person also shows up under, on top of their real/primary one. See migration 0159. */
   master_list_extra_departments: string[] | null;
-  /** Personal (non-company) email — Staff List's per-branch tab. See migration 0154. */
+  /** Personal (non-company) email — Staff List's per-branch tab. See migration 0162. */
   personal_email: string | null;
-  /** A second phone number, distinct from phone_number — Staff List's per-branch tab. See migration 0154. */
+  /** A second phone number, distinct from phone_number — Staff List's per-branch tab. See migration 0162. */
   work_phone: string | null;
-  /** Technician skill tier (e.g. "Tier 2") — NOT an org role, just free text from Staff List. See migration 0154. */
+  /** Technician skill tier (e.g. "Tier 2") — NOT an org role, just free text from Staff List. See migration 0162. */
   tier_level: string | null;
-  /** Free-text note shown on Staff List's per-branch tab. See migration 0154. */
+  /** Free-text note shown on Staff List's per-branch tab. See migration 0162. */
   staff_note: string | null;
-  /** Heartbeat/activity presence — see migration 0155 and touchPresenceSeen/touchPresenceActive. */
+  /** Heartbeat/activity presence — see migration 0163 and touchPresenceSeen/touchPresenceActive. */
   presence_seen_at: string | null;
   presence_active_at: string | null;
   work_plan: Record<string, any> | null;
+  /** Trainee vs Regular — see migration 0152. Fetched separately/best-effort in getCompanyUsers (like working_hours/meal_minutes below), so it defaults to "regular" instead of breaking the whole roster if that migration hasn't been run yet. */
+  employment_type: "trainee" | "regular";
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
   must_change_password: boolean;
@@ -179,7 +182,7 @@ export async function touchLastLogin(firebaseUid: string): Promise<void> {
 }
 
 /**
- * Presence heartbeat (migration 0155) — written every ~60s while the app
+ * Presence heartbeat (migration 0163) — written every ~60s while the app
  * is open, regardless of activity. Master List's Online/Idle/Offline
  * column treats a stale presence_seen_at as Offline (see auth.tsx for the
  * interval that calls this).
@@ -193,7 +196,7 @@ export async function touchPresenceSeen(firebaseUid: string): Promise<void> {
 }
 
 /**
- * Presence activity (migration 0155) — written only on real user
+ * Presence activity (migration 0163) — written only on real user
  * interaction (mouse/keyboard/scroll/touch), throttled client-side.
  * Master List treats a stale presence_active_at (but fresh
  * presence_seen_at) as Idle.
@@ -384,7 +387,7 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
     // Two SEPARATE best-effort queries, not one combined select — if
-    // migration 0154's newer columns (personal_email/work_phone/
+    // migration 0162's newer columns (personal_email/work_phone/
     // tier_level/staff_note) haven't been run yet, a single combined
     // query errors out as a whole and would silently null out
     // working_hours/meal_minutes too (they've existed since 0109 and may
@@ -421,6 +424,26 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
         const presence = presenceById.get(row.id);
         row.presence_seen_at = presence?.presence_seen_at ?? null;
         row.presence_active_at = presence?.presence_active_at ?? null;
+      }
+    }
+  }
+
+  // Same best-effort pattern, in its OWN separate query (not merged into the
+  // one above) — employment_type (migration 0152) is newer/optional, so it
+  // must not be able to break working_hours/meal_minutes (or the rest of
+  // this function's callers) if that migration hasn't been run yet.
+  for (const row of rows) row.employment_type = "regular";
+  if (rows.length > 0) {
+    const { data: empTypeRows, error: empTypeError } = await supabase
+      .from("profiles")
+      .select("id, employment_type")
+      .in("id", rows.map((r) => r.id));
+    if (empTypeError) {
+      console.error("getCompanyUsers (employment_type) error:", empTypeError.message);
+    } else {
+      const empTypeById = new Map((empTypeRows ?? []).map((r: any) => [r.id, r.employment_type]));
+      for (const row of rows) {
+        row.employment_type = empTypeById.get(row.id) ?? "regular";
       }
     }
   }
@@ -831,6 +854,8 @@ export async function updateCompanyUser(
     offDays: number[];
     workPlan: Record<string, any>;
     isActive: boolean;
+    /** Trainee vs Regular. See migration 0152. */
+    employmentType: "trainee" | "regular";
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -867,6 +892,7 @@ export async function updateCompanyUser(
   if (fields.offDays !== undefined) payload.off_days = fields.offDays;
   if (fields.workPlan !== undefined) payload.work_plan = fields.workPlan;
   if (fields.isActive !== undefined) payload.is_active = fields.isActive;
+  if (fields.employmentType !== undefined) payload.employment_type = fields.employmentType;
 
   const { error } = await supabase.from("profiles").update(payload).eq("id", profileId);
   if (error) {

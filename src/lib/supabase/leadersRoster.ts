@@ -1,11 +1,11 @@
 /**
- * HR "Leaders" tab — department-grouped leadership roster (migration 0145).
+ * HR "Leaders" tab — department-grouped leadership roster (migration 0153).
  * A hand-maintained roster, not derived from profiles.role/department (see
  * the migration's header comment for why) — edited by dragging rows to
  * reorder within a department or move to a different one, on the HR Daily
  * Report page's Leaders tab.
  *
- * `reportsTo` (migration 0146) is an optional reporting line WITHIN a
+ * `reportsTo` (migration 0154) is an optional reporting line WITHIN a
  * department — e.g. Technician's Branch Managers each report to a Senior
  * Branch Manager, who reports to the Assistant Technical Director. Null
  * means "top of this department's tree" (or the department has no
