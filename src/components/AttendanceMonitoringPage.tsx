@@ -5,6 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
 import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
@@ -1342,16 +1343,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <tr key={dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         {dateRangeActive && <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{record.date}</td>}
                         <td className="px-3 py-3 text-white font-medium relative">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const key = dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId;
-                              setRequiredTimePopoverKey((cur) => (cur === key ? null : key));
-                            }}
-                            className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer text-left"
-                          >
-                            {record.name}
-                          </button>
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}`}
+                              title={PRESENCE_LABEL[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const key = dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId;
+                                setRequiredTimePopoverKey((cur) => (cur === key ? null : key));
+                              }}
+                              className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer text-left"
+                            >
+                              {record.name}
+                            </button>
+                          </span>
                           {requiredTimePopoverKey === (dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId) && (
                             <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border border-white/10 bg-slate-800 p-3 shadow-xl">
                               <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Scheduled Shift</p>

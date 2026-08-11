@@ -62,6 +62,7 @@ interface WeekDay {
 interface RequiredSchedule {
   requiredCheckIn: string;
   requiredCheckOut: string;
+  scheduleTimezone: "CST" | "EST";
   workingHours: string;
   mealMinutes: string;
 }
@@ -98,6 +99,11 @@ function ProfilePage() {
   // determines every permission check in the app — both are locked down to
   // admin-tier accounts editing their OWN profile, not opened up for everyone.
   const canEditAccountFields = ACCOUNT_FIELD_EDIT_ROLES.has(String(role || "").toUpperCase());
+  // Timezone is locked tighter than Check-In/Out Time — HR sets it from
+  // Master List (bulk, company-wide view of who's on which zone); the only
+  // edit allowed directly on someone's own My Profile is a SUPERADMIN
+  // override, not the broader SCHEDULE_EDIT_ROLES list.
+  const canEditTimezone = normalizeRole(role) === "SUPERADMIN";
   const [profileId, setProfileId] = useState<string | null>(null);
   // Compared against profile.email in save() to know whether the Firebase
   // Auth update call is needed at all — same convention as the admin-side
@@ -136,6 +142,7 @@ function ProfilePage() {
   const [requiredSchedule, setRequiredSchedule] = useState<RequiredSchedule>({
     requiredCheckIn: "08:00",
     requiredCheckOut: "17:00",
+    scheduleTimezone: "CST",
     workingHours: "",
     mealMinutes: "",
   });
@@ -197,6 +204,7 @@ function ProfilePage() {
         setRequiredSchedule({
           requiredCheckIn: p.requiredCheckIn || "08:00",
           requiredCheckOut: p.requiredCheckOut || "17:00",
+          scheduleTimezone: p.scheduleTimezone,
           workingHours: p.workingHours != null ? String(p.workingHours) : "",
           mealMinutes: p.mealMinutes != null ? String(p.mealMinutes) : "",
         });
@@ -256,6 +264,7 @@ function ProfilePage() {
               offDays: selectedOffDays,
             }
           : {}),
+        ...(canEditTimezone ? { scheduleTimezone: requiredSchedule.scheduleTimezone } : {}),
       });
       if (emailChanged) setOriginalEmail(profile.email.trim());
       setSaved("Profile saved.");
@@ -567,7 +576,7 @@ function ProfilePage() {
               </span>
             )}
           </div>
-          <div className="grid sm:grid-cols-2 gap-4 mb-4">
+          <div className="grid sm:grid-cols-3 gap-4 mb-4">
             <label className="flex flex-col gap-2">
               <span className="text-xs text-slate-400">Check-In Time</span>
               <input
@@ -587,6 +596,22 @@ function ProfilePage() {
                 disabled={!canEditSchedule}
                 className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
+                Timezone
+                {!canEditTimezone && <Lock className="h-2.5 w-2.5 text-amber-300/90" />}
+              </span>
+              <select
+                value={requiredSchedule.scheduleTimezone}
+                onChange={(e) => setRequiredSchedule({ ...requiredSchedule, scheduleTimezone: e.target.value as "CST" | "EST" })}
+                disabled={!canEditTimezone}
+                title={canEditTimezone ? undefined : "Set by HR from Master List, or by a Super Admin here"}
+                className="px-3 py-2 bg-slate-700 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <option value="CST">CST</option>
+                <option value="EST">EST</option>
+              </select>
             </label>
           </div>
         </div>

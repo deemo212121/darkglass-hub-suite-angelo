@@ -17,6 +17,7 @@ import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
+import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
 import { MessageBody } from "@/components/MessageBody";
 import {
   type ChannelRow,
@@ -602,8 +603,14 @@ export function TeamMessenger({ mod, sub }: Props) {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
-                        {initials(r.display_name || r.email)}
+                      <div className="relative shrink-0">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
+                          {initials(r.display_name || r.email)}
+                        </div>
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-950 ${PRESENCE_DOT_CLASS[resolvePresenceStatus(r)]}`}
+                          title={PRESENCE_LABEL[resolvePresenceStatus(r)]}
+                        />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-semibold">{r.display_name || r.email}</div>
@@ -630,7 +637,15 @@ export function TeamMessenger({ mod, sub }: Props) {
               <div className="text-xs uppercase tracking-[0.12em] text-slate-400">
                 {active?.kind === "channel" ? "Channel" : active?.kind === "dm" ? "Direct Message" : ""}
               </div>
-              <h2 className="mt-1 text-2xl font-bold">{activeTitle}</h2>
+              <h2 className="mt-1 flex items-center gap-2 text-2xl font-bold">
+                {activeTitle}
+                {active?.kind === "dm" && (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300" title={PRESENCE_LABEL[resolvePresenceStatus(active.participant)]}>
+                    <span className={`h-2 w-2 rounded-full ${PRESENCE_DOT_CLASS[resolvePresenceStatus(active.participant)]}`} />
+                    {PRESENCE_LABEL[resolvePresenceStatus(active.participant)]}
+                  </span>
+                )}
+              </h2>
               {activeSubtitle && <p className="mt-1 text-sm text-slate-300">{activeSubtitle}</p>}
             </div>
             <div className="rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2 text-right text-xs text-slate-400">

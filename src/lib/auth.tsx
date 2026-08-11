@@ -7,7 +7,7 @@ import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession, getCurrentSessionId } from "./supabase/client";
-import { getProfileForLogin, touchLastLogin } from "./supabase/users";
+import { getProfileForLogin, touchLastLogin, touchPresenceSeen, touchPresenceActive } from "./supabase/users";
 import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 import { subscribeTableChanges } from "./supabase/realtime";
 
@@ -726,4 +726,63 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
   return ctx;
+}
+
+// How often to prove "the tab is still open" regardless of activity —
+// Master List treats a presence_seen_at older than a few multiples of
+// this as Offline (see ReportHRDaily.tsx's presence status math).
+const PRESENCE_HEARTBEAT_MS = 60_000;
+// How often a genuine user interaction is allowed to re-stamp
+// presence_active_at — no need to write on every single mousemove.
+const PRESENCE_ACTIVITY_THROTTLE_MS = 30_000;
+const PRESENCE_ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"] as const;
+
+/**
+ * Online/Idle/Offline presence (migration 0163) — self-contained on
+ * purpose, deliberately NOT threaded into AuthProvider's own effect
+ * above: that effect already carries a lot of session-race-sensitive
+ * logic (kickout detection, token refresh, single-session enforcement),
+ * and presence is a simple, independent concern that doesn't need to
+ * share any of that machinery. Mounted once from AppHeader.tsx so it
+ * runs on every authenticated page exactly once.
+ */
+export function usePresenceHeartbeat() {
+  const { ready, uid } = useAuth();
+  useEffect(() => {
+    if (!ready || !uid) return;
+    let cancelled = false;
+    let lastActivityWrite = 0;
+
+    void touchPresenceSeen(uid);
+    void touchPresenceActive(uid);
+
+    const heartbeat = setInterval(() => {
+      if (!cancelled) void touchPresenceSeen(uid);
+    }, PRESENCE_HEARTBEAT_MS);
+
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastActivityWrite < PRESENCE_ACTIVITY_THROTTLE_MS) return;
+      lastActivityWrite = now;
+      void touchPresenceActive(uid);
+    };
+    for (const evt of PRESENCE_ACTIVITY_EVENTS) window.addEventListener(evt, onActivity, { passive: true });
+
+    // Coming back to a backgrounded tab is itself real activity, and
+    // should re-prove "still open" immediately rather than waiting for
+    // the next heartbeat tick.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void touchPresenceSeen(uid);
+      onActivity();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      clearInterval(heartbeat);
+      for (const evt of PRESENCE_ACTIVITY_EVENTS) window.removeEventListener(evt, onActivity);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [ready, uid]);
 }

@@ -1,8 +1,8 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { useAuth, usePresenceHeartbeat } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { ChevronDown, Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy, Smartphone } from "lucide-react";
+import { Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy, Smartphone, ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,22 +17,36 @@ import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
 import { setDesktopOverride, setMobileMode } from "@/lib/device";
+import { getMyFullProfile } from "@/lib/supabase/users";
 
 /**
- * Live Central Time clock in the header — this app's operations run across
+ * Live reference clock in the header — this app's operations run across
  * many US timezones (see LOCATIONS in AdminUserManagementPage.tsx), so a
  * shared reference clock avoids "whose timezone is this timestamp in?"
- * confusion. Clock math uses America/Chicago (correct through DST changes);
- * the label is always "CST" per requested wording, not a dynamic CST/CDT switch.
+ * confusion. Read-only display that always follows the signed-in user's
+ * own profile.scheduleTimezone — the SAME field My Profile's Required
+ * Schedule and the Master List's Hours of Work dropdown read/write (see
+ * profile.tsx / ReportHRDaily.tsx). No picker here on purpose: who's
+ * allowed to CHANGE this is locked down (Master List for HR, or directly
+ * on My Profile for SUPERADMIN only) — this clock just shows the result.
+ * The zone label is a fixed abbreviation per requested wording, not a
+ * dynamic CST/CDT-style DST switch — only the underlying time math
+ * follows DST.
  */
-function CentralClock() {
+const CLOCK_ZONES: { key: string; label: string; timeZone: string }[] = [
+  { key: "CST", label: "Central Time", timeZone: "America/Chicago" },
+  { key: "EST", label: "Eastern Time", timeZone: "America/New_York" },
+];
+
+function CentralClock({ zoneKey }: { zoneKey: string }) {
+  const zone = CLOCK_ZONES.find((z) => z.key === zoneKey) ?? CLOCK_ZONES[0];
   const [time, setTime] = useState<string | null>(null);
 
   useEffect(() => {
     const update = () => {
       setTime(
         new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/Chicago",
+          timeZone: zone.timeZone,
           hour: "numeric",
           minute: "2-digit",
           second: "2-digit",
@@ -43,18 +57,18 @@ function CentralClock() {
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [zone.timeZone]);
 
   if (!time) return null;
 
   return (
     <div
       className="hidden md:flex items-center gap-1.5 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-3 py-1.5 text-xs text-muted-foreground"
-      title="Central Time"
+      title={zone.label}
     >
       <Clock className="h-3.5 w-3.5" />
       <span className="font-mono tabular-nums">{time}</span>
-      <span className="font-semibold">CST</span>
+      <span className="font-semibold">{zone.key}</span>
     </div>
   );
 }
@@ -92,7 +106,10 @@ function loadEmployeePhoto(email: string | null) {
 }
 
 export function AppHeader() {
-  const { email, displayName, companyId, companyLoginAlias, logout, ready } = useAuth();
+  const { email, displayName, companyId, companyLoginAlias, logout, ready, uid } = useAuth();
+  // Online/Idle/Offline presence (migration 0163) — mounted once here since
+  // AppHeader renders on every authenticated page.
+  usePresenceHeartbeat();
   // Full name (first + last) when we have one, falling back to email only
   // for accounts that somehow don't have a display name set.
   const nameDisplay = displayName || email;
@@ -103,10 +120,28 @@ export function AppHeader() {
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [photoDataUrl, setPhotoDataUrl] = useState("");
+  // The signed-in user's own Required Schedule timezone (profile.tsx) —
+  // CentralClock is read-only and always follows this.
+  const [profileZone, setProfileZone] = useState<string | null>(null);
 
   useEffect(() => {
     setPhotoDataUrl(loadEmployeePhoto(email));
   }, [email]);
+
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    getMyFullProfile(uid)
+      .then((p) => {
+        if (!cancelled && p) setProfileZone(p.scheduleTimezone);
+      })
+      .catch(() => {
+        // Best-effort — the clock just falls back to CST if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--color-background)]/70 border-b border-[var(--color-panel-border)]">
@@ -118,7 +153,7 @@ export function AppHeader() {
             <div className="text-xs text-muted-foreground">Operations console</div>
           </div>
         </Link>
-        <CentralClock />
+        <CentralClock zoneKey={profileZone || "CST"} />
         <div className="ml-auto flex items-center gap-2 text-sm">
           {ready && email && <TimeClockButtons />}
           {ready && email && (

@@ -30,6 +30,9 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Dashboard, so they need to pass this gate for that redirect to fire.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
+  // Same sensitivity as hr-dashboard — personal emails, addresses, DOB-
+  // adjacent contact info per branch.
+  "staff-list": ["ADMIN", "HR"],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve
