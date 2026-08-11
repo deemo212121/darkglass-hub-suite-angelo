@@ -10,7 +10,8 @@ import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 
 // Canonical department list for the Department dropdown (admin-tier
-// self-edit only — see ACCOUNT_FIELD_EDIT_ROLES below).
+// self-edit only — see ACCOUNT_FIELD_EDIT_ROLES below). Email is NOT
+// gated by this — see the Email field below.
 const DEPARTMENT_OPTIONS = ["Admin", "BizOps", "Branch Manager", "Claims", "IT", "Parts", "Technician", "Triage", "Executives"];
 
 // Roles that are allowed to change a user's Required Schedule and Days Off.
@@ -45,12 +46,17 @@ type Profile = {
   poInitials: string;
 };
 
-// Own-account fields (Email, Role, Department) are locked for regular
-// employees — only admin-tier accounts can self-edit them here. SUPERSUPERADMIN
-// is excluded from the ROLE dropdown's own OPTIONS (see roleOptions below), not
+// Own-account fields (Role, Department) are locked for regular employees —
+// only admin-tier accounts can self-edit them here. SUPERSUPERADMIN is
+// excluded from the ROLE dropdown's own OPTIONS (see roleOptions below), not
 // from being able to open this gate — the platform role never reaches /profile
 // in practice (redirected to /superadmin), but excluding it here too costs
 // nothing.
+//
+// Email used to be gated by this too, but everyone can now fix their own
+// login email here (e.g. a typo that's been silently bouncing their
+// payslips) — see the Email field below and adminUpdateEmailBridge.ts's
+// self-service branch.
 const ACCOUNT_FIELD_EDIT_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
 interface WeekDay {
@@ -94,10 +100,11 @@ function PasswordRequirement({ met, label }: { met: boolean; label: string }) {
 function ProfilePage() {
   const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
   const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
-  // Email is the real Firebase Auth login credential (changed via
-  // /api/admin-update-email, same as the admin-side user editor), and Role
-  // determines every permission check in the app — both are locked down to
-  // admin-tier accounts editing their OWN profile, not opened up for everyone.
+  // Gates Role/Department self-edits — Role determines every permission
+  // check in the app, so that one stays admin-tier only. Email used to be
+  // gated by this too (see ACCOUNT_FIELD_EDIT_ROLES above); it's now
+  // editable by everyone, changed via /api/admin-update-email's
+  // self-service branch.
   const canEditAccountFields = ACCOUNT_FIELD_EDIT_ROLES.has(String(role || "").toUpperCase());
   // Timezone is locked tighter than Check-In/Out Time — HR sets it from
   // Master List (bulk, company-wide view of who's on which zone); the only
@@ -231,11 +238,12 @@ function ProfilePage() {
     setSaving(true);
     try {
       // Email is the real Firebase Auth login credential — update it there
-      // FIRST via the same admin-only server endpoint the admin-side user
-      // editor uses, and only fold the new address into the Supabase update
-      // below once that succeeds, so profiles.email and Firebase Auth never
-      // end up desynced from a partial failure.
-      const emailChanged = canEditAccountFields && profile.email.trim() !== originalEmail.trim();
+      // FIRST via the same server endpoint the admin-side user editor uses
+      // (now also allowing a self-service caller editing their OWN email,
+      // see adminUpdateEmailBridge.ts), and only fold the new address into
+      // the Supabase update below once that succeeds, so profiles.email and
+      // Firebase Auth never end up desynced from a partial failure.
+      const emailChanged = profile.email.trim() !== originalEmail.trim();
       if (emailChanged) {
         const { auth: firebaseAuthInstance } = await import("@/lib/firebase/config");
         const idToken = await firebaseAuthInstance?.currentUser?.getIdToken();
@@ -490,12 +498,11 @@ function ProfilePage() {
           <label className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">Email</span>
             <input
-              className={`glass-input ${canEditAccountFields ? "" : "opacity-70"}`}
+              className="glass-input"
               type="email"
-              value={canEditAccountFields ? profile.email : (email ?? "")}
+              value={profile.email}
               onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-              disabled={!canEditAccountFields}
-              title={canEditAccountFields ? undefined : "Contact an admin to change your login email"}
+              title="This is your login email — Finance also sends payslips here, so keep it correct."
             />
           </label>
           {field("Phone", "phone", "tel")}
