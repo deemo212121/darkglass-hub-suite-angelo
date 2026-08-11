@@ -1,11 +1,19 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical } from "lucide-react";
+import { DndContext, useDraggable, type DragEndEvent } from "@dnd-kit/core";
+import {
+  getLeadersRoster,
+  upsertLeadersRosterRow,
+  moveLeadersRosterRow,
+  deleteLeadersRosterRow,
+  type LeadersRosterRow,
+} from "@/lib/supabase/leadersRoster";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { normalizeRole, ROLE_LABELS, isJotformHrRole } from "@/lib/roleLabels";
+import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, type EmployeeInfo } from "@/lib/supabase/users";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { subscribeNotifications, markNotificationRead, deleteNotification, type AppNotification } from "@/lib/firebase/notifications";
@@ -179,6 +187,26 @@ interface Employee {
   offDays: number[];
   requiredCheckIn: string;
   requiredCheckOut: string;
+  // Editable straight from the Master List tab; also shown on the
+  // employee's own My Profile page (EmployeeSelfServicePage.tsx) — see
+  // Master List's "Hours of Work" column.
+  workingHours: number | null;
+  // profiles.extra_roles — used by Master List to also surface someone
+  // under "BizOps and IT" when IT is a secondary role, not just their
+  // primary one (see resolveMasterListDepartment).
+  extraRoles: string[];
+  // Which zone requiredCheckIn/requiredCheckOut are actually in — Master
+  // List's "Hours of Work" column dropdown, next to the schedule inputs.
+  scheduleTimezone: "CST" | "EST";
+  // Extra Master List department tabs this person ALSO shows up under,
+  // on top of their real/primary one — see "duplicate to another
+  // department" next to the Department dropdown.
+  extraDepartments: string[];
+  // profiles.phone_number — Master List's Phone column.
+  phone: string;
+  // profiles.meal_minutes — same "Working Hours & Meal Time" field the
+  // employee sets on their own My Profile page (see workingHours above).
+  mealMinutes: number | null;
 }
 
 // Onboarding Documents — per-role/country checklist columns (see the
@@ -234,6 +262,278 @@ const branchesOf = (assignedBranch: string | null, branchAccess: string | null):
   return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
 };
 
+/**
+ * Several fine-grained departments (as actually stored — on hr_leaders_
+ * roster rows, and free-typed into profiles.department) share the same
+ * senior manager in real life, so both the Leaders tab and Master List
+ * collapse them into one tab: Parts Manager + Parts Order + Logistics
+ * (Naveen Lakhani), BizOps + IT (Jerich Bolico), CSR + Accounting + HR
+ * (Lou Basco), and Branch Manager/Senior Branch Manager roles fold into
+ * Current Technicians (same as how the Leaders tab already nests them
+ * under the Technician hierarchy). This is a DISPLAY-only grouping — it
+ * never rewrites the underlying department value on any row/profile, so
+ * un-grouping later is just deleting this list, not a data migration.
+ * Order here is also the tab display order.
+ *
+ * ONLY these 6 named groups are allowed to be their own tab — anything
+ * that doesn't match one (Admin, Management, Finance, a stray typo, etc.)
+ * collapses into "Unlisted" instead of spawning its own one-off tab.
+ * Matched with loose regexes (not exact string equality) since real-world
+ * profiles.department spelling varies ("BizOps" vs "Biz Ops").
+ */
+const MASTER_LIST_UNLISTED = "Unlisted";
+const CANONICAL_DEPARTMENT_GROUPS: { name: string; match: RegExp }[] = [
+  { name: "Executive", match: /^admin$|super\s*admin|management|executive/i },
+  { name: "Claims", match: /claim/i },
+  { name: "Tech Support", match: /tech(nical)?\s*support/i },
+  { name: "Current Technicians", match: /technician|branch\s*manager/i },
+  { name: "Parts Manager and Parts", match: /parts|logistics/i },
+  { name: "BizOps and IT", match: /biz\s*ops|information\s*technology|\bit\b/i },
+  { name: "HR, Accounting and CSR", match: /human\s*resources|\bhr\b|accounting|\bfinance\b|\bcsr\b|customer\s*service/i },
+];
+
+/** Master List's Department column dropdown — the 6 real destinations plus Unlisted (to explicitly park someone there), used to move a person between departments straight from the table. */
+const MASTER_LIST_DEPARTMENT_OPTIONS = [...CANONICAL_DEPARTMENT_GROUPS.map((g) => g.name), MASTER_LIST_UNLISTED];
+
+function canonicalDepartmentGroup(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  for (const g of CANONICAL_DEPARTMENT_GROUPS) {
+    if (g.match.test(trimmed)) return g.name;
+  }
+  return MASTER_LIST_UNLISTED; // not one of the 6 tracked departments — grouped, not its own tab
+}
+
+const LEADERS_TIER_OPTIONS: { value: LeadersRosterRow["tier"]; label: string }[] = [
+  { value: "senior", label: "Senior (cyan)" },
+  { value: "manager", label: "Manager (rose)" },
+  { value: "standard", label: "Standard" },
+];
+
+interface LeaderTreeNode {
+  row: LeadersRosterRow;
+  children: LeaderTreeNode[];
+}
+
+/**
+ * Builds a reporting tree from a department's flat row list, using
+ * reportsTo (migration 0146) to link a row to whichever OTHER row in the
+ * same department has that name. Rows with no reportsTo (or one that
+ * doesn't resolve to anyone in this department) become roots — which is
+ * every row for a department that doesn't use hierarchy at all, so callers
+ * can check `roots.length === rows.length` to fall back to a flat list.
+ */
+function buildLeadersTree(rows: LeadersRosterRow[]): LeaderTreeNode[] {
+  const byName = new Map<string, LeaderTreeNode>();
+  for (const row of rows) byName.set(row.personName, { row, children: [] });
+  const roots: LeaderTreeNode[] = [];
+  for (const row of rows) {
+    const node = byName.get(row.personName)!;
+    const parent = row.reportsTo ? byName.get(row.reportsTo) : undefined;
+    if (parent && parent !== node) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+/**
+ * One draggable row in the Leaders tab. Drag-and-drop is hand-rolled on
+ * @dnd-kit/core's useDraggable WITHOUT its droppable/collision system —
+ * confirmed elsewhere in this app (CustomFormBuilder.tsx) that `over`
+ * never populates reliably — so the parent instead compares this row's own
+ * measured DOM rect (via `rowRef`) against the dragged item's live
+ * translated position to figure out where it was dropped.
+ */
+/** The only 4 titles Current Technicians is allowed to use — see CURRENT_TECHNICIANS_ORDER, which this must stay in sync with. */
+const TECHNICIAN_DEPARTMENT_TITLES = ["Technical Director", "Technical Assistant Director", "Senior Branch Manager", "Branch Manager"];
+
+function LeaderRow({
+  row,
+  canEdit,
+  isDragging,
+  rowRef,
+  deptPeople,
+  onUpdate,
+  onDelete,
+  onDuplicate,
+}: {
+  row: LeadersRosterRow;
+  canEdit: boolean;
+  isDragging: boolean;
+  rowRef: (el: HTMLDivElement | null) => void;
+  /** Every other person's name in this same department — populates "Reports To". */
+  deptPeople: string[];
+  onUpdate: (patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: row.id });
+  const dotClass = row.tier === "senior" ? "bg-cyan-400" : row.tier === "manager" ? "bg-rose-400" : "bg-slate-500";
+  const badgeClass =
+    row.tier === "senior"
+      ? "bg-cyan-500/15 text-cyan-200 border-cyan-400/30"
+      : row.tier === "manager"
+      ? "bg-rose-500/15 text-rose-200 border-rose-400/30"
+      : "bg-white/5 text-slate-400 border-white/10";
+
+  return (
+    <div
+      ref={rowRef}
+      style={{ transform: isDragging ? `translate(${transform?.x ?? 0}px, ${transform?.y ?? 0}px)` : undefined, zIndex: isDragging ? 10 : undefined }}
+      className={`group flex items-center gap-2 px-2.5 py-2 text-xs transition-colors hover:bg-white/[0.04] ${isDragging ? "opacity-60 bg-white/5" : ""}`}
+    >
+      {canEdit ? (
+        <button
+          ref={setNodeRef}
+          {...listeners}
+          {...attributes}
+          type="button"
+          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-slate-300 cursor-grab active:cursor-grabbing transition-opacity"
+          title="Drag to reorder or move to another department"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} />
+      )}
+
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        {canEdit ? (
+          <div className="flex items-center gap-1.5">
+            <select
+              value={row.tier}
+              onChange={(e) => onUpdate({ tier: e.target.value as LeadersRosterRow["tier"] })}
+              className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide focus:outline-none ${badgeClass}`}
+            >
+              {LEADERS_TIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {row.department === "Technician" ? (
+              <select
+                value={row.roleTitle}
+                onChange={(e) => onUpdate({ roleTitle: e.target.value })}
+                className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
+              >
+                {!TECHNICIAN_DEPARTMENT_TITLES.includes(row.roleTitle) && <option value={row.roleTitle}>{row.roleTitle}</option>}
+                {TECHNICIAN_DEPARTMENT_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            ) : (
+              <input
+                key={`role:${row.id}:${row.roleTitle}`}
+                defaultValue={row.roleTitle}
+                onBlur={(e) => e.target.value.trim() && e.target.value !== row.roleTitle && onUpdate({ roleTitle: e.target.value.trim() })}
+                className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
+              />
+            )}
+          </div>
+        ) : (
+          <span className={`self-start rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${badgeClass}`}>
+            {row.roleTitle}
+          </span>
+        )}
+        {canEdit ? (
+          <input
+            key={`name:${row.id}:${row.personName}`}
+            defaultValue={row.personName}
+            onBlur={(e) => e.target.value.trim() && e.target.value !== row.personName && onUpdate({ personName: e.target.value.trim() })}
+            className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-slate-100"
+          />
+        ) : (
+          <span className="px-1.5 text-slate-100">{row.personName}</span>
+        )}
+        {canEdit && deptPeople.length > 0 && (
+          <select
+            value={row.reportsTo ?? ""}
+            onChange={(e) => onUpdate({ reportsTo: e.target.value || null })}
+            className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-[10px] text-slate-500"
+            title="Who this person reports to within this department (optional — builds a nested hierarchy like Technician's)"
+          >
+            <option value="">Reports to: — none (top level) —</option>
+            {deptPeople.map((name) => <option key={name} value={name}>Reports to: {name}</option>)}
+          </select>
+        )}
+        {!canEdit && row.reportsTo && (
+          <span className="px-1.5 text-[10px] text-slate-500">reports to {row.reportsTo}</span>
+        )}
+      </div>
+
+      {canEdit && (
+        <button
+          type="button"
+          onClick={onDuplicate}
+          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-opacity"
+          title="Duplicate this row — same title/tier/reports-to, just type the new person's name"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {canEdit && (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity"
+          title="Remove"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Recursively renders a reporting-tree branch (see buildLeadersTree) — each level of depth indents further and gets a faint connecting rail, so e.g. a Senior Branch Manager's own Branch Managers read as nested under them rather than another flat row. */
+function LeaderTreeBranch({
+  node,
+  depth,
+  canEdit,
+  leadersDraggingId,
+  deptPeople,
+  setLeadersRowRef,
+  onUpdate,
+  onDelete,
+  onDuplicate,
+}: {
+  node: LeaderTreeNode;
+  depth: number;
+  canEdit: boolean;
+  leadersDraggingId: string | null;
+  deptPeople: string[];
+  setLeadersRowRef: (id: string) => (el: HTMLDivElement | null) => void;
+  onUpdate: (id: string, patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => void;
+  onDelete: (id: string) => void;
+  onDuplicate: (id: string) => void;
+}) {
+  return (
+    <>
+      <div className={depth > 0 ? "border-l border-white/10 ml-3" : ""} style={{ paddingLeft: depth > 0 ? 8 : 0 }}>
+        <LeaderRow
+          row={node.row}
+          canEdit={canEdit}
+          isDragging={leadersDraggingId === node.row.id}
+          rowRef={setLeadersRowRef(node.row.id)}
+          deptPeople={deptPeople.filter((n) => n !== node.row.personName)}
+          onUpdate={(patch) => onUpdate(node.row.id, patch)}
+          onDelete={() => onDelete(node.row.id)}
+          onDuplicate={() => onDuplicate(node.row.id)}
+        />
+      </div>
+      {node.children.map((child) => (
+        <LeaderTreeBranch
+          key={child.row.id}
+          node={child}
+          depth={depth + 1}
+          canEdit={canEdit}
+          deptPeople={deptPeople}
+          leadersDraggingId={leadersDraggingId}
+          setLeadersRowRef={setLeadersRowRef}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+        />
+      ))}
+    </>
+  );
+}
+
 export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { role: myRole, extraRoles: myExtraRoles, ready, uid, displayName, companyId } = useAuth();
   const normalizedMyRole = normalizeRole(myRole);
@@ -257,7 +557,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "directory" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "employeeRequestManager" | "w8ben">("hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -270,7 +570,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "directory", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "employeeRequestManager", "w8ben"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -669,14 +969,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
 
-  const [employeeFilters, setEmployeeFilters] = useState({
-    search: "",
-    status: "" as "" | EmploymentStatus,
-    branch: "",
-    sortBy: "name" as "name" | "startDate" | "warnings",
-    sortOrder: "asc" as "asc" | "desc",
-  });
-
   const loadEmployees = async () => {
     setEmployeesLoading(true);
     try {
@@ -714,6 +1006,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           offDays: p.off_days ?? [],
           requiredCheckIn: p.required_check_in || "",
           requiredCheckOut: p.required_check_out || "",
+          workingHours: p.working_hours ?? null,
+          extraRoles: p.extra_roles ?? [],
+          scheduleTimezone: p.schedule_timezone ?? "CST",
+          extraDepartments: p.master_list_extra_departments ?? [],
+          phone: p.phone_number || "",
+          mealMinutes: p.meal_minutes ?? null,
         };
       });
       setEmployees(mapped);
@@ -3230,6 +3528,113 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleCancelStatusChange = () => setConfirmDialog(null);
 
+  // Master List's Department column dropdown (Unlisted/every other tab) —
+  // an explicit override, writing straight to profiles.department. Once
+  // set, this raw value always wins over the Leaders-roster/role-based
+  // fallback in resolveMasterListDepartment, so it's how HR moves someone
+  // out of Unlisted (or between any two departments) directly from the table.
+  const handleUpdateEmployeeDepartment = async (id: string, value: string) => {
+    const prevEmployee = employees.find((e) => e.id === id);
+    if (!prevEmployee) return;
+    const prevValue = prevEmployee.department;
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, department: value } : e)));
+    try {
+      await updateCompanyUser(id, { department: value });
+    } catch (err) {
+      console.error("Failed to move employee's department:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, department: prevValue } : e)));
+    }
+  };
+
+  // Master List's "duplicate to another department" control — someone
+  // like Daven Hodge genuinely leads two departments at once; this makes
+  // them ALSO appear under a second tab without touching their real
+  // (primary) department, which the Department dropdown above still edits.
+  const persistExtraDepartments = async (id: string, next: string[]) => {
+    const prevEmployee = employees.find((e) => e.id === id);
+    if (!prevEmployee) return;
+    const prevValue = prevEmployee.extraDepartments;
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, extraDepartments: next } : e)));
+    try {
+      await updateCompanyUser(id, { masterListExtraDepartments: next });
+    } catch (err) {
+      console.error("Failed to update duplicate departments:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, extraDepartments: prevValue } : e)));
+    }
+  };
+  const handleAddExtraDepartment = (id: string, dept: string) => {
+    const employee = employees.find((e) => e.id === id);
+    if (!employee || employee.extraDepartments.includes(dept)) return;
+    void persistExtraDepartments(id, [...employee.extraDepartments, dept]);
+  };
+  const handleRemoveExtraDepartment = (id: string, dept: string) => {
+    const employee = employees.find((e) => e.id === id);
+    if (!employee) return;
+    void persistExtraDepartments(id, employee.extraDepartments.filter((d) => d !== dept));
+  };
+
+  // Master List's "Hours of Work" column — writes profiles.required_check_in
+  // / required_check_out, the SAME fields EmployeeSelfServicePage.tsx's
+  // "Required Schedule" section reads (see ManageWorkingHoursModal.tsx for
+  // the same write path elsewhere in the app) — this is what actually
+  // reflects on the employee's own My Profile page.
+  const handleUpdateSchedule = async (id: string, field: "requiredCheckIn" | "requiredCheckOut" | "scheduleTimezone", value: string) => {
+    const prevEmployee = employees.find((e) => e.id === id);
+    if (!prevEmployee) return;
+    const prevValue = prevEmployee[field];
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, [field]: value } : e)));
+    try {
+      await updateCompanyUser(id, { [field]: value } as Parameters<typeof updateCompanyUser>[1]);
+    } catch (err) {
+      console.error("Failed to save required schedule:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, [field]: prevValue } : e)));
+    }
+  };
+
+  // Master List's "Total Work Hours" column — writes profiles.working_hours
+  // directly (distinct from the Required Schedule check-in/out range above).
+  const handleUpdateWorkingHours = async (id: string, hours: number | null) => {
+    const prevEmployee = employees.find((e) => e.id === id);
+    if (!prevEmployee) return;
+    const prevValue = prevEmployee.workingHours;
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, workingHours: hours } : e)));
+    try {
+      await updateCompanyUser(id, { workingHours: hours });
+    } catch (err) {
+      console.error("Failed to save total work hours:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, workingHours: prevValue } : e)));
+    }
+  };
+
+  // Master List's "Meal Time" column — writes profiles.meal_minutes, the
+  // other half of the same "Working Hours & Meal Time" field set on My Profile.
+  const handleUpdateMealMinutes = async (id: string, minutes: number | null) => {
+    const prevEmployee = employees.find((e) => e.id === id);
+    if (!prevEmployee) return;
+    const prevValue = prevEmployee.mealMinutes;
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, mealMinutes: minutes } : e)));
+    try {
+      await updateCompanyUser(id, { mealMinutes: minutes });
+    } catch (err) {
+      console.error("Failed to save meal time:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, mealMinutes: prevValue } : e)));
+    }
+  };
+
+  // Master List's "Start Date" column — writes employee_info.hireDate (same
+  // record persistEmployeeStatus above reads/merges), not a profiles column.
+  const handleUpdateStartDate = async (id: string, value: string) => {
+    const prevValue = employees.find((e) => e.id === id)?.startDate ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: value } : e)));
+    try {
+      const info = (await getProfileEmployeeInfo(id)) || {};
+      await saveProfileEmployeeInfo(id, { ...info, hireDate: value });
+    } catch (err) {
+      console.error("Failed to save start date:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: prevValue } : e)));
+    }
+  };
+
   // ── Onboarding Documents: per-employee checklist, persisted on
   // employee_info (same flexible JSON field bank info/address/etc. already
   // live on) so no new table is needed. Merges into the cached full info
@@ -3399,29 +3804,512 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return map;
   }, [employees, ptoRequestsByProfile]);
 
-  // Filtered and sorted employees
-  const filteredEmployees = useMemo(() => {
-    let result = [...employees];
-    const q = employeeFilters.search.trim().toLowerCase();
+  // Master List's "Sick Leave" column — sick isn't a separate accrual
+  // bucket (see pto.ts's PtoType), it draws against the same allowance as
+  // vacation/personal, so there's no independent "available" figure for it
+  // specifically. This is just the "used" half, filtered to ptoType ===
+  // "sick" within the same current PTO-year window remainingPtoByProfile
+  // already computes — Master List pairs it with that shared remaining
+  // figure rather than inventing a second allowance that doesn't exist.
+  const sickUsedByProfile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of employees) {
+      const window = ptoYearWindow(e.startDate, null);
+      if (!window) {
+        map.set(e.id, 0);
+        continue;
+      }
+      const sickRequests = (ptoRequestsByProfile.get(e.id) ?? []).filter((r) => r.ptoType === "sick");
+      map.set(e.id, ptoDaysUsed(sickRequests, window));
+    }
+    return map;
+  }, [employees, ptoRequestsByProfile]);
+
+
+  // ── Master List — same staff roster as Employee Directory, but split
+  // into sub-tabs by department instead of one flat table. Sub-tabs are
+  // generated from whatever distinct profiles.department values actually
+  // exist (not a hand-picked list), so a newly-typed department shows up
+  // automatically next time someone opens this tab — no code change needed.
+  const [masterListDept, setMasterListDept] = useState<string>("__all__");
+  const [masterListSearch, setMasterListSearch] = useState("");
+  // Clicking a name on Master List pops up a quick-detail card instead of
+  // navigating away — full stats are still one click further via the
+  // "View full profile" link inside it.
+  const [masterListDetailEmployee, setMasterListDetailEmployee] = useState<Employee | null>(null);
+
+  // Declared here (rather than down with the rest of the Leaders tab state)
+  // so the department-resolution fallback just below can use it — the
+  // effect that actually LOADS it still lives further down.
+  const [leadersRoster, setLeadersRoster] = useState<LeadersRosterRow[]>([]);
+
+  // Master List's own department resolution — most profiles.department
+  // values are blank in practice, so falling straight back to "Unassigned"
+  // buried hundreds of real people in one useless bucket. Instead: use the
+  // Leaders roster's department for anyone who's on it by name (a real,
+  // curated source), then fall back to role->department (same mapping
+  // AccountingDashboard.tsx's Payroll table uses) — only genuinely unknown
+  // roles land in "Unassigned" now. This is DISPLAY-only (grouping/sub-tabs),
+  // it never writes the resolved value back to profiles.department.
+  const MASTER_LIST_UNASSIGNED = "Unassigned";
+  const LEADERS_TIER_RANK: Record<LeadersRosterRow["tier"], number> = { senior: 3, manager: 2, standard: 1 };
+  // A person can legitimately have more than one roster row now (e.g. Daven
+  // Hodge is Technical Director of both Current Technicians and Technical
+  // Support; the "duplicate to another department" feature deliberately
+  // creates more of these). Picking "whichever row comes first in the
+  // roster" is arbitrary and has bitten us before (a stray low-tier
+  // placeholder row sorting ahead of someone's real senior entry) — always
+  // prefer their HIGHEST-tier row instead, and take department/tier/title
+  // from that SAME row so they never end up mismatched.
+  // A stray row can end up with its tier bumped to match a real senior
+  // entry (e.g. via the tier dropdown) while its title stays whatever
+  // generic default it was created with — a straight tier comparison
+  // would then tie, and whichever sorts first by department wins by
+  // accident. Break that tie by preferring the title that doesn't read
+  // like a mismatch for its own tier (a "senior" row titled "Team Leader"
+  // is almost certainly the stray one).
+  const looksMismatched = (row: LeadersRosterRow) =>
+    (row.tier === "senior" || row.tier === "manager") && /team leader|\bagent\b/i.test(row.roleTitle);
+  const leadersBestRowByName = useMemo(() => {
+    const map = new Map<string, LeadersRosterRow>();
+    for (const row of leadersRoster) {
+      const existing = map.get(row.personName);
+      if (!existing) {
+        map.set(row.personName, row);
+        continue;
+      }
+      const tierDiff = LEADERS_TIER_RANK[row.tier] - LEADERS_TIER_RANK[existing.tier];
+      if (tierDiff > 0) {
+        map.set(row.personName, row);
+      } else if (tierDiff === 0 && looksMismatched(existing) && !looksMismatched(row)) {
+        map.set(row.personName, row);
+      }
+    }
+    return map;
+  }, [leadersRoster]);
+  const leadersDeptByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [name, row] of leadersBestRowByName) map.set(name, row.department);
+    return map;
+  }, [leadersBestRowByName]);
+  // Senior-tier leaders (see the Leaders tab) sit above a single department
+  // — e.g. Lou Basco is Senior Manager across CSR, Accounting, and HR — so
+  // showing one specific department for them would be misleading. Anyone
+  // on that tier gets the "Senior Manager" label instead in the Department
+  // column below, rather than whichever one department happens to be on
+  // file for them.
+  const leadersTierByName = useMemo(() => {
+    const map = new Map<string, LeadersRosterRow["tier"]>();
+    for (const [name, row] of leadersBestRowByName) map.set(name, row.tier);
+    return map;
+  }, [leadersBestRowByName]);
+  // Leaders roster titles ("Team Leader", "Lead Manager", "Pre Auth", …)
+  // are more specific/accurate than the flat role-code label for anyone
+  // on that roster — used for Master List's Position column.
+  const leadersTitleByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [name, row] of leadersBestRowByName) map.set(name, row.roleTitle);
+    return map;
+  }, [leadersBestRowByName]);
+  const resolveMasterListPosition = (e: Employee): string =>
+    leadersTitleByName.get(e.name) || ROLE_LABELS[normalizeRole(e.position)] || e.position || "—";
+  /** The raw specific department, before the senior-tier "Senior Manager" override below — needed by hrAccountingCsrRank to know which of HR/Accounting/CSR someone is actually in even once they're a senior leader. */
+  const rawSpecificDepartment = (e: Employee): string => {
+    const raw = e.department?.trim();
+    return (
+      raw ||
+      leadersDeptByName.get(e.name) ||
+      getRoleDepartmentBreakdown(e.position).department ||
+      MASTER_LIST_UNASSIGNED
+    );
+  };
+  /** Display-only — the person's actual specific department (not the 6-group collapse used for sub-tabs). */
+  const resolveSpecificDepartment = (e: Employee): string => {
+    // Senior-tier leaders sit above a single department (Lou Basco is
+    // "Senior Manager" across CSR/Accounting/HR), so showing one specific
+    // department for them would be misleading — group by their actual
+    // title instead (which for a title-specific role like Daven Hodge's
+    // "Technical Director" is NOT the generic "Senior Manager" label).
+    if (leadersTierByName.get(e.name) === "senior") return leadersTitleByName.get(e.name) || "Senior Manager";
+    return rawSpecificDepartment(e);
+  };
+  // Explicit hierarchy for the "HR, Accounting and CSR" canonical group —
+  // its 3 sub-departments share one senior manager but don't follow the
+  // usual manager > team-leader rank order across each other (an
+  // Accounting Team Leader outranks a CSR Manager here), so this can't be
+  // derived from the generic positionRank below. Index 0 = highest.
+  // HR, Accounting, and CSR share one senior manager but are otherwise 3
+  // separate departments — grouped as their own tier containers (Senior
+  // Manager on top, then each department as its own block) instead of
+  // interleaving everyone by a single flat manager/team-leader/agent rank.
+  const HR_ACCOUNTING_CSR_ORDER = ["Senior Manager", "HR", "Accounting", "CSR"];
+  /** Which of the 4 HR/Accounting/CSR tiers this person is in, or null if they're not in that canonical group at all. */
+  const hrAccountingCsrLabel = (e: Employee): string | null => {
+    if (resolveMasterListDepartment(e) !== "HR, Accounting and CSR") return null;
+    if (leadersTierByName.get(e.name) === "senior") return "Senior Manager";
+    const dept = rawSpecificDepartment(e);
+    if (/human\s*resources|^hr\b/i.test(dept)) return "HR";
+    if (/accounting|finance/i.test(dept)) return "Accounting";
+    if (/\bcsr\b|customer\s*service/i.test(dept)) return "CSR";
+    return "CSR"; // unresolved dept but still in this canonical group — CSR is the largest catch-all here
+  };
+  /** Rank within HR_ACCOUNTING_CSR_ORDER (higher = outranks), or null if this employee isn't in that canonical group. */
+  const hrAccountingCsrRank = (e: Employee): number | null => {
+    const label = hrAccountingCsrLabel(e);
+    if (label === null) return null;
+    const idx = HR_ACCOUNTING_CSR_ORDER.indexOf(label);
+    return idx === -1 ? null : HR_ACCOUNTING_CSR_ORDER.length - idx;
+  };
+  // Explicit hierarchy for "Current Technicians" — the generic tier-based
+  // ranking below can't tell an Assistant Technical Director from a plain
+  // Senior Branch Manager (both are "senior"/"manager" tier), so this
+  // checks title/role text directly instead. Index 0 = highest.
+  const CURRENT_TECHNICIANS_ORDER = [
+    "Technical Director",
+    "Technical Assistant Director",
+    "Senior Branch Manager",
+    "Branch Manager",
+    "Tech Manager",
+    "Technician",
+  ];
+  /** Which of the 6 Current Technicians tiers this person is in, or null if they're not in that canonical group at all. Used both for sorting and for splitting the Master List into separate tier containers (see groupByDepartment). Tech Manager is kept separate from Branch Manager — they're different roles (see 0148's Technical Support split), not interchangeable titles. */
+  const currentTechniciansLabel = (e: Employee): string | null => {
+    if (resolveMasterListDepartment(e) !== "Current Technicians") return null;
+    const tier = leadersTierByName.get(e.name);
+    const title = (leadersTitleByName.get(e.name) || "").toLowerCase();
+    const code = normalizeRole(e.position);
+    if (/^technical director$/i.test(title) || code === "TECHNICAL_DIRECTOR") return "Technical Director";
+    if (/assistant.*director|technical\s*assistant\s*director/i.test(title) || code === "TECHNICAL_ASSISTANT_DIRECTOR") return "Technical Assistant Director";
+    if (/senior\s*(branch\s*)?manager/i.test(title) || tier === "senior" || code === "SENIOR_BRANCH_MANAGER" || code === "SENIOR_MANAGER") return "Senior Branch Manager";
+    if (/tech(nician)?\s*manager/i.test(title) || code === "TECHNICIAN_MANAGER") return "Tech Manager";
+    if (/branch\s*manager/i.test(title) || tier === "manager" || code === "BRANCH_MANAGER") return "Branch Manager";
+    return "Technician";
+  };
+  /** Rank within CURRENT_TECHNICIANS_ORDER (higher = outranks), or null if this employee isn't in that canonical group. */
+  const currentTechniciansRank = (e: Employee): number | null => {
+    const label = currentTechniciansLabel(e);
+    if (label === null) return null;
+    const idx = CURRENT_TECHNICIANS_ORDER.indexOf(label);
+    return idx === -1 ? null : CURRENT_TECHNICIANS_ORDER.length - idx;
+  };
+  // Tech Support gets the same role-tier sub-grouping as Current
+  // Technicians — a manager there is titled "Manager" on the Leaders
+  // roster, but the group header should read "Technical Manager" (their
+  // real title in this department), not the department name itself.
+  const TECH_SUPPORT_ORDER = ["Technical Director", "Technical Manager", "Technician"];
+  const techSupportLabel = (e: Employee): string | null => {
+    if (resolveMasterListDepartment(e) !== "Tech Support") return null;
+    const tier = leadersTierByName.get(e.name);
+    const title = (leadersTitleByName.get(e.name) || "").toLowerCase();
+    const code = normalizeRole(e.position);
+    if (/^technical director$/i.test(title) || code === "TECHNICAL_DIRECTOR") return "Technical Director";
+    if (/manager/i.test(title) || tier === "manager" || code.includes("MANAGER")) return "Technical Manager";
+    return "Technician";
+  };
+  const techSupportRank = (e: Employee): number | null => {
+    const label = techSupportLabel(e);
+    if (label === null) return null;
+    const idx = TECH_SUPPORT_ORDER.indexOf(label);
+    return idx === -1 ? null : TECH_SUPPORT_ORDER.length - idx;
+  };
+  // Parts Manager and Parts — no longer split by branch (was earlier),
+  // now one merged group sorted by this hierarchy instead, same shape as
+  // Current Technicians/Tech Support.
+  const PARTS_ORDER = ["Senior Manager", "Assistant Manager", "Parts Manager", "Team Leader Parts", "Parts"];
+  const partsLabel = (e: Employee): string | null => {
+    if (resolveMasterListDepartment(e) !== "Parts Manager and Parts") return null;
+    const tier = leadersTierByName.get(e.name);
+    const title = (leadersTitleByName.get(e.name) || "").toLowerCase();
+    const code = normalizeRole(e.position);
+    if (/senior\s*manager/i.test(title) || tier === "senior") return "Senior Manager";
+    if (/assistant\s*manager/i.test(title)) return "Assistant Manager";
+    if (/team\s*leader/i.test(title) || code === "PARTS_TEAM_LEADER") return "Team Leader Parts";
+    if (/parts\s*manager/i.test(title) || code === "PARTS_MANAGER" || tier === "manager") return "Parts Manager";
+    return "Parts";
+  };
+  const partsRank = (e: Employee): number | null => {
+    const label = partsLabel(e);
+    if (label === null) return null;
+    const idx = PARTS_ORDER.indexOf(label);
+    return idx === -1 ? null : PARTS_ORDER.length - idx;
+  };
+  /** Rough seniority ranking for the Department table's default sort — highest first. */
+  const positionRank = (e: Employee): number => {
+    const hrRank = hrAccountingCsrRank(e);
+    if (hrRank !== null) return hrRank;
+    const techRank = currentTechniciansRank(e);
+    if (techRank !== null) return techRank;
+    const tsRank = techSupportRank(e);
+    if (tsRank !== null) return tsRank;
+    const pRank = partsRank(e);
+    if (pRank !== null) return pRank;
+    const tier = leadersTierByName.get(e.name);
+    if (tier === "senior") return 5;
+    if (tier === "manager") return 4;
+    const code = normalizeRole(e.position);
+    if (code.includes("DIRECTOR")) return 5;
+    if (code.includes("SENIOR_MANAGER") || code === "ADMIN" || code === "SUPERADMIN") return 5;
+    if (code.includes("MANAGER")) return 4;
+    if (code.includes("TEAM_LEADER")) return 3;
+    if (code.includes("DISPATCHER")) return 2;
+    return 1;
+  };
+  const resolveMasterListDepartment = (e: Employee): string => {
+    // IT as a secondary role always surfaces someone under "BizOps and IT"
+    // — they still keep their real primary department/position everywhere
+    // else, this only affects which Master List group they're grouped
+    // under, so IT can see everyone who actually helps with IT work.
+    if (e.extraRoles.some((r) => (r || "").toUpperCase() === "IT")) {
+      return "BizOps and IT";
+    }
+    const raw = e.department?.trim();
+    const resolved =
+      raw ||
+      leadersDeptByName.get(e.name) ||
+      getRoleDepartmentBreakdown(e.position).department ||
+      MASTER_LIST_UNASSIGNED;
+    // Same 6-group collapse as the Leaders tab (shared senior manager) —
+    // see canonicalDepartmentGroup's own comment for why.
+    return resolved === MASTER_LIST_UNASSIGNED ? resolved : canonicalDepartmentGroup(resolved);
+  };
+
+  /** True if `dept` is either this person's real/primary department or one they've been explicitly duplicated onto (see extraDepartments). */
+  const matchesMasterListTab = (e: Employee, dept: string): boolean =>
+    resolveMasterListDepartment(e) === dept || e.extraDepartments.includes(dept);
+
+  const masterListDepartments = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of employees) {
+      set.add(resolveMasterListDepartment(e));
+      for (const d of e.extraDepartments) set.add(d);
+    }
+    // Executive (leadership) sits right after "All", ahead of every other
+    // tab — everything else stays alphabetical.
+    return Array.from(set).sort((a, b) => {
+      if (a === "Executive") return -1;
+      if (b === "Executive") return 1;
+      return a.localeCompare(b);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees, leadersDeptByName]);
+
+  const masterListFiltered = useMemo(() => {
+    let result = employees;
+    if (masterListDept !== "__all__") {
+      result = result.filter((e) => matchesMasterListTab(e, masterListDept));
+    }
+    const q = masterListSearch.trim().toLowerCase();
     if (q) {
-      result = result.filter(e =>
+      result = result.filter((e) =>
         e.name.toLowerCase().includes(q) ||
         e.email.toLowerCase().includes(q) ||
         e.branch.toLowerCase().includes(q) ||
         (ROLE_LABELS[normalizeRole(e.position)] ?? e.position ?? "").toLowerCase().includes(q),
       );
     }
-    if (employeeFilters.status) result = result.filter(e => e.status === employeeFilters.status);
-    if (employeeFilters.branch) result = result.filter(e => e.branch === employeeFilters.branch);
-    result.sort((a, b) => {
-      let compareVal = 0;
-      if (employeeFilters.sortBy === "name") compareVal = a.name.localeCompare(b.name);
-      else if (employeeFilters.sortBy === "startDate") compareVal = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
-      else if (employeeFilters.sortBy === "warnings") compareVal = (approvedWarningCountByProfile.get(a.id) ?? 0) - (approvedWarningCountByProfile.get(b.id) ?? 0);
-      return employeeFilters.sortOrder === "asc" ? compareVal : -compareVal;
+    return [...result].sort((a, b) => positionRank(b) - positionRank(a) || a.name.localeCompare(b.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees, masterListDept, masterListSearch, leadersDeptByName, leadersTierByName]);
+
+  // ── Leaders — a hand-maintained, drag-to-reorder roster (migration 0145),
+  // NOT derived from profiles.role — several of these titles ("Assistant
+  // Manager", "Senior Director", "Tech Manager ATL") aren't real role codes
+  // in this app, so there's no reliable way to derive them. See
+  // leadersRoster.ts / the Leaders tab render block below for the rest.
+  const [leadersRosterLoading, setLeadersRosterLoading] = useState(false);
+  const loadLeadersRoster = async () => {
+    setLeadersRosterLoading(true);
+    try {
+      setLeadersRoster(await getLeadersRoster());
+    } catch (err) {
+      console.error("Failed to load Leaders roster:", err);
+    } finally {
+      setLeadersRosterLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadLeadersRoster();
+  }, []);
+
+  // Grouped by canonicalDepartmentGroup (e.g. "Parts Manager" + "Parts
+  // Order" both land under "Parts Manager and Parts"), not the raw
+  // department each row actually stores — sorted by (deptSort, rowSort) so
+  // a merged card still shows each original department's rows together in
+  // their own order, rather than interleaved by coincidence of rowSort.
+  const leadersByDepartment = useMemo(() => {
+    const groups = new Map<string, LeadersRosterRow[]>();
+    for (const row of leadersRoster) {
+      const key = canonicalDepartmentGroup(row.department);
+      const list = groups.get(key) ?? [];
+      list.push(row);
+      groups.set(key, list);
+    }
+    for (const list of groups.values()) list.sort((a, b) => (a.deptSort - b.deptSort) || (a.rowSort - b.rowSort));
+    return Array.from(groups.entries()).sort(
+      ([, aRows], [, bRows]) => Math.min(...aRows.map((r) => r.deptSort)) - Math.min(...bRows.map((r) => r.deptSort)),
+    );
+  }, [leadersRoster]);
+
+  const leadersRowNodes = useRef(new Map<string, HTMLDivElement>());
+  const setLeadersRowRef = (id: string) => (el: HTMLDivElement | null) => {
+    if (el) leadersRowNodes.current.set(id, el);
+    else leadersRowNodes.current.delete(id);
+  };
+  // Card-level fallback drop target — lets a row drop into a department
+  // whose rows don't fill the card (or a card with zero rows), by hit
+  // testing the card's own bounds when the pointer isn't over any row.
+  const leadersCardNodes = useRef(new Map<string, HTMLDivElement>());
+  const setLeadersCardRef = (department: string) => (el: HTMLDivElement | null) => {
+    if (el) leadersCardNodes.current.set(department, el);
+    else leadersCardNodes.current.delete(department);
+  };
+  const [leadersDraggingId, setLeadersDraggingId] = useState<string | null>(null);
+
+  /**
+   * Cards are arranged in a responsive multi-column grid, so a single
+   * vertical-list Y-comparison (the CustomFormBuilder.tsx convention) can't
+   * tell which COLUMN a drop landed in. Instead this hit-tests the actual
+   * drop point (still without @dnd-kit's own droppable/collision system,
+   * which — confirmed elsewhere in this app — never populates `over`
+   * reliably): first against every row's own rect, falling back to each
+   * card's rect so dropping into empty space within a card still works.
+   */
+  const findLeadersDropTarget = (x: number, y: number): { department: string; beforeRowId: string | null } | null => {
+    for (const [id, el] of leadersRowNodes.current.entries()) {
+      const rect = el.getBoundingClientRect();
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        const row = leadersRoster.find((r) => r.id === id);
+        if (!row) continue;
+        const before = y < rect.top + rect.height / 2;
+        if (before) return { department: row.department, beforeRowId: id };
+        // After this row — find whatever comes next in the same department (or end of it).
+        const deptRows = leadersByDepartment.find(([d]) => d === row.department)?.[1] ?? [];
+        const idx = deptRows.findIndex((r) => r.id === id);
+        return { department: row.department, beforeRowId: deptRows[idx + 1]?.id ?? null };
+      }
+    }
+    for (const [department, el] of leadersCardNodes.current.entries()) {
+      const rect = el.getBoundingClientRect();
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        return { department, beforeRowId: null };
+      }
+    }
+    return null;
+  };
+
+  const handleLeadersDragEnd = (event: DragEndEvent) => {
+    setLeadersDraggingId(null);
+    const activatorEvent = event.activatorEvent as PointerEvent | MouseEvent | undefined;
+    if (!activatorEvent || !("clientX" in activatorEvent)) return;
+    const x = activatorEvent.clientX + event.delta.x;
+    const y = activatorEvent.clientY + event.delta.y;
+    const drop = findLeadersDropTarget(x, y);
+    if (!drop) return;
+    const activeId = String(event.active.id);
+
+    setLeadersRoster((prev) => {
+      const moving = prev.find((r) => r.id === activeId);
+      if (!moving) return prev;
+      const deptRows = (leadersByDepartment.find(([d]) => d === drop.department)?.[1] ?? []).filter((r) => r.id !== activeId);
+      let insertIdx = drop.beforeRowId === null ? deptRows.length : deptRows.findIndex((r) => r.id === drop.beforeRowId);
+      if (insertIdx === -1) insertIdx = deptRows.length;
+      const prevRow = deptRows[insertIdx - 1];
+      const nextRow = deptRows[insertIdx];
+      const deptSort = prevRow?.deptSort ?? nextRow?.deptSort ?? moving.deptSort;
+      const prevRowSort = prevRow?.rowSort ?? 0;
+      const nextRowSort = nextRow?.rowSort ?? prevRowSort + 2;
+      const rowSort = (prevRowSort + nextRowSort) / 2;
+      const updated: LeadersRosterRow = { ...moving, department: drop.department, deptSort, rowSort };
+
+      void moveLeadersRosterRow(moving.id, { department: drop.department, deptSort, rowSort }).catch((err) => {
+        console.error("Failed to save Leaders reorder:", err);
+      });
+
+      return prev.map((r) => (r.id === activeId ? updated : r));
     });
-    return result;
-  }, [employees, employeeFilters, approvedWarningCountByProfile]);
+  };
+
+  const updateLeadersRow = async (id: string, patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => {
+    const row = leadersRoster.find((r) => r.id === id);
+    if (!row) return;
+    const updated = { ...row, ...patch };
+    setLeadersRoster((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    try {
+      await upsertLeadersRosterRow({
+        id: updated.id,
+        department: updated.department,
+        roleTitle: updated.roleTitle,
+        personName: updated.personName,
+        tier: updated.tier,
+        deptSort: updated.deptSort,
+        rowSort: updated.rowSort,
+        reportsTo: updated.reportsTo,
+      });
+    } catch (err) {
+      console.error("Failed to save Leaders row:", err);
+      setLeadersRoster((prev) => prev.map((r) => (r.id === id ? row : r)));
+    }
+  };
+
+  const addLeadersRow = async (department: string, deptSort: number) => {
+    const rowsInDept = leadersRoster.filter((r) => r.department === department);
+    const rowSort = (rowsInDept.length ? Math.max(...rowsInDept.map((r) => r.rowSort)) : 0) + 1;
+    try {
+      const id = await upsertLeadersRosterRow({
+        department, roleTitle: "Team Leader", personName: "New Person", tier: "standard", deptSort, rowSort,
+      });
+      setLeadersRoster((prev) => [...prev, { id, department, roleTitle: "Team Leader", personName: "New Person", tier: "standard", deptSort, rowSort, reportsTo: null }]);
+    } catch (err) {
+      alert(`Failed to add row: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  /** Clones an existing row's title/tier/reportsTo, inserted right after it, so adding another person in the same role (e.g. another branch's manager) is just typing their name — no need to re-pick title/tier/reports-to from scratch. */
+  const duplicateLeadersRow = async (sourceId: string) => {
+    const source = leadersRoster.find((r) => r.id === sourceId);
+    if (!source) return;
+    const rowSort = source.rowSort + 0.001;
+    try {
+      const id = await upsertLeadersRosterRow({
+        department: source.department,
+        roleTitle: source.roleTitle,
+        personName: "New Person",
+        tier: source.tier,
+        deptSort: source.deptSort,
+        rowSort,
+        reportsTo: source.reportsTo,
+      });
+      setLeadersRoster((prev) => [
+        ...prev,
+        { id, department: source.department, roleTitle: source.roleTitle, personName: "New Person", tier: source.tier, deptSort: source.deptSort, rowSort, reportsTo: source.reportsTo },
+      ]);
+    } catch (err) {
+      alert(`Failed to duplicate row: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  const addLeadersDepartment = async () => {
+    const name = prompt("New department name:")?.trim();
+    if (!name) return;
+    if (leadersByDepartment.some(([d]) => d.toLowerCase() === name.toLowerCase())) {
+      alert("A department with that name already exists.");
+      return;
+    }
+    const deptSort = (leadersByDepartment.length ? Math.max(...leadersByDepartment.map(([, rows]) => rows[0]?.deptSort ?? 0)) : 0) + 1;
+    await addLeadersRow(name, deptSort);
+  };
+
+  const deleteLeadersRow = async (id: string) => {
+    if (!confirm("Remove this person from the Leaders roster?")) return;
+    const row = leadersRoster.find((r) => r.id === id);
+    setLeadersRoster((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await deleteLeadersRosterRow(id);
+    } catch (err) {
+      console.error("Failed to delete Leaders row:", err);
+      if (row) setLeadersRoster((prev) => [...prev, row]);
+    }
+  };
 
   // ── Warnings / Termination / Resigned per-department trend ──
   const [trendMode, setTrendMode] = useState<"monthly" | "range">("monthly");
@@ -3487,7 +4375,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       group: "People Operations",
       icon: Users,
       tabs: [
-        { key: "directory", label: "Employee Directory", count: employees.length, icon: UserCheck },
+        { key: "masterList", label: "Master List", count: employees.length, icon: Users },
+        { key: "leaders", label: "Leaders", count: leadersRoster.length, icon: UserCheck },
         { key: "employeeRequestManager", label: "Employee Request Manager", count: requestManagerPendingCount, icon: ClipboardList },
         { key: "hiring", label: "Hiring", count: visibleCandidates.length, icon: Users },
         { key: "onboarding", label: "Onboarding Documents", count: 0, icon: Paperclip },
@@ -3543,12 +4432,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     </button>
                   );
                 })}
+                {section.group === "People Operations" && (
+                  <Link
+                    to="/m/$module/$submodule"
+                    params={{ module: "admin", submodule: "user-management" }}
+                    onClick={() => setSidebarOpen(false)}
+                    className="w-full text-left pl-2.5 pr-2 py-2 rounded-lg text-sm flex items-center gap-2 border border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                    title="Jump to the Admin module's User Management page"
+                  >
+                    <span className="flex items-center justify-center h-6 w-6 rounded-md shrink-0 bg-white/5 text-muted-foreground">
+                      <UserCheck className="h-3.5 w-3.5" />
+                    </span>
+                    User Management
+                  </Link>
+                )}
               </div>
             </div>
           ))}
         </div>
       </div>
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-6">
+      <main className="flex-1 max-w-[1900px] mx-auto w-full px-3 py-4">
       <div className="flex items-center gap-3 mb-4"><Link to="/m/$module" params={{module:mod.slug}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
 
       {error && (
@@ -3604,8 +4507,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           { label: "Scheduled for Interview", value: kpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("interviewing"); } },
           { label: "Rejected", value: kpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("rejected"); } },
           { label: "Hired", value: kpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" />, onClick: () => { setActiveTab("hiring"); setHiringStatusFilter("hired"); } },
-          { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => { setActiveTab("directory"); setEmployeeFilters((prev) => ({ ...prev, status: "terminated" })); } },
-          { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => { setActiveTab("directory"); setEmployeeFilters((prev) => ({ ...prev, status: "resigned" })); } },
+          { label: "Terminated", value: kpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
+          { label: "Resigned", value: kpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" />, onClick: () => setActiveTab("masterList") },
         ].map((k) => (
           <button
             key={k.label}
@@ -3784,6 +4687,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           )}
                         </button>
                       ))}
+                      {section.group === "People Operations" && (
+                        <Link
+                          to="/m/$module/$submodule"
+                          params={{ module: "admin", submodule: "user-management" }}
+                          onClick={() => setOpenCategory(null)}
+                          className="w-full text-left px-3.5 py-2 text-sm flex items-center gap-2 border-t border-white/10 mt-1 pt-2 text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+                          title="Jump to the Admin module's User Management page"
+                        >
+                          <UserCheck className="h-3.5 w-3.5" /> User Management
+                        </Link>
+                      )}
                     </div>
                   </>
                 )}
@@ -4163,139 +5077,429 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {/* ── Employee Directory ── */}
-      {activeTab === "directory" && (
+      {/* ── Master List — Employee Directory's same roster, split into
+          department sub-tabs instead of one flat table. ── */}
+      {activeTab === "masterList" && (
       <div className="panel p-0 overflow-hidden">
-        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
-          <h2 className="font-semibold text-sm">Employee Directory</h2>
-          <span className="text-xs text-muted-foreground">Click a name to view statistics, mistakes &amp; warnings</span>
-        </div>
-
-        {/* Employee Filters */}
-        <div className="px-4 py-3 border-b border-white/10 bg-white/5">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Search</label>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input value={employeeFilters.search} onChange={(e) => setEmployeeFilters({ ...employeeFilters, search: e.target.value })} placeholder="Name, email, branch, or position…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
-              </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</label>
-              <select value={employeeFilters.status} onChange={(e) => setEmployeeFilters({ ...employeeFilters, status: e.target.value as any })} className="glass-input text-sm py-1.5 px-3 rounded-md">
-                <option value="">All</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="terminated">Terminated</option>
-                <option value="resigned">Resigned</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
-              <select value={employeeFilters.branch} onChange={(e) => setEmployeeFilters({ ...employeeFilters, branch: e.target.value })} className="glass-input text-sm py-1.5 px-3 rounded-md">
-                <option value="">All</option>
-                {allBranches.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sort By</label>
-              <select value={employeeFilters.sortBy} onChange={(e) => setEmployeeFilters({ ...employeeFilters, sortBy: e.target.value as any })} className="glass-input text-sm py-1.5 px-3 rounded-md">
-                <option value="name">Name</option>
-                <option value="startDate">Start Date</option>
-                <option value="warnings">Warnings</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Order</label>
-              <select value={employeeFilters.sortOrder} onChange={(e) => setEmployeeFilters({ ...employeeFilters, sortOrder: e.target.value as any })} className="glass-input text-sm py-1.5 px-3 rounded-md">
-                <option value="asc">Ascending</option>
-                <option value="desc">Descending</option>
-              </select>
-            </div>
-            {(employeeFilters.search || employeeFilters.status || employeeFilters.branch) && (
-              <button onClick={() => setEmployeeFilters({ search: "", status: "", branch: "", sortBy: "name", sortOrder: "asc" })} className="btn text-sm px-3 mb-0.5">Clear Filters</button>
-            )}
-            <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-              {filteredEmployees.length}{(employeeFilters.search || employeeFilters.status || employeeFilters.branch) ? ` of ${employees.length}` : ""} employees
-            </span>
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
+          <h2 className="font-semibold text-sm">Master List</h2>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              value={masterListSearch}
+              onChange={(e) => setMasterListSearch(e.target.value)}
+              placeholder="Name, email, branch, or position…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
           </div>
         </div>
 
-        {/* Employee Table */}
+        {/* Department sub-tabs — generated from whatever department values are actually on file (falling back to a Leaders-roster or role match before landing in Unassigned — see resolveMasterListDepartment). */}
+        <div className="px-4 pt-3 border-b border-white/10 flex gap-1 overflow-x-auto">
+          <button
+            onClick={() => setMasterListDept("__all__")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 whitespace-nowrap transition ${
+              masterListDept === "__all__"
+                ? "border-blue-500 text-blue-300 bg-white/5"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All ({employees.length})
+          </button>
+          {masterListDepartments.map((dept) => {
+            const count = employees.filter((e) => matchesMasterListTab(e, dept)).length;
+            return (
+              <button
+                key={dept}
+                onClick={() => setMasterListDept(dept)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-t-md border-b-2 whitespace-nowrap transition ${
+                  masterListDept === dept
+                    ? "border-blue-500 text-blue-300 bg-white/5"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {dept} ({count})
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="px-4 py-2 border-b border-white/10 bg-white/5 text-xs text-muted-foreground">
+          {masterListFiltered.length} of {employees.length} employees
+        </div>
+
+        {(() => {
+          // Parts is the one department that's organized by branch, not by
+          // a manager/team-leader hierarchy — each branch has its own Parts
+          // person (or none, if a technician covers it there), so a Branch
+          // column + branch-grouped rows matches how HR actually tracks it,
+          // unlike every other department tab.
+          const showBranchColumn = masterListDept === "Parts Manager and Parts";
+          const colCount = showBranchColumn ? 14 : 13;
+          return (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Name</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Email</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Position</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Branch</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Start Date</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Warnings</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Remaining PTO</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Termination</th>
-                <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Status</th>
+                {showBranchColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Branch</th>}
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Status</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes the employee's hire date">Start Date</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Name</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.phone_number">Phone</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Address</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Department</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Position</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.required_check_in / required_check_out, the Required Schedule shown on the employee's own My Profile page">Hours of Work</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.working_hours, a plain total distinct from the Required Schedule range">Total Work Hours</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.meal_minutes, the other half of My Profile's Working Hours & Meal Time field">Meal Time</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Sick draws from the same PTO allowance as vacation/personal — this is just the sick-tagged portion of what's been used">Sick Leave (Used)</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Remaining / Allowance">Vacation Leave</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Warnings</th>
               </tr>
             </thead>
             <tbody>
-              {filteredEmployees.length === 0 ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : employees.length === 0 ? "No employees found." : "No employees match these filters."}</td></tr>
-              ) : (
-                filteredEmployees.map((employee) => (
-                  <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-3 py-2 font-medium">
-                      <a href={`/csr-agent/${employee.id}`} target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 hover:underline transition cursor-pointer" title={`View ${employee.name}'s statistics`}>
-                        {employee.name}
-                      </a>
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">{employee.email}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{ROLE_LABELS[normalizeRole(employee.position)] ?? employee.position}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{employee.branch || "—"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{employee.startDate || "—"}</td>
-                    <td className="px-3 py-2">
-                      {(approvedWarningCountByProfile.get(employee.id) ?? 0) > 0 ? (
-                        <span className="bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded text-xs font-semibold">{approvedWarningCountByProfile.get(employee.id)}</span>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {(() => {
-                        const pto = remainingPtoByProfile.get(employee.id);
-                        if (!pto) return <span className="text-muted-foreground text-xs" title="Not yet eligible — PTO starts after 1 year of tenure.">—</span>;
-                        return (
-                          <span className="bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded text-xs font-semibold">
-                            {pto.remaining}/{pto.allowance}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground text-xs">
-                      {employee.terminationDate ? (
-                        <div className="text-yellow-400 text-xs">
-                          <div>{employee.terminationDate}</div>
-                          <div className="text-xs text-yellow-300">{employee.terminationReason || "N/A"}</div>
+              {masterListFiltered.length === 0 ? (
+                <tr><td colSpan={colCount} className="px-3 py-6 text-center text-muted-foreground text-xs">{employeesLoading ? "Loading employees…" : "No employees match this view."}</td></tr>
+              ) : (() => {
+                // Active first, everyone else (inactive/terminated/resigned)
+                // grouped separately below its own divider — so a
+                // no-longer-active person never reads as if they're still
+                // part of the active headcount just because they're mixed
+                // into the same block.
+                const activeRows = masterListFiltered.filter((e) => e.status === "active");
+                const inactiveRows = masterListFiltered.filter((e) => e.status !== "active");
+                // Within each active/inactive block: group by the person's
+                // specific department (same value shown in the Department
+                // column), and inside each department group, sort by
+                // hierarchy — Senior Manager down to standard — instead of
+                // one flat alphabetical-by-name list.
+                const groupByDepartment = (rows: Employee[]) => {
+                  const byDept = new Map<string, Employee[]>();
+                  for (const e of rows) {
+                    const masterDept = resolveMasterListDepartment(e);
+                    const dept = masterDept === "HR, Accounting and CSR"
+                      ? (hrAccountingCsrLabel(e) ?? masterDept)
+                      : masterDept === "Current Technicians"
+                      ? (currentTechniciansLabel(e) ?? masterDept)
+                      : masterDept === "Tech Support"
+                      ? (techSupportLabel(e) ?? masterDept)
+                      : masterDept === "Parts Manager and Parts"
+                      ? (partsLabel(e) ?? masterDept)
+                      : resolveSpecificDepartment(e);
+                    if (!byDept.has(dept)) byDept.set(dept, []);
+                    byDept.get(dept)!.push(e);
+                  }
+                  const tierGroupIndex = (name: string): number => {
+                    for (const order of [HR_ACCOUNTING_CSR_ORDER, CURRENT_TECHNICIANS_ORDER, TECH_SUPPORT_ORDER, PARTS_ORDER]) {
+                      const idx = order.indexOf(name);
+                      if (idx !== -1) return idx;
+                    }
+                    return -1;
+                  };
+                  return Array.from(byDept.entries())
+                    .sort(([a], [b]) => {
+                      // Current Technicians', Tech Support's, and Parts'
+                      // tier containers sort by rank (most senior first),
+                      // not alphabetically — every other department's
+                      // groups stay alphabetical.
+                      const ai = tierGroupIndex(a);
+                      const bi = tierGroupIndex(b);
+                      if (ai !== -1 && bi !== -1) return ai - bi;
+                      return a.localeCompare(b);
+                    })
+                    .map(([department, deptRows]) => ({
+                      department,
+                      rows: [...deptRows].sort((a, b) => positionRank(b) - positionRank(a) || a.name.localeCompare(b.name)),
+                    }));
+                };
+                const renderRow = (employee: Employee) => {
+                  const pto = remainingPtoByProfile.get(employee.id);
+                  const sickUsed = sickUsedByProfile.get(employee.id) ?? 0;
+                  const warnings = approvedWarningCountByProfile.get(employee.id) ?? 0;
+                  return (
+                    <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                      {showBranchColumn && <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{employee.branch || "—"}</td>}
+                      <td className="px-2 py-1">
+                        <select
+                          value={employee.status}
+                          onChange={(e) => handleUpdateEmployeeStatus(employee.id, e.target.value as EmploymentStatus)}
+                          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 ${
+                            employee.status === "active" ? "bg-emerald-500/20 text-emerald-300" :
+                            employee.status === "terminated" ? "bg-red-500/20 text-red-300" :
+                            employee.status === "resigned" ? "bg-slate-500/20 text-slate-300" :
+                            "bg-yellow-500/20 text-yellow-300"
+                          }`}
+                        >
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                          <option value="terminated">Terminated</option>
+                          <option value="resigned">Resigned</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1">
+                        <input
+                          type="date"
+                          defaultValue={employee.startDate || ""}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== employee.startDate) void handleUpdateStartDate(employee.id, v);
+                          }}
+                          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
+                        />
+                      </td>
+                      <td className="px-2 py-1 font-medium whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => setMasterListDetailEmployee(employee)}
+                          className="text-left text-blue-300/90 hover:text-blue-300 hover:underline transition cursor-pointer"
+                          title={`View ${employee.name}'s details`}
+                        >
+                          {employee.name}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{employee.phone || "—"}</td>
+                      <td className="px-2 py-1 text-muted-foreground max-w-[110px] truncate" title={employee.address || ""}>{employee.address || "—"}</td>
+                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1">
+                            {resolveMasterListDepartment(employee) === "Current Technicians" ? (
+                              <span>{employee.branch || "—"}</span>
+                            ) : (
+                              <select
+                                value={resolveMasterListDepartment(employee)}
+                                onChange={(e) => void handleUpdateEmployeeDepartment(employee.id, e.target.value)}
+                                title="Move this person to a different department"
+                                className="glass-input text-[11px] py-0.5 px-1 rounded-md w-32"
+                              >
+                                {!MASTER_LIST_DEPARTMENT_OPTIONS.includes(resolveMasterListDepartment(employee)) && (
+                                  <option value={resolveMasterListDepartment(employee)}>{resolveMasterListDepartment(employee)}</option>
+                                )}
+                                {MASTER_LIST_DEPARTMENT_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                            )}
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) handleAddExtraDepartment(employee.id, e.target.value);
+                                e.target.value = "";
+                              }}
+                              title="Send a duplicate of this person onto another department tab too — keeps their real department above unchanged"
+                              className="glass-input text-[10px] py-0.5 px-0.5 rounded-md w-6 text-center"
+                            >
+                              <option value="">+</option>
+                              {MASTER_LIST_DEPARTMENT_OPTIONS.filter(
+                                (d) => d !== resolveMasterListDepartment(employee) && !employee.extraDepartments.includes(d),
+                              ).map((d) => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          </div>
+                          {employee.extraDepartments.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {employee.extraDepartments.map((d) => (
+                                <span key={d} className="inline-flex items-center gap-1 bg-blue-500/15 text-blue-300 px-1.5 py-0.5 rounded text-[10px]" title={`Also shown under ${d}`}>
+                                  {d}
+                                  <button type="button" onClick={() => handleRemoveExtraDepartment(employee.id, d)} className="hover:text-red-300" title="Stop showing under this department">
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ) : <span>—</span>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <select
-                        value={employee.status}
-                        onChange={(e) => handleUpdateEmployeeStatus(employee.id, e.target.value as EmploymentStatus)}
-                        className="text-xs font-semibold px-2 py-1 rounded border-0 bg-slate-700 text-slate-100"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                        <option value="terminated">Terminated</option>
-                        <option value="resigned">Resigned</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))
-              )}
+                      </td>
+                      <td className="px-2 py-1 text-muted-foreground max-w-[110px] truncate" title={resolveMasterListPosition(employee)}>{resolveMasterListPosition(employee)}</td>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="time"
+                            defaultValue={employee.requiredCheckIn?.slice(0, 5) || ""}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              if (v && v !== employee.requiredCheckIn?.slice(0, 5)) void handleUpdateSchedule(employee.id, "requiredCheckIn", v);
+                            }}
+                            className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[78px]"
+                          />
+                          <span className="text-muted-foreground">–</span>
+                          <input
+                            type="time"
+                            defaultValue={employee.requiredCheckOut?.slice(0, 5) || ""}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              if (v && v !== employee.requiredCheckOut?.slice(0, 5)) void handleUpdateSchedule(employee.id, "requiredCheckOut", v);
+                            }}
+                            className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[78px]"
+                          />
+                          <select
+                            value={employee.scheduleTimezone}
+                            onChange={(e) => void handleUpdateSchedule(employee.id, "scheduleTimezone", e.target.value)}
+                            title="Which timezone these hours are in"
+                            className="glass-input text-[11px] py-0.5 px-0.5 rounded-md w-[54px]"
+                          >
+                            <option value="CST">CST</option>
+                            <option value="EST">EST</option>
+                          </select>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          defaultValue={employee.workingHours ?? ""}
+                          placeholder="—"
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            const parsed = v === "" ? null : Number(v);
+                            if (parsed !== employee.workingHours) void handleUpdateWorkingHours(employee.id, Number.isFinite(parsed as number) ? parsed : null);
+                          }}
+                          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-14"
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        <input
+                          type="number"
+                          min={0}
+                          step={5}
+                          defaultValue={employee.mealMinutes ?? ""}
+                          placeholder="—"
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            const parsed = v === "" ? null : Number(v);
+                            if (parsed !== employee.mealMinutes) void handleUpdateMealMinutes(employee.id, Number.isFinite(parsed as number) ? parsed : null);
+                          }}
+                          className="glass-input text-[11px] py-0.5 px-1 rounded-md w-14"
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        {!pto ? (
+                          <span className="text-muted-foreground text-[10px]" title="Not yet eligible — PTO starts after 1 year of tenure.">—</span>
+                        ) : (
+                          <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Sick days used / total PTO allowance — sick draws from the same shared pool as vacation/personal.">
+                            {Number.isInteger(sickUsed) ? sickUsed : sickUsed.toFixed(1)}/{pto.allowance}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        {!pto ? (
+                          <span className="text-muted-foreground text-[10px]" title="Not yet eligible — PTO starts after 1 year of tenure.">—</span>
+                        ) : (
+                          <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{pto.remaining}/{pto.allowance}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        {warnings > 0 ? <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{warnings}</span> : <span className="text-muted-foreground text-[10px]">—</span>}
+                      </td>
+                    </tr>
+                  );
+                };
+                const renderDepartmentGroups = (rows: Employee[]) =>
+                  groupByDepartment(rows).map(({ department, rows: deptRows }) => (
+                    <Fragment key={department}>
+                      <tr>
+                        <td colSpan={colCount} className="px-3 py-1 bg-blue-500/10 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                          {department} ({deptRows.length})
+                        </td>
+                      </tr>
+                      {deptRows.map(renderRow)}
+                    </Fragment>
+                  ));
+                return (
+                  <>
+                    {renderDepartmentGroups(activeRows)}
+                    {inactiveRows.length > 0 && (
+                      <tr>
+                        <td colSpan={colCount} className="px-3 py-1.5 bg-white/5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Not Active ({inactiveRows.length}) — inactive, terminated, or resigned
+                        </td>
+                      </tr>
+                    )}
+                    {renderDepartmentGroups(inactiveRows)}
+                  </>
+                );
+              })()}
             </tbody>
           </table>
+        </div>
+          );
+        })()}
+      </div>
+      )}
+
+      {/* ── Leaders — hand-maintained, drag-to-reorder roster (0145). ── */}
+      {activeTab === "leaders" && (
+      <div className="panel p-0 overflow-hidden">
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Leaders</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Drag a row's grip to reorder within a department or drop it into another one.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">{leadersRoster.length} leaders</span>
+            {isHrOrAdmin && (
+              <button onClick={() => void addLeadersDepartment()} className="btn text-xs px-3 py-1.5 flex items-center gap-1">
+                <Plus className="h-3.5 w-3.5" /> Add Department
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="p-5 bg-slate-950/30">
+          {leadersByDepartment.length === 0 ? (
+            <div className="px-3 py-6 text-center text-muted-foreground text-xs">
+              {leadersRosterLoading ? "Loading…" : "No leaders on file yet."}
+            </div>
+          ) : (
+            <DndContext
+              onDragStart={(e) => setLeadersDraggingId(String(e.active.id))}
+              onDragEnd={handleLeadersDragEnd}
+              onDragCancel={() => setLeadersDraggingId(null)}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                {leadersByDepartment.map(([department, rows]) => (
+                  <div
+                    key={department}
+                    ref={setLeadersCardRef(department)}
+                    className="flex flex-col rounded-xl border border-white/10 bg-gradient-to-b from-slate-800/70 to-slate-900/80 shadow-lg shadow-black/30 ring-1 ring-white/5 hover:border-white/20 transition-colors overflow-hidden"
+                  >
+                    <div className="bg-gradient-to-r from-blue-600/25 via-blue-600/10 to-transparent border-b border-white/10 px-3.5 py-2.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-bold text-white uppercase tracking-wide truncate">{department}</span>
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/10 text-slate-300">{rows.length}</span>
+                      </div>
+                      {isHrOrAdmin && (
+                        <button onClick={() => void addLeadersRow(department, rows[0]?.deptSort ?? 0)} className="shrink-0 text-blue-300 hover:text-blue-200 text-xs font-medium flex items-center gap-1">
+                          <Plus className="h-3 w-3" /> Add
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex-1 divide-y divide-white/5">
+                      {(() => {
+                        const tree = buildLeadersTree(rows);
+                        // Only actually nested (some row's reportsTo resolved to
+                        // another row here) if roots are fewer than the total —
+                        // otherwise every row is a root and this is identical to
+                        // a flat list, just rendered through the same code path.
+                        return tree.map((node) => (
+                          <LeaderTreeBranch
+                            key={node.row.id}
+                            node={node}
+                            depth={0}
+                            canEdit={isHrOrAdmin}
+                            leadersDraggingId={leadersDraggingId}
+                            deptPeople={rows.map((r) => r.personName)}
+                            setLeadersRowRef={setLeadersRowRef}
+                            onUpdate={(id, patch) => void updateLeadersRow(id, patch)}
+                            onDelete={(id) => void deleteLeadersRow(id)}
+                            onDuplicate={(id) => void duplicateLeadersRow(id)}
+                          />
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </DndContext>
+          )}
         </div>
       </div>
       )}
@@ -7086,6 +8290,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               >
                 {forwardSending ? "Sending…" : "Send"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Master List — clicking a name pops this up instead of navigating away; "View full profile" inside still opens the full stats page. */}
+      {masterListDetailEmployee && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setMasterListDetailEmployee(null)}>
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-1">{masterListDetailEmployee.name}</h3>
+            <p className="text-xs text-muted-foreground mb-4">{resolveMasterListPosition(masterListDetailEmployee)} · {resolveSpecificDepartment(masterListDetailEmployee)}</p>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Status</dt><dd className="capitalize">{masterListDetailEmployee.status}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Start Date</dt><dd>{masterListDetailEmployee.startDate || "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Branch</dt><dd>{masterListDetailEmployee.branch || "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Phone</dt><dd>{masterListDetailEmployee.phone || "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Email</dt><dd className="truncate max-w-[220px]" title={masterListDetailEmployee.email}>{masterListDetailEmployee.email}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground shrink-0">Address</dt><dd className="text-right">{masterListDetailEmployee.address || "—"}</dd></div>
+            </dl>
+            <div className="flex justify-end gap-2 mt-5">
+              <a
+                href={`/csr-agent/${masterListDetailEmployee.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                View full profile
+              </a>
+              <button onClick={() => setMasterListDetailEmployee(null)} className="btn text-sm px-4 py-2">Close</button>
             </div>
           </div>
         </div>

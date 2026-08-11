@@ -19,7 +19,7 @@ export interface SubModuleDef {
   // Custom seed generator; receives index
   seed: (i: number) => Record<string, unknown>;
   count?: number;
-  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard"; // hook for special pages
+  custom?: "part-return" | "part-return-status" | "claims-pipeline" | "work-map" | "part-order" | "part-receive" | "return-pickup" | "repair-statuses" | "ticket-list" | "user-management" | "account-management" | "location-management" | "csr-daily-report" | "call-tracker" | "csr-status-summary" | "csr-team-leader-dashboard" | "reserved-part-list-custom" | "parts-dashboard" | "claims-dashboard" | "staff-list"; // hook for special pages
   /** Still a real, routable submodule (role gates, custom dispatch — everything works) — just excluded from the module's own tile grid because another page links to it directly instead (e.g. Flash Tech Calendar via a button on Expense Tracking). Keeps the tile grid from accumulating every niche page. */
   hiddenFromGrid?: boolean;
 }
@@ -276,6 +276,15 @@ const dashboardMod: ModuleDef = {
       title: "HR & Recruitment Dashboard",
       description: "Manage job interviews, hiring pipeline, and HR metrics.",
       custom: "hr-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "staff-list",
+      title: "Staff List",
+      description: "Per-branch technician roster, branch-manager summary, and tier pay rates.",
+      custom: "staff-list",
       fields: [],
       count: 0,
       seed: () => ({}),

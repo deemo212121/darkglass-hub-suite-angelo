@@ -87,6 +87,7 @@ import { getMyRoles } from "@/lib/supabase/users";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useEffect, useState } from "react";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
+import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
 import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
@@ -493,6 +494,8 @@ function SubModule() {
         ? <CSRStatusSummary mod={mod} sub={sub} />
         : (sub as any).custom === "hr-dashboard"
         ? <ReportHRDaily mod={mod} sub={sub} />
+        : sub.custom === "staff-list"
+        ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"
         ? <TicketsMapWorkMap mod={mod} sub={sub} />
         : sub.custom === "part-order"

@@ -5,6 +5,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
 import { getRoleDepartmentBreakdown, canSubmitConductNote, normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { addAgentNote, getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import {
@@ -1317,9 +1318,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <tr key={dateRangeActive ? `${record.profileId}|${record.date}` : record.profileId} className="border-b border-white/5 hover:bg-white/5 transition">
                         {dateRangeActive && <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{record.date}</td>}
                         <td className="px-3 py-3 text-white font-medium">
-                          <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
-                            {record.name}
-                          </a>
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}`}
+                              title={PRESENCE_LABEL[resolvePresenceStatus(allProfileById.get(record.profileId) ?? {})]}
+                            />
+                            <a href={`/employee/${record.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                              {record.name}
+                            </a>
+                          </span>
                         </td>
                         <td className="px-3 py-3 text-slate-300">{record.location || "—"}</td>
                         <td className="px-3 py-3 text-slate-300">{record.department || "—"}</td>

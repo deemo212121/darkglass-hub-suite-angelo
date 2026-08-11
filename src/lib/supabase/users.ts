@@ -62,6 +62,21 @@ export interface ProfileRow {
   working_hours: number | null;
   /** How many minutes this person's meal break should be. Not enforced anywhere yet, just stored/shown. */
   meal_minutes: number | null;
+  /** Which zone required_check_in/required_check_out are actually in — "CST" or "EST". See migration 0147. */
+  schedule_timezone: "CST" | "EST" | null;
+  /** Extra Master List department tabs this person also shows up under, on top of their real/primary one. See migration 0151. */
+  master_list_extra_departments: string[] | null;
+  /** Personal (non-company) email — Staff List's per-branch tab. See migration 0154. */
+  personal_email: string | null;
+  /** A second phone number, distinct from phone_number — Staff List's per-branch tab. See migration 0154. */
+  work_phone: string | null;
+  /** Technician skill tier (e.g. "Tier 2") — NOT an org role, just free text from Staff List. See migration 0154. */
+  tier_level: string | null;
+  /** Free-text note shown on Staff List's per-branch tab. See migration 0154. */
+  staff_note: string | null;
+  /** Heartbeat/activity presence — see migration 0155 and touchPresenceSeen/touchPresenceActive. */
+  presence_seen_at: string | null;
+  presence_active_at: string | null;
   work_plan: Record<string, any> | null;
   is_active: boolean;
   /** Set by AdminUserManagementPage.tsx's Reset Password actions — see migration 0103. Forces a redirect to /profile until they change it (__root.tsx). */
@@ -164,6 +179,34 @@ export async function touchLastLogin(firebaseUid: string): Promise<void> {
 }
 
 /**
+ * Presence heartbeat (migration 0155) — written every ~60s while the app
+ * is open, regardless of activity. Master List's Online/Idle/Offline
+ * column treats a stale presence_seen_at as Offline (see auth.tsx for the
+ * interval that calls this).
+ */
+export async function touchPresenceSeen(firebaseUid: string): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ presence_seen_at: new Date().toISOString() })
+    .eq("firebase_uid", firebaseUid);
+  if (error) console.warn("touchPresenceSeen skipped:", error.message);
+}
+
+/**
+ * Presence activity (migration 0155) — written only on real user
+ * interaction (mouse/keyboard/scroll/touch), throttled client-side.
+ * Master List treats a stale presence_active_at (but fresh
+ * presence_seen_at) as Idle.
+ */
+export async function touchPresenceActive(firebaseUid: string): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ presence_active_at: new Date().toISOString() })
+    .eq("firebase_uid", firebaseUid);
+  if (error) console.warn("touchPresenceActive skipped:", error.message);
+}
+
+/**
  * Look up a user's email by username within a company (by legacy company code).
  * Used for username login BEFORE authentication — so there is no Supabase
  * session yet and RLS would block a direct table read. We call a SECURITY
@@ -262,6 +305,7 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
   role: string;
   requiredCheckIn: string;
   requiredCheckOut: string;
+  scheduleTimezone: "CST" | "EST";
   workingHours: number | null;
   mealMinutes: number | null;
 } | null> {
@@ -285,16 +329,18 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
   // with Working Hours/Meal Time.
   let workingHours: number | null = null;
   let mealMinutes: number | null = null;
+  let scheduleTimezone: "CST" | "EST" = "CST";
   const { data: extra, error: extraError } = await supabase
     .from("profiles")
-    .select("working_hours, meal_minutes")
+    .select("working_hours, meal_minutes, schedule_timezone")
     .eq("id", data.id)
     .maybeSingle();
   if (extraError) {
-    console.error("getMyFullProfile (working_hours/meal_minutes) error:", extraError.message);
+    console.error("getMyFullProfile (working_hours/meal_minutes/schedule_timezone) error:", extraError.message);
   } else {
     workingHours = extra?.working_hours ?? null;
     mealMinutes = extra?.meal_minutes ?? null;
+    scheduleTimezone = (extra?.schedule_timezone as "CST" | "EST" | null) ?? "CST";
   }
 
   return {
@@ -308,6 +354,7 @@ export async function getMyFullProfile(firebaseUid: string): Promise<{
     role: data.role,
     requiredCheckIn: data.required_check_in ?? "",
     requiredCheckOut: data.required_check_out ?? "",
+    scheduleTimezone,
     workingHours,
     mealMinutes,
   };
@@ -335,18 +382,45 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   // Management, Payroll, etc), so a missing/future column here must not be
   // able to break all of them at once.
   if (rows.length > 0) {
-    const { data: extraRows, error: extraError } = await supabase
-      .from("profiles")
-      .select("id, working_hours, meal_minutes")
-      .in("id", rows.map((r) => r.id));
-    if (extraError) {
-      console.error("getCompanyUsers (working_hours/meal_minutes) error:", extraError.message);
-    } else {
-      const extraById = new Map((extraRows ?? []).map((r: any) => [r.id, r]));
+    const ids = rows.map((r) => r.id);
+    // Two SEPARATE best-effort queries, not one combined select — if
+    // migration 0154's newer columns (personal_email/work_phone/
+    // tier_level/staff_note) haven't been run yet, a single combined
+    // query errors out as a whole and would silently null out
+    // working_hours/meal_minutes too (they've existed since 0109 and may
+    // have real data) even though only the newer columns are missing.
+    const [{ data: hoursRows, error: hoursError }, { data: staffListRows, error: staffListError }, { data: presenceRows, error: presenceError }] = await Promise.all([
+      supabase.from("profiles").select("id, working_hours, meal_minutes, schedule_timezone, master_list_extra_departments").in("id", ids),
+      supabase.from("profiles").select("id, personal_email, work_phone, tier_level, staff_note").in("id", ids),
+      supabase.from("profiles").select("id, presence_seen_at, presence_active_at").in("id", ids),
+    ]);
+    if (hoursError) {
+      console.error("getCompanyUsers (working_hours/meal_minutes/schedule_timezone/master_list_extra_departments) error:", hoursError.message);
+    }
+    if (staffListError) {
+      console.error("getCompanyUsers (personal_email/work_phone/tier_level/staff_note) error:", staffListError.message);
+    }
+    if (presenceError) {
+      console.error("getCompanyUsers (presence_seen_at/presence_active_at) error:", presenceError.message);
+    }
+    {
+      const hoursById = new Map((hoursRows ?? []).map((r: any) => [r.id, r]));
+      const staffListById = new Map((staffListRows ?? []).map((r: any) => [r.id, r]));
+      const presenceById = new Map((presenceRows ?? []).map((r: any) => [r.id, r]));
       for (const row of rows) {
-        const extra = extraById.get(row.id);
-        row.working_hours = extra?.working_hours ?? null;
-        row.meal_minutes = extra?.meal_minutes ?? null;
+        const hours = hoursById.get(row.id);
+        row.working_hours = hours?.working_hours ?? null;
+        row.meal_minutes = hours?.meal_minutes ?? null;
+        row.schedule_timezone = hours?.schedule_timezone ?? null;
+        row.master_list_extra_departments = hours?.master_list_extra_departments ?? [];
+        const staffList = staffListById.get(row.id);
+        row.personal_email = staffList?.personal_email ?? null;
+        row.work_phone = staffList?.work_phone ?? null;
+        row.tier_level = staffList?.tier_level ?? null;
+        row.staff_note = staffList?.staff_note ?? null;
+        const presence = presenceById.get(row.id);
+        row.presence_seen_at = presence?.presence_seen_at ?? null;
+        row.presence_active_at = presence?.presence_active_at ?? null;
       }
     }
   }
@@ -744,6 +818,12 @@ export async function updateCompanyUser(
     poInitials: string;
     requiredCheckIn: string;
     requiredCheckOut: string;
+    scheduleTimezone: "CST" | "EST";
+    masterListExtraDepartments: string[];
+    personalEmail: string | null;
+    workPhone: string | null;
+    tierLevel: string | null;
+    staffNote: string | null;
     workingHours: number | null;
     mealMinutes: number | null;
     emailReportLocation: string;
@@ -774,6 +854,12 @@ export async function updateCompanyUser(
   if (fields.poInitials !== undefined) payload.po_initials = fields.poInitials;
   if (fields.requiredCheckIn !== undefined) payload.required_check_in = fields.requiredCheckIn;
   if (fields.requiredCheckOut !== undefined) payload.required_check_out = fields.requiredCheckOut;
+  if (fields.scheduleTimezone !== undefined) payload.schedule_timezone = fields.scheduleTimezone;
+  if (fields.masterListExtraDepartments !== undefined) payload.master_list_extra_departments = fields.masterListExtraDepartments;
+  if (fields.personalEmail !== undefined) payload.personal_email = fields.personalEmail;
+  if (fields.workPhone !== undefined) payload.work_phone = fields.workPhone;
+  if (fields.tierLevel !== undefined) payload.tier_level = fields.tierLevel;
+  if (fields.staffNote !== undefined) payload.staff_note = fields.staffNote;
   if (fields.workingHours !== undefined) payload.working_hours = fields.workingHours;
   if (fields.mealMinutes !== undefined) payload.meal_minutes = fields.mealMinutes;
   if (fields.emailReportLocation !== undefined) payload.email_report_location = fields.emailReportLocation;
