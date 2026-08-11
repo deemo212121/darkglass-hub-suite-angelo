@@ -11,6 +11,7 @@ import { collection, addDoc, getDocs, serverTimestamp, query, orderBy } from "fi
 import { db, isFirebaseReady } from "@/lib/firebase/config";
 import { TruckStockPanel } from "@/components/TruckStockPage";
 import { TruckStockRequestsPanel } from "@/components/TruckStockRequestsPage";
+import { TruckStockTransfersPanel } from "@/components/TruckStockTransfersPage";
 import { getPartsInventoryRows, PART_INVENTORY_STATUSES, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getMyRoles } from "@/lib/supabase/users";
 import { canApproveTruckStockPulls } from "@/lib/truckStockNotify";
@@ -43,9 +44,9 @@ function usePortal(open: boolean) {
 export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const { companyId, email, role, uid } = useAuth();
   const routeSearch = (useSearch({ strict: false }) as { tab?: string; requestId?: string }) ?? {};
-  const [activeTab, setActiveTab] = usePersistedTab<"inventory" | "truck-stock" | "truck-stock-requests">(
+  const [activeTab, setActiveTab] = usePersistedTab<"inventory" | "truck-stock" | "truck-stock-requests" | "truck-stock-transfers">(
     "ahs:part-inventory-active-tab",
-    ["inventory", "truck-stock", "truck-stock-requests"],
+    ["inventory", "truck-stock", "truck-stock-requests", "truck-stock-transfers"],
     "inventory",
   );
   // canApproveTruckStockPulls needs extra_roles too, which useAuth() doesn't
@@ -66,6 +67,15 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setActiveTab("truck-stock-requests");
     }
   }, [routeSearch.tab, canApproveTruckStock]);
+  // Same deep-link convention for Branch Transfers — unlike the pull
+  // requests tab above, this one is open to everyone (a plain requester
+  // needs to land here from their own approve/reject/received
+  // notification too), so no canApprove gate on the redirect itself.
+  useEffect(() => {
+    if (routeSearch.tab === "truck-stock-transfers") {
+      setActiveTab("truck-stock-transfers");
+    }
+  }, [routeSearch.tab]);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
   const [partDist, setPartDist] = useState(""); const [distOpen, setDistOpen] = useState(false);
   const [status, setStatus] = useState(""); const [statusOpen, setStatusOpen] = useState(false);
@@ -223,10 +233,18 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               Truck Stock Requests
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setActiveTab("truck-stock-transfers")}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${activeTab === "truck-stock-transfers" ? "border-blue-500 text-blue-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            Branch Transfers
+          </button>
         </div>
 
         {activeTab === "truck-stock" && <TruckStockPanel />}
         {activeTab === "truck-stock-requests" && canApproveTruckStock && <TruckStockRequestsPanel highlightRequestId={routeSearch.requestId} />}
+        {activeTab === "truck-stock-transfers" && <TruckStockTransfersPanel highlightRequestId={routeSearch.requestId} />}
 
         {activeTab === "inventory" && (
         <>
