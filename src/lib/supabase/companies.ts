@@ -236,6 +236,32 @@ export async function getCompanyAdminAccounts(legacyCode: string): Promise<Compa
   }));
 }
 
+/**
+ * Every company's ADMIN/SUPERADMIN account count in one query, keyed by
+ * legacy_code — feeds the SuperAdmin console's companies-list "Users"
+ * column. Same Supabase-sourced accuracy as getCompanyAdminAccounts
+ * above (and the same staleness this replaces: that column used to come
+ * from Firestore's getAllUsers() filtered by companyId, which silently
+ * undercounts any account created/edited straight in Supabase). One
+ * bulk query instead of N getCompanyAdminAccounts calls so the page
+ * doesn't fire a request per company.
+ */
+export async function getAllCompanyAdminAccountCounts(): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("company:company_id(legacy_code)")
+    .in("role", ["ADMIN", "SUPERADMIN"]);
+  if (error) throw new Error(error.message);
+
+  const counts: Record<string, number> = {};
+  for (const row of (data ?? []) as any[]) {
+    const code = row.company?.legacy_code;
+    if (!code) continue;
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  return counts;
+}
+
 /** Set (or clear, with null) a company's login alias by its canonical legacy_code. */
 export async function updateSupabaseCompanyLoginAlias(
   legacyCode: string,
