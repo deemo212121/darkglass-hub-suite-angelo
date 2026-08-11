@@ -127,6 +127,50 @@ export async function notifyPartsManagerOfPullRequest(payload: {
   }
 }
 
+/**
+ * Ping the TICKET's own branch's Parts Manager(s) once a pull is approved —
+ * unlike a transfer (where the approver already IS the destination's own
+ * PM), a pull's approval comes from the SOURCE branch, so the destination
+ * (the branch that'll actually receive and use the part) would otherwise
+ * have no way to know to watch for it short of manually browsing the In
+ * Transit tab. Fire-and-forget.
+ */
+export async function notifyPartsManagerOfPullInTransit(payload: {
+  actorName: string;
+  ticketNo: string;
+  partNo: string;
+  qty: number;
+  sourceBranch: string;
+  destBranch: string;
+  requestId?: string;
+}): Promise<void> {
+  try {
+    if (!payload.destBranch) return;
+    const recipientIds = await findApproverProfileIdsForBranch(payload.destBranch);
+    if (recipientIds.length === 0) return;
+    const qtyLabel = `${payload.qty} unit${payload.qty === 1 ? "" : "s"}`;
+    const body =
+      `${qtyLabel} of ${payload.partNo} for Ticket ${payload.ticketNo} approved by ${payload.actorName} — in transit from ` +
+      `${payload.sourceBranch} to ${payload.destBranch}. Mark Received once it physically arrives.`;
+    const linkTo = payload.requestId
+      ? `/m/parts/part-inventory?tab=truck-stock-requests&requestId=${encodeURIComponent(payload.requestId)}`
+      : "/m/parts/part-inventory?tab=truck-stock-requests";
+    await Promise.all(
+      recipientIds.map((id) =>
+        createNotification({
+          recipientId: id,
+          senderId: null,
+          senderName: payload.actorName,
+          body,
+          linkTo,
+        }).catch((e) => console.warn("[truckStockNotify] notify destination parts manager (pull in transit) failed:", e)),
+      ),
+    );
+  } catch (err) {
+    console.warn("[truckStockNotify] notifyPartsManagerOfPullInTransit skipped:", err);
+  }
+}
+
 /** Ping the requester once their pull request has been approved or rejected. Fire-and-forget. */
 export async function notifyRequesterOfPullDecision(payload: {
   requesterId: string | null;

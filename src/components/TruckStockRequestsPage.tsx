@@ -42,6 +42,7 @@ import { getTruckStock, incrementTruckStock, type TruckStockRow } from "@/lib/su
 import {
   notifyRequesterOfPullDecision,
   notifyRequesterOfPullReceived,
+  notifyPartsManagerOfPullInTransit,
   notifyRequesterOfTransferDecision,
   notifyRequesterOfTransferReceived,
   canApproveTruckStockPull,
@@ -266,6 +267,15 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
           ticketNo: req.ticketNo,
           reviewerName: displayName,
           reviewerId: myProfileId,
+        });
+        void notifyPartsManagerOfPullInTransit({
+          actorName: displayName || "Parts Manager",
+          ticketNo: req.ticketNo,
+          partNo: req.partNo,
+          qty: req.quantity,
+          sourceBranch: req.branch,
+          destBranch: req.ticketBranch,
+          requestId: req.id,
         });
       } else if (row.transfer) {
         const req = row.transfer;
