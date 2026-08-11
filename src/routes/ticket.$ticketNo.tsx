@@ -4322,15 +4322,17 @@ function TicketDetailsPage() {
   }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, TRIAGE_PART_ROLES, CSR_ONLY_ROLES]);
 
   // Split of PART_LOCK_BYPASS_ROLES (plus Triage, see TRIAGE_PART_ROLES
-  // above) into two disjoint tiers — everyone who can see the Part
-  // Transaction toolbar (canUsePartToolbar) falls into one of these, but
-  // which specific actions they can actually use depends on which tier
-  // they're in. Team Leaders/Admins procure (Submit POs); the day-to-day
-  // Parts/Claims/Manager tier — plus Triage, who identifies the part during
-  // diagnosis — maintains the part records themselves (add/edit/delete/
-  // Update). Neither tier overlaps the other — a mixed-role user (e.g.
-  // primary ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same
-  // as every other multi-role check in this file.
+  // above) into two tiers — everyone who can see the Part Transaction
+  // toolbar (canUsePartToolbar) falls into one of these, but which specific
+  // actions they can actually use depends on which tier they're in. Team
+  // Leaders/Admins procure (Submit POs); the day-to-day Parts/Claims/
+  // Manager tier — plus Triage, who identifies the part during diagnosis,
+  // plus SUPERADMIN (a real per-company admin in this app, same tier as
+  // ADMIN for in-company operational data) — maintains the part records
+  // themselves (add/edit/delete/Update). SUPERADMIN is deliberately in
+  // both sets (order AND edit), same as any mixed-role user (e.g. primary
+  // ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same as
+  // every other multi-role check in this file.
   const PARTS_ORDER_ONLY_ROLES = useMemo(
     () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
     [],
@@ -4349,6 +4351,7 @@ function TicketDetailsPage() {
       "BIZOPS_SENIOR_MANAGER",
       "TRIAGE_USER",
       "TRIAGE_MANAGER",
+      "SUPERADMIN",
     ]),
     [],
   );
