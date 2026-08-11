@@ -11,10 +11,7 @@ import { collection, addDoc, getDocs, serverTimestamp, query, orderBy } from "fi
 import { db, isFirebaseReady } from "@/lib/firebase/config";
 import { TruckStockPanel } from "@/components/TruckStockPage";
 import { TruckStockRequestsPanel } from "@/components/TruckStockRequestsPage";
-import { TruckStockTransfersPanel } from "@/components/TruckStockTransfersPage";
 import { getPartsInventoryRows, PART_INVENTORY_STATUSES, type PartInventoryRow } from "@/lib/supabase/partsInventory";
-import { getMyRoles } from "@/lib/supabase/users";
-import { canApproveTruckStockPulls } from "@/lib/truckStockNotify";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -42,38 +39,22 @@ function usePortal(open: boolean) {
 }
 
 export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const { companyId, email, role, uid } = useAuth();
+  const { companyId, email } = useAuth();
   const routeSearch = (useSearch({ strict: false }) as { tab?: string; requestId?: string }) ?? {};
-  const [activeTab, setActiveTab] = usePersistedTab<"inventory" | "truck-stock" | "truck-stock-requests" | "truck-stock-transfers">(
+  const [activeTab, setActiveTab] = usePersistedTab<"inventory" | "truck-stock" | "truck-stock-requests">(
     "ahs:part-inventory-active-tab",
-    ["inventory", "truck-stock", "truck-stock-requests", "truck-stock-transfers"],
+    ["inventory", "truck-stock", "truck-stock-requests"],
     "inventory",
   );
-  // canApproveTruckStockPulls needs extra_roles too, which useAuth() doesn't
-  // carry (it only exposes the primary role) — same pattern as HR's
-  // hasHrSubRole check on the Jotform Submissions tab.
-  const [extraRoles, setExtraRoles] = useState<string[]>([]);
-  useEffect(() => {
-    if (!uid) return;
-    getMyRoles(uid).then(({ extraRoles }) => setExtraRoles(extraRoles)).catch(() => setExtraRoles([]));
-  }, [uid]);
-  const canApproveTruckStock = canApproveTruckStockPulls(role, extraRoles);
 
   // Deep link from a bell-icon notification straight into the Truck Stock
-  // Requests tab (a new pull request needs review, or one was approved/
-  // rejected) — same ?tab= convention as Employee Self-Service.
+  // Requests tab (a new pull/transfer request needs review, or one was
+  // approved/rejected/received) — same ?tab= convention as Employee
+  // Self-Service. Open to everyone, not just approvers: a plain requester
+  // needs to land here to see their own request's status too.
   useEffect(() => {
-    if (routeSearch.tab === "truck-stock-requests" && canApproveTruckStock) {
+    if (routeSearch.tab === "truck-stock-requests") {
       setActiveTab("truck-stock-requests");
-    }
-  }, [routeSearch.tab, canApproveTruckStock]);
-  // Same deep-link convention for Branch Transfers — unlike the pull
-  // requests tab above, this one is open to everyone (a plain requester
-  // needs to land here from their own approve/reject/received
-  // notification too), so no canApprove gate on the redirect itself.
-  useEffect(() => {
-    if (routeSearch.tab === "truck-stock-transfers") {
-      setActiveTab("truck-stock-transfers");
     }
   }, [routeSearch.tab]);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
@@ -224,27 +205,17 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           >
             Truck Stock
           </button>
-          {canApproveTruckStock && (
-            <button
-              type="button"
-              onClick={() => setActiveTab("truck-stock-requests")}
-              className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${activeTab === "truck-stock-requests" ? "border-blue-500 text-blue-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-            >
-              Truck Stock Requests
-            </button>
-          )}
           <button
             type="button"
-            onClick={() => setActiveTab("truck-stock-transfers")}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${activeTab === "truck-stock-transfers" ? "border-blue-500 text-blue-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setActiveTab("truck-stock-requests")}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${activeTab === "truck-stock-requests" ? "border-blue-500 text-blue-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           >
-            Branch Transfers
+            Truck Stock Requests
           </button>
         </div>
 
         {activeTab === "truck-stock" && <TruckStockPanel />}
-        {activeTab === "truck-stock-requests" && canApproveTruckStock && <TruckStockRequestsPanel highlightRequestId={routeSearch.requestId} />}
-        {activeTab === "truck-stock-transfers" && <TruckStockTransfersPanel highlightRequestId={routeSearch.requestId} />}
+        {activeTab === "truck-stock-requests" && <TruckStockRequestsPanel highlightRequestId={routeSearch.requestId} />}
 
         {activeTab === "inventory" && (
         <>

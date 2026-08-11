@@ -19,23 +19,12 @@
 import { supabase } from "./supabase/client";
 import { createNotification } from "./supabase/notifications";
 
-/** Roles that can approve/reject Truck Stock pull requests — gates both the
- * Truck Stock Requests tab and who gets notified about a new request. */
+/** Roles that can approve/reject a Truck Stock request at all — who gets
+ * notified about a new one, and (combined with a branch match) who can
+ * act on it. The Truck Stock Requests tab itself is visible to everyone,
+ * not gated by this — see canApproveTruckStockPull for the actual
+ * per-row, branch-scoped check. */
 const APPROVER_ROLE_CODES = new Set<string>(["PARTS_MANAGER", "ADMIN", "SUPERADMIN"]);
-
-/** Roles allowed to approve/reject Truck Stock pull requests AT ALL (gates
- * whether the Truck Stock Requests tab shows up) — company-wide, not
- * branch-scoped. Which specific PENDING ROWS a Parts Manager can actually
- * act on is a separate, branch-scoped check — see canApproveTruckStockPull. */
-export function canApproveTruckStockPulls(
-  primaryRole: string | null | undefined,
-  extraRoles: string[] | null | undefined,
-): boolean {
-  const all = [primaryRole, ...(extraRoles ?? [])]
-    .map((r) => String(r ?? "").trim().toUpperCase())
-    .filter(Boolean);
-  return all.some((r) => APPROVER_ROLE_CODES.has(r));
-}
 
 /**
  * Whether the given role/branch can approve/reject a pull request FROM
@@ -179,7 +168,10 @@ export async function notifyRequesterOfPullDecision(payload: {
 // either way, just a different meaning for which branch is being checked.
 // ---------------------------------------------------------------------
 
-const TRANSFER_LINK = "/m/parts/part-inventory?tab=truck-stock-transfers";
+// Truck Stock Requests is now one unified tab for both pulls and transfers
+// (see TruckStockRequestsPage.tsx) — same deep-link target as
+// notifyPartsManagerOfPullRequest below.
+const TRANSFER_LINK = "/m/parts/part-inventory?tab=truck-stock-requests";
 
 /** Ping the destination branch's Parts Manager(s) that a transfer request needs review. Fire-and-forget. */
 export async function notifyPartsManagerOfTransferRequest(payload: {
