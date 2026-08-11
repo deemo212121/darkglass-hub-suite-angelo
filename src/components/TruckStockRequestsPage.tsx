@@ -3,23 +3,30 @@
  * (see migration 0047, src/lib/supabase/truckStockRequests.ts). Embedded as
  * a tab inside PartInventory.tsx alongside Part Inventory and Truck Stock.
  *
- * A non-privileged requester's "fulfill in-house" click on a ticket reserves
- * the stock immediately but leaves the Part Transaction line "Need PO" and
- * lands a 'pending' row here. Approving marks that line PO Made (same
- * INH-… auto PO number and audit-log shape the old immediate-pull path
- * used, so Truck Stock's "where is this part used" popup still resolves
- * correctly). Rejecting restores the reserved quantity and reverts the
- * line to Need PO.
+ * A requester's "fulfill in-house" click on a ticket (TruckStockBatchModal)
+ * reserves the stock immediately but leaves the Part Transaction line
+ * "Need PO" and lands a 'pending' row here — approving and requesting are
+ * always separate steps, no matter who requests it. Approving marks that
+ * line PO Made (same INH-… auto PO number and audit-log shape the old
+ * immediate-pull path used, so Truck Stock's "where is this part used"
+ * popup still resolves correctly). Rejecting restores the reserved
+ * quantity and reverts the line to Need PO.
+ *
+ * Every pending row is listed here for anyone who can see this tab at all
+ * (canApproveTruckStockPulls), but Approve/Reject only render for whoever
+ * can actually act on THAT row's specific source branch
+ * (canApproveTruckStockPull) — that branch's own Parts Manager, or
+ * Admin/SuperAdmin. Everyone else sees it read-only.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { CheckCircle, XCircle, Clock, Package, Truck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileId } from "@/lib/supabase/users";
+import { getMyFullProfile } from "@/lib/supabase/users";
 import { getPartById, updateTicketPart, logTicketAuditEntry } from "@/lib/supabase/tickets";
 import { getTruckStock, incrementTruckStock, type TruckStockRow } from "@/lib/supabase/truckStock";
-import { notifyRequesterOfPullDecision } from "@/lib/truckStockNotify";
+import { notifyRequesterOfPullDecision, canApproveTruckStockPull } from "@/lib/truckStockNotify";
 import {
   getTruckStockPullRequests,
   approveTruckStockPullRequest,
@@ -28,8 +35,9 @@ import {
 } from "@/lib/supabase/truckStockRequests";
 
 export function TruckStockRequestsPanel({ highlightRequestId }: { highlightRequestId?: string } = {}) {
-  const { uid, displayName } = useAuth();
+  const { uid, displayName, role, extraRoles } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  const [myAssignedBranch, setMyAssignedBranch] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [pending, setPending] = useState<TruckStockPullRequestRow[]>([]);
   const [approved, setApproved] = useState<TruckStockPullRequestRow[]>([]);
@@ -46,8 +54,19 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
   const [flashId, setFlashId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (uid) getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
+    if (!uid) return;
+    getMyFullProfile(uid)
+      .then((p) => {
+        setMyProfileId(p?.profileId ?? null);
+        setMyAssignedBranch(p?.assignedBranch ?? null);
+      })
+      .catch(() => {
+        setMyProfileId(null);
+        setMyAssignedBranch(null);
+      });
   }, [uid]);
+
+  const canActOn = (branch: string) => canApproveTruckStockPull(role, extraRoles, myAssignedBranch, branch);
 
   const load = async () => {
     setLoading(true);
@@ -268,24 +287,28 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                   {subTab === "rejected" && <td className="px-3 py-2 text-rose-200 max-w-xs" title={r.rejectionReason || ""}>{r.rejectionReason || "—"}</td>}
                   {subTab === "pending" && (
                     <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleApprove(r)}
-                          disabled={busyId === r.id}
-                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 disabled:opacity-40"
-                        >
-                          <CheckCircle className="h-3 w-3" /> Approve
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { setRejectTarget(r); setRejectReason(""); }}
-                          disabled={busyId === r.id}
-                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 disabled:opacity-40"
-                        >
-                          <XCircle className="h-3 w-3" /> Reject
-                        </button>
-                      </div>
+                      {canActOn(r.branch) ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleApprove(r)}
+                            disabled={busyId === r.id}
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 disabled:opacity-40"
+                          >
+                            <CheckCircle className="h-3 w-3" /> Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setRejectTarget(r); setRejectReason(""); }}
+                            disabled={busyId === r.id}
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 disabled:opacity-40"
+                          >
+                            <XCircle className="h-3 w-3" /> Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-slate-500">Awaiting {r.branch}'s Parts Manager</span>
+                      )}
                     </td>
                   )}
                 </tr>

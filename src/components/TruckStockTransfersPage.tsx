@@ -11,7 +11,7 @@
  * status/location too ("where is the parts right now"), not just
  * whoever can approve it. Approve/Reject/Mark Received actions are
  * still gated per-row to the destination branch's own Parts Manager (or
- * Admin/SuperAdmin), via canApproveTruckStockTransfer.
+ * Admin/SuperAdmin), via canApproveTruckStockPull.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -19,7 +19,7 @@ import { CheckCircle, XCircle, Clock, PackageCheck, Truck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyFullProfile } from "@/lib/supabase/users";
 import { incrementTruckStock } from "@/lib/supabase/truckStock";
-import { canApproveTruckStockTransfer, notifyRequesterOfTransferDecision, notifyRequesterOfTransferReceived } from "@/lib/truckStockNotify";
+import { canApproveTruckStockPull, notifyRequesterOfTransferDecision, notifyRequesterOfTransferReceived } from "@/lib/truckStockNotify";
 import {
   getTruckStockTransferRequests,
   approveTruckStockTransferRequest,
@@ -98,7 +98,7 @@ export function TruckStockTransfersPanel({ highlightRequestId }: { highlightRequ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightRequestId, loading, pending, approved, received, rejected]);
 
-  const canActOn = (toBranch: string) => canApproveTruckStockTransfer(role, extraRoles, myAssignedBranch, toBranch);
+  const canActOn = (toBranch: string) => canApproveTruckStockPull(role, extraRoles, myAssignedBranch, toBranch);
 
   const handleApprove = async (req: TruckStockTransferRow) => {
     setBusyId(req.id);

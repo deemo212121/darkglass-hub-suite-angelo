@@ -23,7 +23,10 @@ import { createNotification } from "./supabase/notifications";
  * Truck Stock Requests tab and who gets notified about a new request. */
 const APPROVER_ROLE_CODES = new Set<string>(["PARTS_MANAGER", "ADMIN", "SUPERADMIN"]);
 
-/** Roles allowed to approve/reject Truck Stock pull requests — the Truck Stock Requests tab. */
+/** Roles allowed to approve/reject Truck Stock pull requests AT ALL (gates
+ * whether the Truck Stock Requests tab shows up) — company-wide, not
+ * branch-scoped. Which specific PENDING ROWS a Parts Manager can actually
+ * act on is a separate, branch-scoped check — see canApproveTruckStockPull. */
 export function canApproveTruckStockPulls(
   primaryRole: string | null | undefined,
   extraRoles: string[] | null | undefined,
@@ -34,16 +37,57 @@ export function canApproveTruckStockPulls(
   return all.some((r) => APPROVER_ROLE_CODES.has(r));
 }
 
-async function findApproverProfileIds(): Promise<string[]> {
+/**
+ * Whether the given role/branch can approve/reject a pull request FROM
+ * `sourceBranch` (the branch Truck Stock is being decremented at — that
+ * branch's own Parts Manager is who actually knows whether that stock is
+ * really free to give up). Admin/SuperAdmin can act on any branch, same
+ * as every other approval gate in this app.
+ */
+export function canApproveTruckStockPull(
+  primaryRole: string | null | undefined,
+  extraRoles: string[] | null | undefined,
+  assignedBranch: string | null | undefined,
+  sourceBranch: string,
+): boolean {
+  const all = [primaryRole, ...(extraRoles ?? [])]
+    .map((r) => String(r ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  if (all.some((r) => r === "ADMIN" || r === "SUPERADMIN")) return true;
+  if (!all.includes("PARTS_MANAGER")) return false;
+  return String(assignedBranch ?? "").trim().toLowerCase() === sourceBranch.trim().toLowerCase();
+}
+
+/**
+ * Parts Managers assigned to `branch` specifically — falls back to every
+ * Parts Manager/Admin/SuperAdmin company-wide if nobody is assigned
+ * there, so a request never silently strands with zero possible
+ * approvers just because a branch has no Parts Manager on file yet.
+ * Shared by both the ticket-driven pull requests below (branch = where
+ * stock is being pulled FROM) and the branch transfer requests further
+ * down (branch = where stock is being sent TO).
+ */
+async function findApproverProfileIdsForBranch(branch: string): Promise<string[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, role, extra_roles")
+    .select("id, role, extra_roles, assigned_branch")
     .eq("is_active", true);
   if (error) {
-    console.warn("[truckStockNotify] findApproverProfileIds error:", error.message);
+    console.warn("[truckStockNotify] findApproverProfileIdsForBranch error:", error.message);
     return [];
   }
-  return (data ?? [])
+  const rows = data ?? [];
+  const isPartsManager = (r: any) => {
+    const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
+    return roles.includes("PARTS_MANAGER");
+  };
+  const atBranch = rows
+    .filter((r: any) => isPartsManager(r) && String(r.assigned_branch ?? "").trim().toLowerCase() === branch.trim().toLowerCase())
+    .map((r: any) => r.id as string);
+  if (atBranch.length > 0) return atBranch;
+  // Fallback: no Parts Manager on file for this branch — notify every
+  // company-wide approver instead (Parts Manager anywhere, or Admin/SuperAdmin).
+  return rows
     .filter((r: any) => {
       const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
       return roles.some((v) => APPROVER_ROLE_CODES.has(v));
@@ -51,7 +95,7 @@ async function findApproverProfileIds(): Promise<string[]> {
     .map((r: any) => r.id as string);
 }
 
-/** Ping every Parts Manager in the company that a pull request needs review. Fire-and-forget. */
+/** Ping the source branch's Parts Manager(s) that a pull request needs review. Fire-and-forget. */
 export async function notifyPartsManagerOfPullRequest(payload: {
   actorName: string;
   ticketNo: string;
@@ -65,7 +109,7 @@ export async function notifyPartsManagerOfPullRequest(payload: {
   requestId?: string;
 }): Promise<void> {
   try {
-    const recipientIds = await findApproverProfileIds();
+    const recipientIds = await findApproverProfileIdsForBranch(payload.branch);
     if (recipientIds.length === 0) return;
     const body =
       `${payload.actorName} requested to pull ${payload.qty} × ${payload.partNo} from Truck Stock ` +
@@ -129,67 +173,13 @@ export async function notifyRequesterOfPullDecision(payload: {
 // distinct workflow from the ticket-driven pulls above: moves existing
 // stock from one branch to another, so approval is scoped to the
 // DESTINATION branch's own Parts Manager, not any Parts Manager
-// company-wide.
+// company-wide. Shares canApproveTruckStockPull/
+// findApproverProfileIdsForBranch above (branch = the destination here,
+// vs. the source for a pull request) — same role/branch-matching rule
+// either way, just a different meaning for which branch is being checked.
 // ---------------------------------------------------------------------
 
 const TRANSFER_LINK = "/m/parts/part-inventory?tab=truck-stock-transfers";
-
-/**
- * Whether the given role/branch can approve/reject/mark-received a
- * transfer INTO `toBranch`. Admin/SuperAdmin can act on any branch
- * (company-wide oversight, same as every other approval gate in this
- * app); a Parts Manager can only act on transfers headed to their OWN
- * assigned_branch — they're not authorized to sign off on stock arriving
- * somewhere else.
- */
-export function canApproveTruckStockTransfer(
-  primaryRole: string | null | undefined,
-  extraRoles: string[] | null | undefined,
-  assignedBranch: string | null | undefined,
-  toBranch: string,
-): boolean {
-  const all = [primaryRole, ...(extraRoles ?? [])]
-    .map((r) => String(r ?? "").trim().toUpperCase())
-    .filter(Boolean);
-  if (all.some((r) => r === "ADMIN" || r === "SUPERADMIN")) return true;
-  if (!all.includes("PARTS_MANAGER")) return false;
-  return String(assignedBranch ?? "").trim().toLowerCase() === toBranch.trim().toLowerCase();
-}
-
-/**
- * Parts Managers assigned to `toBranch` specifically — falls back to
- * every Parts Manager/Admin/SuperAdmin company-wide if nobody is
- * assigned there, so a request never silently strands with zero
- * possible approvers just because a branch has no Parts Manager on file
- * yet.
- */
-async function findDestinationApproverProfileIds(toBranch: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, role, extra_roles, assigned_branch")
-    .eq("is_active", true);
-  if (error) {
-    console.warn("[truckStockNotify] findDestinationApproverProfileIds error:", error.message);
-    return [];
-  }
-  const rows = data ?? [];
-  const isPartsManager = (r: any) => {
-    const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
-    return roles.includes("PARTS_MANAGER");
-  };
-  const atBranch = rows
-    .filter((r: any) => isPartsManager(r) && String(r.assigned_branch ?? "").trim().toLowerCase() === toBranch.trim().toLowerCase())
-    .map((r: any) => r.id as string);
-  if (atBranch.length > 0) return atBranch;
-  // Fallback: no Parts Manager on file for this branch — notify every
-  // company-wide approver instead (Parts Manager anywhere, or Admin/SuperAdmin).
-  return rows
-    .filter((r: any) => {
-      const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
-      return roles.some((v) => APPROVER_ROLE_CODES.has(v));
-    })
-    .map((r: any) => r.id as string);
-}
 
 /** Ping the destination branch's Parts Manager(s) that a transfer request needs review. Fire-and-forget. */
 export async function notifyPartsManagerOfTransferRequest(payload: {
@@ -201,7 +191,7 @@ export async function notifyPartsManagerOfTransferRequest(payload: {
   requestId?: string;
 }): Promise<void> {
   try {
-    const recipientIds = await findDestinationApproverProfileIds(payload.toBranch);
+    const recipientIds = await findApproverProfileIdsForBranch(payload.toBranch);
     if (recipientIds.length === 0) return;
     const body =
       `${payload.actorName} requested to transfer ${payload.qty} × ${payload.partNo} from ${payload.fromBranch} ` +

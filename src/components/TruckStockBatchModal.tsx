@@ -4,9 +4,11 @@
  * Opens when the user clicks the Truck Stock button next to Submit POs.
  * Scans every Need PO part on the ticket, looks up which branches have
  * matching stock in `truck_stock`, and lets the user pick a source
- * branch per part with one click. Confirming decrements those branches'
- * stock atomically and reports the new PO Made rows back to the host so
- * it can stamp poNo / status on each part.
+ * branch per part with one click. Confirming reserves (decrements) that
+ * quantity at the chosen branch and creates a pending pull request per
+ * part (see truckStockRequests.ts) — the source branch's own Parts
+ * Manager has to approve before the host stamps a part's status PO Made;
+ * this modal itself never marks anything PO Made directly.
  *
  * Shape contract:
  *   - `parts` is the pre-filtered list of "needs sourcing" rows the host
@@ -276,8 +278,8 @@ export function TruckStockBatchModal({
 
         <footer className="flex items-center justify-between gap-3 rounded-b-xl border-t border-white/10 px-5 py-3 bg-slate-900/40">
           <p className="text-[11px] text-slate-400">
-            Confirming will decrement Truck Stock at the chosen branch and mark each part PO Made with an
-            auto-generated <span className="font-mono">INH-…</span> PO number.
+            Confirming reserves the parts at the chosen branch and creates a pull request — the source branch's
+            Parts Manager has to approve before it's marked PO Made with an auto-generated <span className="font-mono">INH-…</span> PO number.
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -293,7 +295,7 @@ export function TruckStockBatchModal({
               disabled={busy || loading || totalSelected === 0}
               className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
             >
-              {busy ? "Pulling…" : `Pull ${totalSelected} part${totalSelected === 1 ? "" : "s"}`}
+              {busy ? "Requesting…" : `Request ${totalSelected} part${totalSelected === 1 ? "" : "s"}`}
             </button>
           </div>
         </footer>
