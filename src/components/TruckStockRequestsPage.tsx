@@ -517,7 +517,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                     <td className="px-3 py-2">
                       {r.kind === "pull" ? (
                         r.ticketNo ? (
-                          <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} className="text-blue-400 hover:text-blue-300 hover:underline font-mono">{r.ticketNo}</Link>
+                          <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" className="text-blue-400 hover:text-blue-300 hover:underline font-mono">{r.ticketNo}</Link>
                         ) : (
                           <span className="text-slate-500">—</span>
                         )
