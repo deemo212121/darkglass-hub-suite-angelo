@@ -489,7 +489,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
           <thead className="bg-slate-900/60 text-slate-300">
             <tr>
               <th className="px-3 py-2 text-left">Part No</th>
-              <th className="px-3 py-2 text-left">Reason</th>
+              <th className="px-3 py-2 text-left">Ticket No.</th>
               <th className="px-3 py-2 text-left">Technician</th>
               <th className="px-3 py-2 text-right">Qty</th>
               <th className="px-3 py-2 text-left">Branch</th>
