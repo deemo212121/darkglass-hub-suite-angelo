@@ -74,6 +74,8 @@ interface UnifiedRow {
   toBranch: string | null;
   storageLocation: string;
   ticketNo: string | null;
+  /** Assigned technician on the ticket this pull is for — null for a transfer (no ticket involved). */
+  ticketTechnician: string | null;
   requestedByName: string;
   requestedAt: string;
   reviewedByName: string;
@@ -97,6 +99,7 @@ function fromPull(r: TruckStockPullRequestRow): UnifiedRow {
     toBranch: r.ticketBranch || null,
     storageLocation: r.storageLocation,
     ticketNo: r.ticketNo,
+    ticketTechnician: r.ticketTechnician || null,
     requestedByName: r.requestedByName,
     requestedAt: r.requestedAt,
     reviewedByName: r.reviewedByName,
@@ -120,6 +123,7 @@ function fromTransfer(r: TruckStockTransferRow): UnifiedRow {
     toBranch: r.toBranch,
     storageLocation: "",
     ticketNo: null,
+    ticketTechnician: null,
     requestedByName: r.requestedByName,
     requestedAt: r.requestedAt,
     reviewedByName: r.reviewedByName,
@@ -424,7 +428,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
   const showReceived = subTab === "completed";
   const showReason = subTab === "rejected";
   const showActions = subTab === "pending" || subTab === "in_transit";
-  const colCount = 4 + 2 + (showReviewed ? 2 : 0) + (showReceived ? 2 : 0) + (showReason ? 1 : 0) + (showActions ? 1 : 0);
+  const colCount = 5 + 2 + (showReviewed ? 2 : 0) + (showReceived ? 2 : 0) + (showReason ? 1 : 0) + (showActions ? 1 : 0);
 
   const BUCKET_LABEL: Record<Bucket, string> = { pending: "Pending", in_transit: "In Transit", completed: "Completed", rejected: "Rejected" };
   const BUCKET_EMPTY: Record<Bucket, string> = {
@@ -486,6 +490,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
             <tr>
               <th className="px-3 py-2 text-left">Part No</th>
               <th className="px-3 py-2 text-left">Reason</th>
+              <th className="px-3 py-2 text-left">Technician</th>
               <th className="px-3 py-2 text-right">Qty</th>
               <th className="px-3 py-2 text-left">Branch</th>
               <th className="px-3 py-2 text-left">Requested By</th>
@@ -511,16 +516,16 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                     <td className="px-3 py-2 font-mono">{r.partNo}</td>
                     <td className="px-3 py-2">
                       {r.kind === "pull" ? (
-                        <span className="inline-flex items-center gap-1">
-                          <span className="text-slate-300">Ticket Pull</span>
-                          {r.ticketNo ? (
-                            <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} className="text-blue-400 hover:text-blue-300 hover:underline font-mono">{r.ticketNo}</Link>
-                          ) : null}
-                        </span>
+                        r.ticketNo ? (
+                          <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} className="text-blue-400 hover:text-blue-300 hover:underline font-mono">{r.ticketNo}</Link>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )
                       ) : (
                         <span className="text-slate-300">Branch Restock</span>
                       )}
                     </td>
+                    <td className="px-3 py-2 text-slate-300">{r.ticketTechnician || "—"}</td>
                     <td className="px-3 py-2 text-right font-semibold">{r.quantity}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {r.kind === "pull" ? (

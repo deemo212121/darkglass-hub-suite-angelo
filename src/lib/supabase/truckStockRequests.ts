@@ -25,6 +25,8 @@ export interface TruckStockPullRequestRow {
   ticketNo: string;
   /** The ticket's own branch (tickets.location) — where the part is headed, i.e. the destination that must Mark Received. Not the same as `branch` (the source it's being pulled FROM). */
   ticketBranch: string;
+  /** The technician assigned to the ticket (tickets.technician) — who this part is actually for. */
+  ticketTechnician: string;
   partId: string;
   partNo: string;
   branch: string;
@@ -45,7 +47,7 @@ export interface TruckStockPullRequestRow {
 
 const SELECT =
   "id, ticket_id, part_id, part_no, branch, storage_location, quantity, status, requested_by, requested_at, reviewed_by, reviewed_at, rejection_reason, received_by, received_at, " +
-  "tickets!truck_stock_pull_requests_ticket_same_company(ticket_no, location), " +
+  "tickets!truck_stock_pull_requests_ticket_same_company(ticket_no, location, technician), " +
   "requester:requested_by(display_name, username), reviewer:reviewed_by(display_name, username), receiver:received_by(display_name, username)";
 
 function fromRow(r: any): TruckStockPullRequestRow {
@@ -54,6 +56,7 @@ function fromRow(r: any): TruckStockPullRequestRow {
     ticketId: r.ticket_id,
     ticketNo: r.tickets?.ticket_no ?? "",
     ticketBranch: r.tickets?.location ?? "",
+    ticketTechnician: r.tickets?.technician ?? "",
     partId: r.part_id,
     partNo: r.part_no ?? "",
     branch: r.branch ?? "",
