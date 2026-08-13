@@ -652,6 +652,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          if (
+            !formData.correctedCheckIn &&
+            !formData.correctedCheckOut &&
+            !formData.correctedMealStart &&
+            !formData.correctedMealEnd
+          ) {
+            alert("Enter at least one corrected time (Check In, Check Out, Meal Start, or Meal End).");
+            setSubmitting(false);
+            return;
+          }
           const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
           const effectiveCheckIn = formData.correctedCheckIn || existing?.clockIn || "";
           const effectiveCheckOut = formData.correctedCheckOut || existing?.clockOut || "";
