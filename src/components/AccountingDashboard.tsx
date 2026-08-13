@@ -2087,18 +2087,35 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }
 
   if (error) {
+    // generatePayroll's pending-corrections gate reuses this same error
+    // state/banner rather than a dedicated one — detect it here so Finance
+    // gets a direct way to go fix it instead of just a dead end.
+    const isPendingCorrectionsError = error.includes("time correction request(s) are still pending");
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="bg-red-900/30 border border-red-500/40 rounded-lg p-6 max-w-md text-center">
           <AlertCircle className="h-8 w-8 text-red-400 mx-auto mb-3" />
           <p className="text-red-300 font-semibold mb-1">Error loading data</p>
           <p className="text-slate-400 text-sm mb-4">{error}</p>
-          <button
-            onClick={fetchData}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-semibold transition"
-          >
-            Retry
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              onClick={fetchData}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-semibold transition"
+            >
+              Retry
+            </button>
+            {isPendingCorrectionsError && (
+              <Link
+                to="/m/$module/$submodule"
+                params={{ module: "dashboard", submodule: "attendance-monitoring" }}
+                search={{ tab: "corrections" }}
+                target="_blank"
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm font-semibold transition"
+              >
+                Go to Time Corrections
+              </Link>
+            )}
+          </div>
         </div>
       </div>
     );

@@ -1,6 +1,6 @@
 import { AlertCircle, AlertTriangle, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, Download, Calendar, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -216,6 +216,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ["daily-attendance", "pto-management", "corrections", "warnings"],
     "daily-attendance",
   );
+  // Deep-link support (e.g. "Resolve these first" on the Accounting
+  // Dashboard's payroll-blocked error links straight here) — same
+  // ?tab= pattern already used on Part Inventory / HR Daily / etc.
+  // Only ever overrides forward, never fights the persisted tab on a plain
+  // reload with no ?tab= present.
+  const routeSearch = (useSearch({ strict: false }) as { tab?: string }) ?? {};
+  useEffect(() => {
+    if (routeSearch.tab === "corrections") setActiveTab("corrections");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeSearch.tab]);
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly" | "custom">("weekly");
   const [searchEmployee, setSearchEmployee] = useState<string>("");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
