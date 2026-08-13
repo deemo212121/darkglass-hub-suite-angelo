@@ -70,7 +70,10 @@ export async function updatePartPickupRow(
   updates: { pickedUp?: boolean; action?: string; comment?: string }
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
-  if (updates.pickedUp !== undefined) payload.picked_up = updates.pickedUp;
+  if (updates.pickedUp !== undefined) {
+    payload.picked_up = updates.pickedUp;
+    if (updates.pickedUp) payload.picked_up_date = new Date().toISOString().slice(0, 10);
+  }
   if (updates.action !== undefined) payload.pickup_action = updates.action;
   if (updates.comment !== undefined) payload.note = updates.comment;
   if (Object.keys(payload).length === 0) return;

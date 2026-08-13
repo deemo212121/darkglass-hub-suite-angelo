@@ -5339,6 +5339,7 @@ function TicketDetailsPage() {
             <option>CX Home</option>
             <option>Cx Received</option>
             <option>Defective</option>
+            <option>Dropship</option>
             <option>Hold for Estimation</option>
             <option>Hold for next vist</option>
             <option>In Review</option>
@@ -7082,6 +7083,7 @@ function TicketDetailsPage() {
                                 <option>CX Home</option>
                                 <option>Cx Received</option>
                                 <option>Defective</option>
+                                <option>Dropship</option>
                                 <option>Hold for Estimation</option>
                                 <option>Hold for next vist</option>
                                 <option>In Review</option>

@@ -40,6 +40,7 @@ const PART_STATUSES = [
   "CX Home",
   "CX Received",
   "Defective",
+  "Dropship",
   "Hold for Estimation",
   "Hold for next visit",
   "Lost",

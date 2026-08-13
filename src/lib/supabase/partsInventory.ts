@@ -36,6 +36,9 @@ export interface PartInventoryRow {
   location: string;
   technician: string;
   warranty: string;
+  /** The company financially responsible for the claim (tickets.claim_company) —
+   * distinct from `warranty`, which is only status (In/Out of Warranty). */
+  claimCompany: string;
   partNo: string;
   partDist: string;
   partDesc: string;
@@ -71,7 +74,7 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
       .from("parts")
       .select("id, ticket_id, part_no, part_dist, part_desc, quantity, part_price, status, po_no, po_date, invoice_no, order_no, eta, ra_no, ra_date, in_tracking, created_at")
       .order("created_at", { ascending: false }),
-    supabase.from("tickets").select("id, ticket_no, location, technician, warranty, aging"),
+    supabase.from("tickets").select("id, ticket_no, location, technician, warranty, claim_company, aging"),
   ]);
 
   if (partsRes.error) {
@@ -83,13 +86,14 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
     throw new Error(ticketsRes.error.message);
   }
 
-  const ticketById = new Map<string, { ticketNo: string; location: string; technician: string; warranty: string }>();
+  const ticketById = new Map<string, { ticketNo: string; location: string; technician: string; warranty: string; claimCompany: string }>();
   for (const t of ticketsRes.data ?? []) {
     ticketById.set((t as any).id, {
       ticketNo: (t as any).ticket_no ?? "",
       location: (t as any).location ?? "",
       technician: (t as any).technician ?? "",
       warranty: (t as any).warranty ?? "",
+      claimCompany: (t as any).claim_company ?? "",
     });
   }
 
@@ -101,6 +105,7 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
       location: ticket?.location ?? "",
       technician: ticket?.technician ?? "",
       warranty: ticket?.warranty ?? "",
+      claimCompany: ticket?.claimCompany ?? "",
       partNo: row.part_no ?? "",
       partDist: row.part_dist ?? "",
       partDesc: row.part_desc ?? "",

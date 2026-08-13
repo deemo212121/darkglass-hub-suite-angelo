@@ -23,6 +23,7 @@ export interface PartOrderRow {
   location: string;
   scheduleDate: string;
   warranty: string;
+  repairStatus: string;
 }
 
 export async function getPartOrderRows(): Promise<PartOrderRow[]> {
@@ -31,7 +32,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
       .from("parts")
       .select("id, ticket_id, part_no, part_dist, part_desc, quantity, status, po_no, eta")
       .order("created_at", { ascending: false }),
-    supabase.from("tickets").select("id, ticket_no, location, schedule_date, warranty"),
+    supabase.from("tickets").select("id, ticket_no, location, schedule_date, warranty, status"),
   ]);
 
   if (partsRes.error) {
@@ -43,13 +44,14 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
     throw new Error(ticketsRes.error.message);
   }
 
-  const ticketById = new Map<string, { ticketNo: string; location: string; scheduleDate: string; warranty: string }>();
+  const ticketById = new Map<string, { ticketNo: string; location: string; scheduleDate: string; warranty: string; repairStatus: string }>();
   for (const t of ticketsRes.data ?? []) {
     ticketById.set((t as any).id, {
       ticketNo: (t as any).ticket_no ?? "",
       location: (t as any).location ?? "",
       scheduleDate: (t as any).schedule_date ?? "",
       warranty: (t as any).warranty ?? "",
+      repairStatus: (t as any).status ?? "",
     });
   }
 
@@ -73,6 +75,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         location: ticket?.location ?? "",
         scheduleDate: ticket?.scheduleDate ?? "",
         warranty: ticket?.warranty ?? "",
+        repairStatus: ticket?.repairStatus ?? "",
       };
     });
 }

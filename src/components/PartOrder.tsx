@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Download } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
+import { REPAIR_STATUS_OPTIONS } from "@/lib/ticketData";
 import {
   getPartOrderRows,
   getDistinctPartOrderDistributors,
@@ -19,6 +20,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [partDist, setPartDist] = useState("");
   const [scheduleDate, setScheduleDate] = useState("");
   const [warrantyType, setWarrantyType] = useState("");
+  const [repairStatus, setRepairStatus] = useState("");
   const [distributors, setDistributors] = useState<string[]>([]);
   const [warranties, setWarranties] = useState<string[]>([]);
   const [orders, setOrders] = useState<PartOrderRow[]>([]);
@@ -51,9 +53,10 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
       if (partDist && order.partDist !== partDist) return false;
       if (scheduleDate && order.scheduleDate !== scheduleDate) return false;
       if (warrantyType && order.warranty !== warrantyType) return false;
+      if (repairStatus && order.repairStatus !== repairStatus) return false;
       return true;
     });
-  }, [orders, location, partDist, scheduleDate, warrantyType]);
+  }, [orders, location, partDist, scheduleDate, warrantyType, repairStatus]);
 
   // Real live stock check (Marcone) per distinct part number currently on
   // screen - fetched once per part number and cached, not re-fetched on
@@ -129,7 +132,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           {/* Order Criteria Section */}
           <div>
             <h3 className="form-section-title">Filter Criteria</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="form-group">
                 <label>Location</label>
                 <select value={location} onChange={(e) => setLocation(e.target.value)} className="glass-input">
@@ -161,6 +164,16 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                   <option value="">All Warranty Types</option>
                   {warranties.map(wt => (
                     <option key={wt} value={wt}>{wt}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Repair Status</label>
+                <select value={repairStatus} onChange={(e) => setRepairStatus(e.target.value)} className="glass-input">
+                  <option value="">All Repair Statuses</option>
+                  {REPAIR_STATUS_OPTIONS.map(rs => (
+                    <option key={rs} value={rs}>{rs}</option>
                   ))}
                 </select>
               </div>
