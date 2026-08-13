@@ -47,6 +47,7 @@ import { getEmployeeInfoByProfileIds, getCompanyUsers, type EmployeeInfo } from 
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import {
   getTechRepairRates,
   getTechCompletedRepairCounts,
@@ -341,6 +342,28 @@ function findMissingTimeouts(entries: TimecardEntry[], employees: SupabaseEmploy
     .sort();
 }
 
+// Still-pending Time Correction requests (any stage — manager/HR/accounting
+// — not yet fully resolved) whose work_date falls inside the payroll
+// period being generated. A pending correction means the timecard's real
+// hours for that day are still in dispute, so payroll can't trust what's
+// currently on the clock — same "block entirely" reasoning as
+// findMissingTimeouts, just for a different way a day's hours can be
+// unreliable. Only checks employees actually included in this generate
+// action (nationIncludedIds), same scoping the missing-clock-out check uses.
+function findPendingCorrectionsInRange(
+  corrections: TimecardCorrectionRow[],
+  employees: SupabaseEmployee[],
+  nationIncludedIds: Set<string>,
+  periodStart: string,
+  periodEnd: string,
+): string[] {
+  const nameById = new Map(employees.map((e) => [e.id, e.full_name]));
+  return corrections
+    .filter((c) => c.status === "pending" && nationIncludedIds.has(c.profileId) && c.workDate >= periodStart && c.workDate <= periodEnd)
+    .map((c) => `${nameById.get(c.profileId) || "Unknown employee"} (${c.workDate})`)
+    .sort();
+}
+
 // One nation's sheet for the "Payroll by Nation & Department" export —
 // employees grouped by department (same department/role split as the
 // Payroll tab's employee table — see getRoleDepartmentBreakdown), each
@@ -492,6 +515,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [payrollLineItems, setPayrollLineItems] = useState<PayrollLineItem[]>([]);
   const [auditLog, setAuditLog] = useState<PayrollAuditLogRow[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [timecardCorrections, setTimecardCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [techRepairRates, setTechRepairRates] = useState<TechRepairRate[]>([]);
   const [techRepairCounts, setTechRepairCounts] = useState<TechRepairCount[]>([]);
   // Assigned (not just completed) visit counts, and Finance's manually
@@ -597,6 +621,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         lineRes,
         auditRes,
         ptoRes,
+        correctionsRes,
         techRatesRes,
         mileageRes,
         repairStatusRes,
@@ -607,6 +632,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         supabase.from("payroll_line_items").select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary"),
         supabase.from("payroll_audit_log").select("action,employee_name,details,amount,created_at").order("created_at", { ascending: false }).limit(100),
         getCompanyPtoRequests().catch((err) => { console.error("Failed to load PTO requests:", err); return [] as PtoRequestRow[]; }),
+        // Best-effort — generatePayroll's pending-corrections gate just has
+        // nothing to check against (never blocks) if this fails.
+        getCompanyTimecardCorrections().catch((err) => { console.error("Failed to load timecard corrections:", err); return [] as TimecardCorrectionRow[]; }),
         // Best-effort — Tech Payroll just computes $0 for everyone if this fails.
         getTechRepairRates().catch((err) => { console.error("Failed to load tech repair rates:", err); return [] as TechRepairRate[]; }),
         // Best-effort — Mileage tab just shows empty tables if this fails.
@@ -620,6 +648,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         if (res.error) throw new Error(res.error.message);
       }
       setPtoRequests(ptoRes);
+      setTimecardCorrections(correctionsRes);
       setTechRepairRates(techRatesRes);
       setMileageEntries(mileageRes);
       setRepairStatusRows(repairStatusRes);
@@ -1269,6 +1298,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         const preview = missingTimeouts.slice(0, 5).join(", ");
         const more = missingTimeouts.length > 5 ? `, and ${missingTimeouts.length - 5} more` : "";
         setError(`Cannot generate payroll for ${genStart} – ${genEnd}: ${missingTimeouts.length} attendance record(s) are missing a clock-out — ${preview}${more}. Fix these timecards, then try again.`);
+        setGenerating(false);
+        return;
+      }
+
+      // A pending Time Correction on a day inside this period means that
+      // day's real hours are still in dispute — resolve it (Manage
+      // Requests, or HR/Finance's own review) before trusting the clock
+      // data enough to pay against it.
+      const pendingCorrections = findPendingCorrectionsInRange(timecardCorrections, employees, nationIncludedIds, genStart, genEnd);
+      if (pendingCorrections.length > 0) {
+        const preview = pendingCorrections.slice(0, 5).join(", ");
+        const more = pendingCorrections.length > 5 ? `, and ${pendingCorrections.length - 5} more` : "";
+        setError(`Cannot generate payroll for ${genStart} – ${genEnd}: ${pendingCorrections.length} time correction request(s) are still pending — ${preview}${more}. Resolve these first, then try again.`);
         setGenerating(false);
         return;
       }
