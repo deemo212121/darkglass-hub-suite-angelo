@@ -44,6 +44,7 @@ import {
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
   type CorrectionStage,
+  type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 
 interface DailyRecord {
@@ -254,6 +255,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [requiredTimePopoverKey, setRequiredTimePopoverKey] = useState<string | null>(null);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [selectedCorrection, setSelectedCorrection] = useState<TimecardCorrectionRow | null>(null);
+  // Attendance Corrections table's own search/filter — separate from
+  // searchEmployee/filterDepartment above, which are Daily Attendance's.
+  const [correctionSearch, setCorrectionSearch] = useState("");
+  const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean }>>({});
   const [newNote, setNewNote] = useState("");
@@ -1063,6 +1068,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
   };
 
+  // Attendance Corrections table's search + status filter. Status here is
+  // the request's overall status (pending/approved/rejected) — distinct
+  // from the per-stage manager/HR/Accounting badges shown alongside it,
+  // which stay visible regardless of this filter.
+  const filteredCorrections = useMemo(() => {
+    const q = correctionSearch.trim().toLowerCase();
+    return corrections.filter((c) => {
+      if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
+      if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [corrections, correctionSearch, correctionStatusFilter, profileName]);
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
@@ -1870,6 +1888,31 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
                 <h2 className="text-lg font-bold text-white mb-4">Attendance Corrections</h2>
+                <div className="grid gap-3 md:grid-cols-3 mb-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
+                    <input
+                      type="text"
+                      placeholder="Enter employee name..."
+                      value={correctionSearch}
+                      onChange={(e) => setCorrectionSearch(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Status</label>
+                    <select
+                      value={correctionStatusFilter}
+                      onChange={(e) => setCorrectionStatusFilter(e.target.value as "all" | CorrectionStatus)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Statuses</option>
+                      <option value="pending">Pending</option>
+                      <option value="approved">Approved</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </div>
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
@@ -1884,9 +1927,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <tbody>
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : corrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No correction requests yet.</td></tr>
-                    ) : corrections.map((correction) => (
+                    ) : filteredCorrections.length === 0 ? (
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{corrections.length === 0 ? "No correction requests yet." : "No correction requests match your search/filter."}</td></tr>
+                    ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${correction.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
