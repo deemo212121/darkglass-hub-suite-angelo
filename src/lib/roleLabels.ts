@@ -325,3 +325,26 @@ export function isAttendanceManagerTierRole(role: string | null | undefined, ext
 
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */
 export const ATTENDANCE_MANAGER_TIER_ROLES_ARRAY = Array.from(ATTENDANCE_MANAGER_TIER_ROLES);
+
+/**
+ * The Technical Support department — TRIAGE_USER ("Technical Support") and
+ * its higher-ops tier TRIAGE_MANAGER ("Technical Support Manager"). Single
+ * source of truth shared by the Triage Daily Report (Report module) and the
+ * Triage Dashboard (Dashboard module, a Technical-Support-only slice of the
+ * Daily Activity Report) so both agree on exactly who counts as Triage.
+ */
+const TRIAGE_ROLES = new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]);
+
+/**
+ * Checked against the PRIMARY role only, deliberately not the usual
+ * "any held role" pile-up semantics used elsewhere in this file — this
+ * answers "is this person actually ON the Technical Support team," a
+ * roster question, not "does this person hold Technical-Support-level
+ * access." Someone whose real job is e.g. Branch Manager but who also
+ * carries TRIAGE_MANAGER as a secondary/extra role isn't part of the
+ * department — including them via extra_roles here would leak unrelated
+ * managers into Technical Support's own headcount and attendance rows.
+ */
+export function isTriageRole(role: string | null | undefined): boolean {
+  return TRIAGE_ROLES.has(normalizeRole(role));
+}

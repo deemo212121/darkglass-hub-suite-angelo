@@ -13,15 +13,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus, Pencil, Trash2, Save, X, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, Upload, ArrowRightLeft } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 import {
   getTruckStock,
   upsertTruckStockRow,
   deleteTruckStockRow,
   bulkUpsertTruckStock,
+  decrementTruckStock,
   type TruckStockRow,
   type TruckStockStatus,
 } from "@/lib/supabase/truckStock";
+import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
+import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
 import { resolveTruckStockBranch } from "@/lib/truckStockBranchMap";
 import { getPartTransactionsByPartNo, type PartUsageRow } from "@/lib/supabase/tickets";
@@ -62,6 +66,7 @@ const emptyDraft = (): TruckStockRow => ({
 });
 
 export function TruckStockPanel() {
+  const { displayName } = useAuth();
   const [rows, setRows] = useState<TruckStockRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +87,7 @@ export function TruckStockPanel() {
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
   const [usagePartNo, setUsagePartNo] = useState<string | null>(null);
+  const [showTransferForm, setShowTransferForm] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -245,9 +251,54 @@ export function TruckStockPanel() {
     }
   };
 
+  // Sends `qty` of an existing in-stock part from one branch to another —
+  // reserves it at the source branch immediately (same "decrement now,
+  // review after" pattern as a ticket pull request) and lands a pending
+  // row for the destination branch's Parts Manager to approve/reject.
+  const handleRequestTransfer = async (input: { partNo: string; fromBranch: string; toBranch: string; quantity: number; notes: string }) => {
+    setBusy(true);
+    try {
+      const sourceRow = rows.find((r) => r.branch === input.fromBranch && r.partNo.toLowerCase() === input.partNo.toLowerCase());
+      await decrementTruckStock({ branch: input.fromBranch, partNo: input.partNo, qty: input.quantity });
+      const requestId = await createTruckStockTransferRequest({
+        partNo: input.partNo,
+        description: sourceRow?.description,
+        manufacturer: sourceRow?.manufacturer,
+        quantity: input.quantity,
+        fromBranch: input.fromBranch,
+        toBranch: input.toBranch,
+        notes: input.notes,
+      });
+      void notifyPartsManagerOfTransferRequest({
+        actorName: displayName || "Someone",
+        partNo: input.partNo,
+        qty: input.quantity,
+        fromBranch: input.fromBranch,
+        toBranch: input.toBranch,
+        requestId,
+      });
+      const fresh = await getTruckStock();
+      setRows(fresh);
+      setShowTransferForm(false);
+    } catch (err) {
+      alert(`Transfer request failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setShowTransferForm(true)}
+          disabled={busy}
+          title="Request that a part currently in stock at one branch be sent to another branch"
+          className="inline-flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-500/15 px-3 py-2 text-sm font-medium text-sky-200 hover:bg-sky-500/25 disabled:opacity-40"
+        >
+          <ArrowRightLeft className="h-4 w-4" /> Request Transfer
+        </button>
         <button
           type="button"
           onClick={handleImport}
@@ -404,6 +455,16 @@ export function TruckStockPanel() {
         )}
 
         {usagePartNo ? <PartUsageModal partNo={usagePartNo} onClose={() => setUsagePartNo(null)} /> : null}
+
+        {showTransferForm ? (
+          <TransferRequestModal
+            rows={rows}
+            branchOptions={branchOptions}
+            busy={busy}
+            onSubmit={handleRequestTransfer}
+            onClose={() => setShowTransferForm(false)}
+          />
+        ) : null}
     </div>
   );
 }
@@ -751,6 +812,161 @@ function DraftEditor({
         >
           <Save className="h-3.5 w-3.5" /> {busy ? "Saving…" : "Save"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Request Transfer" fill-up form — send `quantity` of an existing
+ * in-stock part from one branch to another. Part No drives everything
+ * else: picking one narrows From Branch to only branches that actually
+ * have it in stock right now (with quantity shown), and Quantity is
+ * capped at whatever's available there.
+ */
+function TransferRequestModal({
+  rows,
+  branchOptions,
+  busy,
+  onSubmit,
+  onClose,
+}: {
+  rows: TruckStockRow[];
+  branchOptions: string[];
+  busy: boolean;
+  onSubmit: (input: { partNo: string; fromBranch: string; toBranch: string; quantity: number; notes: string }) => void;
+  onClose: () => void;
+}) {
+  const [partNo, setPartNo] = useState("");
+  const [fromBranch, setFromBranch] = useState("");
+  const [toBranch, setToBranch] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [notes, setNotes] = useState("");
+
+  const partNoOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.partNo).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  // Every branch that currently has this exact part in stock, with how
+  // much — the only valid sources for this transfer.
+  const sourceOptions = useMemo(() => {
+    const needle = partNo.trim().toLowerCase();
+    if (!needle) return [] as { branch: string; qty: number }[];
+    return rows
+      .filter((r) => r.partNo.toLowerCase() === needle && r.quantity > 0)
+      .map((r) => ({ branch: r.branch, qty: r.quantity }))
+      .sort((a, b) => a.branch.localeCompare(b.branch));
+  }, [rows, partNo]);
+
+  const available = sourceOptions.find((s) => s.branch === fromBranch)?.qty ?? 0;
+  const destinationOptions = branchOptions.filter((b) => b !== fromBranch);
+  const canSubmit = Boolean(partNo.trim() && fromBranch && toBranch && toBranch !== fromBranch && quantity >= 1 && quantity <= available);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    onSubmit({ partNo: partNo.trim(), fromBranch, toBranch, quantity, notes });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-950 text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <header className="flex items-center justify-between gap-4 rounded-t-xl bg-white/5 px-5 py-3 border-b border-white/10">
+          <div>
+            <h2 className="text-base font-semibold flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-sky-300" /> Request Branch Transfer</h2>
+            <p className="text-xs text-slate-400">Sends part(s) from one branch's Truck Stock to another — needs the destination branch's Parts Manager to approve.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="p-5 space-y-3 text-xs">
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-300">Part No *</span>
+            <input
+              list="truck-stock-transfer-part-options"
+              value={partNo}
+              onChange={(e) => { setPartNo(e.target.value); setFromBranch(""); }}
+              placeholder="WH16X27179"
+              className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 font-mono text-white focus:outline-none focus:border-sky-500"
+            />
+            <datalist id="truck-stock-transfer-part-options">
+              {partNoOptions.map((p) => <option key={p} value={p} />)}
+            </datalist>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-300">From Branch *</span>
+            <select
+              value={fromBranch}
+              onChange={(e) => { setFromBranch(e.target.value); setQuantity(1); }}
+              disabled={sourceOptions.length === 0}
+              className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-sky-500 disabled:opacity-40"
+            >
+              <option value="">{partNo.trim() ? (sourceOptions.length === 0 ? "No branch has this part in stock" : "Select a branch") : "Enter a Part No first"}</option>
+              {sourceOptions.map((s) => (
+                <option key={s.branch} value={s.branch}>{s.branch} — {s.qty} available</option>
+              ))}
+            </select>
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-300">Quantity *{fromBranch ? ` (max ${available})` : ""}</span>
+              <input
+                type="number"
+                min={1}
+                max={available || undefined}
+                value={quantity}
+                onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+                disabled={!fromBranch}
+                className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-sky-500 disabled:opacity-40"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-300">To Branch *</span>
+              <select
+                value={toBranch}
+                onChange={(e) => setToBranch(e.target.value)}
+                disabled={!fromBranch}
+                className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-sky-500 disabled:opacity-40"
+              >
+                <option value="">Select branch</option>
+                {destinationOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-300">Notes</span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Why this branch needs it, urgency, etc. (optional)"
+              className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-sky-500 resize-none"
+            />
+          </label>
+
+          {fromBranch && quantity > available ? (
+            <p className="text-rose-300">Only {available} available at {fromBranch}.</p>
+          ) : null}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-white/10 px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/10">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit || busy}
+            className="inline-flex items-center gap-1 rounded bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5" /> {busy ? "Submitting…" : "Submit Request"}
+          </button>
+        </div>
       </div>
     </div>
   );

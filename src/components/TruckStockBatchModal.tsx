@@ -4,15 +4,24 @@
  * Opens when the user clicks the Truck Stock button next to Submit POs.
  * Scans every Need PO part on the ticket, looks up which branches have
  * matching stock in `truck_stock`, and lets the user pick a source
- * branch per part with one click. Confirming decrements those branches'
- * stock atomically and reports the new PO Made rows back to the host so
- * it can stamp poNo / status on each part.
+ * branch per part with one click. Confirming reserves (decrements) that
+ * quantity at the chosen branch and creates a pending pull request per
+ * part (see truckStockRequests.ts) — the source branch's own Parts
+ * Manager has to approve before the host stamps a part's status PO Made;
+ * this modal itself never marks anything PO Made directly. From there the
+ * request isn't done yet either — the ticket's own branch still has to
+ * confirm Mark Received once the parts physically arrive (see
+ * TruckStockRequestsPage.tsx) before the part promotes to Part Ready.
  *
  * Shape contract:
  *   - `parts` is the pre-filtered list of "needs sourcing" rows the host
  *     wants to consider. Rows with no in-house hit are still surfaced
  *     so the user understands why a particular Need PO line can't be
  *     fulfilled from truck stock.
+ *   - `ticketBranch` is display-only here (the destination every row
+ *     ships to is the same, unlike the per-row source branch picker) —
+ *     shown so the person filling this out knows where the parts are
+ *     headed, not just where they're pulling them from.
  *   - `onConfirm` receives the final selections; the host applies them
  *     to its PartTransactionRow array.
  */
@@ -41,6 +50,8 @@ export interface TruckStockBatchModalProps {
   onClose: () => void;
   parts: TruckStockBatchPartLine[];
   ticketNo: string;
+  /** The ticket's own branch (tickets.location) — where these parts are actually headed, i.e. whichever branch's Parts Manager will need to Mark Received once a source branch approves the pull. */
+  ticketBranch: string;
   /**
    * Async lookup the modal calls once when it opens — kept as an
    * injected dependency so this component stays pure and testable.
@@ -65,6 +76,7 @@ export function TruckStockBatchModal({
   onClose,
   parts,
   ticketNo,
+  ticketBranch,
   fetchStock,
   onConfirm,
 }: TruckStockBatchModalProps) {
@@ -166,7 +178,9 @@ export function TruckStockBatchModal({
             <Truck className="h-5 w-5 text-emerald-300" />
             <div>
               <h2 className="text-base font-semibold">Truck Stock — fulfill parts in-house</h2>
-              <p className="text-xs text-emerald-200/80">Ticket {ticketNo} · pick a branch per part</p>
+              <p className="text-xs text-emerald-200/80">
+                Ticket {ticketNo} · ships to <span className="font-semibold text-emerald-100">{ticketBranch || "—"}</span> · pick a source branch per part
+              </p>
             </div>
           </div>
           <button
@@ -191,6 +205,9 @@ export function TruckStockBatchModal({
               <span className="text-rose-300 font-semibold">{totalMissing}</span> not in any branch (order from vendor)
             </span>
           ) : null}
+          <span className="ml-auto rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-200">
+            Ships to <span className="font-semibold text-emerald-100">{ticketBranch || "—"}</span>
+          </span>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto">
@@ -276,8 +293,9 @@ export function TruckStockBatchModal({
 
         <footer className="flex items-center justify-between gap-3 rounded-b-xl border-t border-white/10 px-5 py-3 bg-slate-900/40">
           <p className="text-[11px] text-slate-400">
-            Confirming will decrement Truck Stock at the chosen branch and mark each part PO Made with an
-            auto-generated <span className="font-mono">INH-…</span> PO number.
+            Confirming reserves the parts at the chosen branch and creates a pull request — the source branch's
+            Parts Manager has to approve first (marking it PO Made with an auto-generated <span className="font-mono">INH-…</span> PO number),
+            then {ticketBranch || "the ticket's branch"} confirms Mark Received once the parts actually arrive.
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -293,7 +311,7 @@ export function TruckStockBatchModal({
               disabled={busy || loading || totalSelected === 0}
               className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
             >
-              {busy ? "Pulling…" : `Pull ${totalSelected} part${totalSelected === 1 ? "" : "s"}`}
+              {busy ? "Requesting…" : `Request ${totalSelected} part${totalSelected === 1 ? "" : "s"}`}
             </button>
           </div>
         </footer>

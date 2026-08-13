@@ -63,6 +63,7 @@ const STATUS_LABEL: Record<AttendanceRow["status"], string> = {
   "missing-in": "Missing Clock In",
   "missing-out": "Missing Clock Out",
   "missing-meal": "Meal Not Taken",
+  "day-off": "Rest Day",
 };
 const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   present: "text-green-300",
@@ -70,6 +71,7 @@ const STATUS_COLOR: Record<AttendanceRow["status"], string> = {
   "missing-in": "text-yellow-300",
   "missing-out": "text-yellow-300",
   "missing-meal": "text-orange-300",
+  "day-off": "text-slate-400",
 };
 
 export function EmployeePayrollDetailModal({
@@ -136,7 +138,7 @@ export function EmployeePayrollDetailModal({
   }, [profileId, rangeStart, rangeEnd]);
 
   const totalHours = useMemo(() => attendance.reduce((s, r) => s + r.hoursWorked, 0), [attendance]);
-  const warnings = useMemo(() => attendance.filter((r) => r.status !== "present"), [attendance]);
+  const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off"), [attendance]);
   // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
   // to show the right numbers for whichever it is.

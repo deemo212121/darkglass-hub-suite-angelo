@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useLocation, Link, Outlet } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import {
   createUserAccount,
@@ -17,6 +17,7 @@ import {
   getSupabaseCompanyLoginAlias,
   updateSupabaseCompanyLoginAlias,
   setCompanyActiveStatus,
+  getAllCompanyAdminAccountCounts,
 } from "@/lib/supabase/companies";
 import { createSupabaseAdminProfile } from "@/lib/supabase/users";
 
@@ -30,6 +31,7 @@ function SuperAdminDashboard() {
   const { ready, email, role, logout } = useAuth();
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [adminCountsByCompany, setAdminCountsByCompany] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const [isAddingCompany, setIsAddingCompany] = useState(false);
@@ -131,15 +133,23 @@ function SuperAdminDashboard() {
       
       console.log("Loading users and companies from Firebase...");
       
-      const [allUsers, allCompanies] = await Promise.all([
+      const [allUsers, allCompanies, adminCounts] = await Promise.all([
         getAllUsers(),
         getAllCompanies(),
+        getAllCompanyAdminAccountCounts().catch((err) => {
+          // Companies/users lists are still usable without this — fall back
+          // to an empty count map (renders "0") rather than failing the
+          // whole page load over the Users column alone.
+          console.error("Error loading admin account counts from Supabase:", err);
+          return {} as Record<string, number>;
+        }),
       ]);
-      
+
       console.log(`Loaded ${allUsers.length} users and ${allCompanies.length} companies`);
-      
+
       setUsers(allUsers);
       setCompanies(allCompanies);
+      setAdminCountsByCompany(adminCounts);
     } catch (err: any) {
       console.error("Error loading data:", err);
       setError(`Failed to load data from Firebase: ${err.message || "Unknown error"}`);
@@ -147,13 +157,6 @@ function SuperAdminDashboard() {
       setLoading(false);
     }
   };
-
-  // Filter to show every admin EXCEPT the platform-level SUPERSUPERADMIN
-  // tier — the new per-company SUPERADMIN accounts are real company admins
-  // and should show up here like any other admin.
-  const adminUsers = useMemo(() => {
-    return users.filter((user) => user.role !== "SUPERSUPERADMIN");
-  }, [users]);
 
   // /superadmin/company/$companyId is a CHILD route of /superadmin (see
   // routeTree.gen.ts's parentRoute), so this component needs to explicitly
@@ -960,7 +963,7 @@ function SuperAdminDashboard() {
                   </tr>
                 ) : (
                   companies.map((company, companyIdx) => {
-                    const userCount = adminUsers.filter((u) => u.companyId === company.companyId).length;
+                    const userCount = adminCountsByCompany[company.companyId] ?? 0;
                     return (
                     <tr key={company.companyId || `company-${companyIdx}`} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3">

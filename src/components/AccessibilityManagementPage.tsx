@@ -120,7 +120,10 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const rows = await getCompanyUsers();
+      // Deactivated accounts (including cleanup artifacts like a deactivated
+      // duplicate profile) are hidden by default here, same as Login Security —
+      // they don't need a secondary-role assignment.
+      const rows = (await getCompanyUsers()).filter((u) => u.is_active !== false);
       rows.sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
       setUsers(rows);
     } finally {

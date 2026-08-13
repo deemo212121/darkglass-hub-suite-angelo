@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Loader2, Search, SlidersHorizontal, X } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Search, SlidersHorizontal, X } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, mergeLocationOptions } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers } from "@/lib/supabase/users";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
@@ -190,8 +191,31 @@ function formatDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null }) {
-  const { ready, uid } = useAuth();
+export function DailyActivityPage({
+  mod,
+  sub,
+  companyId,
+  filterProfile,
+  pendingStatusFilter,
+  embedded,
+}: {
+  mod: ModuleDef;
+  sub: SubModuleDef;
+  companyId: string | null;
+  /** Restricts rows to profiles matching this predicate — e.g. the Triage Dashboard's Technical Support-only slice of this same report. Unset shows everyone (subject to the usual manager-tier "my team" scoping below). */
+  filterProfile?: (p: ProfileRow) => boolean;
+  /** Which ticket statuses count toward the "TOTAL # of TICKETS TO DO" tile at the bottom. Unset falls back to isPendingStatus (every open, non-cancelled/completed ticket company-wide) — the Triage Dashboard narrows this to just TR-Need Triage. */
+  pendingStatusFilter?: (status: string) => boolean;
+  /** Skips this page's own outer shell (back-link, title, description, min-h-screen wrapper) — set when a parent page (e.g. TriageDashboardPage's Activity tab) already provides that chrome. */
+  embedded?: boolean;
+}) {
+  const { ready, uid, companyLoginAlias } = useAuth();
+  // Prefer the company's short login alias (e.g. "USIHS") over the raw
+  // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
+  // uses. companyId itself is left untouched (it's still the real
+  // functional identifier passed down from the route) — this only changes
+  // what's shown to the user in the "Live data" line below.
+  const companyDisplay = companyLoginAlias || companyId;
   const [search, setSearch] = useState("");
   const [location, setLocation] = useState("ALL");
   // Defaults to the last 30 days rather than just "today" — a single-day
@@ -272,6 +296,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
         if (visibleProfileIds && !visibleProfileIds.has(who)) continue;
         const profile = profileById.get(who);
         if (!profile || profile.is_active === false) continue;
+        if (filterProfile && !filterProfile(profile)) continue;
         if (!byUser.has(who)) {
           byUser.set(who, {
             userId: who,
@@ -292,7 +317,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
 
       const nextRows = Array.from(byUser.values()).sort((a, b) => b.total - a.total);
       setRows(nextRows);
-      setPendingCount(tickets.filter((t) => isPendingStatus(t.status)).length);
+      setPendingCount(tickets.filter((t) => (pendingStatusFilter ?? isPendingStatus)(t.status)).length);
       setLocationOptions(["ALL", ...mergeLocationOptions(LOCATIONS, visibleProfiles.map((p) => p.assigned_branch || ""))]);
       setLastModified(new Date().toLocaleString());
     } catch (err) {
@@ -300,7 +325,7 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, ready, uid]);
+  }, [dateFrom, dateTo, ready, uid, filterProfile, pendingStatusFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -399,11 +424,30 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
       return next;
     });
 
-  const liveSummary = companyId ? `Live data: ${filteredRows.reduce((s, r) => s + r.total, 0)} activit${filteredRows.reduce((s, r) => s + r.total, 0) === 1 ? "y" : "ies"} for company ${companyId}.` : "";
+  const liveSummary = companyDisplay ? `Live data: ${filteredRows.reduce((s, r) => s + r.total, 0)} activit${filteredRows.reduce((s, r) => s + r.total, 0) === 1 ? "y" : "ies"} for company ${companyDisplay}.` : "";
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-4">
+  // Exports exactly what's on screen — same filteredRows/columnTotals the
+  // table renders, over the Work Date range already selected above (no
+  // separate date picker on the button itself).
+  const exportToXlsx = () => {
+    const sheet: (string | number)[][] = [
+      [sub.title],
+      [`Period: ${dateFrom} to ${dateTo}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      ["User", "Office", ...BUCKET_ORDER.map((b) => BUCKET_LABEL[b]), "Total"],
+      ...filteredRows.map((row) => [row.name, row.office, ...BUCKET_ORDER.map((b) => row.counts[b]), row.total]),
+      ["Total", "", ...BUCKET_ORDER.map((b) => columnTotals.counts[b]), columnTotals.total],
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(sheet);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Activity");
+    XLSX.writeFile(workbook, `${sub.slug}_${dateFrom}_to_${dateTo}.xlsx`);
+  };
+
+  const content = (
+    <>
+      {!embedded && (
         <div className="mb-3">
           <div className="flex items-center gap-3 mb-2">
             <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15">
@@ -411,10 +455,11 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
             </Link>
           </div>
           <div>
-            <h1 className="text-2xl font-display font-bold tracking-tight mb-1">Daily Activity Report</h1>
-            <p className="text-sm text-muted-foreground">Review daily operational activities summary.</p>
+            <h1 className="text-2xl font-display font-bold tracking-tight mb-1">{sub.title}</h1>
+            <p className="text-sm text-muted-foreground">{sub.description}</p>
           </div>
         </div>
+      )}
 
         <div className="panel mb-3">
           <div className="flex flex-col lg:flex-row gap-4">
@@ -533,6 +578,11 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
         </div>
 
         <div className="panel mb-3">
+          <div className="flex items-center justify-end mb-2">
+            <button onClick={exportToXlsx} disabled={loading || filteredRows.length === 0} className="btn text-sm px-3 flex items-center gap-1.5 disabled:opacity-50">
+              <Download className="h-3.5 w-3.5" /> Download XLSX
+            </button>
+          </div>
           <div className="table-wrap overflow-x-auto">
             <table className="data-table report-table">
               <thead>
@@ -621,7 +671,15 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
                         ) : detailsPaged.map((e, i) => (
                           <tr key={i} className="border-b border-white/5">
                             <td className="px-3 py-1.5 text-muted-foreground">{(detailsSafePage - 1) * detailsPageSize + i + 1}</td>
-                            <td className="px-3 py-1.5 font-mono text-blue-400">{e.ticketNo}</td>
+                            <td className="px-3 py-1.5 font-mono text-blue-400">
+                              {e.ticketNo === "—" ? (
+                                e.ticketNo
+                              ) : (
+                                <Link to="/ticket/$ticketNo" params={{ ticketNo: e.ticketNo }} target="_blank" rel="noreferrer" className="hover:text-blue-300 hover:underline">
+                                  {e.ticketNo}
+                                </Link>
+                              )}
+                            </td>
                             <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{new Date(e.when).toLocaleString()}</td>
                             <td className="px-3 py-1.5" style={{ color: BUCKET_COLOR[e.bucket] }}>{BUCKET_LABEL[e.bucket]}</td>
                           </tr>
@@ -673,7 +731,13 @@ export function DailyActivityPage({ mod, sub, companyId }: { mod: ModuleDef; sub
             </div>
           </div>
         )}
-      </main>
+    </>
+  );
+
+  if (embedded) return content;
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-4">{content}</main>
     </div>
   );
 }

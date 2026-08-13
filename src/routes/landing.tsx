@@ -18,7 +18,7 @@ function Landing() {
   const [form, setForm] = useState({ 
     emailOrUsername: "jdage7@gmail.com", 
     password: "", 
-    company: "COMP001",
+    company: "USIHS",
     remember: true 
   });
   const [err, setErr] = useState<string | null>(null);
@@ -180,7 +180,7 @@ function Landing() {
 
   const submitForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!forgotForm.fullName || !forgotForm.username) {
+    if (!forgotForm.fullName.trim() || !forgotForm.username.trim()) {
       setForgotMsg({ text: "Full name and username are required.", error: true });
       return;
     }

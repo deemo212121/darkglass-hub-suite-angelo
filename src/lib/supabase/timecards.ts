@@ -52,15 +52,17 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
   requiredCheckOut: string;
   workingHours: number | null;
   mealMinutes: number | null;
+  /** Day-off indices (0=Sunday..6=Saturday, same convention as getAttendanceForRange's daysOff) — without this, every day (including real days off) gets treated as a scheduled work day. */
+  offDays: number[];
 }> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, required_check_in, required_check_out")
+    .select("id, required_check_in, required_check_out, off_days")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
   if (error) {
     console.error("getMyProfileSchedule error:", error.message);
-    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null };
+    return { profileId: null, requiredCheckIn: "", requiredCheckOut: "", workingHours: null, mealMinutes: null, offDays: [] };
   }
 
   let workingHours: number | null = null;
@@ -85,6 +87,7 @@ export async function getMyProfileSchedule(firebaseUid: string): Promise<{
     requiredCheckOut: data?.required_check_out ?? "",
     workingHours,
     mealMinutes,
+    offDays: ((data as any)?.off_days as number[] | null) ?? [],
   };
 }
 
@@ -290,8 +293,15 @@ export interface AttendanceRow {
   mealStart: string;     // "HH:MM" or ""
   mealEnd: string;       // "HH:MM" or ""
   hoursWorked: number;
-  /** "missing-meal": clocked a full in/out day, was meal-eligible (scheduled shift > 6h), but never completed Meal In + Meal Out. Not blocked at punch time — just recorded here so HR/managers can see it. */
-  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal";
+  /**
+   * "missing-meal": clocked a full in/out day, was meal-eligible (scheduled
+   * shift > 6h), but never completed Meal In + Meal Out. Not blocked at
+   * punch time — just recorded here so HR/managers can see it.
+   * "day-off": no punch on a day in the person's off_days (weekend/RDO) —
+   * a distinct status from "absent" so it reads as an expected rest day,
+   * not a missed shift.
+   */
+  status: "present" | "absent" | "missing-in" | "missing-out" | "missing-meal" | "day-off";
 }
 
 /**
@@ -344,10 +354,12 @@ export async function getAttendanceForRange(
     const isOffDay = daysOff.has(dow);
     const row = byDate.get(key);
     if (!row) {
-      // No timecard entry. Skip days that are explicitly off so we don't
-      // alarm users about weekends/RDOs. Future days are also skipped.
+      // No timecard entry. Future days are skipped entirely (nothing to
+      // report yet). A day off still gets its own row — status "day-off"
+      // instead of "absent" — so it reads as an expected rest day rather
+      // than a gap that looks like missing data, or a missed shift.
       const isFuture = key > new Date().toISOString().slice(0, 10);
-      if (!isOffDay && !isFuture) {
+      if (!isFuture) {
         rows.push({
           date: key,
           clockIn: "",
@@ -355,7 +367,7 @@ export async function getAttendanceForRange(
           mealStart: "",
           mealEnd: "",
           hoursWorked: 0,
-          status: "absent",
+          status: isOffDay ? "day-off" : "absent",
         });
       }
       continue;

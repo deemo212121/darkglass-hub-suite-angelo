@@ -657,7 +657,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const COLUMN_FILTER_KEYS = [
     "ticketNo","warranty","ticketSource","customer","city","location",
     "product","model","internalNote","triageNotes","cancellationReason","repair","technician","customerPref",
-    "schedule","status","phone","redo","partOrder","posting",
+    "schedule","status","phone","redo","aging","statusSpend","partOrder","posting",
   ] as const;
   type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
 
@@ -698,6 +698,8 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     status: (t) => t.status || "",
     phone: (t) => t.phone || "",
     redo: (t) => t.redo || "",
+    aging: (t) => String(daysSinceCreated(t.created)),
+    statusSpend: (t) => String(ticketAgingDays(t)),
     partOrder: (t) => t.partOrder || "",
     posting: (t) => t.created || "",
   };
@@ -735,7 +737,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       const matchesMisdiagnosed = !misdiagnosedOnlyFilter || !canViewMisdiagnosed || ticket.misdiagnosed === "Y";
       return matchesAccess && matchesSearch && matchesRepairStatus && matchesDate && matchesLocation && matchesSource && matchesStatusGroup && matchesColumns && matchesMisdiagnosed;
     });
-  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters, misdiagnosedOnlyFilter, canViewMisdiagnosed]);
+  }, [endDateFilter, locationFilter, repairStatusFilter, searchQuery, startDateFilter, ticketSourceFilter, statusGroupFilter, tickets, allowedLocations, columnFilters, misdiagnosedOnlyFilter, canViewMisdiagnosed, statusLog]);
 
   // Build option lists per column from the data set **before** that column's own
   // filter is applied — so opening Loc still shows every Loc value present in
@@ -768,7 +770,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     for (const key of COLUMN_FILTER_KEYS) out[key] = buildOptionsExcluding(key);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickets, columnFilters, allowedLocations, searchQuery, repairStatusFilter, startDateFilter, endDateFilter, locationFilter, ticketSourceFilter]);
+  }, [tickets, columnFilters, allowedLocations, searchQuery, repairStatusFilter, startDateFilter, endDateFilter, locationFilter, ticketSourceFilter, statusLog]);
 
   const renderColFilter = (key: ColumnFilterKey, label: string) => (
     <TicketColumnFilter
@@ -1182,8 +1184,8 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                   {isColVisible("status") && renderHeader("status", "Status", { filterKey: "status" })}
                   {isColVisible("phone") && renderHeader("phone", "Phone", { filterKey: "phone" })}
                   {isColVisible("redo") && renderHeader("redo", "Redo", { filterKey: "redo" })}
-                  {isColVisible("aging") && renderHeader("aging", "Aging", { align: "center" })}
-                  {isColVisible("statusSpend") && renderHeader("statusSpend", "Status Spend", { align: "center" })}
+                  {isColVisible("aging") && renderHeader("aging", "Aging", { align: "center", filterKey: "aging" })}
+                  {isColVisible("statusSpend") && renderHeader("statusSpend", "Status Spend", { align: "center", filterKey: "statusSpend" })}
                   {isColVisible("calls") && renderHeader("calls", "Calls", { align: "center" })}
                   {isColVisible("partOrder") && renderHeader("partOrder", "Part Order", { filterKey: "partOrder" })}
                   {isColVisible("posting") && renderHeader("posting", "Posting", { filterKey: "posting" })}

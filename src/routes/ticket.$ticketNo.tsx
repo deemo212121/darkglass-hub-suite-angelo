@@ -1335,6 +1335,13 @@ function TicketDetailsPage() {
   // Marcone /parts/lookup state for the inline Add row's "Lookup" button.
   const [marconeLookupBusy, setMarconeLookupBusy] = useState(false);
   const [marconeLookupMsg, setMarconeLookupMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Which Part No the draft's current partDesc/partPrice/coreValue actually
+  // belong to — either the last part a Lookup was run for, or (when editing
+  // an existing row) that row's own saved part number. Lets handleMarconeLookup
+  // tell "re-checking the same part, don't clobber what's there" apart from
+  // "user typed a different Part No, this stale data is from the last part
+  // and must be replaced" — see handleMarconeLookup's guard below.
+  const lastMarconeFillPartNoRef = React.useRef<string | null>(null);
   // ServicePower status sending
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
@@ -4322,15 +4329,17 @@ function TicketDetailsPage() {
   }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, TRIAGE_PART_ROLES, CSR_ONLY_ROLES]);
 
   // Split of PART_LOCK_BYPASS_ROLES (plus Triage, see TRIAGE_PART_ROLES
-  // above) into two disjoint tiers — everyone who can see the Part
-  // Transaction toolbar (canUsePartToolbar) falls into one of these, but
-  // which specific actions they can actually use depends on which tier
-  // they're in. Team Leaders/Admins procure (Submit POs); the day-to-day
-  // Parts/Claims/Manager tier — plus Triage, who identifies the part during
-  // diagnosis — maintains the part records themselves (add/edit/delete/
-  // Update). Neither tier overlaps the other — a mixed-role user (e.g.
-  // primary ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same
-  // as every other multi-role check in this file.
+  // above) into two tiers — everyone who can see the Part Transaction
+  // toolbar (canUsePartToolbar) falls into one of these, but which specific
+  // actions they can actually use depends on which tier they're in. Team
+  // Leaders/Admins procure (Submit POs); the day-to-day Parts/Claims/
+  // Manager tier — plus Triage, who identifies the part during diagnosis,
+  // plus SUPERADMIN (a real per-company admin in this app, same tier as
+  // ADMIN for in-company operational data) — maintains the part records
+  // themselves (add/edit/delete/Update). SUPERADMIN is deliberately in
+  // both sets (order AND edit), same as any mixed-role user (e.g. primary
+  // ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same as
+  // every other multi-role check in this file.
   const PARTS_ORDER_ONLY_ROLES = useMemo(
     () => new Set(["PARTS_TEAM_LEADER", "ADMIN", "SUPERADMIN"]),
     [],
@@ -4349,6 +4358,7 @@ function TicketDetailsPage() {
       "BIZOPS_SENIOR_MANAGER",
       "TRIAGE_USER",
       "TRIAGE_MANAGER",
+      "SUPERADMIN",
     ]),
     [],
   );
@@ -4405,6 +4415,7 @@ function TicketDetailsPage() {
   const clearPartForm = () => {
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
+    lastMarconeFillPartNoRef.current = null;
   };
 
   // ── Marcone /parts/lookup — autofill Description / List Price / Core / Stock ──
@@ -4459,13 +4470,19 @@ function TicketDetailsPage() {
       }
       const d = result.data;
       // Patch the draft only for fields the user hasn't typed yet; never
-      // overwrite Part No, Visit ID, or the Part Dist. they picked.
+      // overwrite Part No, Visit ID, or the Part Dist. they picked. "Hasn't
+      // typed yet" only holds if the existing value actually belongs to
+      // THIS part number — otherwise it's stale leftover description/price
+      // from whatever part was looked up before the user changed Part No,
+      // and must be replaced rather than preserved.
+      const isRefetchOfSamePart = lastMarconeFillPartNoRef.current === partNumber;
       setPartDraft((prev) => ({
         ...prev,
-        partDesc: prev.partDesc || d.description || "",
-        partPrice: prev.partPrice || (d.netPrice ?? d.listPrice ?? "").toString(),
-        coreValue: prev.coreValue || (d.coreValue ?? "").toString(),
+        partDesc: (isRefetchOfSamePart && prev.partDesc) || d.description || "",
+        partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.netPrice ?? d.listPrice ?? "").toString(),
+        coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.coreValue ?? "").toString(),
       }));
+      lastMarconeFillPartNoRef.current = partNumber;
       const stockLine = d.inStock ? "in stock" : "out of stock";
       const discLine = d.isDiscontinued ? " · discontinued" : "";
       setMarconeLookupMsg({
@@ -4704,6 +4721,10 @@ function TicketDetailsPage() {
       return;
     }
     setEditingPartId(row.id);
+    // The loaded description/price genuinely belong to this row's own Part
+    // No — treat it the same as a prior successful lookup for that part, so
+    // clicking Lookup without changing Part No won't clobber the saved value.
+    lastMarconeFillPartNoRef.current = row.partNo || null;
     setPartDraft({
       partNo: row.partNo || "",
       partDist: row.partDist || "",
@@ -6085,7 +6106,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Call Service Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-white/10 bg-slate-900/50 p-4">
+              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 className="font-semibold text-slate-300">Call Service Information</h4>
                   <div className="flex items-center gap-2">
@@ -8868,6 +8889,7 @@ function TicketDetailsPage() {
         open={truckStockModal.open}
         onClose={() => setTruckStockModal({ open: false, parts: [] })}
         ticketNo={ticketNo}
+        ticketBranch={ticket?.location || ""}
         parts={truckStockModal.parts.map((p) => ({
           id: p.id,
           partNo: p.partNo,

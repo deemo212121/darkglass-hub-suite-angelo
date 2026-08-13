@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Menu, Package, AlertTriangle, CheckCircle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, RotateCcw, TrendingUp, BarChart2 } from "lucide-react";
+import { ChevronLeft, Menu, Package, AlertTriangle, CheckCircle, Truck, ClipboardList, DollarSign, Loader2, Users, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -55,18 +55,6 @@ const DASHBOARD_SECTIONS = [
   { id: "section-distributor-breakdown", label: "Distributor Breakdown", icon: Truck },
   { id: "section-most-ordered-parts", label: "Most Ordered Parts", icon: Package },
   { id: "section-part-lines", label: "Part Lines", icon: ClipboardList },
-];
-
-const QUICK_NAV = [
-  { slug: "part-order", label: "Part Order", icon: <ClipboardList className="h-4 w-4" /> },
-  { slug: "part-inventory", label: "Part Inventory", icon: <Package className="h-4 w-4" /> },
-  { slug: "part-collection", label: "Part Collection", icon: <CheckCircle className="h-4 w-4" /> },
-  { slug: "part-pickup", label: "Part Pickup", icon: <Truck className="h-4 w-4" /> },
-  { slug: "part-receive", label: "Part Receive", icon: <Package className="h-4 w-4" /> },
-  { slug: "part-return", label: "Part Return", icon: <RotateCcw className="h-4 w-4" /> },
-  { slug: "part-return-status", label: "Return Status", icon: <TrendingUp className="h-4 w-4" /> },
-  { slug: "po-status", label: "PO Status", icon: <BarChart2 className="h-4 w-4" /> },
-  { slug: "truck-stock", label: "Truck Stock", icon: <Truck className="h-4 w-4" /> },
 ];
 
 /**
@@ -153,6 +141,16 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   const [showDistPct, setShowDistPct] = useState(true);
 
+  // ── Dashboard-wide scope: Date Range + Branch ──
+  // Applies to every KPI, chart, and table below (Part Lines by createdAt +
+  // branch, Truck Stock and Parts Staff by branch only — those two are
+  // current-snapshot data with no meaningful "period" of their own, same
+  // reasoning Generate Report's own period already uses). Independent of
+  // Generate Report's From/To below, which only ever scopes the XLSX export.
+  const [scopeFrom, setScopeFrom] = useState("");
+  const [scopeTo, setScopeTo] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+
   // ── Generate Report (CSV export) ──
   // Period applies to part lines (createdAt-scoped) — truck stock and staff
   // are current-snapshot data with no meaningful "period" of their own, so
@@ -163,8 +161,9 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
-  // Embedded live table filters
-  const [locationFilter, setLocationFilter] = useState("");
+  // Embedded live table filters (Part Lines section only — Location was
+  // dropped from here since the dashboard-wide Branch selector above now
+  // covers it for every section, not just this one table).
   const [distFilter, setDistFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [techFilter, setTechFilter] = useState("");
@@ -204,58 +203,92 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return () => { cancelled = true; };
   }, []);
 
-  const kpi = useMemo(() => {
-    const totalSpend = rows.reduce((s, r) => s + r.partPrice * r.quantity, 0);
-    const pendingPO = rows.filter((r) => PENDING_STATUSES.has(r.status)).length;
-    const readyForPickup = rows.filter((r) => READY_STATUSES.has(r.status)).length;
-    const completed = rows.filter((r) => DONE_STATUSES.has(r.status)).length;
-    const uniqueTickets = new Set(rows.map((r) => r.ticketNo).filter(Boolean)).size;
-    const truckStockTotal = truckStock.reduce((s, t) => s + t.quantity, 0);
-    return { totalLines: rows.length, totalSpend, pendingPO, readyForPickup, completed, uniqueTickets, truckStockTotal, staffCount: staff.length };
+  // Every branch that shows up anywhere in the raw data — always the full
+  // list regardless of the current selection, so picking a branch never
+  // shrinks its own dropdown.
+  const branchOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) if (r.location) set.add(r.location);
+    for (const t of truckStock) if (t.branch) set.add(t.branch);
+    for (const p of staff) if (p.assigned_branch) set.add(p.assigned_branch);
+    return Array.from(set).sort();
   }, [rows, truckStock, staff]);
+
+  // Dashboard-wide scoping — every KPI/chart/table below reads from these,
+  // not the raw loaded arrays. Truck Stock and Staff have no createdAt of
+  // their own (current snapshot / current assignment), so scopeFrom/scopeTo
+  // only ever narrow Part Lines; branchFilter narrows all three.
+  const scopedRows = useMemo(() => {
+    return rows.filter((r) => {
+      if (scopeFrom && r.createdAt < scopeFrom) return false;
+      if (scopeTo && r.createdAt > `${scopeTo}T23:59:59`) return false;
+      if (branchFilter && r.location !== branchFilter) return false;
+      return true;
+    });
+  }, [rows, scopeFrom, scopeTo, branchFilter]);
+
+  const scopedTruckStock = useMemo(() => {
+    if (!branchFilter) return truckStock;
+    return truckStock.filter((t) => t.branch === branchFilter);
+  }, [truckStock, branchFilter]);
+
+  const scopedStaff = useMemo(() => {
+    if (!branchFilter) return staff;
+    return staff.filter((p) => p.assigned_branch === branchFilter);
+  }, [staff, branchFilter]);
+
+  const kpi = useMemo(() => {
+    const totalSpend = scopedRows.reduce((s, r) => s + r.partPrice * r.quantity, 0);
+    const pendingPO = scopedRows.filter((r) => PENDING_STATUSES.has(r.status)).length;
+    const readyForPickup = scopedRows.filter((r) => READY_STATUSES.has(r.status)).length;
+    const completed = scopedRows.filter((r) => DONE_STATUSES.has(r.status)).length;
+    const uniqueTickets = new Set(scopedRows.map((r) => r.ticketNo).filter(Boolean)).size;
+    const truckStockTotal = scopedTruckStock.reduce((s, t) => s + t.quantity, 0);
+    return { totalLines: scopedRows.length, totalSpend, pendingPO, readyForPickup, completed, uniqueTickets, truckStockTotal, staffCount: scopedStaff.length };
+  }, [scopedRows, scopedTruckStock, scopedStaff]);
 
   const statusBreakdown = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       const key = r.status || "Unspecified";
       map.set(key, (map.get(key) ?? 0) + 1);
     }
     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [rows]);
+  }, [scopedRows]);
 
   const distBreakdown = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       const key = r.partDist || "Unspecified";
       map.set(key, (map.get(key) ?? 0) + 1);
     }
     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [rows]);
+  }, [scopedRows]);
 
   const locationBreakdown = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       const key = r.location || "Unspecified";
       map.set(key, (map.get(key) ?? 0) + 1);
     }
     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [rows]);
+  }, [scopedRows]);
 
   const truckStockByBranch = useMemo(() => {
     const map = new Map<string, number>();
-    for (const t of truckStock) {
+    for (const t of scopedTruckStock) {
       const key = t.branch || "Unspecified";
       map.set(key, (map.get(key) ?? 0) + t.quantity);
     }
     return Array.from(map.entries()).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 12);
-  }, [truckStock]);
+  }, [scopedTruckStock]);
 
   // Daily trend — the live date range in this data set spans a few weeks,
   // not enough for a meaningful monthly view, so this tracks lines logged
   // per day over the trailing window instead of inventing a monthly bucket.
   const dailyTrend = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       const day = r.createdAt.slice(0, 10);
       if (!day) continue;
       map.set(day, (map.get(day) ?? 0) + 1);
@@ -264,11 +297,11 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       .sort((a, b) => a[0].localeCompare(b[0]))
       .slice(-14)
       .map(([date, count]) => ({ date: new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" }), count }));
-  }, [rows]);
+  }, [scopedRows]);
 
   const agingBuckets = useMemo(() => {
     const buckets = { "0-3 Days": 0, "4-7 Days": 0, "8-14 Days": 0, "15+ Days": 0 };
-    for (const r of rows) {
+    for (const r of scopedRows) {
       if (DONE_STATUSES.has(r.status)) continue;
       if (r.agingDays <= 3) buckets["0-3 Days"]++;
       else if (r.agingDays <= 7) buckets["4-7 Days"]++;
@@ -276,11 +309,11 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       else buckets["15+ Days"]++;
     }
     return Object.entries(buckets).map(([label, count]) => ({ label, count }));
-  }, [rows]);
+  }, [scopedRows]);
 
   const topParts = useMemo(() => {
     const map = new Map<string, { partNo: string; desc: string; count: number; spend: number }>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       if (!r.partNo) continue;
       const key = r.partNo;
       const existing = map.get(key) ?? { partNo: r.partNo, desc: r.partDesc, count: 0, spend: 0 };
@@ -290,12 +323,12 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       map.set(key, existing);
     }
     return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 10);
-  }, [rows]);
+  }, [scopedRows]);
 
   const distTable = useMemo(() => {
-    const totalLines = rows.length || 1;
+    const totalLines = scopedRows.length || 1;
     const map = new Map<string, { name: string; lines: number; spend: number }>();
-    for (const r of rows) {
+    for (const r of scopedRows) {
       const key = r.partDist || "Unspecified";
       const existing = map.get(key) ?? { name: key, lines: 0, spend: 0 };
       existing.lines += 1;
@@ -305,7 +338,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return Array.from(map.values())
       .map((d) => ({ ...d, share: Math.round((d.lines / totalLines) * 1000) / 10 }))
       .sort((a, b) => b.lines - a.lines);
-  }, [rows]);
+  }, [scopedRows]);
 
   // Only approved notes count as an employee's official record — same rule
   // used everywhere else this workflow shows up.
@@ -327,7 +360,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   }, [notes]);
 
   const staffRows = useMemo(() => {
-    return staff
+    return scopedStaff
       .map((p) => ({
         id: p.id,
         name: p.display_name || p.username || p.email,
@@ -337,29 +370,27 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         mistakes: mistakeCountByProfile.get(p.id) ?? 0,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [staff, warningCountByProfile, mistakeCountByProfile]);
+  }, [scopedStaff, warningCountByProfile, mistakeCountByProfile]);
 
   // Real in-stock lookup — matches the embedded table's part numbers
   // against truck_stock instead of showing an invented reserved/available
   // quantity.
   const stockByPartNo = useMemo(() => {
     const map = new Map<string, number>();
-    for (const t of truckStock) {
+    for (const t of scopedTruckStock) {
       const key = t.partNo.trim().toUpperCase();
       if (!key) continue;
       map.set(key, (map.get(key) ?? 0) + t.quantity);
     }
     return map;
-  }, [truckStock]);
+  }, [scopedTruckStock]);
 
-  const locationOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.location).filter(Boolean))).sort(), [rows]);
-  const distOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.partDist).filter(Boolean))).sort(), [rows]);
-  const statusOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.status).filter(Boolean))).sort(), [rows]);
-  const techOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.technician).filter(Boolean))).sort(), [rows]);
+  const distOptions = useMemo(() => Array.from(new Set(scopedRows.map((r) => r.partDist).filter(Boolean))).sort(), [scopedRows]);
+  const statusOptions = useMemo(() => Array.from(new Set(scopedRows.map((r) => r.status).filter(Boolean))).sort(), [scopedRows]);
+  const techOptions = useMemo(() => Array.from(new Set(scopedRows.map((r) => r.technician).filter(Boolean))).sort(), [scopedRows]);
 
   const filteredRows = useMemo(() => {
-    return rows.filter((r) => {
-      if (locationFilter && r.location !== locationFilter) return false;
+    return scopedRows.filter((r) => {
       if (distFilter && r.partDist !== distFilter) return false;
       if (statusFilter && r.status !== statusFilter) return false;
       if (techFilter && r.technician !== techFilter) return false;
@@ -369,14 +400,14 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       }
       return true;
     });
-  }, [rows, locationFilter, distFilter, statusFilter, techFilter, search]);
+  }, [scopedRows, distFilter, statusFilter, techFilter, search]);
 
   // Jump back to page 1 whenever the filtered set changes underneath the
   // current page — otherwise narrowing a filter can strand the view on a
   // now-empty page.
   useEffect(() => {
     setPartLinesPage(1);
-  }, [locationFilter, distFilter, statusFilter, techFilter, search]);
+  }, [scopeFrom, scopeTo, branchFilter, distFilter, statusFilter, techFilter, search]);
 
   const partLinesTotalPages = Math.max(1, Math.ceil(filteredRows.length / PART_LINES_PAGE_SIZE));
   const partLinesPageSafe = Math.min(partLinesPage, partLinesTotalPages);
@@ -395,7 +426,10 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         if (reportTo && iso > `${reportTo}T23:59:59`) return false;
         return true;
       };
-      const periodRows = rows.filter((r) => inPeriod(r.createdAt));
+      // Respects the dashboard-wide Branch selector (same scope as everything
+      // on screen) but its OWN From/To above, independent of the dashboard's
+      // Date Range selector — this period is what actually gets exported.
+      const periodRows = rows.filter((r) => inPeriod(r.createdAt) && (!branchFilter || r.location === branchFilter));
 
       const totalSpend = periodRows.reduce((s, r) => s + r.partPrice * r.quantity, 0);
       const pendingPO = periodRows.filter((r) => PENDING_STATUSES.has(r.status)).length;
@@ -432,6 +466,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       const rows_: (string | number)[][] = [
         ["Parts Dashboard Report"],
         [`Period: ${reportFrom || "All time"} to ${reportTo || "All time"}`],
+        [`Branch: ${branchFilter || "All Branches"}`],
         [`Generated: ${new Date().toLocaleString()}`],
         [],
         ["Summary"],
@@ -497,20 +532,43 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 mb-6 mt-4">
-          {QUICK_NAV.map((item) => (
-            <Link key={item.slug} to="/m/$module/$submodule" params={{ module: "parts", submodule: item.slug }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors">
-              {item.icon}{item.label}
-            </Link>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowGenerateReport((v) => !v)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
-          >
-            <span>📄</span>Generate Report
-          </button>
+        {/* Dashboard-wide scope — every KPI, chart, and table below reads
+            through this Date Range + Branch selection. */}
+        <div className="panel p-4 mb-6 mt-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date From</label>
+              <input type="date" aria-label="Scope date from" value={scopeFrom} onChange={(e) => setScopeFrom(e.target.value)} className="glass-input mt-1" />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Date To</label>
+              <input type="date" aria-label="Scope date to" value={scopeTo} onChange={(e) => setScopeTo(e.target.value)} className="glass-input mt-1" />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Branch</label>
+              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className="glass-input mt-1">
+                <option value="">All Branches</option>
+                {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            {(scopeFrom || scopeTo || branchFilter) && (
+              <button
+                type="button"
+                onClick={() => { setScopeFrom(""); setScopeTo(""); setBranchFilter(""); }}
+                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowGenerateReport((v) => !v)}
+              className={`ml-auto flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${showGenerateReport ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10"}`}
+            >
+              <span>📄</span>Generate Report
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">Applies to every KPI, chart, and table below (Date Range narrows Part Lines only — Truck Stock and Parts Staff are current-snapshot data with no date of their own).</p>
         </div>
 
         {showGenerateReport && (
@@ -803,14 +861,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </div>
 
           <div className="p-4 border-b border-white/10 bg-white/[0.01]">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Location</label>
-                <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="glass-input mt-1 w-full">
-                  <option value="">All Locations</option>
-                  {locationOptions.map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Distributor</label>
                 <select value={distFilter} onChange={(e) => setDistFilter(e.target.value)} className="glass-input mt-1 w-full">

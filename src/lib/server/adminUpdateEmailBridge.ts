@@ -1,5 +1,10 @@
 /**
- * Admin "update user email" bridge (runtime-agnostic, Web Crypto only).
+ * "Update user email" bridge (runtime-agnostic, Web Crypto only). Despite
+ * the filename, this now covers TWO callers, not just admins:
+ *  - Self-service: a signed-in user fixing their OWN email from My Profile
+ *    (e.g. a typo that's been silently bouncing their payslips).
+ *  - Admin-side: ADMIN/SUPERADMIN editing another user's email from the
+ *    admin user editor, same as always.
  *
  * Why this file exists:
  *  - profiles.email is not just a display field — the username-login path
@@ -21,10 +26,11 @@
  *     verifyFirebaseToken) to get their real Firebase uid — never trust a
  *     client-supplied "I am an admin" claim.
  *  3. We look up the caller's OWN profile via the Supabase REST API using
- *     the service-role key (bypasses RLS) to confirm their role (primary or
- *     extra_roles) is ADMIN/SUPERADMIN/HR, and load the target profile to
- *     get its firebase_uid and confirm it's in the SAME company (cross-
- *     tenant safety).
+ *     the service-role key (bypasses RLS). The request is authorized if
+ *     EITHER the caller is editing their OWN profile (targetProfileId ===
+ *     their own id — self-service), OR their role (primary or extra_roles)
+ *     is ADMIN/SUPERADMIN/HR and the target is in the SAME company
+ *     (cross-tenant safety, unchanged admin path).
  *  4. We call Identity Toolkit's accounts:update to change the target
  *     Firebase user's email. Only once that succeeds do we return success —
  *     the caller (client) is responsible for then updating profiles.email
@@ -171,17 +177,22 @@ export async function handleAdminUpdateEmailRequest(request: Request, env?: Reco
     // 1. Confirm the caller is really who their ID token says they are.
     const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
 
-    // 2. Confirm the caller holds ADMIN/SUPERADMIN/HR via their OWN profile
-    //    row (never trust a client-supplied role) and load the target's row.
+    // 2. Load the caller's OWN profile row (never trust a client-supplied
+    //    role) and authorize: either they're editing their OWN email
+    //    (self-service, always allowed — see the file-level doc comment),
+    //    or they hold ADMIN/SUPERADMIN/HR (primary or extra_roles) and the
+    //    target is in their company.
     const callerProfile = await fetchProfile(envBag, { firebase_uid: claims.sub });
-    if (!callerProfile || !hasAdminRole(callerProfile)) {
+    if (!callerProfile) return json({ error: "Caller profile not found" }, 404);
+    const isSelf = callerProfile.id === targetProfileId;
+    if (!isSelf && !hasAdminRole(callerProfile)) {
       return json({ error: "Not authorized to change user emails" }, 403);
     }
     const targetProfile = await fetchProfile(envBag, { id: targetProfileId });
     if (!targetProfile || !targetProfile.firebase_uid) {
       return json({ error: "Target user not found" }, 404);
     }
-    if (targetProfile.company_id !== callerProfile.company_id) {
+    if (!isSelf && targetProfile.company_id !== callerProfile.company_id) {
       return json({ error: "Target user is not in your company" }, 403);
     }
 

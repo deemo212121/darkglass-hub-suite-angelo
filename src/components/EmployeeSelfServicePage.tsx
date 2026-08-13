@@ -194,6 +194,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             requiredCheckOut: schedule.requiredCheckOut,
             workingHours: schedule.workingHours,
             mealMinutes: schedule.mealMinutes,
+            daysOff: schedule.offDays,
           }
         );
         if (cancelled) return;
@@ -787,6 +788,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             requiredCheckOut: schedule?.requiredCheckOut,
             workingHours: schedule?.workingHours,
             mealMinutes: schedule?.mealMinutes,
+            daysOff: schedule?.offDays,
           }
         );
         if (cancelled) return;
@@ -1179,6 +1181,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           "missing-in": { label: "Missing Time-In", className: "bg-amber-500/20 text-amber-300" },
                           "missing-out": { label: "Missing Time-Out", className: "bg-amber-500/20 text-amber-300" },
                           "missing-meal": { label: "Meal Not Taken", className: "bg-orange-500/20 text-orange-300" },
+                          "day-off": { label: "Rest Day", className: "bg-slate-500/20 text-slate-300" },
                         };
                         const meta = statusLabel[record.status];
                         return (

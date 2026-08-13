@@ -8,7 +8,8 @@
  * writes — no approve/reject, no notes, no messages.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -64,7 +65,46 @@ function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: str
   return { present: true, late, absent: false, hours };
 }
 
-export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
+type DailyStatus = "present" | "late" | "absent" | "day-off";
+const STATUS_LABEL: Record<DailyStatus, string> = {
+  present: "✓ Present",
+  late: "Late",
+  absent: "Absent",
+  "day-off": "Day Off",
+};
+const STATUS_CLASS: Record<DailyStatus, string> = {
+  present: "bg-green-500/20 text-green-300",
+  late: "bg-yellow-500/20 text-yellow-300",
+  absent: "bg-red-500/20 text-red-300",
+  "day-off": "bg-slate-500/20 text-slate-300",
+};
+
+export function ReportAttendanceMonitoring({
+  mod,
+  sub,
+  filterProfile,
+  embedded,
+  groupBy = "role",
+}: {
+  mod: ModuleDef;
+  sub: SubModuleDef;
+  /** Restricts the roster to profiles matching this predicate — e.g. the Triage Dashboard's Technical Support-only Attendance tab. Unset shows every company employee. */
+  filterProfile?: (p: ProfileRow) => boolean;
+  /** Skips this page's own outer shell (back-link, title, description, min-h-screen wrapper) — set when a parent page (e.g. TriageDashboardPage's Attendance tab) already provides that chrome. */
+  embedded?: boolean;
+  /**
+   * "role" (default) groups the bottom summary table by role label — meant
+   * for the system-wide report, where multiple departments are expected.
+   * "employee" breaks it down per person by name instead — for a
+   * filterProfile-scoped embed like Triage Dashboard's Attendance tab,
+   * where filterProfile is a "holds this role, primary OR secondary" check
+   * (pile-up semantics, same as everywhere else in this app), so a person
+   * could pass filterProfile while their PRIMARY role (and thus their role
+   * label) is something else entirely — grouping by role there would show
+   * confusing "other department" rows instead of who's actually on the team.
+   */
+  groupBy?: "role" | "employee";
+}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,6 +117,14 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
   const [dateFrom, setDateFrom] = useState(daysAgoIso(6));
   const [dateTo, setDateTo] = useState(todayIso());
   const [departmentFilter, setDepartmentFilter] = useState("");
+  // Which individuals to show in the day-by-day table (groupBy === "employee")
+  // — empty means everyone in filteredProfiles. Deliberately doesn't affect
+  // the KPI tiles/trend chart above, which stay department-wide.
+  const [employeeFilter, setEmployeeFilter] = useState<Set<string>>(new Set());
+  const [employeeFilterOpen, setEmployeeFilterOpen] = useState(false);
+  const [employeeFilterPos, setEmployeeFilterPos] = useState<{ top: number; left: number } | null>(null);
+  const employeeFilterBtnRef = useRef<HTMLButtonElement>(null);
+  const employeeFilterMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,7 +140,12 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
           getAllAgentNotes().catch((err) => { console.error("Failed to load agent notes:", err); return []; }),
         ]);
         if (cancelled) return;
-        setProfiles(companyUsers);
+        // Deactivated accounts are hidden by default here, same as Role
+        // Management/Accessibility Management/Login Security — an
+        // attendance breakdown has nothing actionable to say about someone
+        // whose account is disabled.
+        const activeUsers = companyUsers.filter((u) => u.is_active !== false);
+        setProfiles(filterProfile ? activeUsers.filter(filterProfile) : activeUsers);
         setEntries(tcEntries);
         setPtoRequests(pto);
         setCorrections(corr);
@@ -108,6 +161,47 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
 
   const departmentOptions = useMemo(() => Array.from(new Set(profiles.map((p) => roleLabel(p.role)))).sort(), [profiles]);
   const filteredProfiles = useMemo(() => profiles.filter((p) => !departmentFilter || roleLabel(p.role) === departmentFilter), [profiles, departmentFilter]);
+
+  // Options for the Employee checkbox filter — every profile currently
+  // passing the Department filter above, by display name.
+  const employeeFilterOptions = useMemo(
+    () =>
+      filteredProfiles
+        .map((p) => ({ id: p.id, name: p.display_name || p.username || p.email || "Unknown" }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [filteredProfiles]
+  );
+  // Drop any selected id that's no longer in range (e.g. Department filter
+  // changed) so a stale selection can't silently keep hiding everyone.
+  useEffect(() => {
+    setEmployeeFilter((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(employeeFilterOptions.map((o) => o.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [employeeFilterOptions]);
+
+  const openEmployeeFilterMenu = () => {
+    const rect = employeeFilterBtnRef.current?.getBoundingClientRect();
+    if (rect) setEmployeeFilterPos({ top: rect.bottom + 4, left: rect.left });
+    setEmployeeFilterOpen(true);
+  };
+  useEffect(() => {
+    if (!employeeFilterOpen) return;
+    const close = (e: Event) => {
+      if (employeeFilterMenuRef.current && e.target instanceof Node && employeeFilterMenuRef.current.contains(e.target)) return;
+      setEmployeeFilterOpen(false);
+    };
+    window.addEventListener("scroll", close, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", close, { capture: true });
+  }, [employeeFilterOpen]);
+  const toggleEmployeeFilter = (id: string) =>
+    setEmployeeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
 
   const entriesByProfileDate = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
@@ -144,6 +238,41 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
     return Array.from(map.entries()).map(([role, v]) => ({ role, ...v })).sort((a, b) => b.absent - a.absent || b.late - a.late);
   }, [filteredProfiles, dateRange, entriesByProfileDate]);
 
+  // Day-by-day breakdown, for groupBy === "employee" — one row per
+  // (employee, date), Name/Role on the far left same as the aggregate
+  // Role Summary's columns, but not collapsed into a period total: this is
+  // the same shape as Employee Self-Service's own "Daily Attendance (last
+  // 30 days)" table, just covering every employee in filteredProfiles
+  // instead of only the signed-in user.
+  const dailyEmployeeRows = useMemo(() => {
+    const rows: {
+      profileId: string;
+      name: string;
+      role: string;
+      date: string;
+      clockIn: string;
+      clockOut: string;
+      hours: number;
+      status: DailyStatus;
+    }[] = [];
+    for (const p of filteredProfiles) {
+      if (employeeFilter.size > 0 && !employeeFilter.has(p.id)) continue;
+      const name = p.display_name || p.username || p.email || "Unknown";
+      const role = roleLabel(p.role);
+      for (const d of dateRange) {
+        const entry = entriesByProfileDate.get(`${p.id}|${d}`);
+        const off = isOffDay(d, p.off_days);
+        const st = dayStatus(entry, p.required_check_in, off);
+        const status: DailyStatus = st.present ? (st.late ? "late" : "present") : off ? "day-off" : "absent";
+        rows.push({ profileId: p.id, name, role, date: d, clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "", hours: st.hours, status });
+      }
+    }
+    // Grouped by date (most recent first) so scanning down reads "who was
+    // in on 8/11, then who was in on 8/10, ..." instead of one person's
+    // entire week before jumping to the next person.
+    return rows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
+  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter]);
+
   // Today-scoped KPI tiles (only meaningful when today falls inside the
   // selected range — otherwise these read 0, same as a report for a past
   // period showing no "today").
@@ -160,8 +289,13 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
     return { present, absent, late };
   }, [todayInRange, filteredProfiles, entriesByProfileDate]);
 
-  const ptoPending = ptoRequests.filter((r) => r.status === "pending").length;
-  const correctionsPending = corrections.filter((c) => c.status === "pending").length;
+  // Scoped to filteredProfiles (department filter AND the optional
+  // filterProfile restriction) — company-wide PTO/correction counts would be
+  // misleading on a department-specific embed like the Triage Dashboard's
+  // Attendance tab.
+  const visibleProfileIds = useMemo(() => new Set(filteredProfiles.map((p) => p.id)), [filteredProfiles]);
+  const ptoPending = ptoRequests.filter((r) => r.status === "pending" && visibleProfileIds.has(r.profileId)).length;
+  const correctionsPending = corrections.filter((c) => c.status === "pending" && visibleProfileIds.has(c.profileId)).length;
   const warningsCount = useMemo(() => {
     const profileIds = new Set(filteredProfiles.map((p) => p.id));
     return notes.filter((n) => n.status === "approved" && n.type === "warning" && profileIds.has(n.agentProfileId)).length;
@@ -202,9 +336,17 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
       ["Date", "Present", "Absent", "Late"],
       ...trendData.map((t) => [t.date, t.present, t.absent, t.late]),
       [],
-      ["Role Summary — Full Period"],
-      ["Role", "Employees", "Days Present", "Absences", "Lates", "Total Hours"],
-      ...roleSummary.map((r) => [r.role, r.count, r.present, r.absent, r.late, r.hours.toFixed(1)]),
+      ...(groupBy === "employee"
+        ? [
+            ["Daily Attendance"],
+            ["Name", "Role", "Date", "Clock In", "Clock Out", "Hours", "Status"],
+            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.clockOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
+          ]
+        : [
+            ["Role Summary — Full Period"],
+            ["Role", "Employees", "Days Present", "Absences", "Lates", "Total Hours"],
+            ...roleSummary.map((r) => [r.role, r.count, r.present, r.absent, r.late, r.hours.toFixed(1)]),
+          ]),
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(sheet);
     const workbook = XLSX.utils.book_new();
@@ -212,9 +354,9 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
     XLSX.writeFile(workbook, `attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`);
   };
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+  const content = (
+    <>
+      {!embedded && (
         <div className="flex items-center gap-3 mb-6">
           <Link to="/m/$module" params={{ module: mod.slug }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></Link>
           <div>
@@ -222,29 +364,77 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
             <p className="text-xs text-muted-foreground mt-0.5">Read-only attendance summary — approve PTO/corrections from the Attendance Monitoring Dashboard.</p>
           </div>
         </div>
+      )}
 
-        <div className="panel p-4 mb-6"><div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
-          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
-          <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Department</label>
-            <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
-              <option value="">All Departments</option>
-              {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select></div>
-          <button onClick={exportToXlsx} disabled={loading} className="btn text-sm px-3 mb-0.5 flex items-center gap-1.5 disabled:opacity-50">
+        <div className="panel p-2.5 mb-3"><div className="flex flex-wrap items-end gap-2.5">
+          <div className="flex flex-col gap-0.5"><label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-xs py-1 px-2 rounded-md" /></div>
+          <div className="flex flex-col gap-0.5"><label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input text-xs py-1 px-2 rounded-md" /></div>
+          {groupBy !== "employee" && (
+            <div className="flex flex-col gap-0.5"><label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Department</label>
+              <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="glass-input text-xs py-1 px-2 rounded-md">
+                <option value="">All Departments</option>
+                {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select></div>
+          )}
+          {groupBy === "employee" && (
+            <div className="flex flex-col gap-0.5 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Employee</label>
+              <button
+                ref={employeeFilterBtnRef}
+                type="button"
+                onClick={() => (employeeFilterOpen ? setEmployeeFilterOpen(false) : openEmployeeFilterMenu())}
+                className="glass-input text-xs py-1 px-2 rounded-md text-left flex items-center justify-between gap-2 min-w-[9rem]"
+              >
+                <span className="truncate">
+                  {employeeFilter.size === 0
+                    ? "All Employees"
+                    : employeeFilterOptions.filter((o) => employeeFilter.has(o.id)).map((o) => o.name).join(", ")}
+                </span>
+              </button>
+              {employeeFilterOpen && employeeFilterPos && createPortal(
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setEmployeeFilterOpen(false)} />
+                  <div
+                    ref={employeeFilterMenuRef}
+                    className="fixed z-50 w-64 max-h-72 overflow-y-auto rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl"
+                    style={{ top: employeeFilterPos.top, left: employeeFilterPos.left }}
+                  >
+                    <label className="flex items-center gap-2 px-2 py-1.5 mb-1 rounded border-b border-white/10 hover:bg-white/5 cursor-pointer text-sm font-semibold text-slate-100">
+                      <input
+                        type="checkbox"
+                        checked={employeeFilter.size === 0}
+                        onChange={() => setEmployeeFilter(new Set())}
+                        className="accent-blue-500"
+                      />
+                      All Employees
+                    </label>
+                    {employeeFilterOptions.length === 0 && <p className="text-xs text-muted-foreground px-2 py-1.5">No employees.</p>}
+                    {employeeFilterOptions.map((o) => (
+                      <label key={o.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm text-slate-200">
+                        <input type="checkbox" checked={employeeFilter.has(o.id)} onChange={() => toggleEmployeeFilter(o.id)} className="accent-blue-500" />
+                        {o.name}
+                      </label>
+                    ))}
+                  </div>
+                </>,
+                document.body,
+              )}
+            </div>
+          )}
+          <button onClick={exportToXlsx} disabled={loading} className="btn text-xs px-2.5 py-1 mb-0.5 flex items-center gap-1.5 disabled:opacity-50">
             <Download className="h-3.5 w-3.5" /> Download XLSX
           </button>
         </div></div>
 
-        {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
+        {error && <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
         {loading ? (
-          <div className="panel p-8 mb-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Attendance Monitoring Report…</div>
+          <div className="panel p-6 mb-3 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading Attendance Monitoring Report…</div>
         ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
           {[
             ["Total Employees", filteredProfiles.length, "text-white", Users],
             ["Present Today", todayKpi.present, "text-green-300", UserCheck],
@@ -253,16 +443,17 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
             ["PTO Pending", ptoPending, "text-blue-300", Clock],
             ["Warnings", warningsCount, "text-orange-300", UserX],
           ].map(([label, value, color, Icon]: any) => (
-            <div key={label} className="panel p-3 text-center">
-              <div className="flex justify-center mb-1 text-muted-foreground"><Icon className="h-4 w-4" /></div>
-              <p className={`text-xl font-bold ${color}`}>{value}</p>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{label}</p>
+            <div key={label} className="panel p-2 text-center">
+              <div className="flex justify-center mb-0.5 text-muted-foreground"><Icon className="h-3.5 w-3.5" /></div>
+              <p className={`text-base font-bold ${color}`}>{value}</p>
+              <p className="text-[9px] text-muted-foreground uppercase tracking-wide mt-0.5">{label}</p>
             </div>
           ))}
         </div>
 
-        <div className="panel p-4 mb-4">
-          <p className="text-sm font-semibold mb-4">Daily Attendance Trend</p>
+        {groupBy !== "employee" && (
+        <div className="panel p-3 mb-3">
+          <p className="text-sm font-semibold mb-3">Daily Attendance Trend</p>
           <ResponsiveContainer width="100%" height={220} debounce={200}>
             <BarChart data={trendData} margin={{ left: -10 }}>
               <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
@@ -275,7 +466,50 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
             </BarChart>
           </ResponsiveContainer>
         </div>
+        )}
 
+        {groupBy === "employee" ? (
+        <div className="panel overflow-x-auto p-0">
+          <div className="px-3 py-2 border-b border-white/10 font-semibold text-xs flex justify-between"><span>Daily Attendance</span><span className="text-muted-foreground">{dailyEmployeeRows.length} records</span></div>
+          <table className="w-full text-xs"><thead><tr className="border-b border-white/10 bg-white/5">
+            {[
+              { label: "Name", align: "text-left" },
+              { label: "Role", align: "text-left" },
+              { label: "Clock In", align: "text-center" },
+              { label: "Clock Out", align: "text-center" },
+              { label: "Hours", align: "text-center" },
+              { label: "Status", align: "text-center" },
+            ].map((h) => (
+              <th key={h.label} className={`px-2.5 py-1.5 ${h.align} text-[10px] text-muted-foreground uppercase whitespace-nowrap`}>{h.label}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {dailyEmployeeRows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No attendance records found.</td></tr> :
+              dailyEmployeeRows.map((r, i) => {
+                const showDateBand = i === 0 || dailyEmployeeRows[i - 1].date !== r.date;
+                return (
+                  <Fragment key={`${r.profileId}|${r.date}`}>
+                    {showDateBand && (
+                      <tr className="bg-blue-500/10">
+                        <td colSpan={6} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">{r.date}</td>
+                      </tr>
+                    )}
+                    <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                      <td className="px-2.5 py-1 font-medium whitespace-nowrap">{r.name}</td>
+                      <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{r.role}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockIn || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockOut || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.hours.toFixed(2)}h</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${STATUS_CLASS[r.status]}`}>{STATUS_LABEL[r.status]}</span>
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
+          </tbody></table>
+        </div>
+        ) : (
         <div className="panel overflow-x-auto p-0">
           <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between"><span>Role Summary — Full Period</span><span className="text-xs text-muted-foreground">{roleSummary.length} roles</span></div>
           <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5">
@@ -297,9 +531,16 @@ export function ReportAttendanceMonitoring({ mod, sub }: { mod: ModuleDef; sub: 
               ))}
           </tbody></table>
         </div>
+        )}
         </>
         )}
-      </main>
+    </>
+  );
+
+  if (embedded) return content;
+  return (
+    <div className="min-h-screen flex flex-col">
+      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">{content}</main>
     </div>
   );
 }

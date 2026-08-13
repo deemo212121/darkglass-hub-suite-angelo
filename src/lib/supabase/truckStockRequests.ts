@@ -1,20 +1,32 @@
 /**
  * Truck Stock pull requests — the Parts Manager approval gate on top of
- * Truck Stock pulls (see migration 0047). A non-privileged requester's
- * "fulfill in-house" click reserves the stock immediately but creates a
- * 'pending' row here instead of completing the pull; a Parts Manager then
- * approves (marks the Part Transaction line PO Made) or rejects (reverts
- * the line to Need PO and restores the reserved quantity).
+ * Truck Stock pulls (see migration 0047, widened by 0167). A
+ * non-privileged requester's "fulfill in-house" click reserves the stock
+ * immediately but creates a 'pending' row here instead of completing the
+ * pull. Four-state status, mirroring truckStockTransfers.ts:
+ *   pending  -> awaiting the SOURCE branch's Parts Manager.
+ *   approved -> source signed off (Part Transaction line stamped PO
+ *               Made); the part is now in transit to the ticket's own
+ *               branch, not yet physically there.
+ *   received -> the ticket's branch confirms physical arrival (Part
+ *               Transaction line promotes PO Made -> Part Ready) — this,
+ *               not approval, is when the request is actually complete.
+ *   rejected -> declined; reserved quantity restored, line reverts to
+ *               Need PO.
  */
 
 import { supabase } from "./client";
 
-export type TruckStockPullRequestStatus = "pending" | "approved" | "rejected";
+export type TruckStockPullRequestStatus = "pending" | "approved" | "rejected" | "received";
 
 export interface TruckStockPullRequestRow {
   id: string;
   ticketId: string;
   ticketNo: string;
+  /** The ticket's own branch (tickets.location) — where the part is headed, i.e. the destination that must Mark Received. Not the same as `branch` (the source it's being pulled FROM). */
+  ticketBranch: string;
+  /** The technician assigned to the ticket (tickets.technician) — who this part is actually for. */
+  ticketTechnician: string;
   partId: string;
   partNo: string;
   branch: string;
@@ -28,18 +40,23 @@ export interface TruckStockPullRequestRow {
   reviewedByName: string;
   reviewedAt: string | null;
   rejectionReason: string | null;
+  receivedBy: string | null;
+  receivedByName: string;
+  receivedAt: string | null;
 }
 
 const SELECT =
-  "id, ticket_id, part_id, part_no, branch, storage_location, quantity, status, requested_by, requested_at, reviewed_by, reviewed_at, rejection_reason, " +
-  "tickets!truck_stock_pull_requests_ticket_same_company(ticket_no), " +
-  "requester:requested_by(display_name, username), reviewer:reviewed_by(display_name, username)";
+  "id, ticket_id, part_id, part_no, branch, storage_location, quantity, status, requested_by, requested_at, reviewed_by, reviewed_at, rejection_reason, received_by, received_at, " +
+  "tickets!truck_stock_pull_requests_ticket_same_company(ticket_no, location, technician), " +
+  "requester:requested_by(display_name, username), reviewer:reviewed_by(display_name, username), receiver:received_by(display_name, username)";
 
 function fromRow(r: any): TruckStockPullRequestRow {
   return {
     id: r.id,
     ticketId: r.ticket_id,
     ticketNo: r.tickets?.ticket_no ?? "",
+    ticketBranch: r.tickets?.location ?? "",
+    ticketTechnician: r.tickets?.technician ?? "",
     partId: r.part_id,
     partNo: r.part_no ?? "",
     branch: r.branch ?? "",
@@ -53,6 +70,9 @@ function fromRow(r: any): TruckStockPullRequestRow {
     reviewedByName: r.reviewer?.display_name || r.reviewer?.username || "",
     reviewedAt: r.reviewed_at,
     rejectionReason: r.rejection_reason,
+    receivedBy: r.received_by,
+    receivedByName: r.receiver?.display_name || r.receiver?.username || "",
+    receivedAt: r.received_at,
   };
 }
 
@@ -120,6 +140,18 @@ export async function rejectTruckStockPullRequest(id: string, reviewerId: string
     .eq("id", id);
   if (error) {
     console.error("rejectTruckStockPullRequest error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** Mark an approved (in-transit) request as physically received at the ticket's branch — caller is responsible for also promoting the linked Part Transaction line PO Made -> Part Ready. */
+export async function markTruckStockPullRequestReceived(id: string, receiverId: string | null): Promise<void> {
+  const { error } = await supabase
+    .from("truck_stock_pull_requests")
+    .update({ status: "received", received_by: receiverId, received_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) {
+    console.error("markTruckStockPullRequestReceived error:", error.message);
     throw new Error(error.message);
   }
 }

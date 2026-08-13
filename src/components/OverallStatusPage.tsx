@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Printer, Download, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { useAuth } from "@/lib/auth";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -370,6 +371,13 @@ function exportCsv(title: string, rows: RankingRow[], label: string) {
 }
 
 export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: SubModuleDef; companyId: string | null; }) {
+  // Prefer the company's short login alias (e.g. "USIHS") over the raw
+  // legacy_code (e.g. "COMP001") for display — same convention Header.tsx
+  // uses. companyId itself is left untouched (still the real functional
+  // identifier passed down from the route) — this only changes what's
+  // shown to the user in the caption below.
+  const { companyLoginAlias } = useAuth();
+  const companyDisplay = companyLoginAlias || companyId;
   const [data, setData] = useState<OverallStatusData>(EMPTY_OVERALL_STATUS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -433,7 +441,7 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
 
         <div className="mb-2 text-center">
           <h1 className="text-lg font-bold underline">Overall Status</h1>
-          {companyId && <p className="mt-0.5 text-[10px] text-slate-400">Company {companyId}</p>}
+          {companyDisplay && <p className="mt-0.5 text-[10px] text-slate-400">Company {companyDisplay}</p>}
         </div>
 
         {/* Filters */}
