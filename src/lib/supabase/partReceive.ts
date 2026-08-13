@@ -33,13 +33,15 @@ export interface PartReceiveRow {
   coreValue: number;
   location: string;
   partFrom: string;
+  /** The real carrier/shipping method selected when the PO was placed (e.g. "FedEx Ground") — only set by the Marcone/Encompass order flow, see migration 0168. */
+  shipMethod: string;
 }
 
 export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, po_no, po_date, order_no, invoice_no, part_no, part_desc, eta, received_date, in_tracking, part_dist, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+      "id, po_no, po_date, order_no, invoice_no, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
     )
     .eq("status", "PO Made");
 
@@ -69,6 +71,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
     coreValue: Number(row.core_value ?? 0),
     location: row.tickets?.location || "",
     partFrom: row.part_dist || "",
+    shipMethod: row.ship_method || "",
   }));
 }
 

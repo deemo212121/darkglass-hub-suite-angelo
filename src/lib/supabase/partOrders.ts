@@ -512,6 +512,7 @@ export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<M
         status: "PO Made",
         po_no: poNo,
         po_date: today,
+        ship_method: payload.shipMethod || null,
       };
       if (marconeOrderNo) patch.order_no = marconeOrderNo;
 
@@ -669,6 +670,7 @@ export async function placeEncompassOrder(payload: MarconeOrderPayload): Promise
         status: "PO Made",
         po_no: poNo,
         po_date: today,
+        ship_method: payload.shipMethod || null,
       };
       if (encompassOrderNo) patch.order_no = encompassOrderNo;
 
