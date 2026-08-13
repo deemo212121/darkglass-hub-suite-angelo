@@ -211,19 +211,23 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
 
-  const [activeTab, setActiveTab] = usePersistedTab<"daily-attendance" | "pto-management" | "corrections" | "warnings">(
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "warnings"] as const;
+  const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
-    ["daily-attendance", "pto-management", "corrections", "warnings"],
+    ATTENDANCE_TABS,
     "daily-attendance",
   );
-  // Deep-link support (e.g. "Resolve these first" on the Accounting
-  // Dashboard's payroll-blocked error links straight here) — same
-  // ?tab= pattern already used on Part Inventory / HR Daily / etc.
-  // Only ever overrides forward, never fights the persisted tab on a plain
-  // reload with no ?tab= present.
+  // Deep-link support (e.g. the Accounting Dashboard's payroll-blocked
+  // errors — missing clock-out or pending time correction — link straight
+  // to whichever tab actually lets Finance fix it) — same ?tab= pattern
+  // already used on Part Inventory / HR Daily / etc. Only ever overrides
+  // forward, never fights the persisted tab on a plain reload with no
+  // ?tab= present.
   const routeSearch = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   useEffect(() => {
-    if (routeSearch.tab === "corrections") setActiveTab("corrections");
+    if (routeSearch.tab && (ATTENDANCE_TABS as readonly string[]).includes(routeSearch.tab)) {
+      setActiveTab(routeSearch.tab as typeof ATTENDANCE_TABS[number]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeSearch.tab]);
   const [summaryView, setSummaryView] = useState<"weekly" | "monthly" | "custom">("weekly");

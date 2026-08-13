@@ -2087,10 +2087,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }
 
   if (error) {
-    // generatePayroll's pending-corrections gate reuses this same error
-    // state/banner rather than a dedicated one — detect it here so Finance
-    // gets a direct way to go fix it instead of just a dead end.
+    // generatePayroll's pending-corrections and missing-clock-out gates both
+    // reuse this same error state/banner rather than dedicated ones —
+    // detect which one here so Finance gets a direct way to go fix it
+    // instead of just a dead end.
     const isPendingCorrectionsError = error.includes("time correction request(s) are still pending");
+    const isMissingClockOutError = error.includes("attendance record(s) are missing a clock-out");
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="bg-red-900/30 border border-red-500/40 rounded-lg p-6 max-w-md text-center">
@@ -2113,6 +2115,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm font-semibold transition"
               >
                 Go to Time Corrections
+              </Link>
+            )}
+            {isMissingClockOutError && (
+              <Link
+                to="/m/$module/$submodule"
+                params={{ module: "dashboard", submodule: "attendance-monitoring" }}
+                search={{ tab: "daily-attendance" }}
+                target="_blank"
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm font-semibold transition"
+              >
+                Go to Daily Attendance
               </Link>
             )}
           </div>
