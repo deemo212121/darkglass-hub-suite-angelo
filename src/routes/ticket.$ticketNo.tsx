@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
+import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -1254,6 +1254,10 @@ function TicketDetailsPage() {
   // pre-fetched address book. The modal owns its own form state; this only
   // gates open/closed + which parts to seed it with.
   const [marconeModal, setMarconeModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
+  // Encompass shares the exact same modal component (its UI was never
+  // Marcone-specific) — separate state since the two can each hold
+  // different in-flight selections independently.
+  const [encompassModal, setEncompassModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
   // Truck Stock batch modal — opens from the new Truck Stock button next
   // to Submit POs. Lets the user fulfill Need PO parts from an in-house
   // branch with one confirmation, instead of placing distributor POs.
@@ -3451,26 +3455,27 @@ function TicketDetailsPage() {
       return;
     }
 
-    // Split: Marcone goes through the review modal; everything else takes
-    // the silent batch path so the user isn't blocked on confirming each
-    // distributor separately.
+    // Split: Marcone and Encompass each go through their own review modal
+    // (same component, different data + submit handler); everything else
+    // takes the silent batch path so the user isn't blocked on confirming
+    // each distributor separately.
     const marconeParts = partsNeedingPO.filter((p) => isMarconeDist(p.partDist));
-    const otherParts = partsNeedingPO.filter((p) => !isMarconeDist(p.partDist));
+    const encompassParts = partsNeedingPO.filter((p) => isEncompassDist(p.partDist));
+    const otherParts = partsNeedingPO.filter((p) => !isMarconeDist(p.partDist) && !isEncompassDist(p.partDist));
 
-    // Kick off non-Marcone silent submission immediately; the modal opening
-    // doesn't need to wait on it. If both sets are non-empty we surface a
-    // combined success message after the modal closes.
+    // Kick off silent submission for everything else immediately; the modal
+    // opening doesn't need to wait on it. If sets are non-empty we surface
+    // a combined success message after the modal(s) close.
     let silentPoNumbers: string[] = [];
     if (otherParts.length > 0) {
       silentPoNumbers = await submitSilentPOs(otherParts);
     }
 
-    if (marconeParts.length > 0) {
-      setMarconeModal({ open: true, parts: marconeParts });
-      return;
-    }
+    if (marconeParts.length > 0) setMarconeModal({ open: true, parts: marconeParts });
+    if (encompassParts.length > 0) setEncompassModal({ open: true, parts: encompassParts });
+    if (marconeParts.length > 0 || encompassParts.length > 0) return;
 
-    // No Marcone parts — show the silent-only result.
+    // No Marcone/Encompass parts — show the silent-only result.
     if (silentPoNumbers.length > 0) {
       alert(`${silentPoNumbers.length} PO(s) created successfully:\n${silentPoNumbers.join('\n')}\n\nView them in Part Order page.`);
     }
@@ -3513,6 +3518,43 @@ function TicketDetailsPage() {
       `Marcone PO ${poNo} placed — ${payload.lineItems.length} part${payload.lineItems.length === 1 ? "" : "s"}.`,
       marconeOrderNo ? `Marcone Order #: ${marconeOrderNo}` : null,
       "ETA, tracking, and invoice # will populate once Marcone ships.",
+    ].filter(Boolean).join("\n");
+    alert(summary);
+  };
+
+  // Handler the Encompass Parts Order modal calls when the user clicks
+  // Place Order. Mirrors handleMarconePlaceOrder exactly — same modal
+  // component, different vendor call underneath.
+  const handleEncompassPlaceOrder = async (payload: MarconeOrderPayload) => {
+    const result = await placeEncompassOrder(payload);
+    const { poNo, encompassOrderNo } = result;
+    for (const line of payload.lineItems) {
+      const after = [
+        `${line.partNumber}`,
+        `Status: PO Made`,
+        `PO #: ${poNo}`,
+        `Ship: ${payload.shipMethod}`,
+        encompassOrderNo ? `Encompass Order: ${encompassOrderNo}` : null,
+      ].filter(Boolean).join(" - ");
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Submitted PO (Encompass Modal)",
+        field: "Part Transaction",
+        before: `${line.partNumber}`,
+        after,
+      });
+    }
+    try {
+      const parts = await sbGetTicketParts(ticketNo);
+      setPartRows(parts as any);
+    } catch (err) {
+      console.warn("Failed to refresh parts after Encompass order:", err);
+    }
+    setEncompassModal({ open: false, parts: [] });
+    const summary = [
+      `Encompass PO ${poNo} placed — ${payload.lineItems.length} part${payload.lineItems.length === 1 ? "" : "s"}.`,
+      encompassOrderNo ? `Encompass Order #: ${encompassOrderNo}` : null,
+      "ETA, tracking, and invoice # will populate once Encompass ships.",
     ].filter(Boolean).join("\n");
     alert(summary);
   };
@@ -4426,14 +4468,15 @@ function TicketDetailsPage() {
       setMarconeLookupMsg({ kind: "err", text: "Pick Part Dist. first." });
       return;
     }
-    // Marcone is the only distributor we have an API for right now. Other
-    // distributors (GE, AIG, Encompass, ...) need their own integrations.
-    const distLower = partDist.toLowerCase();
-    const isMarconeDist = distLower.startsWith("marcone");
-    if (!isMarconeDist) {
+    // Marcone and Encompass are the only distributors we have an API for
+    // right now. Other distributors (GE, AIG, ...) need their own
+    // integrations.
+    const isMarcone = isMarconeDist(partDist);
+    const isEncompass = isEncompassDist(partDist);
+    if (!isMarcone && !isEncompass) {
       setMarconeLookupMsg({
         kind: "err",
-        text: `Lookup not available for ${partDist}. Currently wired for Marcone only.`,
+        text: `Lookup not available for ${partDist}. Currently wired for Marcone and Encompass only.`,
       });
       return;
     }
@@ -4444,31 +4487,11 @@ function TicketDetailsPage() {
     setMarconeLookupBusy(true);
     setMarconeLookupMsg(null);
     try {
-      const { marconeLookupPart } = await import("@/lib/marconeApi");
-      // The inline Lookup is for vendor (Marcone) info only now — in-house
+      // The inline Lookup is for vendor info only now — in-house
       // truck-stock fulfilment is handled by the dedicated Truck Stock
       // button next to Submit POs. That separation keeps the Lookup
       // banner short and focused on what the distributor can supply.
-      const result = await marconeLookupPart({
-        partNumber,
-        quantity: Number(partDraft.quantity) || 1,
-      });
-
-      if (result.notFound) {
-        setMarconeLookupMsg({
-          kind: "err",
-          text: `Marcone: ${partNumber} not found.`,
-        });
-        return;
-      }
-      if (!result.success || !result.data) {
-        setMarconeLookupMsg({
-          kind: "err",
-          text: `Marcone error: ${result.error || "request failed"}`,
-        });
-        return;
-      }
-      const d = result.data;
+      //
       // Patch the draft only for fields the user hasn't typed yet; never
       // overwrite Part No, Visit ID, or the Part Dist. they picked. "Hasn't
       // typed yet" only holds if the existing value actually belongs to
@@ -4476,18 +4499,58 @@ function TicketDetailsPage() {
       // from whatever part was looked up before the user changed Part No,
       // and must be replaced rather than preserved.
       const isRefetchOfSamePart = lastMarconeFillPartNoRef.current === partNumber;
+
+      if (isMarcone) {
+        const { marconeLookupPart } = await import("@/lib/marconeApi");
+        const result = await marconeLookupPart({ partNumber, quantity: Number(partDraft.quantity) || 1 });
+        if (result.notFound) {
+          setMarconeLookupMsg({ kind: "err", text: `Marcone: ${partNumber} not found.` });
+          return;
+        }
+        if (!result.success || !result.data) {
+          setMarconeLookupMsg({ kind: "err", text: `Marcone error: ${result.error || "request failed"}` });
+          return;
+        }
+        const d = result.data;
+        setPartDraft((prev) => ({
+          ...prev,
+          partDesc: (isRefetchOfSamePart && prev.partDesc) || d.description || "",
+          partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.netPrice ?? d.listPrice ?? "").toString(),
+          coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.coreValue ?? "").toString(),
+        }));
+        lastMarconeFillPartNoRef.current = partNumber;
+        const stockLine = d.inStock ? "in stock" : "out of stock";
+        const discLine = d.isDiscontinued ? " · discontinued" : "";
+        setMarconeLookupMsg({
+          kind: "ok",
+          text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
+        });
+        return;
+      }
+
+      // isEncompass
+      const { encompassLookupPart } = await import("@/lib/encompassApi");
+      const result = await encompassLookupPart({ partNumber });
+      if (result.notFound) {
+        setMarconeLookupMsg({ kind: "err", text: `Encompass: ${partNumber} not found.` });
+        return;
+      }
+      if (!result.success || !result.data) {
+        setMarconeLookupMsg({ kind: "err", text: `Encompass error: ${result.error || "request failed"}` });
+        return;
+      }
+      const d = result.data;
       setPartDraft((prev) => ({
         ...prev,
         partDesc: (isRefetchOfSamePart && prev.partDesc) || d.description || "",
-        partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.netPrice ?? d.listPrice ?? "").toString(),
-        coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.coreValue ?? "").toString(),
+        partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.partPrice ?? d.listPrice ?? "").toString(),
+        coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.corePrice ?? "").toString(),
       }));
       lastMarconeFillPartNoRef.current = partNumber;
       const stockLine = d.inStock ? "in stock" : "out of stock";
-      const discLine = d.isDiscontinued ? " · discontinued" : "";
       setMarconeLookupMsg({
         kind: "ok",
-        text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
+        text: `Found ${d.mfgName || ""} ${d.partNumber || partNumber} · Encompass: ${stockLine}.`,
       });
     } catch (err) {
       setMarconeLookupMsg({
@@ -4510,6 +4573,18 @@ function TicketDetailsPage() {
   // that called syncMarconeOrderStatus({ silent: true }) on an interval.
   const [marconeRefreshingId, setMarconeRefreshingId] = useState<string | null>(null);
 
+  // Common shape both vendors' order-status responses get normalized into
+  // before the shared patch/promotion/audit logic below (which doesn't
+  // care which vendor the data came from).
+  type OrderStatusInfo = {
+    eta?: string;
+    invoiceNumber?: string;
+    invoiceDate?: string;
+    trackingNumbers?: string;
+    status?: string;
+    orderNumber?: string;
+  };
+
   // Core sync routine. `silent` controls UI feedback. Currently only the
   // manual button calls it (silent: false). Returns true when the row
   // picked up at least one new field.
@@ -4517,23 +4592,47 @@ function TicketDetailsPage() {
     row: PartTransactionRow,
     options: { silent: boolean },
   ): Promise<boolean> => {
-    if (!row.orderNo?.trim() || !isMarconeDist(row.partDist)) return false;
+    const isMarcone = isMarconeDist(row.partDist);
+    const isEncompass = isEncompassDist(row.partDist);
+    if (!row.orderNo?.trim() || (!isMarcone && !isEncompass)) return false;
+    const vendorLabel = isMarcone ? "Marcone" : "Encompass";
 
-    const { marconeOrderStatus } = await import("@/lib/marconeApi");
-    const result = await marconeOrderStatus({ orderNumber: row.orderNo.trim() });
-    if (!result.success || !result.data) {
-      if (!options.silent) {
-        alert(`Marcone order status failed: ${result.error || "no data returned"}`);
-      } else {
-        console.warn(
-          `[marcone auto-sync] ${row.partNo} (${row.orderNo}) failed:`,
-          result.error || "no data",
-        );
+    let info: OrderStatusInfo;
+    if (isMarcone) {
+      const { marconeOrderStatus } = await import("@/lib/marconeApi");
+      const result = await marconeOrderStatus({ orderNumber: row.orderNo.trim() });
+      if (!result.success || !result.data) {
+        if (!options.silent) {
+          alert(`Marcone order status failed: ${result.error || "no data returned"}`);
+        } else {
+          console.warn(`[marcone auto-sync] ${row.partNo} (${row.orderNo}) failed:`, result.error || "no data");
+        }
+        return false;
       }
-      return false;
+      info = result.data;
+    } else {
+      const { encompassOrderStatus } = await import("@/lib/encompassApi");
+      const result = await encompassOrderStatus({ referenceNumber: row.orderNo.trim() });
+      const record = result.records[0];
+      if (!result.success || !record) {
+        if (!options.silent) {
+          alert(`Encompass order status failed: ${result.error || "no data returned"}`);
+        } else {
+          console.warn(`[encompass auto-sync] ${row.partNo} (${row.orderNo}) failed:`, result.error || "no data");
+        }
+        return false;
+      }
+      const part = record.parts.find((p) => p.partNumber === row.partNo) || record.parts[0];
+      info = {
+        eta: part?.eta,
+        invoiceNumber: record.invoiceNumber,
+        invoiceDate: record.invoiceDate,
+        trackingNumbers: (part?.outboundTrackings || []).map((t) => t.trackingNumber).filter(Boolean).join(", ") || undefined,
+        status: part?.status,
+        orderNumber: record.orderNumber,
+      };
     }
 
-    const info = result.data;
     const patch: Record<string, unknown> = {};
     if (info.eta && info.eta !== row.eta) patch.eta = info.eta;
     if (info.invoiceNumber && info.invoiceNumber !== row.invoiceNo) patch.invoice_no = info.invoiceNumber;
@@ -4559,7 +4658,7 @@ function TicketDetailsPage() {
     if (Object.keys(patch).length === 0) {
       if (!options.silent) {
         alert(
-          `Marcone order ${info.orderNumber || row.orderNo} — status: ${info.status || "pending"}. ` +
+          `${vendorLabel} order ${info.orderNumber || row.orderNo} — status: ${info.status || "pending"}. ` +
           "No new ETA, invoice, or tracking yet.",
         );
       }
@@ -4579,8 +4678,8 @@ function TicketDetailsPage() {
     setPartRows((prev) => prev.map((r) => (r.id === row.id ? nextRow : r)));
 
     appendAuditEntry({
-      by: options.silent ? "Auto-sync (Marcone)" : currentEditor,
-      action: options.silent ? "Auto-synced from Marcone" : "Refreshed from Marcone",
+      by: options.silent ? `Auto-sync (${vendorLabel})` : currentEditor,
+      action: options.silent ? `Auto-synced from ${vendorLabel}` : `Refreshed from ${vendorLabel}`,
       field: "Part Transaction",
       before: `${row.partNo} - Status: ${row.status} - ETA: ${row.eta || "—"} - Tracking: ${row.inTracking || "—"} - Invoice: ${row.invoiceNo || "—"}`,
       after: `${row.partNo} - Status: ${nextStatus} - ETA: ${info.eta || row.eta || "—"} - Tracking: ${info.trackingNumbers || row.inTracking || "—"} - Invoice: ${info.invoiceNumber || row.invoiceNo || "—"}`,
@@ -4592,25 +4691,25 @@ function TicketDetailsPage() {
       if (info.invoiceNumber) updates.push(`Invoice #: ${info.invoiceNumber}`);
       if (info.trackingNumbers) updates.push(`Tracking: ${info.trackingNumbers}`);
       if (nextStatus !== row.status) updates.push(`Status: ${nextStatus}`);
-      alert(`Refreshed from Marcone order ${info.orderNumber || row.orderNo}:\n${updates.join("\n")}`);
+      alert(`Refreshed from ${vendorLabel} order ${info.orderNumber || row.orderNo}:\n${updates.join("\n")}`);
     }
     return true;
   };
 
   const refreshMarconeOrderStatus = async (row: PartTransactionRow) => {
     if (!row.orderNo?.trim()) {
-      alert("This part has no Marcone Order # to refresh.");
+      alert("This part has no vendor Order # to refresh.");
       return;
     }
-    if (!isMarconeDist(row.partDist)) {
-      alert("Refresh from Marcone is only available for Marcone parts.");
+    if (!isMarconeDist(row.partDist) && !isEncompassDist(row.partDist)) {
+      alert("Refresh is only available for Marcone or Encompass parts.");
       return;
     }
     setMarconeRefreshingId(row.id);
     try {
       await syncMarconeOrderStatus(row, { silent: false });
     } catch (err) {
-      alert(`Failed to refresh from Marcone: ${err instanceof Error ? err.message : String(err)}`);
+      alert(`Failed to refresh order status: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setMarconeRefreshingId(null);
     }
@@ -7033,13 +7132,13 @@ function TicketDetailsPage() {
                               <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
                             </td>
                             <td className="px-2 py-1.5 whitespace-nowrap">
-                              {row.orderNo && isMarconeDist(row.partDist) ? (
+                              {row.orderNo && (isMarconeDist(row.partDist) || isEncompassDist(row.partDist)) ? (
                                 <button
                                   type="button"
                                   onClick={() => refreshMarconeOrderStatus(row)}
                                   disabled={marconeRefreshingId === row.id}
                                   className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
-                                  title={`Pull ETA / invoice / tracking from Marcone for order ${row.orderNo}`}
+                                  title={`Pull ETA / invoice / tracking from ${isMarconeDist(row.partDist) ? "Marcone" : "Encompass"} for order ${row.orderNo}`}
                                 >
                                   {marconeRefreshingId === row.id ? "…" : "Refresh"}
                                 </button>
@@ -8880,6 +8979,26 @@ function TicketDetailsPage() {
         defaultShipTo={defaultShipTo}
         addressBook={partAddressBook}
         onPlaceOrder={handleMarconePlaceOrder}
+      />
+
+      {/* Encompass Parts Order modal — same component as Marcone's (its UI
+          was never vendor-specific), opens when Submit POs catches at
+          least one Encompass part. */}
+      <MarconePartsOrderModal
+        open={encompassModal.open}
+        onClose={() => setEncompassModal({ open: false, parts: [] })}
+        parts={encompassModal.parts.map((p): MarconePartLine => ({
+          id: p.id,
+          partNo: p.partNo,
+          partDesc: p.partDesc,
+          partPrice: p.partPrice,
+          coreValue: p.coreValue,
+          quantity: p.quantity,
+        }))}
+        ticketNo={ticketNo}
+        defaultShipTo={defaultShipTo}
+        addressBook={partAddressBook}
+        onPlaceOrder={handleEncompassPlaceOrder}
       />
 
       {/* Truck Stock batch modal — opens from the Truck Stock button next
