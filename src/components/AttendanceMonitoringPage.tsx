@@ -498,6 +498,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return result;
   }, [profiles, allowedLocations, teamScopedIds]);
 
+  // PTO Management tab (KPI tile + both request lists) — same team scoping
+  // as visibleProfiles/Daily Attendance above, so a manager-tier viewer only
+  // ever sees their own team's PTO requests, never the whole company's.
+  const visiblePtoRequests = useMemo(() => {
+    if (teamScopedIds === null) return ptoRequests;
+    return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
+  }, [ptoRequests, teamScopedIds]);
+
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     entries.forEach((e) => map.set(`${e.profileId}|${e.workDate}`, e));
@@ -588,7 +596,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
   const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay).length;
   const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
-  const ptoPendingApproval = ptoRequests.filter((r) => r.status === "pending").length;
+  const ptoPendingApproval = visiblePtoRequests.filter((r) => r.status === "pending").length;
 
   const getAlertColor = (alert: string) => {
     if (alert.includes("Over Time")) return "bg-blue-500/20 text-blue-300 border-blue-500/30";
@@ -1102,15 +1110,28 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Attendance Corrections table's search + status filter. Status here is
   // the request's overall status (pending/approved/rejected) — distinct
   // from the per-stage manager/HR/Accounting badges shown alongside it,
-  // which stay visible regardless of this filter.
+  // which stay visible regardless of this filter. Also team-scoped, same
+  // as visibleProfiles/visiblePtoRequests above — a manager-tier viewer
+  // only ever sees corrections for their own team, never the whole company.
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
+      if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, profileName]);
+  }, [corrections, correctionSearch, correctionStatusFilter, profileName, teamScopedIds]);
+
+  // Correction History panel — same team scoping as filteredCorrections
+  // above, via each history entry's related correction's profileId.
+  const visibleCorrectionHistory = useMemo(() => {
+    if (teamScopedIds === null) return correctionHistory;
+    return correctionHistory.filter((h) => {
+      const related = corrections.find((c) => c.id === h.correctionId);
+      return related ? teamScopedIds.has(related.profileId) : false;
+    });
+  }, [correctionHistory, corrections, teamScopedIds]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1787,9 +1808,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <tbody>
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : ptoRequests.filter(r => r.status === "pending").length === 0 ? (
+                    ) : visiblePtoRequests.filter(r => r.status === "pending").length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : ptoRequests.filter(r => r.status === "pending").map((request) => (
+                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => (
                       <tr key={request.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
                         <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
@@ -1875,11 +1896,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">PTO History</h2>
                 <div className="space-y-3">
-                  {ptoRequests.filter(r => r.status !== "pending").length === 0 ? (
+                  {visiblePtoRequests.filter(r => r.status !== "pending").length === 0 ? (
                     <div className="text-center py-8">
                       <p className="text-slate-400 text-sm">No PTO history yet</p>
                     </div>
-                  ) : ptoRequests.filter(r => r.status !== "pending").map((request) => (
+                  ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => (
                     <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1960,7 +1981,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{corrections.length === 0 ? "No correction requests yet." : "No correction requests match your search/filter."}</td></tr>
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -2015,8 +2036,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">Correction History</h2>
                 <div className="space-y-3">
-                  {correctionHistory.length > 0 ? (
-                    correctionHistory.map((history) => {
+                  {visibleCorrectionHistory.length > 0 ? (
+                    visibleCorrectionHistory.map((history) => {
                       const relatedCorrection = corrections.find(c => c.id === history.correctionId);
                       return (
                         <div key={history.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
