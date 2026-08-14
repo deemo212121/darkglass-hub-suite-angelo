@@ -1,12 +1,15 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Printer, Save, CheckCircle } from "lucide-react";
+import { ChevronLeft, Printer, Save, CheckCircle, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
+import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
+
+const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -22,6 +25,42 @@ function getDefaultCollectionDate() {
   else d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
+function daysAgoIso(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+export interface CollectionExampleRow {
+  id: string;
+  techName: string;
+  ticketNo: string;
+  location: string;
+  partNo: string;
+  description: string;
+  po: string;
+  quantity: number;
+  coreValue: number;
+  collectType: string;
+  pickupDate: string;
+  collectDate: string;
+  collected: boolean;
+  comment: string;
+}
+
+// TEMPORARY — no real data source is wired up for this page yet (see
+// PartDailyPickup.tsx's getPartsForDailyPickup for what a real one looks
+// like). This is hardcoded placeholder data so the table has something
+// to look at / iterate the design against in the meantime; nothing here
+// is persisted anywhere.
+export const EXAMPLE_COLLECTION_ROWS: CollectionExampleRow[] = [
+  { id: "ex-1", techName: "Abel Severino", ticketNo: "26000671722HS", location: "Atlanta", partNo: "11101010016460", description: "Fixed Speed Reciprocating Comp", po: "1007567278-10-AV", quantity: 1, coreValue: 45, collectType: "Defective", pickupDate: daysAgoIso(1), collectDate: daysAgoIso(1), collected: true, comment: "Picked up at office" },
+  { id: "ex-2", techName: "Darrin Stewart", ticketNo: "1007567278-10-AV", location: "Memphis", partNo: "4056017371", description: "Pipe", po: "PO-260702-001", quantity: 2, coreValue: 0, collectType: "Used", pickupDate: daysAgoIso(1), collectDate: daysAgoIso(1), collected: false, comment: "" },
+  { id: "ex-3", techName: "John Godfrey", ticketNo: "SA-3349588-AV", location: "Nashville", partNo: "WE22X37340", description: "User Interface Board FL Dryer 87 & 95", po: "12-606043-0526", quantity: 1, coreValue: 0, collectType: "Hold by Technician", pickupDate: daysAgoIso(2), collectDate: daysAgoIso(2), collected: false, comment: "Waiting on tech schedule" },
+  { id: "ex-4", techName: "Zonate Grant", ticketNo: "1234567", location: "Birmingham", partNo: "WE04X24719", description: "Button Start ASM", po: "75112201", quantity: 1, coreValue: 12.5, collectType: "In Review", pickupDate: daysAgoIso(2), collectDate: daysAgoIso(2), collected: false, comment: "" },
+  { id: "ex-5", techName: "Erick Guzman Juarez", ticketNo: "1007685370-10-AV", location: "San Antonio", partNo: "140156010054", description: "Manifold, Water Filter, W/NO Con", po: "1-55553", quantity: 1, coreValue: 0, collectType: "Restock", pickupDate: daysAgoIso(3), collectDate: daysAgoIso(3), collected: true, comment: "Back in stock" },
+  { id: "ex-6", techName: "Cole Mushinsky", ticketNo: "3868626E1", location: "New Orleans", partNo: "WE03X25285", description: "Knob Main ASM", po: "PO-260702-001", quantity: 1, coreValue: 0, collectType: "Used (Core)", pickupDate: daysAgoIso(1), collectDate: daysAgoIso(1), collected: true, comment: "Core returned" },
+];
 
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const { companyId } = useAuth();
@@ -33,6 +72,19 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [ticketNo,setTicketNo]=useState(""); const [notCollected,setNotCollected]=useState(true);const [collected,setCollected]=useState(false);
   const [restockToast,setRestockToast]=useState("");
   const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
+  // TEMPORARY example rows — see EXAMPLE_COLLECTION_ROWS above. Toggling
+  // Collected only updates this local state, nothing is saved anywhere.
+  const [rows,setRows]=useState<CollectionExampleRow[]>(EXAMPLE_COLLECTION_ROWS);
+  const toggleRowCollected=(id:string)=>{
+    setRows(prev=>prev.map(r=>{
+      if(r.id!==id) return r;
+      const next={...r,collected:!r.collected};
+      const label=`${next.partNo||next.id} (Ticket ${next.ticketNo||"—"})`;
+      if(next.collected) addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE,id,label,next.location);
+      else removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE,id);
+      return next;
+    }));
+  };
   useEffect(() => {
     getCompanyTechnicians()
       .then((techs) => setTechnicianRoster(techs.map((t) => t.name)))
@@ -66,6 +118,17 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     if(dtOpen&&!dtD.ref.current?.contains(t)&&!dtL.current?.contains(t))setDtOpen(false);
     if(ctOpen&&!ctD.ref.current?.contains(t)&&!ctL.current?.contains(t))setCtOpen(false);
   };document.addEventListener("mousedown",fn);return()=>document.removeEventListener("mousedown",fn);},[locOpen,techOpen,dtOpen,ctOpen]);
+
+  const filteredRows = rows.filter((r) => {
+    if (location && r.location !== location) return false;
+    if (tech && r.techName !== tech) return false;
+    if (ticketNo && !r.ticketNo.toLowerCase().includes(ticketNo.trim().toLowerCase())) return false;
+    if (collectType && r.collectType !== collectType) return false;
+    const rowDate = dateType === "Collect Date" ? r.collectDate : r.pickupDate;
+    if (startDate && rowDate < startDate) return false;
+    if (endDate && rowDate > endDate) return false;
+    return r.collected ? collected : notCollected;
+  });
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
     <div className="flex items-center gap-3 mb-6"><Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
@@ -105,7 +168,49 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         </div>
       </div>
     </div>
-    <div className="panel p-8 text-center text-sm text-muted-foreground">Apply filters above to load collection data.</div>
+    <p className="text-xs text-amber-400 mb-2">Showing example data for now — this page isn't connected to real records yet.</p>
+    <div className="panel p-0 w-full">
+      {filteredRows.length===0 ? (
+        <p className="text-sm text-muted-foreground px-4 py-6">No example rows match these filters.</p>
+      ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead><tr className="border-b border-white/10 bg-white/5">
+            {["Tech Name","Ticket #","Location","Part No","Description","PO","Qty","Core Value","Collect Type","Collected","Comment"].map(h=>
+              <th key={h} className="px-2 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+            )}
+          </tr></thead>
+          <tbody>
+            {filteredRows.map((r,idx)=>(
+              <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/[0.02]":""}`}>
+                <td className="px-2 py-2 whitespace-nowrap">{r.techName}</td>
+                <td className="px-2 py-2 font-mono text-blue-400 whitespace-nowrap">{r.ticketNo}</td>
+                <td className="px-2 py-2 whitespace-nowrap">{r.location}</td>
+                <td className="px-2 py-2 font-mono whitespace-nowrap">{r.partNo}</td>
+                <td className="px-2 py-2 max-w-[200px] truncate" title={r.description}>{r.description}</td>
+                <td className="px-2 py-2 font-mono whitespace-nowrap">{r.po}</td>
+                <td className="px-2 py-2 text-center">{r.quantity}</td>
+                <td className="px-2 py-2 text-center">{r.coreValue > 0 ? `$${r.coreValue.toFixed(2)}` : "—"}</td>
+                <td className="px-2 py-2 whitespace-nowrap">
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-500/20 text-slate-300">{r.collectType}</span>
+                </td>
+                <td className="px-2 py-2 text-center">
+                  <button
+                    onClick={()=>toggleRowCollected(r.id)}
+                    className={`h-6 w-6 rounded-md border flex items-center justify-center mx-auto transition-colors ${r.collected?"bg-green-500/30 border-green-500/50 text-green-300":"border-white/20 text-transparent hover:border-white/40"}`}
+                    title={r.collected?"Mark as NOT collected":"Mark as collected"}
+                  >
+                    <Check className="h-3.5 w-3.5"/>
+                  </button>
+                </td>
+                <td className="px-2 py-2 max-w-[160px] truncate" title={r.comment}>{r.comment || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      )}
+    </div>
     <div className="flex justify-center mt-4"><button className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8"><Save className="h-3.5 w-3.5"/>Save</button></div>
     {restockToast&&<div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/15 px-4 py-3 text-sm text-green-300 shadow-2xl backdrop-blur-md"><CheckCircle className="h-4 w-4"/>{restockToast}</div>}
   </main></div>);}

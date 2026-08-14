@@ -27,6 +27,12 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   warning_form_reassigned: "Sent Warning Form to next recipient",
   jotform_submission_deleted: "Deleted Jotform submission",
   jotform_submission_restored: "Restored Jotform submission",
+  part_receive_marked_received: "Marked part received",
+  part_receive_unmarked_received: "Unmarked part received",
+  part_receive_qty_changed: "Changed quantity received",
+  part_receive_date_changed: "Changed receive date",
+  part_receive_invoice_changed: "Changed invoice #",
+  part_receive_note_changed: "Changed parts note",
 };
 
 export function activityActionLabel(action: string): string {
@@ -100,6 +106,8 @@ export interface GetActivityLogFilters {
   action?: string;
   /** Narrows to entries logged against one specific target row (e.g. one employee's profile id) — see Master List's per-employee "Recent Activity" popup section. */
   targetId?: string;
+  /** Narrows to one category of target (e.g. "part_receive") — see Part Receive's page-level activity panel. */
+  targetType?: string;
   from?: string;
   to?: string;
   search?: string;
@@ -111,6 +119,7 @@ export async function getActivityLog(filters?: GetActivityLogFilters): Promise<H
   if (filters?.actorId) query = query.eq("actor_id", filters.actorId);
   if (filters?.action) query = query.eq("action", filters.action);
   if (filters?.targetId) query = query.eq("target_id", filters.targetId);
+  if (filters?.targetType) query = query.eq("target_type", filters.targetType);
   if (filters?.from) query = query.gte("created_at", filters.from);
   if (filters?.to) query = query.lt("created_at", filters.to);
   query = query.limit(filters?.limit ?? 500);

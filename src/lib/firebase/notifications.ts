@@ -83,20 +83,32 @@ export async function sendNotification(
   );
 }
 
-/** Convenience: notify by role label (looks up users from users_index). */
-export async function sendNotificationToRole(
-  roleLabel: string,
-  companyId: string,
-  payload: Omit<AppNotification, "id" | "uid" | "isRead" | "createdAt">
-): Promise<void> {
-  if (!isFirebaseReady() || !db) return;
+/**
+ * Firebase uids whose users_index.userType (their PRIMARY role, stamped
+ * once at account creation — see src/lib/firebase/users.ts) matches
+ * roleLabel. Exported separately from sendNotificationToRole so callers
+ * that also need to cross-check Supabase's extra_roles (which this
+ * legacy Firestore index has no concept of) can merge both lookups
+ * before sending, instead of double-notifying anyone in both sets.
+ */
+export async function getUidsForFirestoreRole(roleLabel: string, companyId: string): Promise<string[]> {
+  if (!isFirebaseReady() || !db) return [];
   const q = query(
     collection(db!, "users_index"),
     where("userType", "==", roleLabel),
     where("companyId", "==", companyId)
   );
   const snap = await getDocs(q);
-  const uids = snap.docs.map((d) => d.data().uid as string).filter(Boolean);
+  return snap.docs.map((d) => d.data().uid as string).filter(Boolean);
+}
+
+/** Convenience: notify by role label (looks up users from users_index). */
+export async function sendNotificationToRole(
+  roleLabel: string,
+  companyId: string,
+  payload: Omit<AppNotification, "id" | "uid" | "isRead" | "createdAt">
+): Promise<void> {
+  const uids = await getUidsForFirestoreRole(roleLabel, companyId);
   if (uids.length > 0) await sendNotification(uids, payload);
 }
 

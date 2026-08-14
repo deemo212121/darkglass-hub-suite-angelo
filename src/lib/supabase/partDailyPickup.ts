@@ -22,6 +22,7 @@ export interface PartPickupRow {
   action: string;
   comment: string;
   inTransit: boolean;
+  location: string;
 }
 
 export async function getPartsForDailyPickup(filters: {
@@ -61,6 +62,7 @@ export async function getPartsForDailyPickup(filters: {
     action: row.pickup_action || "",
     comment: row.note || "",
     inTransit: Boolean(row.in_tracking && String(row.in_tracking).trim()),
+    location: row.tickets?.location || "",
   }));
 }
 
