@@ -1,10 +1,15 @@
 /**
- * Branch -> Parts Manager reverse lookup for the Parts hub's "Done"
- * button — a Parts Manager can cover more than one branch (e.g. two
- * smaller branches sharing one manager), and profiles.branch_access
- * (already used elsewhere for permission scoping — see parseBranchAccess
- * in lib/locations.ts) is the source of truth for which branch(es) that
- * is, rather than a new admin-maintained table.
+ * Branch -> notified-role reverse lookup for the Parts hub's "Done"
+ * button — a manager can cover more than one branch (e.g. two smaller
+ * branches sharing one manager), and profiles.branch_access (already
+ * used elsewhere for permission scoping — see parseBranchAccess in
+ * lib/locations.ts) is the source of truth for which branch(es) that is,
+ * rather than a new admin-maintained table.
+ *
+ * Which role(s) count as "the branch manager" is itself configurable —
+ * see notificationRoleGates.ts's "parts_done_digest" trigger (defaults
+ * to Parts Manager) — so this takes the effective role list as a param
+ * instead of hardcoding PARTS_MANAGER.
  */
 import { supabase } from "./client";
 import { parseBranchAccess } from "@/lib/locations";
@@ -14,11 +19,13 @@ export interface PartsManagerBranches {
   branches: string[]; // already expanded — parseBranchAccess turns "*" into every LOCATIONS entry
 }
 
-export async function getPartsManagerBranchRoster(): Promise<PartsManagerBranches[]> {
+export async function getPartsManagerBranchRoster(roles: string[]): Promise<PartsManagerBranches[]> {
+  if (roles.length === 0) return [];
+  const orClause = roles.map((r) => `role.eq.${r},extra_roles.cs.{${r}}`).join(",");
   const { data, error } = await supabase
     .from("profiles")
     .select("firebase_uid, role, extra_roles, branch_access")
-    .or("role.eq.PARTS_MANAGER,extra_roles.cs.{PARTS_MANAGER}");
+    .or(orClause);
   if (error) {
     console.error("getPartsManagerBranchRoster error:", error.message);
     return [];
@@ -37,13 +44,13 @@ export async function getPartsManagerBranchRoster(): Promise<PartsManagerBranche
  * listed, so they get one combined notification instead of two. Any
  * branch nobody's branch_access covers comes back in
  * unassignedBranches so the caller can fall back to notifying the
- * whole Parts Manager pool for it, instead of silently dropping it.
+ * whole role pool for it, instead of silently dropping it.
  */
-export async function groupBranchesByManager(branches: string[]): Promise<{
+export async function groupBranchesByManager(branches: string[], roles: string[]): Promise<{
   byManager: Map<string, string[]>;
   unassignedBranches: string[];
 }> {
-  const roster = await getPartsManagerBranchRoster();
+  const roster = await getPartsManagerBranchRoster(roles);
   const byManager = new Map<string, string[]>();
   const covered = new Set<string>();
   for (const branch of branches) {

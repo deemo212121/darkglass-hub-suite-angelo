@@ -70,10 +70,11 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
 // (migration 0171) so it's independently connectable instead of forced to
 // reuse whichever Payroll US/PH mailbox happens to be connected. Same
 // table/RPCs/connect-flow, just a third allowed value.
-type Region = "US" | "PH" | "PARTS";
+type Region = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3";
+const VALID_REGIONS = new Set<Region>(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3"]);
 function parseRegion(value: string | null | undefined): Region | null {
   const upper = String(value ?? "").toUpperCase();
-  return upper === "US" || upper === "PH" || upper === "PARTS" ? upper : null;
+  return VALID_REGIONS.has(upper as Region) ? (upper as Region) : null;
 }
 /** Same rule as AccountingDashboard.tsx's country derivation — assigned_branch === "Philippines" is the only PH signal. */
 function resolveEmployeeRegion(assignedBranch: string | null): Region {
@@ -104,6 +105,10 @@ const DROPSHIP_SENDER_ROLES = new Set([
   "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "TRIAGE_USER", "TRIAGE_MANAGER",
   "ADMIN", "SUPERADMIN",
 ]);
+
+// Matches ItTicketsPage.tsx's own IT_ADMIN_ROLES (who can Manage/Send on
+// that page) — sending an IT ticket email is no more sensitive than that.
+const IT_TICKET_SENDER_ROLES = new Set(["IT", "ADMIN", "SUPERADMIN"]);
 
 function b64urlEncode(input: string): string {
   return btoa(unescape(encodeURIComponent(input))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -342,7 +347,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     const idToken = url.searchParams.get("idToken");
     const region = parseRegion(url.searchParams.get("region"));
     if (!idToken) return json({ error: "Missing idToken" }, 400);
-    if (!region) return json({ error: "Missing or invalid region (must be US or PH)" }, 400);
+    if (!region) return json({ error: "Missing or invalid Gmail connection slot" }, 400);
     try {
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const profile = await fetchProfileByFirebaseUid(envBag, claims.sub);
@@ -538,6 +543,70 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: to });
     } catch (err) {
       console.error("[gmail] send-dropship-request error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // IT Tickets' "Send" — unlike every other send action, the FROM account
+  // is caller-SELECTED (one of up to 3 connected IT_1/IT_2/IT_3 slots),
+  // not server-resolved to one fixed slot, so region has no fallback
+  // default here: a missing/invalid one is a real error, not "pick PARTS".
+  if (url.searchParams.get("action") === "send-it-ticket-email") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      const region = parseRegion(typeof payload.region === "string" ? payload.region : "");
+      const to = typeof payload.to === "string" ? payload.to.trim() : "";
+      const cc = typeof payload.cc === "string" ? payload.cc.trim() : "";
+      const subject = typeof payload.subject === "string" ? payload.subject.trim() : "";
+      const body = typeof payload.body === "string" ? payload.body : "";
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!region || !region.startsWith("IT_")) return json({ error: "Missing or invalid sender — pick a connected Gmail account" }, 400);
+      if (!to) return json({ error: "Recipient email is required" }, 400);
+      if (!EMAIL_RE.test(to)) return json({ error: "Invalid recipient email address" }, 400);
+      const ccList = cc
+        .split(/[,;\s]+/)
+        .map((addr) => addr.trim())
+        .filter((addr) => addr.length > 0);
+      if (ccList.some((addr) => !EMAIL_RE.test(addr))) {
+        return json({ error: "Invalid CC email address" }, 400);
+      }
+      const ccHeader = ccList.join(", ");
+      if (!subject.trim()) return json({ error: "Subject is required" }, 400);
+      if (!body.trim()) return json({ error: "Message body is required" }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      if (!caller.role || !IT_TICKET_SENDER_ROLES.has(caller.role.toUpperCase())) {
+        return json({ error: "Not authorized to send IT ticket emails" }, 403);
+      }
+
+      const connection = await fetchGmailConnection(envBag, caller.companyId, region);
+      if (!connection) return json({ error: `That Gmail account isn't connected yet — connect it first.` }, 409);
+
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `That Gmail connection has expired or was revoked — reconnect it, then try again.`,
+            reauthRequired: true,
+            region,
+          }, 409);
+        }
+        throw err;
+      }
+      const fromEmail = connection.connectedEmail || "me";
+      await sendGmailMessage(accessToken, fromEmail, to, subject, body, ccHeader || undefined);
+
+      return json({ ok: true, sentTo: to, sentFrom: fromEmail });
+    } catch (err) {
+      console.error("[gmail] send-it-ticket-email error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }

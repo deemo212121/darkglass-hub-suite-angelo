@@ -6,7 +6,8 @@ import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { sendNotificationToRole } from "@/lib/firebase/notifications";
+import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
+import { notifyPartsManagers } from "@/lib/partsNotify";
 import { collection, addDoc, getDocs, serverTimestamp, query, orderBy } from "firebase/firestore";
 import { db, isFirebaseReady } from "@/lib/firebase/config";
 import { TruckStockPanel } from "@/components/TruckStockPage";
@@ -106,7 +107,11 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleUseCrossInventory = useCallback(async (ownerBranch: string, partDesc: string) => {
     setCrossWarn(`Using part from ${ownerBranch}'s inventory. The owner branch manager has been notified.`);
     try {
-      await sendNotificationToRole("Parts Manager", companyId ?? "", {
+      // Configurable via Accessibility Management > Notification Access by
+      // Role (trigger "parts_cross_inventory") — defaults to Parts Manager.
+      // Per-user opt-outs (same page's opt-out grid) apply too.
+      const roles = await getEffectiveNotificationRoles("parts_cross_inventory");
+      await notifyPartsManagers(companyId, roles, "parts_cross_inventory", {
         kind: "cross_inventory_request",
         title: "Cross-branch inventory request",
         body: `${email ?? "A user"} is attempting to use "${partDesc}" from branch ${ownerBranch}'s inventory. Please locate and ship the part.`,

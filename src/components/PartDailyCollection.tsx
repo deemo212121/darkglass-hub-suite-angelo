@@ -5,10 +5,11 @@ import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine } fro
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
 import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
+import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
+import { notifyPartsManagers } from "@/lib/partsNotify";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
 
@@ -110,10 +111,13 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   };
 
   // When collect type is set to "Restock" and saved, fire a notification
-  // to the Parts Manager role that this part is back in stock.
+  // to whichever role(s) Accessibility Management > Notification Access by
+  // Role configures for trigger "parts_restock" (defaults to Parts
+  // Manager) — per-user opt-outs on that same page apply too.
   const notifyRestock = useCallback(async (row: PartCollectionRow) => {
     try {
-      await sendNotificationToRole("Parts Manager", companyId ?? "", {
+      const roles = await getEffectiveNotificationRoles("parts_restock");
+      await notifyPartsManagers(companyId, roles, "parts_restock", {
         kind: "restock_auto",
         title: "Part back in stock",
         body: `Ticket ${row.ticketNo} — part ${row.partNo} marked as Restock by tech ${row.techName || "unknown"}.`,
