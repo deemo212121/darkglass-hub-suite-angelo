@@ -66,6 +66,7 @@ import { PartDailyCollection } from "@/components/PartDailyCollection";
 import { PartReturn } from "@/components/PartReturn";
 import { ReservedPartList } from "@/components/ReservedPartList";
 import { PartsDashboard } from "@/components/PartsDashboard";
+import { PartsOrderDashboard } from "@/components/PartsOrderDashboard";
 import { TicketList } from "@/components/TicketList";
 import { NewTicketPage } from "@/components/NewTicketPage";
 import { TodoListPage } from "@/components/TodoListPage";
@@ -547,6 +548,8 @@ function SubModule() {
         ? <CompanySettingsPage mod={mod} sub={sub} />
         : (sub as any).custom === "parts-dashboard"
         ? <PartsDashboard mod={mod} sub={sub} />
+        : (sub as any).custom === "parts-order-dashboard"
+        ? <PartsOrderDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "claims-dashboard"
         ? <ClaimsDashboard mod={mod} sub={sub} />
         : sub.custom === "reserved-part-list-custom"

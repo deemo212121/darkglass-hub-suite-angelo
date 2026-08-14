@@ -309,8 +309,17 @@ const dashboardMod: ModuleDef = {
     {
       slug: "parts-dashboard",
       title: "Parts Dashboard",
-      description: "Parts operations overview — PO queue, collections, receives and distributor breakdown.",
+      description: "Parts operations overview — part status funnel, aging, warranty, truck stock, and Parts staff.",
       custom: "parts-dashboard",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "parts-order-dashboard",
+      title: "Parts Order Dashboard",
+      description: "Parts Order overview — distributor spend, daily PO balances, warranty/vendor breakdown, part lines, and Parts Order staff.",
+      custom: "parts-order-dashboard" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
