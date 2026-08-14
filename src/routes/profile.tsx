@@ -535,7 +535,7 @@ function ProfilePage() {
                 className="glass-input"
               >
                 {Object.entries(ROLE_LABELS)
-                  .filter(([code]) => code !== "SUPERSUPERADMIN")
+                  .filter(([code]) => !["SUPERSUPERADMIN", "CSR", "DISPATCHER"].includes(code))
                   .map(([code, label]) => (
                     <option key={code} value={code}>{label}</option>
                   ))}

@@ -533,7 +533,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
               <Download className="h-4 w-4" /> Generate Report
             </p>
             <p className="text-xs text-muted-foreground mb-4">
-              Pick a period and download a CSV covering every CSR Agent/Team Leader company-wide — schedule &amp; update actions from the ticket audit trail, plus approved warnings/mistakes issued in that window.
+              Pick a period and download a CSV covering every CSR Associate/Team Leader company-wide — schedule &amp; update actions from the ticket audit trail, plus approved warnings/mistakes issued in that window.
             </p>
             <div className="flex flex-wrap items-end gap-4">
               <div>
@@ -634,7 +634,7 @@ export function CSRDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
           </div>
         ) : agents.length === 0 ? (
           <p className="panel p-6 mb-4 text-center text-sm text-muted-foreground">
-            No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+            No CSR Associates or CSR Team Leaders found. Add them in User Management with role "CSR Associate" or "CSR Team Leader" first.
           </p>
         ) : (
         <>

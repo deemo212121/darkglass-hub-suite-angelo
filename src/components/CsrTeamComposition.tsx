@@ -243,7 +243,7 @@ export function CsrTeamComposition() {
             {p.name}
           </div>
           <div className="text-[10px] text-muted-foreground truncate">
-            {isLeader ? "Team Leader (lead)" : p.isLeaderRole ? "Team Leader" : "CSR Agent"}
+            {isLeader ? "Team Leader (lead)" : p.isLeaderRole ? "Team Leader" : "CSR Associate"}
           </div>
         </div>
         {teamKey !== ROSTER && (
@@ -291,7 +291,7 @@ export function CsrTeamComposition() {
 
       {staff.length === 0 ? (
         <p className="text-sm text-muted-foreground py-6 text-center">
-          No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+          No CSR Associates or CSR Team Leaders found. Add them in User Management with role "CSR Associate" or "CSR Team Leader" first.
         </p>
       ) : (
       <div className="grid gap-4 lg:grid-cols-[320px_1fr] items-start">
@@ -310,7 +310,7 @@ export function CsrTeamComposition() {
             {rosterLeaders.map((p) => <Card key={p.id} p={p} teamKey={ROSTER} />)}
           </div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-2 flex items-center gap-1.5">
-            <Users className="h-3.5 w-3.5" /> CSR Agents · {rosterAgents.length}
+            <Users className="h-3.5 w-3.5" /> CSR Associates · {rosterAgents.length}
           </div>
           <div className="flex flex-col gap-1.5">
             {rosterAgents.length === 0 && <div className="text-[11px] text-muted-foreground italic px-1">All agents placed.</div>}

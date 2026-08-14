@@ -659,13 +659,11 @@ export default function UserManagementPage() {
                     </>
                   )}
                   <SelectItem value="MANAGER">Manager</SelectItem>
-                  <SelectItem value="CSR">CSR</SelectItem>
                   <SelectItem value="TECHNICIAN">Technician</SelectItem>
-                  <SelectItem value="DISPATCHER">Dispatcher</SelectItem>
                   <SelectItem value="HR">HR</SelectItem>
                   <SelectItem value="IT">IT</SelectItem>
                   <SelectItem value="PARTS">Parts</SelectItem>
-                  <SelectItem value="FINANCE">Finance</SelectItem>
+                  <SelectItem value="FINANCE">Accounting</SelectItem>
                 </SelectContent>
               </Select>
             </div>
