@@ -18,6 +18,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { toSeconds, ON_TIME_BUFFER_SECONDS, payGraceMinutesFor } from "@/lib/attendanceGrace";
 
 // profiles.department is rarely populated in this data set — role is the
 // real department-like dimension (same convention AccountingDashboard.tsx
@@ -54,15 +55,34 @@ interface DayStatus {
   hours: number;
 }
 
-function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean): DayStatus {
+/**
+ * Lateness must go through the same clock-precision buffer + pay-grace
+ * window Attendance Monitoring's own Daily Attendance Tracker applies
+ * (attendanceGrace.ts) — a raw `checkIn > requiredCheckIn` string
+ * comparison (the previous version of this function) flags literally any
+ * nonzero-second punch as late, disagreeing with the dashboard on nearly
+ * every row (e.g. a PH employee clocking in at 08:00:32 against a 08:00
+ * schedule reads "Late" here but "✓ OK" there).
+ */
+function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean, graceMinutes: number): DayStatus {
   if (!entry || (!entry.checkIn && !entry.checkOut)) {
     return { present: false, late: false, absent: !offDay, hours: 0 };
   }
-  const late = !!(requiredCheckIn && entry.checkIn && entry.checkIn > requiredCheckIn);
+  let late = false;
+  if (requiredCheckIn && entry.checkIn) {
+    const lateSeconds = toSeconds(entry.checkIn) - toSeconds(requiredCheckIn);
+    late = lateSeconds > Math.max(ON_TIME_BUFFER_SECONDS, graceMinutes * 60);
+  }
   const hours = entry.checkIn && entry.checkOut
     ? calcWorkedHours({ checkIn: entry.checkIn, checkOut: entry.checkOut, mealStart: entry.mealStart, mealEnd: entry.mealEnd, notes: "" })
     : 0;
   return { present: true, late, absent: false, hours };
+}
+
+/** Mirrors AttendanceMonitoringPage's own country/role -> grace-minutes resolution exactly, so both pages agree on what counts as "late". */
+function graceMinutesFor(p: ProfileRow): number {
+  const country = p.assigned_branch === "Philippines" ? "PH" : "US";
+  return payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
 }
 
 type DailyStatus = "present" | "late" | "absent" | "day-off";
@@ -227,9 +247,10 @@ export function ReportAttendanceMonitoring({
       const role = roleLabel(p.role);
       const bucket = map.get(role) ?? { count: 0, present: 0, absent: 0, late: 0, hours: 0 };
       bucket.count += 1;
+      const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutes);
         if (st.present) { bucket.present++; if (st.late) bucket.late++; bucket.hours += st.hours; }
         else if (st.absent) bucket.absent++;
       }
@@ -259,10 +280,11 @@ export function ReportAttendanceMonitoring({
       if (employeeFilter.size > 0 && !employeeFilter.has(p.id)) continue;
       const name = p.display_name || p.username || p.email || "Unknown";
       const role = roleLabel(p.role);
+      const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const entry = entriesByProfileDate.get(`${p.id}|${d}`);
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entry, p.required_check_in, off);
+        const st = dayStatus(entry, p.required_check_in, off, graceMinutes);
         const status: DailyStatus = st.present ? (st.late ? "late" : "present") : off ? "day-off" : "absent";
         rows.push({ profileId: p.id, name, role, date: d, clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "", hours: st.hours, status });
       }
@@ -282,7 +304,7 @@ export function ReportAttendanceMonitoring({
     let present = 0, absent = 0, late = 0;
     for (const p of filteredProfiles) {
       const off = isOffDay(todayIso(), p.off_days);
-      const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off);
+      const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off, graceMinutesFor(p));
       if (st.present) { present++; if (st.late) late++; }
       else if (st.absent) absent++;
     }
@@ -307,7 +329,7 @@ export function ReportAttendanceMonitoring({
       let present = 0, absent = 0, late = 0;
       for (const p of filteredProfiles) {
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutesFor(p));
         if (st.present) { present++; if (st.late) late++; }
         else if (st.absent) absent++;
       }
