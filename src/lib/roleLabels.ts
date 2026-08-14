@@ -323,6 +323,20 @@ export function isAttendanceManagerTierRole(role: string | null | undefined, ext
   return anyHeldRoleIn(ATTENDANCE_MANAGER_TIER_ROLES, role, extraRoles);
 }
 
+/**
+ * Full-company-visibility roles for Attendance Monitoring — always see
+ * everyone, even if they ALSO hold a manager-tier role in extra_roles (e.g.
+ * a real HR profile here has extra_roles ["MANAGER", "ADMIN"] from being
+ * stacked with department-admin duties elsewhere in the app; that shouldn't
+ * narrow their attendance view down to just their own direct reports).
+ * Callers must check this BEFORE isAttendanceManagerTierRole so it wins.
+ */
+const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE"]);
+
+export function isAttendanceFullAccessRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(ATTENDANCE_FULL_ACCESS_ROLES, role, extraRoles);
+}
+
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */
 export const ATTENDANCE_MANAGER_TIER_ROLES_ARRAY = Array.from(ATTENDANCE_MANAGER_TIER_ROLES);
 
