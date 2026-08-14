@@ -5,16 +5,14 @@
  * batch), so the manager sees the real remaining backlog, not only
  * what just got marked.
  *
- * Part Daily Collection has no real backend yet (see PartDailyCollection.
- * tsx), so its numbers come from the same example rows the page itself
- * shows — update this once that page gets real data. Part Daily Pickup's
- * real query is scoped to today's pickup date; if it comes back empty
- * (very possible — see PartDailyPickup.tsx), this falls back to the same
- * per-branch example rows the page itself would show, for consistency.
+ * Part Daily Pickup's real query is scoped to today's pickup date; if it
+ * comes back empty (very possible — see PartDailyPickup.tsx), this falls
+ * back to the same per-branch example rows the page itself would show,
+ * for consistency.
  */
 import { getPartsToReceive } from "@/lib/supabase/partReceive";
 import { getPartsForDailyPickup } from "@/lib/supabase/partDailyPickup";
-import { EXAMPLE_COLLECTION_ROWS } from "@/components/PartDailyCollection";
+import { getPartsForDailyCollection } from "@/lib/supabase/partDailyCollection";
 import { EXAMPLE_PICKUP_ROWS } from "@/components/PartDailyPickup";
 
 export interface BranchProgress {
@@ -29,17 +27,20 @@ export interface BranchProgress {
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
+const COLLECTION_PROGRESS_FILTERS = { dateType: "Collect Date", startDate: "", endDate: "", notCollected: true, collected: true } as const;
+
 export async function getBranchProgress(branches: string[]): Promise<BranchProgress[]> {
-  const [allReceive, ...pickupResults] = await Promise.all([
+  const [allReceive, pickupResults, collectionResults] = await Promise.all([
     getPartsToReceive().catch(() => []),
-    ...branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: TODAY }).catch(() => [])),
+    Promise.all(branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: TODAY }).catch(() => []))),
+    Promise.all(branches.map((b) => getPartsForDailyCollection({ ...COLLECTION_PROGRESS_FILTERS, location: b }).catch(() => []))),
   ]);
 
   return branches.map((branch, i) => {
     const receiveRows = allReceive.filter((r) => r.location === branch);
     const realPickup = pickupResults[i] ?? [];
     const pickupRows = realPickup.length > 0 ? realPickup : EXAMPLE_PICKUP_ROWS.filter((r) => r.location === branch);
-    const collectionRows = EXAMPLE_COLLECTION_ROWS.filter((r) => r.location === branch);
+    const collectionRows = collectionResults[i] ?? [];
 
     return {
       branch,

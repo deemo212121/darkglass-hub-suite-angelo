@@ -24,7 +24,7 @@ import {
 // detail page's own Parts tab) - real distinct values currently in the data
 // are unioned in below in case something outside this list ever shows up.
 const PART_STATUS_OPTIONS = [
-  "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective",
+  "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective", "Dropship",
   "Hold for Estimation", "Hold for next vist", "In Review", "Lost", "Need PO", "Not Used & Stocked",
   "PAID", "Part Ready", "PNN", "PO Made", "RA - Defect", "RA- DMG", "RA - PNN",
   "RA - Qty Discrepancy", "SQT Received", "Tech Pickup", "Transfer to Another Ticket", "Used",

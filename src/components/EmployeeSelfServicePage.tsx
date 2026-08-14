@@ -45,9 +45,10 @@ import {
 } from "@/lib/supabase/employeeRequests";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { createNotification } from "@/lib/supabase/notifications";
-import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
+import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { ROLE_LABELS, isAttendanceManagerTierRole } from "@/lib/roleLabels";
+import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import {
   formatClockTime,
   offDaysInRange,
@@ -144,6 +145,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [allCorrections, setAllCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [allEmployeeRequests, setAllEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  // Only needed to resolve a CSR Manager/Team Leader's own team on Manage
+  // Requests — same "own + underlings" scoping already used on Attendance
+  // Monitoring / Daily Activity Report (visibleAttendanceProfileIds).
+  const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
   const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
@@ -222,20 +227,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   // Load real PTO / correction / attendance-dispute / payroll-inquiry requests
   // for the whole company (RLS already scopes this to the caller's company) —
-  // used both for "mine" (My Requests tab) and, for HR/Finance/Admin, the
-  // full company view on the Manage Requests tab.
+  // used both for "mine" (My Requests tab) and, on the Manage Requests tab,
+  // the full company view for HR/Finance/Admin or the "my team" scoped view
+  // for manager-tier roles (see visibleTeamProfileIds below).
   useEffect(() => {
     if (!myProfileId) return;
     let cancelled = false;
     (async () => {
       setRequestsLoading(true);
       try {
-        const [ptoRows, correctionRows, employeeReqRows, profileRows, payslipRows] = await Promise.all([
+        const [ptoRows, correctionRows, employeeReqRows, profileRows, payslipRows, csrTeams] = await Promise.all([
           getCompanyPtoRequests(),
           getCompanyTimecardCorrections(),
           getCompanyEmployeeRequests(),
           getCompanyUsers(),
           getMyPayslips(myProfileId),
+          getCsrTeamComposition().catch((): CsrTeamComposition | null => null),
         ]);
         if (cancelled) return;
         setAllPtoRequests(ptoRows);
@@ -243,6 +250,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         setAllEmployeeRequests(employeeReqRows);
         setCompanyProfiles(profileRows);
         setMyPayslips(payslipRows);
+        setCsrComposition(csrTeams);
       } catch (err) {
         console.error("Failed to load employee requests:", err);
       } finally {
@@ -333,7 +341,24 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     [myRequests, requestTypeFilter]
   );
 
-  const canManageRequests = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
+  // Full company-wide visibility (every request, every section, including
+  // Attendance Disputes/Payroll Inquiries — which have no manager stage at
+  // all and go straight to HR/Finance). Manager-tier roles get the tab too,
+  // but scoped to their own team via visibleTeamProfileIds below, and the
+  // per-request Approve/Reject buttons already only render for whichever
+  // stage (manager/HR/accounting) the viewer actually has authority over
+  // (see canReviewCorrectionStage / canReviewPtoStage).
+  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
+  const canManageRequests = isFullRequestsAdmin || isAttendanceManagerTierRole(role, extraRoles);
+
+  const myProfile = useMemo(() => companyProfiles.find((p) => p.id === myProfileId) ?? null, [companyProfiles, myProfileId]);
+  // null = unrestricted (Admin/SuperAdmin/HR/Finance); a manager-tier viewer
+  // gets back their own id + anyone whose manager_name resolves to them +
+  // (for a CSR Manager/Team Leader) anyone on a CSR team they lead.
+  const visibleTeamProfileIds = useMemo(
+    () => (myProfile ? visibleAttendanceProfileIds(myProfile, companyProfiles, csrComposition) : null),
+    [myProfile, companyProfiles, csrComposition]
+  );
 
   // PTO eligibility: 1 year of tenure from hire date (falls back to account
   // creation date if HR hasn't set a hire date yet).
@@ -409,9 +434,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     );
   };
 
-  const pendingPto = allPtoRequests.filter((r) => r.status === "pending");
-  const pendingCorrections = allCorrections.filter((r) => r.status === "pending");
-  const pendingEmployeeRequests = allEmployeeRequests.filter((r) => r.status === "pending");
+  // PTO and Time Correction both have a manager stage, so a manager-tier
+  // viewer sees their own team's pending requests here (visibleTeamProfileIds
+  // is null — unrestricted — for Admin/SuperAdmin/HR/Finance). Attendance
+  // Disputes/Payroll Inquiries have no manager stage at all — those go
+  // straight to HR/Finance, so managers never see them here.
+  const pendingPto = allPtoRequests.filter((r) => r.status === "pending" && (!visibleTeamProfileIds || visibleTeamProfileIds.has(r.profileId)));
+  const pendingCorrections = allCorrections.filter((r) => r.status === "pending" && (!visibleTeamProfileIds || visibleTeamProfileIds.has(r.profileId)));
+  const pendingEmployeeRequests = isFullRequestsAdmin ? allEmployeeRequests.filter((r) => r.status === "pending") : [];
 
   const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
     try {
@@ -619,6 +649,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         case "correction": {
           if (!formData.correctionDate) {
             alert("Please select a date");
+            setSubmitting(false);
+            return;
+          }
+          if (
+            !formData.correctedCheckIn &&
+            !formData.correctedCheckOut &&
+            !formData.correctedMealStart &&
+            !formData.correctedMealEnd
+          ) {
+            alert("Enter at least one corrected time (Check In, Check Out, Meal Start, or Meal End).");
             setSubmitting(false);
             return;
           }
@@ -1425,10 +1465,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           </div>
         )}
 
-        {/* Manage Requests Tab (HR / Finance / Admin only) */}
+        {/* Manage Requests Tab — HR/Finance/Admin see the whole company;
+            manager-tier roles see this too now, scoped to their own team
+            (visibleTeamProfileIds) since PTO and Time Correction both have
+            a manager approval stage. Attendance Disputes/Payroll Inquiries
+            have no manager stage — HR/Finance/Admin only. */}
         {activeTab === "manage" && canManageRequests && (
           <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-3">
+            {!isFullRequestsAdmin && (
+              <p className="text-xs text-slate-400 -mb-2">Showing your team's requests only.</p>
+            )}
+            <div className={`grid gap-4 ${isFullRequestsAdmin ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Pending PTO</p>
                 <p className="text-2xl font-bold text-yellow-300">{pendingPto.length}</p>
@@ -1437,10 +1484,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="text-xs text-slate-400 mb-1">Pending Corrections</p>
                 <p className="text-2xl font-bold text-yellow-300">{pendingCorrections.length}</p>
               </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
-                <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
-              </div>
+              {isFullRequestsAdmin && (
+                <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                  <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
+                  <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
+                </div>
+              )}
             </div>
 
             {/* Pending PTO */}
@@ -1627,7 +1676,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               )}
             </div>
 
-            {/* Pending Attendance Disputes & Payroll Inquiries */}
+            {/* Pending Attendance Disputes & Payroll Inquiries — no manager
+                stage exists for these, so only HR/Finance/Admin see it. */}
+            {isFullRequestsAdmin && (
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes & Payroll Inquiries — Pending</h3>
               {requestsLoading ? (
@@ -1683,6 +1734,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
       </main>

@@ -234,7 +234,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           {/* Order Criteria Section */}
           <div>
             <h3 className="form-section-title">Filter Criteria</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <div className="form-group">
                 <label>Location</label>
                 <MultiSelectDropdown label="Locations" options={LOCATIONS as unknown as string[]} selected={locations} onChange={setLocations} />

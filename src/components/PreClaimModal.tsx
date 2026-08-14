@@ -26,7 +26,7 @@ const PRE_CLAIM_STATUSES = ["Holding", "Need Claim", "Claim Not Needed", "Claime
 // (ticket.$ticketNo.tsx) — duplicated here rather than shared, matching how
 // it's already duplicated in PartTransactionManager.tsx and MobileTechApp.tsx.
 const PART_STATUSES = [
-  "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective",
+  "Back Order", "Cancelled", "Claimed", "CX Home", "Cx Received", "Defective", "Dropship",
   "Hold for Estimation", "Hold for next vist", "In Review", "Lost", "Need PO",
   "Not Used & Stocked", "PAID", "Part Ready", "PNN", "PO Made", "RA - Defect",
   "RA- DMG", "RA - PNN", "RA - Qty Discrepancy", "SQT Received", "Tech Pickup",

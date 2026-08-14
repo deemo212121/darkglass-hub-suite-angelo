@@ -18,6 +18,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { toSeconds, ON_TIME_BUFFER_SECONDS, payGraceMinutesFor } from "@/lib/attendanceGrace";
 
 // profiles.department is rarely populated in this data set — role is the
 // real department-like dimension (same convention AccountingDashboard.tsx
@@ -54,15 +55,34 @@ interface DayStatus {
   hours: number;
 }
 
-function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean): DayStatus {
+/**
+ * Lateness must go through the same clock-precision buffer + pay-grace
+ * window Attendance Monitoring's own Daily Attendance Tracker applies
+ * (attendanceGrace.ts) — a raw `checkIn > requiredCheckIn` string
+ * comparison (the previous version of this function) flags literally any
+ * nonzero-second punch as late, disagreeing with the dashboard on nearly
+ * every row (e.g. a PH employee clocking in at 08:00:32 against a 08:00
+ * schedule reads "Late" here but "✓ OK" there).
+ */
+function dayStatus(entry: CompanyTimecardEntry | undefined, requiredCheckIn: string | null, offDay: boolean, graceMinutes: number): DayStatus {
   if (!entry || (!entry.checkIn && !entry.checkOut)) {
     return { present: false, late: false, absent: !offDay, hours: 0 };
   }
-  const late = !!(requiredCheckIn && entry.checkIn && entry.checkIn > requiredCheckIn);
+  let late = false;
+  if (requiredCheckIn && entry.checkIn) {
+    const lateSeconds = toSeconds(entry.checkIn) - toSeconds(requiredCheckIn);
+    late = lateSeconds > Math.max(ON_TIME_BUFFER_SECONDS, graceMinutes * 60);
+  }
   const hours = entry.checkIn && entry.checkOut
     ? calcWorkedHours({ checkIn: entry.checkIn, checkOut: entry.checkOut, mealStart: entry.mealStart, mealEnd: entry.mealEnd, notes: "" })
     : 0;
   return { present: true, late, absent: false, hours };
+}
+
+/** Mirrors AttendanceMonitoringPage's own country/role -> grace-minutes resolution exactly, so both pages agree on what counts as "late". */
+function graceMinutesFor(p: ProfileRow): number {
+  const country = p.assigned_branch === "Philippines" ? "PH" : "US";
+  return payGraceMinutesFor(country, normalizeRole(p.role) === "TECHNICIAN");
 }
 
 type DailyStatus = "present" | "late" | "absent" | "day-off";
@@ -227,9 +247,10 @@ export function ReportAttendanceMonitoring({
       const role = roleLabel(p.role);
       const bucket = map.get(role) ?? { count: 0, present: 0, absent: 0, late: 0, hours: 0 };
       bucket.count += 1;
+      const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutes);
         if (st.present) { bucket.present++; if (st.late) bucket.late++; bucket.hours += st.hours; }
         else if (st.absent) bucket.absent++;
       }
@@ -252,6 +273,8 @@ export function ReportAttendanceMonitoring({
       date: string;
       clockIn: string;
       clockOut: string;
+      requiredCheckIn: string;
+      requiredCheckOut: string;
       hours: number;
       status: DailyStatus;
     }[] = [];
@@ -259,12 +282,18 @@ export function ReportAttendanceMonitoring({
       if (employeeFilter.size > 0 && !employeeFilter.has(p.id)) continue;
       const name = p.display_name || p.username || p.email || "Unknown";
       const role = roleLabel(p.role);
+      const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const entry = entriesByProfileDate.get(`${p.id}|${d}`);
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entry, p.required_check_in, off);
+        const st = dayStatus(entry, p.required_check_in, off, graceMinutes);
         const status: DailyStatus = st.present ? (st.late ? "late" : "present") : off ? "day-off" : "absent";
-        rows.push({ profileId: p.id, name, role, date: d, clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "", hours: st.hours, status });
+        rows.push({
+          profileId: p.id, name, role, date: d,
+          clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "",
+          requiredCheckIn: p.required_check_in || "", requiredCheckOut: p.required_check_out || "",
+          hours: st.hours, status,
+        });
       }
     }
     // Grouped by date (most recent first) so scanning down reads "who was
@@ -282,7 +311,7 @@ export function ReportAttendanceMonitoring({
     let present = 0, absent = 0, late = 0;
     for (const p of filteredProfiles) {
       const off = isOffDay(todayIso(), p.off_days);
-      const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off);
+      const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off, graceMinutesFor(p));
       if (st.present) { present++; if (st.late) late++; }
       else if (st.absent) absent++;
     }
@@ -307,7 +336,7 @@ export function ReportAttendanceMonitoring({
       let present = 0, absent = 0, late = 0;
       for (const p of filteredProfiles) {
         const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutesFor(p));
         if (st.present) { present++; if (st.late) late++; }
         else if (st.absent) absent++;
       }
@@ -339,8 +368,8 @@ export function ReportAttendanceMonitoring({
       ...(groupBy === "employee"
         ? [
             ["Daily Attendance"],
-            ["Name", "Role", "Date", "Clock In", "Clock Out", "Hours", "Status"],
-            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.clockOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
+            ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
+            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
           ]
         : [
             ["Role Summary — Full Period"],
@@ -476,7 +505,9 @@ export function ReportAttendanceMonitoring({
               { label: "Name", align: "text-left" },
               { label: "Role", align: "text-left" },
               { label: "Clock In", align: "text-center" },
+              { label: "Required In", align: "text-center" },
               { label: "Clock Out", align: "text-center" },
+              { label: "Required Out", align: "text-center" },
               { label: "Hours", align: "text-center" },
               { label: "Status", align: "text-center" },
             ].map((h) => (
@@ -484,21 +515,23 @@ export function ReportAttendanceMonitoring({
             ))}
           </tr></thead>
           <tbody>
-            {dailyEmployeeRows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No attendance records found.</td></tr> :
+            {dailyEmployeeRows.length === 0 ? <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">No attendance records found.</td></tr> :
               dailyEmployeeRows.map((r, i) => {
                 const showDateBand = i === 0 || dailyEmployeeRows[i - 1].date !== r.date;
                 return (
                   <Fragment key={`${r.profileId}|${r.date}`}>
                     {showDateBand && (
                       <tr className="bg-blue-500/10">
-                        <td colSpan={6} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">{r.date}</td>
+                        <td colSpan={8} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">{r.date}</td>
                       </tr>
                     )}
                     <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
                       <td className="px-2.5 py-1 font-medium whitespace-nowrap">{r.name}</td>
                       <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{r.role}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockIn || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{r.requiredCheckIn || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockOut || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{r.requiredCheckOut || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.hours.toFixed(2)}h</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] ${STATUS_CLASS[r.status]}`}>{STATUS_LABEL[r.status]}</span>

@@ -86,6 +86,14 @@ const SERVER_DEFINE = {
   "globalThis.__MARCONE_PROD_CLIENT_SECRET__": JSON.stringify(
     rootEnv.VITE_MARCONE_PROD_CLIENT_SECRET ?? ""
   ),
+  // Encompass Supply Chain Solutions credentials (SERVER ONLY). Simpler
+  // than Marcone's — no OAuth token, jsonUser/jsonPassword go on every
+  // request, so there's nothing to cache, just the two secrets + env pick.
+  "globalThis.__ENCOMPASS_ENV__": JSON.stringify(rootEnv.VITE_ENCOMPASS_ENV ?? "test"),
+  "globalThis.__ENCOMPASS_JSON_USER__": JSON.stringify(rootEnv.VITE_ENCOMPASS_JSON_USER ?? ""),
+  "globalThis.__ENCOMPASS_JSON_PASSWORD__": JSON.stringify(rootEnv.VITE_ENCOMPASS_JSON_PASSWORD ?? ""),
+  "globalThis.__ENCOMPASS_CUSTOMER_NUMBER__": JSON.stringify(rootEnv.VITE_ENCOMPASS_CUSTOMER_NUMBER ?? ""),
+  "globalThis.__ENCOMPASS_CUSTOMER_PASSWORD__": JSON.stringify(rootEnv.VITE_ENCOMPASS_CUSTOMER_PASSWORD ?? ""),
   // NSA Platform credentials (SERVER ONLY — never exposed to browser).
   "globalThis.__NSA_BASE_URL__": JSON.stringify(rootEnv.NSA_BASE_URL ?? "https://api.nsaweb.com"),
   "globalThis.__NSA_API_KEY__": JSON.stringify(rootEnv.NSA_API_KEY ?? ""),
@@ -218,6 +226,42 @@ function marconeDevPlugin() {
           res.statusCode = 500;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Marcone request failed" }));
+        }
+      });
+    },
+  };
+}
+
+// Dev-only middleware: serve /api/encompass locally. Same shape as the
+// Marcone plugin.
+function encompassDevPlugin() {
+  return {
+    name: "encompass-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/encompass", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks).toString("utf8");
+
+          const { handleEncompassRequest } = await server.ssrLoadModule(
+            "/src/lib/server/encompassBridge.ts"
+          );
+          const webReq = new Request("http://localhost/api/encompass", {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleEncompassRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Encompass request failed" }));
         }
       });
     },
@@ -688,7 +732,7 @@ export default defineConfig({
     // lets a temporary cloudflared/ngrok tunnel hostname reach the local dev
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
-    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up

@@ -30,6 +30,7 @@ export const ROLE_LABELS: Record<string, string> = {
   CLAIMS_TEAM_LEADER: "Claims Team Leader",
   PARTS_MANAGER: "Parts Manager",
   PARTS_TEAM_LEADER: "Parts Team Leader",
+  PARTS_ORDER: "Parts Order",
   BIZOPS_MANAGER: "BizOps Manager",
   BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
   TRIAGE_USER: "Technical Support",
@@ -87,6 +88,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   CLAIMS_TEAM_LEADER: { department: "Claims", roleLabel: "Team Leader" },
   PARTS_MANAGER: { department: "Parts", roleLabel: "Manager" },
   PARTS_TEAM_LEADER: { department: "Parts", roleLabel: "Team Leader" },
+  PARTS_ORDER: { department: "Parts", roleLabel: "Order" },
   BIZOPS_MANAGER: { department: "BizOps", roleLabel: "Manager" },
   BIZOPS_SENIOR_MANAGER: { department: "BizOps", roleLabel: "Senior Manager" },
   TRIAGE_USER: { department: "Triage", roleLabel: "Agent" },
@@ -321,6 +323,20 @@ const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
 
 export function isAttendanceManagerTierRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return anyHeldRoleIn(ATTENDANCE_MANAGER_TIER_ROLES, role, extraRoles);
+}
+
+/**
+ * Full-company-visibility roles for Attendance Monitoring — always see
+ * everyone, even if they ALSO hold a manager-tier role in extra_roles (e.g.
+ * a real HR profile here has extra_roles ["MANAGER", "ADMIN"] from being
+ * stacked with department-admin duties elsewhere in the app; that shouldn't
+ * narrow their attendance view down to just their own direct reports).
+ * Callers must check this BEFORE isAttendanceManagerTierRole so it wins.
+ */
+const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE"]);
+
+export function isAttendanceFullAccessRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return anyHeldRoleIn(ATTENDANCE_FULL_ACCESS_ROLES, role, extraRoles);
 }
 
 /** Array form for spreading into a DASHBOARD_ROLE_GATES entry. */

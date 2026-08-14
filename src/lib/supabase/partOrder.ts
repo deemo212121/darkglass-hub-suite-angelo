@@ -45,14 +45,14 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
     throw new Error(ticketsRes.error.message);
   }
 
-  const ticketById = new Map<string, { ticketNo: string; location: string; scheduleDate: string; warranty: string; status: string }>();
+  const ticketById = new Map<string, { ticketNo: string; location: string; scheduleDate: string; warranty: string; repairStatus: string }>();
   for (const t of ticketsRes.data ?? []) {
     ticketById.set((t as any).id, {
       ticketNo: (t as any).ticket_no ?? "",
       location: (t as any).location ?? "",
       scheduleDate: (t as any).schedule_date ?? "",
       warranty: (t as any).warranty ?? "",
-      status: (t as any).status ?? "",
+      repairStatus: (t as any).status ?? "",
     });
   }
 
@@ -76,7 +76,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         location: ticket?.location ?? "",
         scheduleDate: ticket?.scheduleDate ?? "",
         warranty: ticket?.warranty ?? "",
-        repairStatus: ticket?.status ?? "",
+        repairStatus: ticket?.repairStatus ?? "",
       };
     });
 }

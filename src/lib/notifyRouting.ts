@@ -6,7 +6,7 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
+import { isAttendanceManagerTierRole, isAttendanceFullAccessRole } from "@/lib/roleLabels";
 
 const CSR_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
 
@@ -58,6 +58,11 @@ export function visibleAttendanceProfileIds(
   allProfiles: ProfileRow[],
   csrComposition: CsrTeamComposition | null
 ): Set<string> | null {
+  // Full-access roles win even if the same profile ALSO holds a manager-tier
+  // role somewhere (primary or extra) — e.g. a real HR profile with
+  // extra_roles ["MANAGER", "ADMIN"] must still see the whole company, not
+  // just their own direct reports.
+  if (isAttendanceFullAccessRole(viewer.role, viewer.extra_roles)) return null;
   if (!isAttendanceManagerTierRole(viewer.role, viewer.extra_roles)) return null;
 
   const ids = new Set<string>([viewer.id]);

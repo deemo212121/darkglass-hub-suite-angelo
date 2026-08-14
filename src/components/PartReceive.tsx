@@ -21,9 +21,36 @@ function partReceiveActivityLabel(item: Pick<PartReceiveRow, "partNo" | "poNo" |
   return `${item.partNo || item.id} · PO ${item.poNo || "—"}`;
 }
 
-function getTrackingUrl(tracking: string, partFrom: string) {
+// Ship methods that don't route to any carrier tracking site at all — the
+// part was picked up in person, not shipped, so there's no tracking number
+// to look up regardless of what ended up (or didn't) in the tracking field.
+const NO_TRACKING_SHIP_METHODS = new Set(["will call", "pcr will call"]);
+
+function getTrackingUrl(tracking: string, partFrom: string, shipMethod: string) {
   const value = tracking.trim();
   const source = partFrom.trim().toLowerCase();
+  const method = shipMethod.trim().toLowerCase();
+
+  if (NO_TRACKING_SHIP_METHODS.has(method)) return "#";
+
+  // Prefer the real shipping method actually selected when the PO was
+  // placed (Marcone/Encompass order flow) over guessing from the tracking
+  // number's shape — a real carrier name is never ambiguous the way a bare
+  // number pattern can be.
+  if (value && method) {
+    if (method.startsWith("fedex")) {
+      return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(value)}`;
+    }
+    if (method.startsWith("ups")) {
+      return `https://www.ups.com/track?track=yes&trackNums=${encodeURIComponent(value)}`;
+    }
+    if (method.startsWith("usps")) {
+      return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(value)}`;
+    }
+    // LTL freight and anything else without a universal tracking site fall
+    // through to the pattern-matching / search fallback below.
+  }
+
   if (!value) return "#";
   if (source.includes("marcone")) {
     return `https://www.google.com/search?q=${encodeURIComponent(`site:marcone.com ${value} tracking`)}`;
@@ -828,7 +855,13 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     {isColVisible("tracking") && (
                       <td className="px-4 py-3 font-mono text-xs text-slate-300">
                         {item.tracking ? (
-                          <a href={getTrackingUrl(item.tracking, item.partFrom)} target="_blank" rel="noreferrer" className="text-blue-300 underline decoration-dotted underline-offset-4 hover:text-blue-200">
+                          <a
+                            href={getTrackingUrl(item.tracking, item.partFrom, item.shipMethod)}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={item.shipMethod ? `Ship method: ${item.shipMethod}` : undefined}
+                            className="text-blue-300 underline decoration-dotted underline-offset-4 hover:text-blue-200"
+                          >
                             {item.tracking}
                           </a>
                         ) : "—"}

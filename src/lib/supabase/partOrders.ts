@@ -17,6 +17,11 @@ export function isMarconeDist(value: string | null | undefined): boolean {
   return /\bmarcone\b/i.test(String(value || ""));
 }
 
+/** Same reasoning as isMarconeDist, for the Encompass distributor entries ("Encompass", "Encompass-Birmingham / Montgomery", etc.). */
+export function isEncompassDist(value: string | null | undefined): boolean {
+  return /\bencompass\b/i.test(String(value || ""));
+}
+
 /** Address used as the ship-to on a Marcone order. */
 export interface ShipToAddress {
   name: string;
@@ -507,6 +512,7 @@ export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<M
         status: "PO Made",
         po_no: poNo,
         po_date: today,
+        ship_method: payload.shipMethod || null,
       };
       if (marconeOrderNo) patch.order_no = marconeOrderNo;
 
@@ -535,4 +541,153 @@ export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<M
     tracking: undefined,
     raw: resp,
   };
+}
+
+/**
+ * Place an Encompass Supply Chain Solutions order. Same shape/contract as
+ * placeMarconeOrder (reuses MarconeOrderPayload — nothing about that type
+ * is actually Marcone-specific, and MarconePartsOrderModal's UI is generic
+ * too, so both vendors share the same modal component) but adapted to
+ * Encompass's own API:
+ *
+ * 1. Resolve each line's `mfgCode` via encompassLookupPart (createOrder
+ *    requires it on every part, same reason Marcone needs `make`).
+ * 2. POST /restfulservice/createOrder through the server bridge, using our
+ *    own PO number as `referenceNumber1`.
+ * 3. Unlike Marcone, createOrder's response carries no order number — only
+ *    a status. Immediately follow up with /restfulservice/orderStatus
+ *    using that same referenceNumber1 to fetch Encompass's real order
+ *    number, ETA, and tracking.
+ * 4. Insert a `part_orders` summary row.
+ * 5. Stamp every referenced parts row PO Made with the PO no + order info.
+ * 6. On any partial failure after the order is already placed, best-effort
+ *    delete the inserted summary so the user can retry without an orphan —
+ *    same as placeMarconeOrder. NOTE: unlike a failed step 2 (nothing sent
+ *    yet), a failure here means the order already exists at Encompass; the
+ *    rollback only cleans up OUR bookkeeping, not their order.
+ */
+export interface EncompassOrderResult {
+  poNo: string;
+  affectedPartIds: string[];
+  encompassOrderNo?: string;
+  invoiceNo?: string;
+  eta?: string;
+  tracking?: string;
+  raw?: unknown;
+}
+
+export async function placeEncompassOrder(payload: MarconeOrderPayload): Promise<EncompassOrderResult> {
+  const poNo = (payload.purchaseOrderNumber || "").trim() || generatePoNumber();
+  const today = new Date().toISOString().slice(0, 10);
+
+  // ── 1. Resolve mfgCode per line (createOrder requires it) ──────────
+  const { encompassLookupPart, encompassCreateOrder, encompassOrderStatus } = await import("@/lib/encompassApi");
+  const resolvedItems: Array<{ mfgCode: string; partNumber: string; orderQuantity: number }> = [];
+  for (const line of payload.lineItems) {
+    const lookup = await encompassLookupPart({ partNumber: line.partNumber });
+    const mfgCode = lookup.success && lookup.data?.mfgCode ? lookup.data.mfgCode.trim() : "";
+    if (!mfgCode) {
+      throw new Error(
+        `Could not resolve Encompass mfgCode for part ${line.partNumber}. ` +
+        `Lookup result: ${lookup.error || "no mfgCode returned"}.`,
+      );
+    }
+    resolvedItems.push({ mfgCode, partNumber: line.partNumber, orderQuantity: line.quantity || 1 });
+  }
+
+  // ── 2. Create the order ─────────────────────────────────────────────
+  const createResult = await encompassCreateOrder({
+    referenceNumber1: poNo,
+    shippingMethod: payload.shipMethod,
+    shipToAddress: {
+      name: payload.shipTo.name,
+      address1: payload.shipTo.street1,
+      address2: payload.shipTo.street2,
+      city: payload.shipTo.city,
+      state: payload.shipTo.state,
+      zipCode: payload.shipTo.zip,
+      phoneNumber: payload.shipTo.phone,
+    },
+    parts: resolvedItems,
+  });
+  if (!createResult.success) {
+    throw new Error(`Encompass /restfulservice/createOrder failed: ${createResult.error || "unknown error"}`);
+  }
+
+  // ── 3. Follow up with orderStatus for the real order number/ETA/tracking ──
+  // Best-effort: the order is already placed at this point even if this
+  // lookup fails, so don't throw — just proceed without the extra detail
+  // and let a later manual refresh (same pattern as Marcone's) fill it in.
+  let encompassOrderNo: string | undefined;
+  let eta: string | undefined;
+  let tracking: string | undefined;
+  let raw: unknown;
+  try {
+    const statusResult = await encompassOrderStatus({ referenceNumber: poNo });
+    const record = statusResult.records[0];
+    if (record) {
+      encompassOrderNo = record.orderNumber;
+      const firstPart = record.parts[0];
+      eta = firstPart?.eta;
+      tracking = firstPart?.outboundTrackings?.[0]?.trackingNumber;
+      raw = record;
+    }
+  } catch (err) {
+    console.warn("[placeEncompassOrder] orderStatus follow-up failed (order was still placed):", err);
+  }
+
+  // ── 4. Persist a summary part_orders row ────────────────────────────
+  const totalQty = payload.lineItems.reduce((sum, l) => sum + (l.quantity || 0), 0);
+  const totalPrice = payload.lineItems.reduce((sum, l) => sum + (l.quantity || 0) * (l.unitPrice || 0), 0);
+  const partNoSummary = payload.lineItems.map((l) => l.partNumber).filter(Boolean).join(", ");
+  const partDescSummary = payload.lineItems.map((l) => l.description).filter(Boolean).join(" | ");
+  const order: StoredPartOrder = {
+    poNo,
+    ticketNo: payload.ticketNo,
+    partNo: partNoSummary || (payload.lineItems[0]?.partNumber ?? ""),
+    partDist: "Encompass",
+    partDesc: partDescSummary,
+    quantity: totalQty || 1,
+    partPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
+    poDate: today,
+    eta: eta || "",
+    orderNo: encompassOrderNo || "",
+    invoiceNo: "",
+    inTracking: tracking || "",
+    note: `Ship via ${payload.shipMethod} to ${payload.shipTo.name}`,
+    status: "PO Made",
+    itemStatus: "No-Invoice",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await savePartOrder(order);
+
+  // ── 5. Stamp every selected parts row with the live values ─────────
+  const affectedPartIds: string[] = [];
+  try {
+    for (const line of payload.lineItems) {
+      const patch: Record<string, unknown> = {
+        status: "PO Made",
+        po_no: poNo,
+        po_date: today,
+        ship_method: payload.shipMethod || null,
+      };
+      if (encompassOrderNo) patch.order_no = encompassOrderNo;
+
+      const { error } = await supabase.from("parts").update(patch).eq("id", line.partId);
+      if (error) {
+        throw new Error(`Failed to update part ${line.partNumber}: ${error.message}`);
+      }
+      affectedPartIds.push(line.partId);
+    }
+  } catch (err) {
+    try {
+      await deletePartOrder(poNo);
+    } catch (rollbackErr) {
+      console.warn("placeEncompassOrder rollback failed:", rollbackErr);
+    }
+    throw err;
+  }
+
+  return { poNo, affectedPartIds, encompassOrderNo, invoiceNo: undefined, eta, tracking, raw };
 }
