@@ -272,6 +272,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // searchEmployee/filterDepartment above, which are Daily Attendance's.
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
+  const [correctionDepartmentFilter, setCorrectionDepartmentFilter] = useState<string>("all");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean }>>({});
   const [newNote, setNewNote] = useState("");
@@ -1118,10 +1119,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return corrections.filter((c) => {
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
+      if (correctionDepartmentFilter !== "all") {
+        const p = allProfileById.get(c.profileId);
+        if (!p || profileDepartment(p) !== correctionDepartmentFilter) return false;
+      }
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, profileName, teamScopedIds]);
+  }, [corrections, correctionSearch, correctionStatusFilter, correctionDepartmentFilter, profileName, teamScopedIds, allProfileById]);
 
   // Correction History panel — same team scoping as filteredCorrections
   // above, via each history entry's related correction's profileId.
@@ -1965,6 +1970,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <option value="rejected">Rejected</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Department</label>
+                    <select
+                      value={correctionDepartmentFilter}
+                      onChange={(e) => setCorrectionDepartmentFilter(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -1981,7 +1999,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
