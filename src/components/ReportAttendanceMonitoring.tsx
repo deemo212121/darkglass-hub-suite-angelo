@@ -273,6 +273,8 @@ export function ReportAttendanceMonitoring({
       date: string;
       clockIn: string;
       clockOut: string;
+      requiredCheckIn: string;
+      requiredCheckOut: string;
       hours: number;
       status: DailyStatus;
     }[] = [];
@@ -286,7 +288,12 @@ export function ReportAttendanceMonitoring({
         const off = isOffDay(d, p.off_days);
         const st = dayStatus(entry, p.required_check_in, off, graceMinutes);
         const status: DailyStatus = st.present ? (st.late ? "late" : "present") : off ? "day-off" : "absent";
-        rows.push({ profileId: p.id, name, role, date: d, clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "", hours: st.hours, status });
+        rows.push({
+          profileId: p.id, name, role, date: d,
+          clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "",
+          requiredCheckIn: p.required_check_in || "", requiredCheckOut: p.required_check_out || "",
+          hours: st.hours, status,
+        });
       }
     }
     // Grouped by date (most recent first) so scanning down reads "who was
@@ -361,8 +368,8 @@ export function ReportAttendanceMonitoring({
       ...(groupBy === "employee"
         ? [
             ["Daily Attendance"],
-            ["Name", "Role", "Date", "Clock In", "Clock Out", "Hours", "Status"],
-            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.clockOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
+            ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
+            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
           ]
         : [
             ["Role Summary — Full Period"],
@@ -498,7 +505,9 @@ export function ReportAttendanceMonitoring({
               { label: "Name", align: "text-left" },
               { label: "Role", align: "text-left" },
               { label: "Clock In", align: "text-center" },
+              { label: "Required In", align: "text-center" },
               { label: "Clock Out", align: "text-center" },
+              { label: "Required Out", align: "text-center" },
               { label: "Hours", align: "text-center" },
               { label: "Status", align: "text-center" },
             ].map((h) => (
@@ -506,21 +515,23 @@ export function ReportAttendanceMonitoring({
             ))}
           </tr></thead>
           <tbody>
-            {dailyEmployeeRows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No attendance records found.</td></tr> :
+            {dailyEmployeeRows.length === 0 ? <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">No attendance records found.</td></tr> :
               dailyEmployeeRows.map((r, i) => {
                 const showDateBand = i === 0 || dailyEmployeeRows[i - 1].date !== r.date;
                 return (
                   <Fragment key={`${r.profileId}|${r.date}`}>
                     {showDateBand && (
                       <tr className="bg-blue-500/10">
-                        <td colSpan={6} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">{r.date}</td>
+                        <td colSpan={8} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">{r.date}</td>
                       </tr>
                     )}
                     <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
                       <td className="px-2.5 py-1 font-medium whitespace-nowrap">{r.name}</td>
                       <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{r.role}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockIn || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{r.requiredCheckIn || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.clockOut || "—"}</td>
+                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{r.requiredCheckOut || "—"}</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">{r.hours.toFixed(2)}h</td>
                       <td className="px-2.5 py-1 text-center whitespace-nowrap">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] ${STATUS_CLASS[r.status]}`}>{STATUS_LABEL[r.status]}</span>
