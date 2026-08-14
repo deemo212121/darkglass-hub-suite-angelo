@@ -46,6 +46,12 @@ import {
   type CorrectionStage,
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
+import {
+  getCompanyEmployeeRequests,
+  updateEmployeeRequestStatus,
+  type EmployeeRequestRow,
+  type EmployeeRequestStatus,
+} from "@/lib/supabase/employeeRequests";
 
 interface DailyRecord {
   profileId: string;
@@ -196,6 +202,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
   const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
+  // Attendance Disputes/Payroll Inquiries have no manager stage at all —
+  // unlike PTO/Corrections above, these go straight to HR/Finance/Admin,
+  // so manager-tier roles never see this tab (moved here from Employee
+  // Self-Service's old "Manage Requests" tab, which had the same rule).
+  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
   // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
   // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
   // any manager-flavored role can submit one here for a tardy employee, but
@@ -211,8 +222,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
+  const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
+  const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
 
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "warnings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "warnings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -306,7 +319,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
@@ -316,6 +329,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         getCompanyTimecardCorrections(),
         getCompanyTimecardCorrectionHistory(),
         getAllAgentNotes().catch(() => []),
+        getCompanyEmployeeRequests().catch(() => []),
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
@@ -330,6 +344,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setCorrections(correctionRows);
       setCorrectionHistory(historyRows);
       setConductNotes(conductNoteRows);
+      setEmployeeRequests(employeeRequestRows);
     } catch (error) {
       console.error("Failed to load attendance data:", error);
     } finally {
@@ -1030,6 +1045,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
+  const pendingEmployeeRequests = isFullRequestsAdmin ? employeeRequests.filter((r) => r.status === "pending") : [];
+
+  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
+    try {
+      await updateEmployeeRequestStatus(id, status, myProfileId, employeeRequestNote[id]);
+      setEmployeeRequests(await getCompanyEmployeeRequests());
+      setEmployeeRequestNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (error) {
+      alert(`Failed to update request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
     setCorrectionStageBusy(true);
@@ -1178,6 +1209,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
               { id: "pto-management", label: "PTO Management", Icon: Calendar },
               { id: "corrections", label: "Corrections", Icon: FileText },
+              ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
               { id: "warnings", label: "Warnings", Icon: AlertTriangle },
             ].map(tab => {
               const Icon = tab.Icon;
@@ -2017,6 +2049,68 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "disputes-inquiries" && isFullRequestsAdmin && (
+            <div className="space-y-6">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes &amp; Payroll Inquiries — Pending</h3>
+                {pendingEmployeeRequests.length === 0 ? (
+                  <p className="text-sm text-slate-400">No pending disputes or inquiries.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {pendingEmployeeRequests.map((r) => (
+                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                        <p className="text-sm font-semibold text-white">
+                          {profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                        <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                        <textarea
+                          placeholder="Optional response note (visible to the employee)..."
+                          value={employeeRequestNote[r.id] || ""}
+                          onChange={(e) => setEmployeeRequestNote({ ...employeeRequestNote, [r.id]: e.target.value })}
+                          rows={2}
+                          className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                        />
+                        <div className="flex gap-2 mt-2">
+                          {r.requestType === "attendance_dispute" ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleEmployeeRequestAction(r.id, "approved")}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEmployeeRequestAction(r.id, "rejected")}
+                                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleEmployeeRequestAction(r.id, "closed")}
+                              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition"
+                            >
+                              Respond &amp; Close
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

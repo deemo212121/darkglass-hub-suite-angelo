@@ -14,8 +14,6 @@ import {
 import {
   getCompanyPtoRequests,
   createPtoRequest,
-  reviewPtoStage,
-  canReviewPtoStage,
   isEligibleForPto,
   ptoEligibleDate,
   ptoYearWindow,
@@ -26,29 +24,22 @@ import {
   weekdayCount,
   type PtoRequestRow,
   type PtoType,
-  type PtoStage,
 } from "@/lib/supabase/pto";
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
-  reviewCorrectionStage,
-  canReviewCorrectionStage,
   type TimecardCorrectionRow,
-  type CorrectionStage,
 } from "@/lib/supabase/timecardCorrections";
 import {
   getCompanyEmployeeRequests,
   createEmployeeRequest,
-  updateEmployeeRequestStatus,
   type EmployeeRequestRow,
-  type EmployeeRequestStatus,
 } from "@/lib/supabase/employeeRequests";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { createNotification } from "@/lib/supabase/notifications";
-import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { ROLE_LABELS, isAttendanceManagerTierRole } from "@/lib/roleLabels";
-import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
+import { ROLE_LABELS } from "@/lib/roleLabels";
 import {
   formatClockTime,
   offDaysInRange,
@@ -117,9 +108,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   const employee = getEmployeeFromEmail(email);
 
-  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests" | "manage">(
+  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests">(
     "ahs:employee-self-service-active-tab",
-    ["dashboard", "payroll", "attendance", "requests", "manage"],
+    ["dashboard", "payroll", "attendance", "requests"],
     "dashboard",
   );
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
@@ -137,24 +128,20 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   // Real Supabase-backed PTO / time-correction / attendance-dispute / payroll-inquiry
   // requests — company-scoped by RLS, filtered down to "mine" below for the
-  // employee-facing tabs and shown in full on the "Manage Requests" tab for
-  // HR/Finance/Admin.
+  // employee-facing tabs. Reviewing everyone else's pending requests now
+  // lives entirely on Attendance Monitoring (PTO Management / Corrections /
+  // Disputes & Inquiries tabs) instead of here.
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [myHireDate, setMyHireDate] = useState<string | null>(null);
   const [allPtoRequests, setAllPtoRequests] = useState<PtoRequestRow[]>([]);
   const [allCorrections, setAllCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [allEmployeeRequests, setAllEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
-  // Only needed to resolve a CSR Manager/Team Leader's own team on Manage
-  // Requests — same "own + underlings" scoping already used on Attendance
-  // Monitoring / Daily Activity Report (visibleAttendanceProfileIds).
-  const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
   const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [responseNote, setResponseNote] = useState<Record<string, string>>({});
   const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
   const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
@@ -227,22 +214,20 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
   // Load real PTO / correction / attendance-dispute / payroll-inquiry requests
   // for the whole company (RLS already scopes this to the caller's company) —
-  // used both for "mine" (My Requests tab) and, on the Manage Requests tab,
-  // the full company view for HR/Finance/Admin or the "my team" scoped view
-  // for manager-tier roles (see visibleTeamProfileIds below).
+  // filtered down to "mine" below for the My Requests tab. companyProfiles is
+  // also needed for resolveTeamLeadOrManager when submitting a new request.
   useEffect(() => {
     if (!myProfileId) return;
     let cancelled = false;
     (async () => {
       setRequestsLoading(true);
       try {
-        const [ptoRows, correctionRows, employeeReqRows, profileRows, payslipRows, csrTeams] = await Promise.all([
+        const [ptoRows, correctionRows, employeeReqRows, profileRows, payslipRows] = await Promise.all([
           getCompanyPtoRequests(),
           getCompanyTimecardCorrections(),
           getCompanyEmployeeRequests(),
           getCompanyUsers(),
           getMyPayslips(myProfileId),
-          getCsrTeamComposition().catch((): CsrTeamComposition | null => null),
         ]);
         if (cancelled) return;
         setAllPtoRequests(ptoRows);
@@ -250,7 +235,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         setAllEmployeeRequests(employeeReqRows);
         setCompanyProfiles(profileRows);
         setMyPayslips(payslipRows);
-        setCsrComposition(csrTeams);
       } catch (err) {
         console.error("Failed to load employee requests:", err);
       } finally {
@@ -341,25 +325,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     [myRequests, requestTypeFilter]
   );
 
-  // Full company-wide visibility (every request, every section, including
-  // Attendance Disputes/Payroll Inquiries — which have no manager stage at
-  // all and go straight to HR/Finance). Manager-tier roles get the tab too,
-  // but scoped to their own team via visibleTeamProfileIds below, and the
-  // per-request Approve/Reject buttons already only render for whichever
-  // stage (manager/HR/accounting) the viewer actually has authority over
-  // (see canReviewCorrectionStage / canReviewPtoStage).
-  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
-  const canManageRequests = isFullRequestsAdmin || isAttendanceManagerTierRole(role, extraRoles);
-
-  const myProfile = useMemo(() => companyProfiles.find((p) => p.id === myProfileId) ?? null, [companyProfiles, myProfileId]);
-  // null = unrestricted (Admin/SuperAdmin/HR/Finance); a manager-tier viewer
-  // gets back their own id + anyone whose manager_name resolves to them +
-  // (for a CSR Manager/Team Leader) anyone on a CSR team they lead.
-  const visibleTeamProfileIds = useMemo(
-    () => (myProfile ? visibleAttendanceProfileIds(myProfile, companyProfiles, csrComposition) : null),
-    [myProfile, companyProfiles, csrComposition]
-  );
-
   // PTO eligibility: 1 year of tenure from hire date (falls back to account
   // creation date if HR hasn't set a hire date yet).
   const myCreatedAt = companyProfiles.find((p) => p.id === myProfileId)?.created_at ?? null;
@@ -398,23 +363,24 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   );
 
   // Deep link from a bell-icon notification straight into a specific tab
-  // (e.g. PTO/correction outcome -> "requests", new request submitted ->
-  // "manage", payroll generated -> "payroll").
+  // (e.g. PTO/correction outcome -> "requests", payroll generated ->
+  // "payroll"). Reviewing others' pending requests now happens entirely on
+  // Attendance Monitoring, not here.
   useEffect(() => {
     const tab = search.tab;
     if (!tab) return;
-    if (tab === "manage" && !canManageRequests) return;
-    if (["dashboard", "payroll", "attendance", "requests", "manage"].includes(tab)) {
+    if (["dashboard", "payroll", "attendance", "requests"].includes(tab)) {
       setActiveTab(tab as typeof activeTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.tab, canManageRequests]);
+  }, [search.tab]);
 
-  // Ping every HR/Finance/Admin in the company when a new request comes in,
-  // so they don't have to keep checking the Manage Requests tab manually.
-  // Uses the dedicated notifications table (not the messenger) — see
+  // Ping every HR/Finance/Admin in the company when a new request comes in
+  // — they now review it on Attendance Monitoring (PTO Management /
+  // Corrections / Disputes & Inquiries tabs) rather than here. Uses the
+  // dedicated notifications table (not the messenger) — see
   // src/lib/supabase/notifications.ts.
-  const notifyManagers = async (body: string) => {
+  const notifyManagers = async (body: string, linkTo = "/m/dashboard/attendance-monitoring") => {
     const recipients = companyProfiles.filter((p) => {
       if (p.id === myProfileId) return false;
       const primary = (p.role || "").toUpperCase();
@@ -428,65 +394,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           senderId: myProfileId,
           senderName: displayName || employee?.role || "Employee",
           body,
-          linkTo: "/m/dashboard/employee-self-service?tab=manage",
+          linkTo,
         }).catch((err) => console.error("Failed to notify", r.id, err))
       )
     );
-  };
-
-  // PTO and Time Correction both have a manager stage, so a manager-tier
-  // viewer sees their own team's pending requests here (visibleTeamProfileIds
-  // is null — unrestricted — for Admin/SuperAdmin/HR/Finance). Attendance
-  // Disputes/Payroll Inquiries have no manager stage at all — those go
-  // straight to HR/Finance, so managers never see them here.
-  const pendingPto = allPtoRequests.filter((r) => r.status === "pending" && (!visibleTeamProfileIds || visibleTeamProfileIds.has(r.profileId)));
-  const pendingCorrections = allCorrections.filter((r) => r.status === "pending" && (!visibleTeamProfileIds || visibleTeamProfileIds.has(r.profileId)));
-  const pendingEmployeeRequests = isFullRequestsAdmin ? allEmployeeRequests.filter((r) => r.status === "pending") : [];
-
-  const handlePtoStageAction = async (request: PtoRequestRow, stage: PtoStage, decision: "approved" | "rejected") => {
-    try {
-      await reviewPtoStage(request, stage, decision, myProfileId || "", displayName || "Employee");
-      await refreshRequests();
-    } catch (err) {
-      alert(`Failed to update PTO request: ${err instanceof Error ? err.message : "Unknown error"}`);
-    }
-  };
-
-  const handleCorrectionStageAction = async (correction: TimecardCorrectionRow, stage: CorrectionStage, decision: "approved" | "rejected") => {
-    try {
-      if (decision === "approved") {
-        const effectiveCheckIn = correction.correctedCheckIn || correction.originalCheckIn || "";
-        const effectiveCheckOut = correction.correctedCheckOut || correction.originalCheckOut || "";
-        const effectiveMealStart = correction.correctedMealStart || correction.originalMealStart || "";
-        const effectiveMealEnd = correction.correctedMealEnd || correction.originalMealEnd || "";
-        if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
-          alert(`Can't approve: check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
-          return;
-        }
-        if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
-          alert(`Can't approve: meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). This is usually an AM/PM mistake on the time picker — reject it and ask the employee to resubmit.`);
-          return;
-        }
-      }
-      await reviewCorrectionStage(correction, stage, decision, myProfileId || "", displayName || "Reviewer");
-      await refreshRequests();
-    } catch (err) {
-      alert(`Failed to update correction: ${err instanceof Error ? err.message : "Unknown error"}`);
-    }
-  };
-
-  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
-    try {
-      await updateEmployeeRequestStatus(id, status, myProfileId, responseNote[id]);
-      await refreshRequests();
-      setResponseNote((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-    } catch (err) {
-      alert(`Failed to update request: ${err instanceof Error ? err.message : "Unknown error"}`);
-    }
   };
 
   const tabs = [
@@ -494,7 +405,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     { id: "payroll", label: "My Payroll", icon: DollarSign },
     { id: "attendance", label: "My Attendance", icon: Clock },
     { id: "requests", label: "My Requests", icon: ListTodo },
-    ...(canManageRequests ? [{ id: "manage", label: "Manage Requests", icon: AlertCircle }] : []),
   ];
 
   const getStatusColor = (status: string) => {
@@ -580,7 +490,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   senderId: myProfileId,
                   senderName: displayName || "Employee",
                   body: `🗓️ New PTO Request from ${displayName || "an employee"} needs your approval: ${formData.leaveType}, ${formData.startDate} to ${formData.endDate}.`,
-                  linkTo: "/m/dashboard/employee-self-service?tab=manage",
+                  linkTo: "/m/dashboard/attendance-monitoring?tab=pto-management",
                 }).catch((err) => console.error("Failed to notify", r.id, err))
               )
             );
@@ -630,7 +540,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   senderId: myProfileId,
                   senderName: displayName || "Employee",
                   body: `🤒 New Sick Leave Request from ${displayName || "an employee"} needs your approval: ${formData.startDate} to ${formData.endDate}.`,
-                  linkTo: "/m/dashboard/employee-self-service?tab=manage",
+                  linkTo: "/m/dashboard/attendance-monitoring?tab=pto-management",
                 }).catch((err) => console.error("Failed to notify", r.id, err))
               )
             );
@@ -644,7 +554,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             details: formData.details,
             requestedBy: myProfileId,
           });
-          await notifyManagers(`⚠️ New Attendance Dispute from ${displayName || "an employee"}.`);
+          await notifyManagers(`⚠️ New Attendance Dispute from ${displayName || "an employee"}.`, "/m/dashboard/attendance-monitoring?tab=disputes-inquiries");
           break;
         case "correction": {
           if (!formData.correctionDate) {
@@ -721,7 +631,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   body: `🕐 New Time Correction Request from ${displayName || "an employee"} for ${formData.correctionDate}.`,
                   linkTo: r.id === myProfileId
                     ? "/m/dashboard/employee-self-service?tab=requests"
-                    : "/m/dashboard/employee-self-service?tab=manage",
+                    : "/m/dashboard/attendance-monitoring?tab=corrections",
                 }).catch((err) => console.error("Failed to notify", r.id, err))
               )
             );
@@ -735,7 +645,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             details: formData.details,
             requestedBy: myProfileId,
           });
-          await notifyManagers(`💰 New Payroll Inquiry from ${displayName || "an employee"}.`);
+          await notifyManagers(`💰 New Payroll Inquiry from ${displayName || "an employee"}.`, "/m/dashboard/attendance-monitoring?tab=disputes-inquiries");
           break;
       }
 
@@ -1462,279 +1372,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Manage Requests Tab — HR/Finance/Admin see the whole company;
-            manager-tier roles see this too now, scoped to their own team
-            (visibleTeamProfileIds) since PTO and Time Correction both have
-            a manager approval stage. Attendance Disputes/Payroll Inquiries
-            have no manager stage — HR/Finance/Admin only. */}
-        {activeTab === "manage" && canManageRequests && (
-          <div className="space-y-6">
-            {!isFullRequestsAdmin && (
-              <p className="text-xs text-slate-400 -mb-2">Showing your team's requests only.</p>
-            )}
-            <div className={`grid gap-4 ${isFullRequestsAdmin ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Pending PTO</p>
-                <p className="text-2xl font-bold text-yellow-300">{pendingPto.length}</p>
-              </div>
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <p className="text-xs text-slate-400 mb-1">Pending Corrections</p>
-                <p className="text-2xl font-bold text-yellow-300">{pendingCorrections.length}</p>
-              </div>
-              {isFullRequestsAdmin && (
-                <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                  <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
-                  <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Pending PTO */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">PTO Requests — Pending</h3>
-              {requestsLoading ? (
-                <p className="text-sm text-slate-400">Loading…</p>
-              ) : pendingPto.length === 0 ? (
-                <p className="text-sm text-slate-400">No pending PTO requests.</p>
-              ) : (
-                <div className="space-y-3">
-                  {pendingPto.map((r) => {
-                    const canManagerAct = r.managerStatus === "pending" && canReviewPtoStage(r, "manager", myProfileId, role, extraRoles);
-                    const canHrAct = r.hrStatus === "pending" && canReviewPtoStage(r, "hr", myProfileId, role, extraRoles);
-                    const canAccountingAct = r.accountingStatus === "pending" && canReviewPtoStage(r, "accounting", myProfileId, role, extraRoles);
-                    return (
-                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}</p>
-                            <p className="text-xs text-slate-400 mt-1">{r.startDate} to {r.endDate} ({r.hoursRequested}h)</p>
-                            {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
-                            <div className="flex gap-2 mt-2">
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
-                                {r.managerReviewedBy ? ` — ${profileName(r.managerReviewedBy)}` : ""}
-                              </span>
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
-                                {r.hrReviewedBy ? ` — ${profileName(r.hrReviewedBy)}` : ""}
-                              </span>
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
-                                {r.accountingReviewedBy ? ` — ${profileName(r.accountingReviewedBy)}` : ""}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex flex-col gap-2 shrink-0">
-                            {canManagerAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handlePtoStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (Mgr)
-                                </button>
-                                <button type="button" onClick={() => handlePtoStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {canHrAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handlePtoStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (HR)
-                                </button>
-                                <button type="button" onClick={() => handlePtoStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {canAccountingAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (Acct)
-                                </button>
-                                <button type="button" onClick={() => handlePtoStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {!canManagerAct && !canHrAct && !canAccountingAct && (
-                              <span className="text-xs text-slate-500">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Pending Time Corrections */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Time Corrections — Pending</h3>
-              {requestsLoading ? (
-                <p className="text-sm text-slate-400">Loading…</p>
-              ) : pendingCorrections.length === 0 ? (
-                <p className="text-sm text-slate-400">No pending time correction requests.</p>
-              ) : (
-                <div className="space-y-3">
-                  {pendingCorrections.map((r) => {
-                    const canManagerAct = r.managerStatus === "pending" && canReviewCorrectionStage(r, "manager", myProfileId, role, extraRoles);
-                    const canHrAct = r.hrStatus === "pending" && canReviewCorrectionStage(r, "hr", myProfileId, role, extraRoles);
-                    const canAccountingAct = r.accountingStatus === "pending" && canReviewCorrectionStage(r, "accounting", myProfileId, role, extraRoles);
-                    return (
-                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-white">{profileName(r.profileId)} — {r.workDate}</p>
-                            <p className="text-xs text-slate-400 mt-1">
-                              {r.originalCheckIn || "—"} → {r.originalCheckOut || "—"} &nbsp;⟶&nbsp; requested {r.correctedCheckIn || "—"} → {r.correctedCheckOut || "—"}
-                            </p>
-                            {(r.correctedMealStart || r.correctedMealEnd) && (
-                              <p className="text-xs text-slate-400 mt-0.5">
-                                Meal: {r.originalMealStart || "—"} → {r.originalMealEnd || "—"} &nbsp;⟶&nbsp; requested {r.correctedMealStart || "—"} → {r.correctedMealEnd || "—"}
-                              </p>
-                            )}
-                            {r.reason && <p className="text-sm text-slate-300 mt-2">{r.reason}</p>}
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                Manager: {r.managerStatus.charAt(0).toUpperCase() + r.managerStatus.slice(1)}
-                              </span>
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                HR: {r.hrStatus.charAt(0).toUpperCase() + r.hrStatus.slice(1)}
-                              </span>
-                              <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                r.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                                : r.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                                : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                              }`}>
-                                Accounting: {r.accountingStatus.charAt(0).toUpperCase() + r.accountingStatus.slice(1)}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex flex-col gap-2 shrink-0">
-                            {canManagerAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (Mgr)
-                                </button>
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "manager", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {canHrAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (HR)
-                                </button>
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "hr", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {canAccountingAct && (
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "approved")} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition">
-                                  Approve (Acct)
-                                </button>
-                                <button type="button" onClick={() => handleCorrectionStageAction(r, "accounting", "rejected")} className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition">
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {!canManagerAct && !canHrAct && !canAccountingAct && (
-                              <span className="text-xs text-slate-500">{r.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Pending Attendance Disputes & Payroll Inquiries — no manager
-                stage exists for these, so only HR/Finance/Admin see it. */}
-            {isFullRequestsAdmin && (
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes & Payroll Inquiries — Pending</h3>
-              {requestsLoading ? (
-                <p className="text-sm text-slate-400">Loading…</p>
-              ) : pendingEmployeeRequests.length === 0 ? (
-                <p className="text-sm text-slate-400">No pending disputes or inquiries.</p>
-              ) : (
-                <div className="space-y-3">
-                  {pendingEmployeeRequests.map((r) => (
-                    <div key={r.id} className="border border-white/10 rounded-lg p-3">
-                      <p className="text-sm font-semibold text-white">
-                        {profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
-                      <p className="text-sm text-slate-300 mt-2">{r.details}</p>
-                      <textarea
-                        placeholder="Optional response note (visible to the employee)..."
-                        value={responseNote[r.id] || ""}
-                        onChange={(e) => setResponseNote({ ...responseNote, [r.id]: e.target.value })}
-                        rows={2}
-                        className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
-                      />
-                      <div className="flex gap-2 mt-2">
-                        {r.requestType === "attendance_dispute" ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleEmployeeRequestAction(r.id, "approved")}
-                              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleEmployeeRequestAction(r.id, "rejected")}
-                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
-                            >
-                              Reject
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleEmployeeRequestAction(r.id, "closed")}
-                            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition"
-                          >
-                            Respond &amp; Close
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            )}
           </div>
         )}
       </main>

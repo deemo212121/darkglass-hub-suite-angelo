@@ -449,7 +449,7 @@ export async function reviewPtoStage(
             senderId: reviewerId,
             senderName: reviewerName,
             body: `🗓️ PTO request from ${requesterName} (${dateRange}) was approved by the manager — awaiting HR or Accounting review.`,
-            linkTo: "/m/dashboard/employee-self-service?tab=manage",
+            linkTo: "/m/dashboard/attendance-monitoring?tab=pto-management",
           })
         )
       );
