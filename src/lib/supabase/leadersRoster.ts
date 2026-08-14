@@ -84,12 +84,21 @@ export async function upsertLeadersRosterRow(input: {
   return data.id;
 }
 
-/** Drag-drop reposition — only touches the fields a move can change (department block + its ordering), never the role/name text or reporting line. */
-export async function moveLeadersRosterRow(id: string, next: { department: string; deptSort: number; rowSort: number }): Promise<void> {
-  const { error } = await supabase
-    .from("hr_leaders_roster")
-    .update({ department: next.department, dept_sort: next.deptSort, row_sort: next.rowSort })
-    .eq("id", id);
+/**
+ * Drag-drop reposition — department block + its ordering, and now
+ * (dropping a row onto another row, not just between rows) the
+ * reporting line too, so the tree itself is draggable, not just each
+ * department's flat order. `reportsTo` is only included in the update
+ * when the drop actually changed it (undefined = leave as-is) — a plain
+ * reorder within the same parent doesn't need to touch it.
+ */
+export async function moveLeadersRosterRow(
+  id: string,
+  next: { department: string; deptSort: number; rowSort: number; reportsTo?: string | null }
+): Promise<void> {
+  const payload: Record<string, unknown> = { department: next.department, dept_sort: next.deptSort, row_sort: next.rowSort };
+  if (next.reportsTo !== undefined) payload.reports_to = next.reportsTo;
+  const { error } = await supabase.from("hr_leaders_roster").update(payload).eq("id", id);
   if (error) throw new Error(error.message);
 }
 

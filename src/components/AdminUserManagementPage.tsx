@@ -28,6 +28,20 @@ function topTierRank(record: UserManagementRecord): number {
   return 2;
 }
 
+/**
+ * Same three-bucket color coding as the Leaders tab's own tier system
+ * (senior/manager/standard) — derived from the real role code here
+ * instead of a hand-picked field, since Hierarchy is built from actual
+ * accounts, not a curated roster.
+ */
+type HierarchyTier = "senior" | "manager" | "standard";
+function hierarchyRoleTier(roleCode: string | null | undefined): HierarchyTier {
+  const r = normalizeRole(roleCode);
+  if (["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "TECHNICAL_DIRECTOR", "SENIOR_DIRECTOR"].includes(r) || r.includes("SENIOR")) return "senior";
+  if (r.includes("MANAGER") || r.includes("TEAM_LEADER") || r.includes("DIRECTOR") || r === "DISPATCHER") return "manager";
+  return "standard";
+}
+
 type ViewMode = "list" | "hierarchy";
 
 interface NewUserFormData {
@@ -418,26 +432,62 @@ const EMPTY_ANCESTORS: ReadonlySet<string> = new Set();
  * renders, making them impossible to find without first scrolling past
  * the whole thing. Non-root nodes still default open, matching this
  * tree's previous always-expanded behavior once you've opened a root.
+ *
+ * Draggable — native HTML5 DnD, same technique as CsrTeamComposition.tsx
+ * / the Leaders tab's own reporting tree: drag one person's row onto
+ * another to set the dragged person's manager_name to that row's name
+ * (see moveUserManagerTo on the parent). No inline-editable inputs live
+ * inside this row, so unlike Leaders' dedicated grip handle, the whole
+ * row itself is the drag source — nothing for it to conflict with.
  */
 function HierarchyTreeNode({
   record, childrenByManagerName, moduleSlug, submoduleSlug, ancestors, isRoot, subtreeSize,
+  draggingId, overName, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }: {
-  record: UserManagementRecord;
-  childrenByManagerName: Map<string, UserManagementRecord[]>;
+  record: UserRow;
+  childrenByManagerName: Map<string, UserRow[]>;
   moduleSlug: string;
   submoduleSlug: string;
   ancestors: ReadonlySet<string>;
   isRoot?: boolean;
   subtreeSize: (userName: string) => number;
+  draggingId: string | null;
+  overName: string | null;
+  onDragStart: (profileId: string) => (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  onDragOver: (userName: string) => (e: React.DragEvent) => void;
+  onDragLeave: (userName: string) => () => void;
+  onDrop: (userName: string) => (e: React.DragEvent) => void;
 }) {
   const children = ancestors.has(record.userName) ? [] : (childrenByManagerName.get(record.userName) ?? []);
   const hasChildren = children.length > 0;
   const childAncestors = useMemo(() => new Set(ancestors).add(record.userName), [ancestors, record.userName]);
   const [expanded, setExpanded] = useState(!isRoot);
+  const isDragging = draggingId === record.profileId;
+  const isOver = overName === record.userName;
+  const tier = hierarchyRoleTier(record.type);
+  const tierBoxClass =
+    tier === "senior"
+      ? "border-cyan-400/30 bg-cyan-500/10 hover:border-cyan-400/50"
+      : tier === "manager"
+      ? "border-rose-400/30 bg-rose-500/10 hover:border-rose-400/50"
+      : "border-white/10 bg-white/5 hover:border-white/20";
+  const tierTextClass = tier === "senior" ? "text-cyan-300" : tier === "manager" ? "text-rose-300" : "text-slate-400";
 
   return (
-    <div>
-      <div className="flex items-center gap-2.5 py-1.5">
+    <div className="mb-1.5 last:mb-0">
+      <div
+        draggable
+        onDragStart={onDragStart(record.profileId)}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver(record.userName)}
+        onDragLeave={onDragLeave(record.userName)}
+        onDrop={onDrop(record.userName)}
+        title="Drag onto another person to make them this person's manager"
+        className={`flex items-center gap-2.5 py-1.5 px-2.5 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
+          isOver ? "border-primary bg-white/10" : tierBoxClass
+        } ${isDragging ? "opacity-50" : ""}`}
+      >
         <button
           type="button"
           onClick={() => hasChildren && setExpanded((e) => !e)}
@@ -455,7 +505,7 @@ function HierarchyTreeNode({
           <UserLink moduleSlug={moduleSlug} submoduleSlug={submoduleSlug} userId={record.loginName}>
             {record.userName}
           </UserLink>
-          <span className="text-xs text-slate-400 whitespace-nowrap">({roleDisplay(record.type)})</span>
+          <span className={`text-xs whitespace-nowrap ${tierTextClass}`}>({roleDisplay(record.type)})</span>
           {hasChildren && !expanded && (
             <span className="text-xs text-slate-500 whitespace-nowrap">
               — {subtreeSize(record.userName)} {subtreeSize(record.userName) === 1 ? "report" : "reports"} total
@@ -464,7 +514,7 @@ function HierarchyTreeNode({
         </div>
       </div>
       {hasChildren && expanded && (
-        <div className="ml-[7px] border-l border-white/15 pl-[17px]">
+        <div className="ml-[7px] mt-1.5 border-l border-white/15 pl-[17px]">
           {children.map((child) => (
             <HierarchyTreeNode
               key={child.loginName}
@@ -474,6 +524,13 @@ function HierarchyTreeNode({
               submoduleSlug={submoduleSlug}
               ancestors={childAncestors}
               subtreeSize={subtreeSize}
+              draggingId={draggingId}
+              overName={overName}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
             />
           ))}
         </div>
@@ -786,7 +843,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const activeForHierarchy = useMemo(() => filtered.filter((r) => r.isActive !== false), [filtered]);
 
   const usersByName = useMemo(() => {
-    const map = new Map<string, UserManagementRecord>();
+    const map = new Map<string, UserRow>();
     activeForHierarchy.forEach((r) => { if (r.userName) map.set(r.userName, r); });
     return map;
   }, [activeForHierarchy]);
@@ -798,7 +855,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // where the ROOTS themselves sort (see hierarchyRoots), never whether
   // someone with a real manager gets nested.
   const childrenByManagerName = useMemo(() => {
-    const map = new Map<string, UserManagementRecord[]>();
+    const map = new Map<string, UserRow[]>();
     activeForHierarchy.forEach((record) => {
       if (!record.manager) return;
       map.set(record.manager, [...(map.get(record.manager) ?? []), record]);
@@ -806,6 +863,86 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     for (const list of map.values()) list.sort((a, b) => a.userName.localeCompare(b.userName));
     return map;
   }, [activeForHierarchy]);
+
+  // Drag-and-drop manager reassignment (native HTML5 DnD — same
+  // technique as CsrTeamComposition.tsx / the Leaders tab's own
+  // reporting-tree drag). manager_name is free text with no DB
+  // constraint against cycles, so dropping someone onto their own
+  // descendant is blocked client-side.
+  const [hierarchyDraggingId, setHierarchyDraggingId] = useState<string | null>(null);
+  const [hierarchyOverName, setHierarchyOverName] = useState<string | null>(null);
+  const ROOT_DROP_KEY = "__root__";
+
+  const getHierarchyDescendantNames = (userName: string): Set<string> => {
+    const result = new Set<string>();
+    const stack = (childrenByManagerName.get(userName) ?? []).map((r) => r.userName);
+    while (stack.length > 0) {
+      const name = stack.pop()!;
+      if (result.has(name)) continue;
+      result.add(name);
+      stack.push(...(childrenByManagerName.get(name) ?? []).map((r) => r.userName));
+    }
+    return result;
+  };
+
+  /** newManagerName "" clears it (makes them a root). */
+  const moveUserManagerTo = (profileId: string, newManagerName: string) => {
+    const moving = users.find((u) => u.profileId === profileId);
+    if (!moving || moving.userName === newManagerName) return;
+    if (newManagerName && getHierarchyDescendantNames(moving.userName).has(newManagerName)) return;
+
+    const prevManager = moving.manager;
+    setUsers((prev) => prev.map((u) => (u.profileId === profileId ? { ...u, manager: newManagerName } : u)));
+    updateCompanyUser(profileId, { managerName: newManagerName }).catch((err) => {
+      console.error("Failed to update manager via drag:", err);
+      setUsers((prev) => prev.map((u) => (u.profileId === profileId ? { ...u, manager: prevManager } : u)));
+      alert(`Failed to update manager: ${err instanceof Error ? err.message : "Unknown error"}`);
+    });
+  };
+
+  const handleHierarchyDragStart = (profileId: string) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", profileId);
+    requestAnimationFrame(() => setHierarchyDraggingId(profileId));
+  };
+  const handleHierarchyDragEnd = () => {
+    setHierarchyDraggingId(null);
+    setHierarchyOverName(null);
+  };
+  const handleHierarchyDragOver = (userName: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    if (hierarchyOverName !== userName) setHierarchyOverName(userName);
+  };
+  const handleHierarchyDragLeave = (userName: string) => () => {
+    setHierarchyOverName((o) => (o === userName ? null : o));
+  };
+  const handleHierarchyDrop = (userName: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData("text/plain") || hierarchyDraggingId;
+    if (draggedId) moveUserManagerTo(draggedId, userName);
+    setHierarchyDraggingId(null);
+    setHierarchyOverName(null);
+  };
+  // Fallback drop target — dropping into empty panel space (not onto any
+  // specific person) clears the manager, making them a root.
+  const handleHierarchyRootDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (hierarchyOverName !== ROOT_DROP_KEY) setHierarchyOverName(ROOT_DROP_KEY);
+  };
+  const handleHierarchyRootDragLeave = () => {
+    setHierarchyOverName((o) => (o === ROOT_DROP_KEY ? null : o));
+  };
+  const handleHierarchyRootDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData("text/plain") || hierarchyDraggingId;
+    if (draggedId) moveUserManagerTo(draggedId, "");
+    setHierarchyDraggingId(null);
+    setHierarchyOverName(null);
+  };
 
   const subtreeSize = useMemo(() => {
     const cache = new Map<string, number>();
@@ -1285,7 +1422,20 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </table>
           </div>
         ) : (
-          <div className="mt-5 rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+          <div
+            onDragOver={handleHierarchyRootDragOver}
+            onDragLeave={handleHierarchyRootDragLeave}
+            onDrop={handleHierarchyRootDrop}
+            title="Drop here to clear a manager (make them top-level)"
+            className={`mt-5 rounded-xl border p-5 text-white backdrop-blur-md transition-colors ${
+              hierarchyOverName === ROOT_DROP_KEY ? "border-primary bg-white/12" : "border-white/15 bg-white/8"
+            }`}
+          >
+            <div className="mb-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-cyan-400" /> Senior / Director / Admin</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rose-400" /> Manager / Team Leader</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-500" /> Everyone else</span>
+            </div>
             {hierarchyRoots.length === 0 ? (
               <p className="py-6 text-center text-sm text-slate-400">No hierarchy to show yet.</p>
             ) : (
@@ -1299,6 +1449,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   ancestors={EMPTY_ANCESTORS}
                   subtreeSize={subtreeSize}
                   isRoot
+                  draggingId={hierarchyDraggingId}
+                  overName={hierarchyOverName}
+                  onDragStart={handleHierarchyDragStart}
+                  onDragEnd={handleHierarchyDragEnd}
+                  onDragOver={handleHierarchyDragOver}
+                  onDragLeave={handleHierarchyDragLeave}
+                  onDrop={handleHierarchyDrop}
                 />
               ))
             )}

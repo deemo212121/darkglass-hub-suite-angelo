@@ -645,7 +645,39 @@ async function mirrorSubmissionFiles(
 // deliberately dependency-free so it stays portable across whatever
 // runtime ends up building it (Cloudflare Worker today, previously a
 // Vercel nodejs20.x function).
-const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
+// Hardcoded fallback — used when a company has no override rows in
+// notification_role_gates for trigger "jotform_submission_hr" yet (see
+// getJotformNotifyRoles below). Must match this trigger's defaultRoles
+// entry in src/lib/supabase/notificationRoleGates.ts (the client-side
+// registry the Accessibility Management grid reads/writes) so the two
+// stay in sync.
+const JOTFORM_HR_ROLES_DEFAULT = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
+const JOTFORM_NOTIFY_TRIGGER_KEY = "jotform_submission_hr";
+
+/**
+ * Configurable via Accessibility Management's Notification Access by Role
+ * grid — a plain raw-REST read (this file is deliberately dependency-free,
+ * no supabase-js client) mirroring notificationRoleGates.ts's client-side
+ * getEffectiveNotificationRoles logic: a company's override rows win if
+ * any exist, otherwise fall back to JOTFORM_HR_ROLES_DEFAULT. Any fetch
+ * failure also falls back to the default rather than notifying nobody.
+ */
+async function getJotformNotifyRoles(supabaseUrl: string, serviceKey: string, companyId: string): Promise<Set<string>> {
+  try {
+    const url =
+      `${supabaseUrl}/rest/v1/notification_role_gates` +
+      `?select=role` +
+      `&company_id=eq.${encodeURIComponent(companyId)}` +
+      `&trigger_key=eq.${JOTFORM_NOTIFY_TRIGGER_KEY}`;
+    const res = await fetch(url, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } });
+    if (!res.ok) return JOTFORM_HR_ROLES_DEFAULT;
+    const rows = (await res.json()) as Array<{ role: string }>;
+    if (rows.length === 0) return JOTFORM_HR_ROLES_DEFAULT;
+    return new Set(rows.map((r) => r.role));
+  } catch {
+    return JOTFORM_HR_ROLES_DEFAULT;
+  }
+}
 
 /**
  * Look up HR-tier recipients from Supabase `profiles` — the app's actual
@@ -654,16 +686,19 @@ const JOTFORM_HR_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIO
  * it here always returned zero recipients for any account created
  * recently).
  *
- * Matches HR/Admin/Superadmin/Manager as either the primary `role` or
- * anywhere in `extra_roles` (sub-roles), scoped to the target company and
- * active accounts only. Uses the service-role key to bypass RLS — this
- * webhook has no logged-in Supabase session to scope a normal query to.
+ * Matches whichever role(s) getJotformNotifyRoles resolves to (HR/Admin/
+ * Superadmin/Manager/Senior Manager by default, configurable) as either
+ * the primary `role` or anywhere in `extra_roles` (sub-roles), scoped to
+ * the target company and active accounts only. Uses the service-role key
+ * to bypass RLS — this webhook has no logged-in Supabase session to scope
+ * a normal query to.
  */
 async function findHrFirebaseUids(
   supabaseUrl: string,
   serviceKey: string,
   companyId: string
 ): Promise<string[]> {
+  const notifyRoles = await getJotformNotifyRoles(supabaseUrl, serviceKey, companyId);
   const url =
     `${supabaseUrl}/rest/v1/profiles` +
     `?select=firebase_uid,role,extra_roles` +
@@ -678,13 +713,45 @@ async function findHrFirebaseUids(
     role: string | null;
     extra_roles: string[] | null;
   }>;
-  return rows
+  const candidateUids = rows
     .filter((r) => {
       const roles = [r.role, ...(r.extra_roles ?? [])].map((v) => String(v ?? "").trim().toUpperCase());
-      return roles.some((v) => JOTFORM_HR_ROLES.has(v));
+      return roles.some((v) => notifyRoles.has(v));
     })
     .map((r) => r.firebase_uid)
     .filter((uid): uid is string => Boolean(uid));
+  return filterOptedInUids(supabaseUrl, serviceKey, companyId, candidateUids);
+}
+
+/**
+ * Per-person opt-outs (Accessibility Management's opt-out grid, migration
+ * 0172) layered on top of the role-based routing above — a person whose
+ * role qualifies can still have personally opted out of this trigger.
+ * Fails open (returns the input unfiltered) on any error rather than
+ * silently notifying nobody.
+ */
+async function filterOptedInUids(
+  supabaseUrl: string,
+  serviceKey: string,
+  companyId: string,
+  uids: string[]
+): Promise<string[]> {
+  if (uids.length === 0) return uids;
+  try {
+    const url =
+      `${supabaseUrl}/rest/v1/notification_user_opt_outs` +
+      `?select=firebase_uid` +
+      `&company_id=eq.${encodeURIComponent(companyId)}` +
+      `&trigger_key=eq.${JOTFORM_NOTIFY_TRIGGER_KEY}` +
+      `&firebase_uid=in.(${uids.map((u) => encodeURIComponent(u)).join(",")})`;
+    const res = await fetch(url, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } });
+    if (!res.ok) return uids;
+    const rows = (await res.json()) as Array<{ firebase_uid: string }>;
+    const optedOut = new Set(rows.map((r) => r.firebase_uid));
+    return uids.filter((uid) => !optedOut.has(uid));
+  } catch {
+    return uids;
+  }
 }
 
 /**

@@ -18,13 +18,8 @@
 
 import { supabase } from "./supabase/client";
 import { createNotification } from "./supabase/notifications";
-
-/** Roles that can approve/reject a Truck Stock request at all — who gets
- * notified about a new one, and (combined with a branch match) who can
- * act on it. The Truck Stock Requests tab itself is visible to everyone,
- * not gated by this — see canApproveTruckStockPull for the actual
- * per-row, branch-scoped check. */
-const APPROVER_ROLE_CODES = new Set<string>(["PARTS_MANAGER", "ADMIN", "SUPERADMIN"]);
+import { getEffectiveNotificationRoles } from "./supabase/notificationRoleGates";
+import { filterOptedIn } from "./supabase/notificationOptOuts";
 
 /**
  * Whether the given role/branch can approve/reject a pull request FROM
@@ -48,40 +43,57 @@ export function canApproveTruckStockPull(
 }
 
 /**
- * Parts Managers assigned to `branch` specifically — falls back to every
- * Parts Manager/Admin/SuperAdmin company-wide if nobody is assigned
- * there, so a request never silently strands with zero possible
- * approvers just because a branch has no Parts Manager on file yet.
- * Shared by both the ticket-driven pull requests below (branch = where
- * stock is being pulled FROM) and the branch transfer requests further
- * down (branch = where stock is being sent TO).
+ * Approver-role holders assigned to `branch` specifically — falls back to
+ * every approver-role holder company-wide if nobody is assigned there, so
+ * a request never silently strands with zero possible approvers just
+ * because a branch has no one on file yet. Shared by both the
+ * ticket-driven pull requests below (branch = where stock is being
+ * pulled FROM) and the branch transfer requests further down (branch =
+ * where stock is being sent TO).
+ *
+ * Which roles count as "approver" for this purpose is configurable — see
+ * notificationRoleGates.ts's "truck_stock_approver" trigger (defaults to
+ * Parts Manager, Admin, SuperAdmin), and a specific person can be opted
+ * out on top of that (notificationOptOuts.ts) even if their role
+ * qualifies. Note this only controls who gets NOTIFIED/considered here —
+ * canApproveTruckStockPull's own hardcoded "Admin/SuperAdmin can always
+ * approve anything" rule is a separate authorization check, not a
+ * notification-routing one, and stays as-is.
  */
 async function findApproverProfileIdsForBranch(branch: string): Promise<string[]> {
+  const approverRoles = await getEffectiveNotificationRoles("truck_stock_approver");
+  if (approverRoles.length === 0) return [];
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, role, extra_roles, assigned_branch")
+    .select("id, firebase_uid, role, extra_roles, assigned_branch")
     .eq("is_active", true);
   if (error) {
     console.warn("[truckStockNotify] findApproverProfileIdsForBranch error:", error.message);
     return [];
   }
   const rows = data ?? [];
-  const isPartsManager = (r: any) => {
+  const isApprover = (r: any) => {
     const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
-    return roles.includes("PARTS_MANAGER");
+    return roles.some((v) => approverRoles.includes(v));
   };
-  const atBranch = rows
-    .filter((r: any) => isPartsManager(r) && String(r.assigned_branch ?? "").trim().toLowerCase() === branch.trim().toLowerCase())
-    .map((r: any) => r.id as string);
-  if (atBranch.length > 0) return atBranch;
-  // Fallback: no Parts Manager on file for this branch — notify every
-  // company-wide approver instead (Parts Manager anywhere, or Admin/SuperAdmin).
-  return rows
-    .filter((r: any) => {
-      const roles = [r.role, ...(r.extra_roles ?? [])].map((v: unknown) => String(v ?? "").trim().toUpperCase());
-      return roles.some((v) => APPROVER_ROLE_CODES.has(v));
-    })
-    .map((r: any) => r.id as string);
+  // filterOptedIn works in firebase_uid space; keep a uid->profile-id map
+  // so the return value can stay in profile-id space (what createNotification expects).
+  const idByUid = new Map<string, string>();
+  for (const r of rows) {
+    if (r.firebase_uid) idByUid.set(r.firebase_uid as string, r.id as string);
+  }
+  const optedInIds = async (matched: any[]) => {
+    const uids = matched.map((r) => r.firebase_uid as string).filter(Boolean);
+    const optedIn = await filterOptedIn(uids, "truck_stock_approver");
+    return optedIn.map((uid) => idByUid.get(uid)).filter((id): id is string => Boolean(id));
+  };
+  const atBranch = rows.filter(
+    (r: any) => isApprover(r) && String(r.assigned_branch ?? "").trim().toLowerCase() === branch.trim().toLowerCase()
+  );
+  if (atBranch.length > 0) return optedInIds(atBranch);
+  // Fallback: nobody on file for this branch specifically — notify every
+  // company-wide approver-role holder instead.
+  return optedInIds(rows.filter(isApprover));
 }
 
 /** Ping the source branch's Parts Manager(s) that a pull request needs review. Fire-and-forget. */

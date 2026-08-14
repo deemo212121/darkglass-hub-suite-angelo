@@ -21,6 +21,8 @@ import { getPendingDoneItems, clearPendingDoneItems, PARTS_DONE_QUEUE_EVENT, typ
 import { notifyPartsManagers } from "@/lib/partsNotify";
 import { groupBranchesByManager } from "@/lib/supabase/partsManagerBranches";
 import { getBranchProgress, formatBranchProgressLine, type BranchProgress } from "@/lib/partsBranchProgress";
+import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
+import { filterOptedIn } from "@/lib/supabase/notificationOptOuts";
 import { sendNotification } from "@/lib/firebase/notifications";
 import { ArrowRight, ChevronLeft, ChevronDown, ChevronUp, CheckCheck } from "lucide-react";
 
@@ -116,21 +118,30 @@ function ModuleIndex() {
     setImDoneSending(true);
     setImDoneMessage(null);
     try {
-      const { byManager, unassignedBranches } = await groupBranchesByManager(pendingBranches);
+      const notifyRoles = await getEffectiveNotificationRoles("parts_done_digest");
+      const { byManager, unassignedBranches } = await groupBranchesByManager(pendingBranches, notifyRoles);
       const actor = displayName || email || "A team member";
       const lineFor = (branch: string) => {
         const progress = branchProgress.find((p) => p.branch === branch);
         return progress ? formatBranchProgressLine(progress) : `${branch} Parts: progress unavailable`;
       };
 
+      // Per-user opt-outs (Accessibility Management > Notification Access
+      // by Role's "opt out" grid) layer on top of the role-based routing
+      // above — a manager whose role qualifies can still have personally
+      // opted out of this specific trigger.
+      const managerUids = await filterOptedIn(Array.from(byManager.keys()), "parts_done_digest");
+      const optedInManagers = new Set(managerUids);
+
       const sends: Promise<void>[] = [];
       for (const [uid, branches] of byManager) {
+        if (!optedInManagers.has(uid)) continue;
         const body = `${actor} update — ${branches.map(lineFor).join(" • ")}`;
         sends.push(sendNotification([uid], { kind: "part_status_change", title: "Parts done", body }));
       }
       if (unassignedBranches.length > 0) {
         const body = `${actor} update (no assigned Parts Manager found for these branches) — ${unassignedBranches.map(lineFor).join(" • ")}`;
-        sends.push(notifyPartsManagers(companyId, { kind: "part_status_change", title: "Parts done", body }));
+        sends.push(notifyPartsManagers(companyId, notifyRoles, "parts_done_digest", { kind: "part_status_change", title: "Parts done", body }));
       }
       await Promise.all(sends);
 

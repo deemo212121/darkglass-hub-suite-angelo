@@ -8,6 +8,8 @@ import { ROLE_OPTIONS, ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates } from "@/lib/moduleAccess";
 import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
+import { NOTIFICATION_TRIGGERS, getNotificationRoleGateOverrides, setNotificationRoleGateOverride } from "@/lib/supabase/notificationRoleGates";
+import { getNotificationOptOuts, setUserNotificationOptOut } from "@/lib/supabase/notificationOptOuts";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 interface Props {
@@ -47,6 +49,23 @@ function GateColGroup() {
   return (
     <colgroup>
       {GATE_COL_WIDTHS.map((w, i) => (
+        <col key={i} style={{ width: w }} />
+      ))}
+    </colgroup>
+  );
+}
+
+// Fourth grid, further down still: per-user notification opt-outs. One
+// column per NOTIFICATION_TRIGGERS entry — wider than a role-code column
+// since trigger labels are longer than role labels.
+const TRIGGER_COL_W = 170;
+const OPTOUT_COL_WIDTHS = [NAME_COL_W, ROLE_COL_W, ...NOTIFICATION_TRIGGERS.map(() => TRIGGER_COL_W)];
+const OPTOUT_TABLE_WIDTH = OPTOUT_COL_WIDTHS.reduce((sum, w) => sum + w, 0);
+
+function OptOutColGroup() {
+  return (
+    <colgroup>
+      {OPTOUT_COL_WIDTHS.map((w, i) => (
         <col key={i} style={{ width: w }} />
       ))}
     </colgroup>
@@ -108,6 +127,139 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // modules doesn't force a long scroll before you reach the one module
   // you actually came to edit.
   const [expandedGateModules, setExpandedGateModules] = useState<Set<string>>(new Set());
+
+  // Notification role-gate grid (third section, below) — which role(s)
+  // get notified by each of the app's role-configurable notification
+  // triggers (see notificationRoleGates.ts for the full list and why
+  // only some notifications qualify — several go to named individuals
+  // or back to whoever requested something, not a configurable role).
+  const [notificationGates, setNotificationGates] = useState<Record<string, string[]>>({});
+  const [notificationGatesLoading, setNotificationGatesLoading] = useState(true);
+  const [savingNotificationCell, setSavingNotificationCell] = useState<string | null>(null);
+  const notificationTableScrollRef = useRef<HTMLDivElement>(null);
+  const notificationHeaderScrollRef = useRef<HTMLDivElement>(null);
+
+  const loadNotificationGates = async () => {
+    setNotificationGatesLoading(true);
+    try {
+      const overrides = await getNotificationRoleGateOverrides();
+      const effective: Record<string, string[]> = {};
+      for (const trigger of NOTIFICATION_TRIGGERS) {
+        effective[trigger.key] = overrides[trigger.key] ?? trigger.defaultRoles;
+      }
+      setNotificationGates(effective);
+    } finally {
+      setNotificationGatesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadNotificationGates();
+  }, []);
+
+  const handleNotificationGateToggle = async (triggerKey: string, roleCode: string, checked: boolean) => {
+    const prev = notificationGates[triggerKey] ?? [];
+    const next = checked ? Array.from(new Set([...prev, roleCode])) : prev.filter((r) => r !== roleCode);
+
+    setNotificationGates((p) => ({ ...p, [triggerKey]: next }));
+    const cellKey = `${triggerKey}:${roleCode}`;
+    setSavingNotificationCell(cellKey);
+    try {
+      await setNotificationRoleGateOverride(triggerKey, next);
+    } catch (err) {
+      setNotificationGates((p) => ({ ...p, [triggerKey]: prev }));
+      alert(`Failed to update notification access: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingNotificationCell(null);
+    }
+  };
+
+  // Per-user notification opt-outs (fourth section, below) — layered on
+  // top of Notification Access by Role: a user's role can make them a
+  // candidate, but an admin can exclude a specific person here anyway.
+  // Reuses this page's own `users`/`roleGroups`/`filtered`/`search`/
+  // `expandedRoleGroups` state from the first grid above — same people,
+  // just different columns/checkboxes.
+  const [notificationOptOuts, setNotificationOptOuts] = useState<Record<string, Set<string>>>({});
+  const [optOutsLoading, setOptOutsLoading] = useState(true);
+  const [savingOptOutCell, setSavingOptOutCell] = useState<string | null>(null);
+  const optOutTableScrollRef = useRef<HTMLDivElement>(null);
+  const optOutHeaderScrollRef = useRef<HTMLDivElement>(null);
+
+  const loadNotificationOptOuts = async () => {
+    setOptOutsLoading(true);
+    try {
+      setNotificationOptOuts(await getNotificationOptOuts());
+    } finally {
+      setOptOutsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadNotificationOptOuts();
+  }, []);
+
+  // Checkbox reads "notify this user" (checked = will get it, matching
+  // this page's other grids' "checked = has it" convention) — internally
+  // that's the ABSENCE of an opt-out row, so a checked->unchecked toggle
+  // here is what actually creates one.
+  const handleOptOutToggle = async (user: ProfileRow, triggerKey: string, notifyChecked: boolean) => {
+    if (!user.firebase_uid) return;
+    const optedOut = !notifyChecked;
+    const prevSet = notificationOptOuts[triggerKey] ?? new Set<string>();
+    const nextSet = new Set(prevSet);
+    if (optedOut) nextSet.add(user.firebase_uid);
+    else nextSet.delete(user.firebase_uid);
+
+    setNotificationOptOuts((p) => ({ ...p, [triggerKey]: nextSet }));
+    const cellKey = `${user.id}:${triggerKey}`;
+    setSavingOptOutCell(cellKey);
+    try {
+      await setUserNotificationOptOut(user.firebase_uid, triggerKey, optedOut);
+    } catch (err) {
+      setNotificationOptOuts((p) => ({ ...p, [triggerKey]: prevSet }));
+      alert(`Failed to update notification opt-out: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingOptOutCell(null);
+    }
+  };
+
+  const renderOptOutUserRow = (user: ProfileRow) => {
+    const primary = normalizeRole(user.role);
+    return (
+      <tr key={user.id} className="border-b border-white/5 hover:bg-white/5">
+        <td
+          className="px-3 py-2 truncate font-medium text-white sticky left-0 z-10 bg-slate-950"
+          title={user.display_name || user.email || undefined}
+        >
+          {user.display_name || user.email}
+        </td>
+        <td className="px-3 py-2 truncate text-slate-300" title={ROLE_LABELS[primary] || user.role || undefined}>
+          {ROLE_LABELS[primary] || user.role || "—"}
+        </td>
+        {NOTIFICATION_TRIGGERS.map((trigger) => {
+          const optedOut = notificationOptOuts[trigger.key]?.has(user.firebase_uid) ?? false;
+          const cellKey = `${user.id}:${trigger.key}`;
+          const cellSaving = savingOptOutCell === cellKey;
+          return (
+            <td key={trigger.key} className="px-2 py-2 text-center">
+              {cellSaving ? (
+                <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+              ) : (
+                <input
+                  type="checkbox"
+                  checked={!optedOut}
+                  title={`${optedOut ? "Opted out of" : "Gets"} ${trigger.label}`}
+                  onChange={(e) => void handleOptOutToggle(user, trigger.key, e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
 
   // Every submodule across every module — grouped by module for the grid
   // below. A row with no override (and, for Dashboard, no hardcoded
@@ -537,6 +689,171 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
                       );
                     }),
                   ];
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-10 mb-4">
+          <h2 className="text-xl font-semibold text-white">Notification Access by Role</h2>
+          <p className="text-sm text-slate-400 mt-1">
+            Check a box to have that role notified when the trigger on the left fires. A row you haven't edited yet
+            shows its built-in default (usually Parts Manager). This only covers notifications that are genuinely
+            "which role should hear about this" — a few notifications elsewhere in the app go to named individuals
+            or back to whoever originally requested something, and aren't configurable here.
+          </p>
+        </div>
+
+        <FloatingHorizontalScrollbar targetRef={notificationTableScrollRef} />
+        <div
+          ref={notificationHeaderScrollRef}
+          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
+            <GateColGroup />
+            <thead>
+              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Notification</th>
+                {ROLE_OPTIONS.map((r) => (
+                  <th key={r.value} className="px-2 py-2 text-center font-normal leading-tight">
+                    {r.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div
+          ref={notificationTableScrollRef}
+          onScroll={(e) => {
+            if (notificationHeaderScrollRef.current) notificationHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: GATE_TABLE_WIDTH }}>
+            <GateColGroup />
+            <tbody>
+              {notificationGatesLoading ? (
+                <tr>
+                  <td colSpan={1 + ROLE_OPTIONS.length} className="px-3 py-6 text-center text-slate-400">
+                    Loading…
+                  </td>
+                </tr>
+              ) : (
+                NOTIFICATION_TRIGGERS.map((trigger) => {
+                  const allowed = new Set(notificationGates[trigger.key] ?? []);
+                  return (
+                    <tr key={trigger.key} className="border-b border-white/5 hover:bg-white/5">
+                      <td
+                        className="px-3 py-2 sticky left-0 z-10 bg-slate-950"
+                        title={trigger.description}
+                      >
+                        <div className="font-medium text-white truncate">{trigger.label}</div>
+                        <div className="text-xs text-slate-500 truncate">{trigger.description}</div>
+                      </td>
+                      {ROLE_OPTIONS.map((r) => {
+                        const checked = allowed.has(r.value);
+                        const cellKey = `${trigger.key}:${r.value}`;
+                        const cellSaving = savingNotificationCell === cellKey;
+                        return (
+                          <td key={r.value} className="px-2 py-2 text-center">
+                            {cellSaving ? (
+                              <Loader2 className="h-3.5 w-3.5 mx-auto animate-spin text-slate-400" />
+                            ) : (
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => void handleNotificationGateToggle(trigger.key, r.value, e.target.checked)}
+                                className="h-4 w-4 accent-blue-500"
+                              />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-10 mb-4">
+          <h2 className="text-xl font-semibold text-white">Notification Opt-Outs by User</h2>
+          <p className="text-sm text-slate-400 mt-1">
+            Layered on top of Notification Access by Role above — a role check makes someone a candidate, but you can
+            uncheck a specific person here to exclude them from that one trigger anyway. Checked means they'll get
+            it (the default); unchecked means they've been opted out. Same grouping/search as the first grid.
+          </p>
+        </div>
+
+        <FloatingHorizontalScrollbar targetRef={optOutTableScrollRef} />
+        <div
+          ref={optOutHeaderScrollRef}
+          className="overflow-x-hidden rounded-t-lg border border-b-0 border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md sticky top-16 z-20"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: OPTOUT_TABLE_WIDTH }}>
+            <OptOutColGroup />
+            <thead>
+              <tr className="border-b border-white/10 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2 truncate sticky left-0 z-10 bg-slate-950">Name</th>
+                <th className="px-3 py-2 whitespace-nowrap truncate">Primary Role</th>
+                {NOTIFICATION_TRIGGERS.map((trigger) => (
+                  <th key={trigger.key} className="px-2 py-2 text-center font-normal leading-tight" title={trigger.description}>
+                    {trigger.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div
+          ref={optOutTableScrollRef}
+          onScroll={(e) => {
+            if (optOutHeaderScrollRef.current) optOutHeaderScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          className="overflow-x-auto rounded-b-lg border border-[var(--color-panel-border)] bg-[var(--color-panel)] backdrop-blur-md"
+        >
+          <table className="text-sm" style={{ tableLayout: "fixed", width: OPTOUT_TABLE_WIDTH }}>
+            <OptOutColGroup />
+            <tbody>
+              {loading || optOutsLoading ? (
+                <tr>
+                  <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="px-3 py-6 text-center text-slate-400">
+                    Loading…
+                  </td>
+                </tr>
+              ) : search.trim() ? (
+                filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="px-3 py-6 text-center text-slate-400">
+                      No users found.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((user) => renderOptOutUserRow(user))
+                )
+              ) : (
+                roleGroups.flatMap((group) => {
+                  const isExpanded = expandedRoleGroups.has(group.code);
+                  const headerRow = (
+                    <tr key={`optout-role-${group.code}`} className="border-b border-white/10 bg-white/5">
+                      <td colSpan={2 + NOTIFICATION_TRIGGERS.length} className="p-0 sticky left-0 bg-slate-900">
+                        <button
+                          type="button"
+                          onClick={() => toggleRoleGroup(group.code)}
+                          aria-expanded={isExpanded}
+                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5 transition-colors"
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                          {group.label} ({group.users.length})
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                  if (!isExpanded) return [headerRow];
+                  return [headerRow, ...group.users.map((user) => renderOptOutUserRow(user))];
                 })
               )}
             </tbody>

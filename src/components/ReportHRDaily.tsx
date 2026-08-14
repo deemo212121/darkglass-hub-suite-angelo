@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronDown, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, Search, Bell, Download, Forward, History, FileText, ClipboardList, Landmark, GripVertical } from "lucide-react";
-import { DndContext, useDraggable, type DragEndEvent } from "@dnd-kit/core";
 import {
   getLeadersRoster,
   upsertLeadersRosterRow,
@@ -345,21 +344,54 @@ function buildLeadersTree(rows: LeadersRosterRow[]): LeaderTreeNode[] {
 }
 
 /**
- * One draggable row in the Leaders tab. Drag-and-drop is hand-rolled on
- * @dnd-kit/core's useDraggable WITHOUT its droppable/collision system —
- * confirmed elsewhere in this app (CustomFormBuilder.tsx) that `over`
- * never populates reliably — so the parent instead compares this row's own
- * measured DOM rect (via `rowRef`) against the dragged item's live
- * translated position to figure out where it was dropped.
+ * Every name reporting (directly or transitively) to `personName` — used
+ * to block dragging someone onto their own descendant while reparenting
+ * via drag (see moveLeaderTo), which would otherwise create a cycle
+ * buildLeadersTree has no protection against.
  */
+function getDescendantNames(rows: LeadersRosterRow[], personName: string): Set<string> {
+  const childrenByParent = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!row.reportsTo) continue;
+    const list = childrenByParent.get(row.reportsTo) ?? [];
+    list.push(row.personName);
+    childrenByParent.set(row.reportsTo, list);
+  }
+  const result = new Set<string>();
+  const stack = [...(childrenByParent.get(personName) ?? [])];
+  while (stack.length > 0) {
+    const name = stack.pop()!;
+    if (result.has(name)) continue;
+    result.add(name);
+    stack.push(...(childrenByParent.get(name) ?? []));
+  }
+  return result;
+}
+
 /** The only 4 titles Current Technicians is allowed to use — see CURRENT_TECHNICIANS_ORDER, which this must stay in sync with. */
 const TECHNICIAN_DEPARTMENT_TITLES = ["Technical Director", "Technical Assistant Director", "Senior Branch Manager", "Branch Manager"];
 
+/**
+ * One container box in the Leaders tab's reporting tree — native HTML5
+ * drag-and-drop, same technique as CsrTeamComposition.tsx's team cards
+ * (not @dnd-kit — its droppable/collision system was confirmed
+ * unreliable elsewhere in this app, e.g. CustomFormBuilder.tsx). The
+ * grip handle is the actual drag SOURCE, not the whole box, so dragging
+ * doesn't fight with the editable text inputs inside it; the box itself
+ * is the drop TARGET — drop another person onto it to nest them under
+ * this one, matching "drop a card into a box" instead of an invisible
+ * top/bottom zone on a flat row.
+ */
 function LeaderRow({
   row,
   canEdit,
   isDragging,
-  rowRef,
+  isOver,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
   deptPeople,
   onUpdate,
   onDelete,
@@ -368,14 +400,18 @@ function LeaderRow({
   row: LeadersRosterRow;
   canEdit: boolean;
   isDragging: boolean;
-  rowRef: (el: HTMLDivElement | null) => void;
+  isOver: boolean;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
   /** Every other person's name in this same department — populates "Reports To". */
   deptPeople: string[];
   onUpdate: (patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => void;
   onDelete: () => void;
   onDuplicate: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: row.id });
   const dotClass = row.tier === "senior" ? "bg-cyan-400" : row.tier === "manager" ? "bg-rose-400" : "bg-slate-500";
   const badgeClass =
     row.tier === "senior"
@@ -386,116 +422,131 @@ function LeaderRow({
 
   return (
     <div
-      ref={rowRef}
-      style={{ transform: isDragging ? `translate(${transform?.x ?? 0}px, ${transform?.y ?? 0}px)` : undefined, zIndex: isDragging ? 10 : undefined }}
-      className={`group flex items-center gap-2 px-2.5 py-2 text-xs transition-colors hover:bg-white/[0.04] ${isDragging ? "opacity-60 bg-white/5" : ""}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`group rounded-lg border px-2.5 py-2 text-xs transition-colors ${
+        isOver ? "border-primary bg-white/10" : "border-white/10 bg-white/5"
+      } ${isDragging ? "opacity-50" : ""}`}
     >
-      {canEdit ? (
-        <button
-          ref={setNodeRef}
-          {...listeners}
-          {...attributes}
-          type="button"
-          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-slate-300 cursor-grab active:cursor-grabbing transition-opacity"
-          title="Drag to reorder or move to another department"
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-        </button>
-      ) : (
-        <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} />
-      )}
-
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+      <div className="flex items-center gap-2">
         {canEdit ? (
-          <div className="flex items-center gap-1.5">
-            <select
-              value={row.tier}
-              onChange={(e) => onUpdate({ tier: e.target.value as LeadersRosterRow["tier"] })}
-              className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide focus:outline-none ${badgeClass}`}
-            >
-              {LEADERS_TIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            {row.department === "Technician" ? (
-              <select
-                value={row.roleTitle}
-                onChange={(e) => onUpdate({ roleTitle: e.target.value })}
-                className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
-              >
-                {!TECHNICIAN_DEPARTMENT_TITLES.includes(row.roleTitle) && <option value={row.roleTitle}>{row.roleTitle}</option>}
-                {TECHNICIAN_DEPARTMENT_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            ) : (
-              <input
-                key={`role:${row.id}:${row.roleTitle}`}
-                defaultValue={row.roleTitle}
-                onBlur={(e) => e.target.value.trim() && e.target.value !== row.roleTitle && onUpdate({ roleTitle: e.target.value.trim() })}
-                className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
-              />
-            )}
-          </div>
-        ) : (
-          <span className={`self-start rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${badgeClass}`}>
-            {row.roleTitle}
-          </span>
-        )}
-        {canEdit ? (
-          <input
-            key={`name:${row.id}:${row.personName}`}
-            defaultValue={row.personName}
-            onBlur={(e) => e.target.value.trim() && e.target.value !== row.personName && onUpdate({ personName: e.target.value.trim() })}
-            className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-slate-100"
-          />
-        ) : (
-          <span className="px-1.5 text-slate-100">{row.personName}</span>
-        )}
-        {canEdit && deptPeople.length > 0 && (
-          <select
-            value={row.reportsTo ?? ""}
-            onChange={(e) => onUpdate({ reportsTo: e.target.value || null })}
-            className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-[10px] text-slate-500"
-            title="Who this person reports to within this department (optional — builds a nested hierarchy like Technician's)"
+          <span
+            draggable
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-slate-300 cursor-grab active:cursor-grabbing transition-opacity"
+            title="Drag onto another person to nest under them, or into empty space to make them top-level"
           >
-            <option value="">Reports to: — none (top level) —</option>
-            {deptPeople.map((name) => <option key={name} value={name}>Reports to: {name}</option>)}
-          </select>
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
+        ) : (
+          <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} />
         )}
-        {!canEdit && row.reportsTo && (
-          <span className="px-1.5 text-[10px] text-slate-500">reports to {row.reportsTo}</span>
+
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          {canEdit ? (
+            <div className="flex items-center gap-1.5">
+              <select
+                value={row.tier}
+                onChange={(e) => onUpdate({ tier: e.target.value as LeadersRosterRow["tier"] })}
+                className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide focus:outline-none ${badgeClass}`}
+              >
+                {LEADERS_TIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              {row.department === "Technician" ? (
+                <select
+                  value={row.roleTitle}
+                  onChange={(e) => onUpdate({ roleTitle: e.target.value })}
+                  className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
+                >
+                  {!TECHNICIAN_DEPARTMENT_TITLES.includes(row.roleTitle) && <option value={row.roleTitle}>{row.roleTitle}</option>}
+                  {TECHNICIAN_DEPARTMENT_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              ) : (
+                <input
+                  key={`role:${row.id}:${row.roleTitle}`}
+                  defaultValue={row.roleTitle}
+                  onBlur={(e) => e.target.value.trim() && e.target.value !== row.roleTitle && onUpdate({ roleTitle: e.target.value.trim() })}
+                  className="flex-1 min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 font-semibold text-slate-200"
+                />
+              )}
+            </div>
+          ) : (
+            <span className={`self-start rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${badgeClass}`}>
+              {row.roleTitle}
+            </span>
+          )}
+          {canEdit ? (
+            <input
+              key={`name:${row.id}:${row.personName}`}
+              defaultValue={row.personName}
+              onBlur={(e) => e.target.value.trim() && e.target.value !== row.personName && onUpdate({ personName: e.target.value.trim() })}
+              className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-slate-100"
+            />
+          ) : (
+            <span className="px-1.5 text-slate-100">{row.personName}</span>
+          )}
+          {canEdit && deptPeople.length > 0 && (
+            <select
+              value={row.reportsTo ?? ""}
+              onChange={(e) => onUpdate({ reportsTo: e.target.value || null })}
+              className="min-w-0 rounded px-1.5 py-0.5 bg-transparent border-0 focus:outline-none focus:bg-white/5 text-[10px] text-slate-500"
+              title="Who this person reports to within this department (optional — builds a nested hierarchy like Technician's)"
+            >
+              <option value="">Reports to: — none (top level) —</option>
+              {deptPeople.map((name) => <option key={name} value={name}>Reports to: {name}</option>)}
+            </select>
+          )}
+          {!canEdit && row.reportsTo && (
+            <span className="px-1.5 text-[10px] text-slate-500">reports to {row.reportsTo}</span>
+          )}
+        </div>
+
+        {canEdit && (
+          <button
+            type="button"
+            onClick={onDuplicate}
+            className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-opacity"
+            title="Duplicate this row — same title/tier/reports-to, just type the new person's name"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity"
+            title="Remove"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
-
-      {canEdit && (
-        <button
-          type="button"
-          onClick={onDuplicate}
-          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-emerald-300 transition-opacity"
-          title="Duplicate this row — same title/tier/reports-to, just type the new person's name"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      )}
-      {canEdit && (
-        <button
-          type="button"
-          onClick={onDelete}
-          className="shrink-0 flex items-center text-slate-600 opacity-0 group-hover:opacity-100 hover:text-red-300 transition-opacity"
-          title="Remove"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      )}
     </div>
   );
 }
 
-/** Recursively renders a reporting-tree branch (see buildLeadersTree) — each level of depth indents further and gets a faint connecting rail, so e.g. a Senior Branch Manager's own Branch Managers read as nested under them rather than another flat row. */
+/**
+ * Recursively renders a reporting-tree branch (see buildLeadersTree) as
+ * nested container boxes — each depth level's children render INSIDE
+ * their parent's own box (indented, connecting rail), same "drag a card
+ * into a box" language as CsrTeamComposition.tsx's team cards, instead
+ * of a flat row list with an invisible top/bottom drop zone.
+ */
 function LeaderTreeBranch({
   node,
   depth,
   canEdit,
   leadersDraggingId,
+  leadersOverId,
   deptPeople,
-  setLeadersRowRef,
+  onDragStartRow,
+  onDragEndRow,
+  onDragOverNode,
+  onDragLeaveNode,
+  onDropOnNode,
   onUpdate,
   onDelete,
   onDuplicate,
@@ -504,41 +555,58 @@ function LeaderTreeBranch({
   depth: number;
   canEdit: boolean;
   leadersDraggingId: string | null;
+  leadersOverId: string | null;
   deptPeople: string[];
-  setLeadersRowRef: (id: string) => (el: HTMLDivElement | null) => void;
+  onDragStartRow: (id: string) => (e: React.DragEvent) => void;
+  onDragEndRow: () => void;
+  onDragOverNode: (id: string) => (e: React.DragEvent) => void;
+  onDragLeaveNode: (id: string) => () => void;
+  onDropOnNode: (id: string) => (e: React.DragEvent) => void;
   onUpdate: (id: string, patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => void;
   onDelete: (id: string) => void;
   onDuplicate: (id: string) => void;
 }) {
   return (
-    <>
-      <div className={depth > 0 ? "border-l border-white/10 ml-3" : ""} style={{ paddingLeft: depth > 0 ? 8 : 0 }}>
-        <LeaderRow
-          row={node.row}
-          canEdit={canEdit}
-          isDragging={leadersDraggingId === node.row.id}
-          rowRef={setLeadersRowRef(node.row.id)}
-          deptPeople={deptPeople.filter((n) => n !== node.row.personName)}
-          onUpdate={(patch) => onUpdate(node.row.id, patch)}
-          onDelete={() => onDelete(node.row.id)}
-          onDuplicate={() => onDuplicate(node.row.id)}
-        />
-      </div>
-      {node.children.map((child) => (
-        <LeaderTreeBranch
-          key={child.row.id}
-          node={child}
-          depth={depth + 1}
-          canEdit={canEdit}
-          deptPeople={deptPeople}
-          leadersDraggingId={leadersDraggingId}
-          setLeadersRowRef={setLeadersRowRef}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-        />
-      ))}
-    </>
+    <div className={depth > 0 ? "border-l border-white/10 ml-3 pl-2.5 mt-1.5" : ""}>
+      <LeaderRow
+        row={node.row}
+        canEdit={canEdit}
+        isDragging={leadersDraggingId === node.row.id}
+        isOver={leadersOverId === node.row.id}
+        onDragStart={onDragStartRow(node.row.id)}
+        onDragEnd={onDragEndRow}
+        onDragOver={onDragOverNode(node.row.id)}
+        onDragLeave={onDragLeaveNode(node.row.id)}
+        onDrop={onDropOnNode(node.row.id)}
+        deptPeople={deptPeople.filter((n) => n !== node.row.personName)}
+        onUpdate={(patch) => onUpdate(node.row.id, patch)}
+        onDelete={() => onDelete(node.row.id)}
+        onDuplicate={() => onDuplicate(node.row.id)}
+      />
+      {node.children.length > 0 && (
+        <div className="flex flex-col gap-1.5 mt-1.5">
+          {node.children.map((child) => (
+            <LeaderTreeBranch
+              key={child.row.id}
+              node={child}
+              depth={depth + 1}
+              canEdit={canEdit}
+              deptPeople={deptPeople}
+              leadersDraggingId={leadersDraggingId}
+              leadersOverId={leadersOverId}
+              onDragStartRow={onDragStartRow}
+              onDragEndRow={onDragEndRow}
+              onDragOverNode={onDragOverNode}
+              onDragLeaveNode={onDragLeaveNode}
+              onDropOnNode={onDropOnNode}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -5589,83 +5657,92 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     );
   }, [leadersRoster]);
 
-  const leadersRowNodes = useRef(new Map<string, HTMLDivElement>());
-  const setLeadersRowRef = (id: string) => (el: HTMLDivElement | null) => {
-    if (el) leadersRowNodes.current.set(id, el);
-    else leadersRowNodes.current.delete(id);
-  };
-  // Card-level fallback drop target — lets a row drop into a department
-  // whose rows don't fill the card (or a card with zero rows), by hit
-  // testing the card's own bounds when the pointer isn't over any row.
-  const leadersCardNodes = useRef(new Map<string, HTMLDivElement>());
-  const setLeadersCardRef = (department: string) => (el: HTMLDivElement | null) => {
-    if (el) leadersCardNodes.current.set(department, el);
-    else leadersCardNodes.current.delete(department);
-  };
+  // Native HTML5 drag-and-drop state — same technique as
+  // CsrTeamComposition.tsx's team cards. leadersOverId is either a
+  // person's row id (dragging over their box = would nest under them) or
+  // `dept:${department}` (dragging over empty card space = would go
+  // top-level in that department) — drives the highlighted-box styling.
   const [leadersDraggingId, setLeadersDraggingId] = useState<string | null>(null);
+  const [leadersOverId, setLeadersOverId] = useState<string | null>(null);
 
   /**
-   * Cards are arranged in a responsive multi-column grid, so a single
-   * vertical-list Y-comparison (the CustomFormBuilder.tsx convention) can't
-   * tell which COLUMN a drop landed in. Instead this hit-tests the actual
-   * drop point (still without @dnd-kit's own droppable/collision system,
-   * which — confirmed elsewhere in this app — never populates `over`
-   * reliably): first against every row's own rect, falling back to each
-   * card's rect so dropping into empty space within a card still works.
+   * Applies a drag-drop move: `reportsTo: null` puts `activeId` at the
+   * top level of `department`; a name nests them under whichever row in
+   * that department has that name — silently no-ops if that would drop
+   * someone onto their own descendant (would create a reporting cycle).
    */
-  const findLeadersDropTarget = (x: number, y: number): { department: string; beforeRowId: string | null } | null => {
-    for (const [id, el] of leadersRowNodes.current.entries()) {
-      const rect = el.getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-        const row = leadersRoster.find((r) => r.id === id);
-        if (!row) continue;
-        const before = y < rect.top + rect.height / 2;
-        if (before) return { department: row.department, beforeRowId: id };
-        // After this row — find whatever comes next in the same department (or end of it).
-        const deptRows = leadersByDepartment.find(([d]) => d === row.department)?.[1] ?? [];
-        const idx = deptRows.findIndex((r) => r.id === id);
-        return { department: row.department, beforeRowId: deptRows[idx + 1]?.id ?? null };
-      }
-    }
-    for (const [department, el] of leadersCardNodes.current.entries()) {
-      const rect = el.getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-        return { department, beforeRowId: null };
-      }
-    }
-    return null;
-  };
-
-  const handleLeadersDragEnd = (event: DragEndEvent) => {
-    setLeadersDraggingId(null);
-    const activatorEvent = event.activatorEvent as PointerEvent | MouseEvent | undefined;
-    if (!activatorEvent || !("clientX" in activatorEvent)) return;
-    const x = activatorEvent.clientX + event.delta.x;
-    const y = activatorEvent.clientY + event.delta.y;
-    const drop = findLeadersDropTarget(x, y);
-    if (!drop) return;
-    const activeId = String(event.active.id);
-
+  const moveLeaderTo = (activeId: string, department: string, reportsTo: string | null) => {
     setLeadersRoster((prev) => {
       const moving = prev.find((r) => r.id === activeId);
       if (!moving) return prev;
-      const deptRows = (leadersByDepartment.find(([d]) => d === drop.department)?.[1] ?? []).filter((r) => r.id !== activeId);
-      let insertIdx = drop.beforeRowId === null ? deptRows.length : deptRows.findIndex((r) => r.id === drop.beforeRowId);
-      if (insertIdx === -1) insertIdx = deptRows.length;
-      const prevRow = deptRows[insertIdx - 1];
-      const nextRow = deptRows[insertIdx];
-      const deptSort = prevRow?.deptSort ?? nextRow?.deptSort ?? moving.deptSort;
-      const prevRowSort = prevRow?.rowSort ?? 0;
-      const nextRowSort = nextRow?.rowSort ?? prevRowSort + 2;
-      const rowSort = (prevRowSort + nextRowSort) / 2;
-      const updated: LeadersRosterRow = { ...moving, department: drop.department, deptSort, rowSort };
+      if (reportsTo) {
+        const blocked = new Set([moving.personName, ...getDescendantNames(prev, moving.personName)]);
+        if (blocked.has(reportsTo)) return prev;
+      }
 
-      void moveLeadersRosterRow(moving.id, { department: drop.department, deptSort, rowSort }).catch((err) => {
+      const parentRow = reportsTo ? prev.find((r) => r.personName === reportsTo && r.department === department) : undefined;
+      const siblings = prev.filter((r) => r.reportsTo === reportsTo && r.department === department && r.id !== activeId);
+      const deptRowsExisting = leadersByDepartment.find(([d]) => d === department)?.[1] ?? [];
+      const deptSort = parentRow?.deptSort ?? deptRowsExisting[0]?.deptSort ?? moving.deptSort;
+      const rowSort = siblings.length > 0 ? Math.max(...siblings.map((r) => r.rowSort)) + 1 : (parentRow?.rowSort ?? 0) + 1;
+
+      const updated: LeadersRosterRow = { ...moving, department, deptSort, rowSort, reportsTo };
+      void moveLeadersRosterRow(moving.id, { department, deptSort, rowSort, reportsTo }).catch((err) => {
         console.error("Failed to save Leaders reorder:", err);
       });
-
       return prev.map((r) => (r.id === activeId ? updated : r));
     });
+  };
+
+  const handleLeaderDragStart = (id: string) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+    requestAnimationFrame(() => setLeadersDraggingId(id));
+  };
+  const handleLeaderDragEnd = () => {
+    setLeadersDraggingId(null);
+    setLeadersOverId(null);
+  };
+  // stopPropagation on the row-level handlers below so a drop on a
+  // nested child box doesn't also bubble up and re-trigger its parent's
+  // (or the department card's) own onDrop — the innermost box wins.
+  const handleLeaderDragOverNode = (id: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    if (leadersOverId !== id) setLeadersOverId(id);
+  };
+  const handleLeaderDragLeaveNode = (id: string) => () => {
+    setLeadersOverId((o) => (o === id ? null : o));
+  };
+  const handleLeaderDropOnNode = (id: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const targetRow = leadersRoster.find((r) => r.id === id);
+    const draggedId = e.dataTransfer.getData("text/plain") || leadersDraggingId;
+    if (draggedId && targetRow && draggedId !== id) moveLeaderTo(draggedId, targetRow.department, targetRow.personName);
+    setLeadersDraggingId(null);
+    setLeadersOverId(null);
+  };
+  // Card-level fallback — dropping into empty space within a department
+  // card (not onto any specific person's box) puts the dragged row at
+  // that department's top level.
+  const handleLeadersCardDragOver = (department: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const key = `dept:${department}`;
+    if (leadersOverId !== key) setLeadersOverId(key);
+  };
+  const handleLeadersCardDragLeave = (department: string) => () => {
+    const key = `dept:${department}`;
+    setLeadersOverId((o) => (o === key ? null : o));
+  };
+  const handleLeadersCardDrop = (department: string) => (e: React.DragEvent) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData("text/plain") || leadersDraggingId;
+    if (draggedId) moveLeaderTo(draggedId, department, null);
+    setLeadersDraggingId(null);
+    setLeadersOverId(null);
   };
 
   const updateLeadersRow = async (id: string, patch: Partial<Pick<LeadersRosterRow, "roleTitle" | "personName" | "tier" | "reportsTo">>) => {
@@ -6925,17 +7002,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               {leadersRosterLoading ? "Loading…" : "No leaders on file yet."}
             </div>
           ) : (
-            <DndContext
-              onDragStart={(e) => setLeadersDraggingId(String(e.active.id))}
-              onDragEnd={handleLeadersDragEnd}
-              onDragCancel={() => setLeadersDraggingId(null)}
-            >
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
                 {leadersByDepartment.map(([department, rows]) => (
                   <div
                     key={department}
-                    ref={setLeadersCardRef(department)}
-                    className="flex flex-col rounded-xl border border-white/10 bg-gradient-to-b from-slate-800/70 to-slate-900/80 shadow-lg shadow-black/30 ring-1 ring-white/5 hover:border-white/20 transition-colors overflow-hidden"
+                    onDragOver={handleLeadersCardDragOver(department)}
+                    onDragLeave={handleLeadersCardDragLeave(department)}
+                    onDrop={handleLeadersCardDrop(department)}
+                    className={`flex flex-col rounded-xl border shadow-lg shadow-black/30 ring-1 ring-white/5 transition-colors overflow-hidden ${
+                      leadersOverId === `dept:${department}`
+                        ? "border-primary bg-gradient-to-b from-slate-800/90 to-slate-900/95"
+                        : "border-white/10 bg-gradient-to-b from-slate-800/70 to-slate-900/80 hover:border-white/20"
+                    }`}
                   >
                     <div className="bg-gradient-to-r from-blue-600/25 via-blue-600/10 to-transparent border-b border-white/10 px-3.5 py-2.5 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -6948,7 +7026,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </button>
                       )}
                     </div>
-                    <div className="flex-1 divide-y divide-white/5">
+                    <div className="flex-1 flex flex-col gap-1.5 p-2.5">
                       {(() => {
                         const tree = buildLeadersTree(rows);
                         // Only actually nested (some row's reportsTo resolved to
@@ -6962,8 +7040,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             depth={0}
                             canEdit={isHrOrAdmin}
                             leadersDraggingId={leadersDraggingId}
+                            leadersOverId={leadersOverId}
                             deptPeople={rows.map((r) => r.personName)}
-                            setLeadersRowRef={setLeadersRowRef}
+                            onDragStartRow={handleLeaderDragStart}
+                            onDragEndRow={handleLeaderDragEnd}
+                            onDragOverNode={handleLeaderDragOverNode}
+                            onDragLeaveNode={handleLeaderDragLeaveNode}
+                            onDropOnNode={handleLeaderDropOnNode}
                             onUpdate={(id, patch) => void updateLeadersRow(id, patch)}
                             onDelete={(id) => void deleteLeadersRow(id)}
                             onDuplicate={(id) => void duplicateLeadersRow(id)}
@@ -6974,7 +7057,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   </div>
                 ))}
               </div>
-            </DndContext>
           )}
         </div>
       </div>

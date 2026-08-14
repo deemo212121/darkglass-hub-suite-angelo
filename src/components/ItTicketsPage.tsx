@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Ticket, Trash2, Save } from "lucide-react";
+import { ChevronLeft, Ticket, Trash2, Save, Send, Mail } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getMyRoles, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -16,8 +16,18 @@ import {
   type ItTicketPriority,
   type ItTicketStatus,
 } from "@/lib/supabase/itTickets";
+import {
+  getGmailConnectionStatus,
+  disconnectGmail,
+  IT_TICKET_GMAIL_REGIONS,
+  type GmailConnectionStatus,
+  type GmailRegion,
+} from "@/lib/supabase/gmailConnection";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 
 const IT_ADMIN_ROLES = ["IT", "ADMIN"];
+const IT_GMAIL_LABELS: Record<string, string> = { IT_1: "Slot 1", IT_2: "Slot 2", IT_3: "Slot 3" };
+const CC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const STATUS_LABELS: Record<ItTicketStatus, string> = {
   open: "Open",
@@ -63,6 +73,152 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [editResolutionNotes, setEditResolutionNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Up to 3 independently-connectable Gmail accounts for IT Tickets (see
+  // migration 0173) — unlike Payroll/Parts, the "Send" preview lets the
+  // caller pick WHICH connected one to send from, rather than always
+  // resolving to a single fixed slot.
+  const [gmailStatuses, setGmailStatuses] = useState<Record<string, GmailConnectionStatus | null>>({});
+  const [gmailStatusLoading, setGmailStatusLoading] = useState(false);
+  const [connectingRegion, setConnectingRegion] = useState<GmailRegion | null>(null);
+  const [disconnectingRegion, setDisconnectingRegion] = useState<GmailRegion | null>(null);
+
+  const loadGmailStatuses = () => {
+    setGmailStatusLoading(true);
+    Promise.all(IT_TICKET_GMAIL_REGIONS.map((region) => getGmailConnectionStatus(region)))
+      .then((results) => {
+        const next: Record<string, GmailConnectionStatus | null> = {};
+        IT_TICKET_GMAIL_REGIONS.forEach((region, i) => { next[region] = results[i]; });
+        setGmailStatuses(next);
+      })
+      .catch((err) => console.error("Failed to load IT Gmail connection status:", err))
+      .finally(() => setGmailStatusLoading(false));
+  };
+
+  const handleConnectGmail = async (region: GmailRegion) => {
+    setConnectingRegion(region);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+      window.location.href = `/api/gmail?action=connect&region=${region}&idToken=${encodeURIComponent(idToken)}`;
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to start Gmail connection.");
+      setConnectingRegion(null);
+    }
+  };
+
+  const handleDisconnectGmail = async (region: GmailRegion) => {
+    const email = gmailStatuses[region]?.connectedEmail;
+    if (!confirm(`Disconnect ${email || "this"} Gmail account from IT Tickets ${IT_GMAIL_LABELS[region] || region}?`)) return;
+    setDisconnectingRegion(region);
+    try {
+      await disconnectGmail(region);
+      loadGmailStatuses();
+    } catch (err) {
+      alert(`Failed to disconnect: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDisconnectingRegion(null);
+    }
+  };
+
+  // "Send" preview modal — a free-text email the caller composes/edits
+  // before sending, same pattern as ticket.$ticketNo.tsx's Drop-Ship
+  // Request preview.
+  const [sendTicket, setSendTicket] = useState<ItTicketRow | null>(null);
+  const [sendFromRegion, setSendFromRegion] = useState<GmailRegion | "">("");
+  const [sendTo, setSendTo] = useState("");
+  const [sendCc, setSendCc] = useState<string[]>([]);
+  const [sendCcInput, setSendCcInput] = useState("");
+  const [sendSubject, setSendSubject] = useState("");
+  const [sendBody, setSendBody] = useState("");
+  const [sendSending, setSendSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendSent, setSendSent] = useState(false);
+
+  const connectedItRegions = IT_TICKET_GMAIL_REGIONS.filter((r) => gmailStatuses[r]?.connected);
+
+  const openSendModal = (t: ItTicketRow) => {
+    setSendTicket(t);
+    setSendFromRegion(connectedItRegions[0] || "");
+    setSendTo("");
+    setSendCc([]);
+    setSendCcInput("");
+    setSendError(null);
+    setSendSent(false);
+    setSendSubject(`Re: ${t.subject}`);
+    setSendBody(
+      [
+        "Hi,",
+        "",
+        `Regarding your IT ticket "${t.subject}":`,
+        "",
+        "",
+        "",
+        "Thank you,",
+        displayName || "IT",
+      ].join("\n"),
+    );
+  };
+  const closeSendModal = () => setSendTicket(null);
+
+  const commitSendCcInput = () => {
+    const parts = sendCcInput.split(/[,;\s]+/).map((p) => p.trim()).filter((p) => p.length > 0);
+    if (parts.length === 0) return;
+    const valid = parts.filter((p) => CC_EMAIL_RE.test(p));
+    const invalid = parts.filter((p) => !CC_EMAIL_RE.test(p));
+    if (valid.length > 0) setSendCc((prev) => [...prev, ...valid.filter((p) => !prev.includes(p))]);
+    setSendCcInput(invalid.join(", "));
+    if (invalid.length === 0) setSendError(null);
+  };
+  const removeSendCc = (email: string) => setSendCc((prev) => prev.filter((e) => e !== email));
+
+  const handleSendTicketEmail = async () => {
+    if (!sendTicket) return;
+    const to = sendTo.trim();
+    if (!sendFromRegion) {
+      setSendError("Pick which connected Gmail account to send from.");
+      return;
+    }
+    if (!to) {
+      setSendError("Recipient email is required.");
+      return;
+    }
+    const pendingCc = sendCcInput.split(/[,;\s]+/).map((p) => p.trim()).filter((p) => p.length > 0);
+    if (pendingCc.some((p) => !CC_EMAIL_RE.test(p))) {
+      setSendError(`Invalid CC email address: ${pendingCc.find((p) => !CC_EMAIL_RE.test(p))}`);
+      return;
+    }
+    const ccList = [...sendCc, ...pendingCc.filter((p) => !sendCc.includes(p))];
+    setSendSending(true);
+    setSendError(null);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+      const res = await fetch("/api/gmail?action=send-it-ticket-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, region: sendFromRegion, to, cc: ccList.join(", "), subject: sendSubject, body: sendBody }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to send.");
+      setSendCc(ccList);
+      setSendCcInput("");
+      setSendSent(true);
+      void logModuleActivity({
+        module: "it-tickets",
+        actorName: displayName || email || "IT",
+        action: "it_ticket_email_sent",
+        targetType: "it_ticket",
+        targetId: sendTicket.id,
+        targetLabel: sendTicket.subject,
+        details: { to, cc: ccList.join(", ") },
+      });
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send.");
+    } finally {
+      setSendSending(false);
+    }
+  };
+
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -101,6 +257,12 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         )
       )
       .catch((err) => console.error("Failed to load IT/Admin roster:", err));
+  }, [canEdit]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    loadGmailStatuses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canEdit]);
 
   const filteredTickets = useMemo(() => {
@@ -190,16 +352,64 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <ChevronLeft className="h-4 w-4" /> {mod.label}
             </Link>
           </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {sub.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">{sub.description}</p>
-            {extraRoles !== null && !canEdit && (
-              <p className="mt-2 text-xs text-amber-300/90">
-                View-only — only IT and Admins can edit, assign, or delete tickets.
-              </p>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {sub.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">{sub.description}</p>
+              {extraRoles !== null && !canEdit && (
+                <p className="mt-2 text-xs text-amber-300/90">
+                  View-only — only IT and Admins can edit, assign, or delete tickets.
+                </p>
+              )}
+            </div>
+
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <Mail className="h-3 w-3" /> Send from
+                </span>
+                {IT_TICKET_GMAIL_REGIONS.map((region) => {
+                  const status = gmailStatuses[region];
+                  if (gmailStatusLoading && !status) {
+                    return <span key={region} className="text-[10px] text-slate-500">{IT_GMAIL_LABELS[region]}…</span>;
+                  }
+                  if (status?.connected) {
+                    return (
+                      <span
+                        key={region}
+                        className="flex items-center gap-1 rounded border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300"
+                        title={`${IT_GMAIL_LABELS[region]}: ${status.connectedEmail}`}
+                      >
+                        ✓ {IT_GMAIL_LABELS[region]}: {status.connectedEmail}
+                        <button
+                          type="button"
+                          onClick={() => void handleDisconnectGmail(region)}
+                          disabled={disconnectingRegion === region}
+                          className="ml-1 text-emerald-400/70 hover:text-emerald-200 disabled:opacity-50"
+                          title={`Disconnect ${IT_GMAIL_LABELS[region]}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={region}
+                      type="button"
+                      onClick={() => void handleConnectGmail(region)}
+                      disabled={connectingRegion === region}
+                      className="rounded border border-white/15 bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300 transition hover:bg-slate-700 disabled:opacity-50"
+                      title={`Connect a Gmail account as ${IT_GMAIL_LABELS[region]}`}
+                    >
+                      {connectingRegion === region ? "Connecting…" : `Connect ${IT_GMAIL_LABELS[region]}`}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -304,6 +514,16 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         >
                           {canEdit ? "Manage" : "View"}
                         </button>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => openSendModal(t)}
+                            title="Email this ticket's submitter (or anyone else)"
+                            className="px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-400/30 text-blue-300 rounded text-xs font-medium transition inline-flex items-center gap-1"
+                          >
+                            <Send className="h-3 w-3" /> Send
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             type="button"
@@ -451,6 +671,125 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   </button>
                   <button onClick={closeModal} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">
                     Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {sendTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeSendModal}>
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-1 text-lg font-bold text-white">Send Email</h3>
+            <p className="mb-4 text-xs text-slate-400">Re: {sendTicket.subject}</p>
+
+            {sendSent ? (
+              <>
+                <p className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-300">
+                  Sent to {sendTo}{sendCc.length > 0 ? ` (cc: ${sendCc.join(", ")})` : ""}.
+                </p>
+                <div className="flex justify-end">
+                  <button type="button" onClick={closeSendModal} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sender</label>
+                    <select
+                      value={sendFromRegion}
+                      onChange={(e) => setSendFromRegion(e.target.value as GmailRegion)}
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">— Select a connected Gmail account —</option>
+                      {connectedItRegions.map((region) => (
+                        <option key={region} value={region}>
+                          {IT_GMAIL_LABELS[region]}: {gmailStatuses[region]?.connectedEmail}
+                        </option>
+                      ))}
+                    </select>
+                    {connectedItRegions.length === 0 && (
+                      <p className="mt-1 text-[11px] text-amber-400">No Gmail account connected yet — connect one at the top of this page first.</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Recipient</label>
+                    <input
+                      type="email"
+                      value={sendTo}
+                      onChange={(e) => setSendTo(e.target.value)}
+                      placeholder="person@example.com"
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">CC (optional)</label>
+                    <div className="mt-1 flex w-full flex-wrap items-center gap-1.5 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 focus-within:border-blue-500">
+                      {sendCc.map((cc) => (
+                        <span key={cc} className="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs text-white">
+                          {cc}
+                          <button type="button" onClick={() => removeSendCc(cc)} className="text-slate-400 hover:text-white" aria-label={`Remove ${cc}`}>
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        value={sendCcInput}
+                        onChange={(e) => setSendCcInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            commitSendCcInput();
+                          } else if (e.key === "Backspace" && sendCcInput === "" && sendCc.length > 0) {
+                            removeSendCc(sendCc[sendCc.length - 1]);
+                          }
+                        }}
+                        onBlur={commitSendCcInput}
+                        placeholder={sendCc.length > 0 ? "Add another…" : "you@company.com"}
+                        className="min-w-[10rem] flex-1 bg-transparent px-1 py-0.5 text-sm text-white focus:outline-none"
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">Press Enter after each address to add it.</p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Subject</label>
+                    <input
+                      type="text"
+                      value={sendSubject}
+                      onChange={(e) => setSendSubject(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Message (preview — edit before sending)</label>
+                    <textarea
+                      value={sendBody}
+                      onChange={(e) => setSendBody(e.target.value)}
+                      rows={10}
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none resize-none"
+                    />
+                  </div>
+                  {sendError && (
+                    <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{sendError}</p>
+                  )}
+                </div>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={closeSendModal} className="rounded-md border border-white/15 px-4 py-2 text-sm text-slate-300 hover:bg-white/5">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendTicketEmail}
+                    disabled={sendSending || !sendTo.trim() || !sendFromRegion}
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {sendSending ? "Sending…" : "Send"}
                   </button>
                 </div>
               </>

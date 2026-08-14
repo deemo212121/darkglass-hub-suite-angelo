@@ -5,9 +5,10 @@ import { ChevronLeft, Printer, Save, CheckCircle, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
+import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
+import { notifyPartsManagers } from "@/lib/partsNotify";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
 
@@ -96,7 +97,11 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const handleSave = useCallback(async () => {
     if (collectType === "Restock" && ticketNo) {
       try {
-        await sendNotificationToRole("Parts Manager", companyId ?? "", {
+        // Configurable via Accessibility Management > Notification Access by
+        // Role (trigger "parts_restock") — defaults to Parts Manager. Per-
+        // user opt-outs (same page's opt-out grid) apply too.
+        const roles = await getEffectiveNotificationRoles("parts_restock");
+        await notifyPartsManagers(companyId, roles, "parts_restock", {
           kind: "restock_auto",
           title: "Part back in stock",
           body: `Ticket ${ticketNo} — part marked as Restock by tech ${tech || "unknown"}. Status auto-updated to Back in Stock.`,

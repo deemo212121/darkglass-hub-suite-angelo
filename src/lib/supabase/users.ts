@@ -302,12 +302,18 @@ export async function getMyRoles(firebaseUid: string): Promise<{ role: string | 
  * company.
  */
 export async function getFirebaseUidsForRole(roleCode: string): Promise<string[]> {
+  return getFirebaseUidsForRoles([roleCode]);
+}
+
+/** Same as getFirebaseUidsForRole, but for a whole role list at once (matches ANY of them, as either primary or extra role). */
+export async function getFirebaseUidsForRoles(roleCodes: string[]): Promise<string[]> {
+  if (roleCodes.length === 0) return [];
   const { data, error } = await supabase
     .from("profiles")
     .select("firebase_uid, role, extra_roles")
-    .or(`role.eq.${roleCode},extra_roles.cs.{${roleCode}}`);
+    .or(roleCodes.map((code) => `role.eq.${code},extra_roles.cs.{${code}}`).join(","));
   if (error) {
-    console.error("getFirebaseUidsForRole error:", error.message);
+    console.error("getFirebaseUidsForRoles error:", error.message);
     return [];
   }
   return (data ?? []).map((r: any) => r.firebase_uid as string).filter(Boolean);
