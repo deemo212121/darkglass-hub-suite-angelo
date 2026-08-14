@@ -23,9 +23,11 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LayoutGrid } from "lucide-react";
-import { MODULES, type ModuleDef } from "@/lib/modules";
+import { MODULES, DASHBOARD_GRID_EXCLUDED_SLUGS, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
+import { isSubmoduleAllowed } from "@/lib/roleLabels";
+import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
+import { getModuleRoleGate } from "@/lib/moduleAccess";
 
 // Header's inner container in AppHeader: `max-w-[1400px] mx-auto px-6`.
 // We mirror those constants here so the floating navigator's right edge
@@ -104,13 +106,30 @@ export function ModuleNavigator() {
 
   if (!ready || !email || !mounted) return null;
 
-  // CSR-department roles only get Dashboard/Tickets (see isModuleAllowed) —
-  // the actual pages already enforce this, but the quick-nav pill strip
-  // rendered every module unconditionally, so a restricted user could still
-  // see and click into Parts/Claims/Report/Admin from here even though
-  // they'd be blocked on arrival. Filtering the strip itself, not just the
-  // destination page, keeps what's hoverable in sync with what's allowed.
-  const visibleModules = MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles));
+  // Same filtering the module's own tile grid uses (m.$module.tsx): the CSR
+  // department allow-list (isSubmoduleAllowed, which folds in the module-
+  // level CSR check too) PLUS the per-submodule role gate (Dashboard's
+  // hardcoded defaults / any company override from Accessibility
+  // Management's Module Access by Role grid). Previously this only checked
+  // the CSR allow-list, so e.g. a plain Technician would see HR Dashboard,
+  // Staff List, Payroll Calculation, etc. in the quick-nav even though
+  // opening any of them lands on "Access restricted." Filtering the strip
+  // itself, not just the destination page, keeps what's hoverable in sync
+  // with what's actually reachable.
+  const visibleSubmodulesFor = (m: ModuleDef): SubModuleDef[] =>
+    m.submodules.filter((s) => {
+      if (s.hiddenFromGrid) return false;
+      if (m.slug === "dashboard" && DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug)) return false;
+      const explicitOverride = getModuleRoleGate(m.slug, s.slug);
+      const roleGate = m.slug === "dashboard" ? getDashboardRoleGate(s.slug) : explicitOverride;
+      if (roleGate && !hasDashboardAccess(roleGate, role, extraRoles)) return false;
+      if (!explicitOverride && !isSubmoduleAllowed(role, m.slug, s.slug, extraRoles)) return false;
+      return true;
+    });
+
+  // A module only gets a pill if it has at least one submodule this viewer
+  // can actually open — an empty dropdown isn't useful to show.
+  const visibleModules = MODULES.filter((m) => visibleSubmodulesFor(m).length > 0);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -145,14 +164,7 @@ export function ModuleNavigator() {
           <div className="flex items-stretch overflow-visible">
             {visibleModules.map((m) => {
               const isActive = activeModule?.slug === m.slug;
-              // Same hiddenFromGrid convention as the module's own tile grid
-              // (m.$module.tsx) — a submodule meant to be reached only via
-              // another page's button (e.g. Flash Tech Calendar via Expense
-              // Tracking) stays out of this quick-nav dropdown too — plus the
-              // CSR allow-list, same as the module filter above.
-              const visibleSubmodules = m.submodules.filter(
-                (s) => !s.hiddenFromGrid && isSubmoduleAllowed(role, m.slug, s.slug, extraRoles)
-              );
+              const visibleSubmodules = visibleSubmodulesFor(m);
               return (
                 <div
                   key={m.slug}

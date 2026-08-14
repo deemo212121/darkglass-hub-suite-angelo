@@ -4,7 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
-import { getModule, type SubModuleDef } from "@/lib/modules";
+import { getModule, DASHBOARD_GRID_EXCLUDED_SLUGS, type SubModuleDef } from "@/lib/modules";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate } from "@/lib/moduleAccess";
 import { isModuleAllowed, isSubmoduleAllowed } from "@/lib/roleLabels";
@@ -529,7 +529,7 @@ function ModuleIndex() {
         {m.slug === "dashboard" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {submodules
-              .filter((s: SubModuleDef) => !["csr-daily-report", "call-tracker", "csr-status-summary", "csr-team-leader-dashboard"].includes(s.slug))
+              .filter((s: SubModuleDef) => !DASHBOARD_GRID_EXCLUDED_SLUGS.has(s.slug))
               .filter((s: SubModuleDef) => {
                 const allowed = getDashboardRoleGate(s.slug);
                 return !allowed || hasDashboardAccess(allowed, role, extraRoles);

@@ -1513,6 +1513,25 @@ const adminMod: ModuleDef = {
 };
 
 
+/**
+ * Dashboard submodules that are real, routable pages (role gates and all)
+ * but never get their own tile on the Dashboard grid — each is reached
+ * through another page instead (CSR Dashboard redirects CSR_AGENT/
+ * CSR_TEAM_LEADER to csr-team-leader-dashboard; csr-daily-report,
+ * call-tracker, and csr-status-summary are opened from within CSR
+ * Dashboard/Team Leader Dashboard). Shared by the module's own tile grid
+ * (m.$module.tsx) and the floating quick-nav (ModuleNavigator.tsx) so the
+ * two stay in sync — none of these four have hiddenFromGrid set since that
+ * flag also affects non-grid consumers that DO want them (e.g. direct link
+ * resolution), this list is deliberately just for "don't tile it."
+ */
+export const DASHBOARD_GRID_EXCLUDED_SLUGS = new Set([
+  "csr-daily-report",
+  "call-tracker",
+  "csr-status-summary",
+  "csr-team-leader-dashboard",
+]);
+
 export const MODULES: ModuleDef[] = [dashboardMod, ticketsMod, partsMod, claimsMod, reportMod, adminMod];
 
 export function getModule(slug: string) {
