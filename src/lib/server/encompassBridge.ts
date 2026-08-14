@@ -21,6 +21,25 @@
 const ENCOMPASS_PROD_BASE = "https://encompass.com";
 const ENCOMPASS_TEST_BASE = "https://test.encompass.com";
 
+// `programName` is NOT one account-wide value — Encompass assigns a
+// distinct one per service (confirmed against their SwaggerHub docs and
+// live-tested against test.encompass.com), rejecting every other endpoint's
+// value with "-104 program not authorized" even though the account/
+// credentials are otherwise fully valid. Keyed by the same `path` callers
+// already pass through this bridge.
+const PROGRAM_NAME_BY_PATH: Record<string, string> = {
+  "/restfulservice/brandList": "JSON.MFG.LIST",
+  "/restfulservice/modelPartList": "JSON.MODEL.INFORMATION",
+  "/restfulservice/partsInformation": "JSON.ITEM.INFORMATION",
+  "/restfulservice/frequentlyPurchasedParts": "JSON.FBT",
+  "/restfulservice/shipto": "JSONShipTo",
+  "/restfulservice/createOrder": "JSON.ORDER.CREATE",
+  "/restfulservice/orderStatus": "JSON.ORDER.STATUS",
+  "/restfulservice/cancelOrder": "JSON.ORDER.CANCEL",
+  "/restfulservice/AvailableReturns": "JSONAvailableReturns",
+  "/restfulservice/returnRequest": "JSON.RETURN.REQUEST",
+};
+
 interface EncompassRequestBody {
   /** Path relative to the base URL, e.g. "/restfulservice/search". Every documented Encompass endpoint is POST. */
   path?: string;
@@ -99,6 +118,8 @@ export async function handleEncompassRequest(
     const envName = pick((globalThis as any).__ENCOMPASS_ENV__, "VITE_ENCOMPASS_ENV") || "test";
     const jsonUser = pick((globalThis as any).__ENCOMPASS_JSON_USER__, "VITE_ENCOMPASS_JSON_USER");
     const jsonPassword = pick((globalThis as any).__ENCOMPASS_JSON_PASSWORD__, "VITE_ENCOMPASS_JSON_PASSWORD");
+    const customerNumber = pick((globalThis as any).__ENCOMPASS_CUSTOMER_NUMBER__, "VITE_ENCOMPASS_CUSTOMER_NUMBER");
+    const customerPassword = pick((globalThis as any).__ENCOMPASS_CUSTOMER_PASSWORD__, "VITE_ENCOMPASS_CUSTOMER_PASSWORD");
 
     if (!jsonUser || !jsonPassword) {
       return json({ success: false, error: "Encompass credentials not configured on server" }, 500);
@@ -111,14 +132,21 @@ export async function handleEncompassRequest(
 
     // Every Encompass endpoint wants { settings: {...}, data: {...} } —
     // settings always carries jsonUser/jsonPassword (assembled here, only
-    // server-side, never accepted from the caller), a default programName
-    // (some endpoints, e.g. brandList, 400 with "missing program name"
-    // without one — cheaper to always send it than track which do), plus
-    // whatever customerNumber/customerPassword the caller supplied for
-    // account-specific operations.
+    // server-side, never accepted from the caller), the endpoint-specific
+    // programName (see PROGRAM_NAME_BY_PATH — caller can still override),
+    // and customerNumber/customerPassword (account 272467, needed by every
+    // customer-scoped endpoint like orderStatus/createOrder — harmless to
+    // send even to endpoints that ignore it, like brandList).
     const callerSettings = reqBody.settings || {};
     const upstreamBody = {
-      settings: { programName: "AHS", ...callerSettings, jsonUser, jsonPassword },
+      settings: {
+        programName: PROGRAM_NAME_BY_PATH[path],
+        customerNumber,
+        customerPassword,
+        ...callerSettings,
+        jsonUser,
+        jsonPassword,
+      },
       data: reqBody.data || {},
     };
 

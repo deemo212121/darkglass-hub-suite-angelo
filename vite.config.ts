@@ -92,6 +92,8 @@ const SERVER_DEFINE = {
   "globalThis.__ENCOMPASS_ENV__": JSON.stringify(rootEnv.VITE_ENCOMPASS_ENV ?? "test"),
   "globalThis.__ENCOMPASS_JSON_USER__": JSON.stringify(rootEnv.VITE_ENCOMPASS_JSON_USER ?? ""),
   "globalThis.__ENCOMPASS_JSON_PASSWORD__": JSON.stringify(rootEnv.VITE_ENCOMPASS_JSON_PASSWORD ?? ""),
+  "globalThis.__ENCOMPASS_CUSTOMER_NUMBER__": JSON.stringify(rootEnv.VITE_ENCOMPASS_CUSTOMER_NUMBER ?? ""),
+  "globalThis.__ENCOMPASS_CUSTOMER_PASSWORD__": JSON.stringify(rootEnv.VITE_ENCOMPASS_CUSTOMER_PASSWORD ?? ""),
   // NSA Platform credentials (SERVER ONLY — never exposed to browser).
   "globalThis.__NSA_BASE_URL__": JSON.stringify(rootEnv.NSA_BASE_URL ?? "https://api.nsaweb.com"),
   "globalThis.__NSA_API_KEY__": JSON.stringify(rootEnv.NSA_API_KEY ?? ""),
