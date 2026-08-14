@@ -2487,7 +2487,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               {/* Timecard Details */}
               <div className="bg-slate-800/50 border border-white/10 rounded-lg p-4 mb-6">
                 <h3 className="text-sm font-bold text-white mb-4">Clock Times</h3>
-                <p className="text-xs text-slate-400 mb-3">Original: {selectedCorrection.originalCheckIn || "—"} → {selectedCorrection.originalCheckOut || "—"}</p>
+                <p className="text-sm text-slate-400 mb-3">Original: <span className="text-base text-slate-200 font-semibold">{selectedCorrection.originalCheckIn || "—"} → {selectedCorrection.originalCheckOut || "—"}</span></p>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Check In</label>
