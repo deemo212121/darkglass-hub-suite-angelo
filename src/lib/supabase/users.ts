@@ -293,6 +293,27 @@ export async function getMyRoles(firebaseUid: string): Promise<{ role: string | 
 }
 
 /**
+ * Firebase uids of every profile with roleCode as either their PRIMARY
+ * role or one of their extra_roles — for notification fan-out that needs
+ * to reach secondary-role holders too, not just the primary-role lookup
+ * Firestore's users_index.userType supports (see getUidsForFirestoreRole
+ * in lib/firebase/notifications.ts). No company_id filter needed:
+ * profiles_select RLS already scopes plain selects to the caller's own
+ * company.
+ */
+export async function getFirebaseUidsForRole(roleCode: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("firebase_uid, role, extra_roles")
+    .or(`role.eq.${roleCode},extra_roles.cs.{${roleCode}}`);
+  if (error) {
+    console.error("getFirebaseUidsForRole error:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r: any) => r.firebase_uid as string).filter(Boolean);
+}
+
+/**
  * The caller's own editable account fields — used by the self-service
  * /profile page. Distinct from getProfileForLogin (login-time only, no
  * phone/department/branch) and getMyProfileSchedule (schedule fields only).

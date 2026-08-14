@@ -1,17 +1,20 @@
 /**
- * "Connect Gmail" for Payroll — one connection PER REGION (US/PH each get
- * their own connected Gmail account, matching AccountingDashboard.tsx's
- * US/PH Payroll toggle). Status/disconnect go through Supabase RPCs (see
- * migration 0113_hr_gmail_connections.sql), same pattern as
- * customForms.ts's Google Drive connection wrappers. The actual connect
- * flow and payslip send both go through src/lib/server/gmailBridge.ts
- * instead (a real OAuth redirect, and a privileged send action — neither
- * fits a plain Supabase RPC).
+ * "Connect Gmail" — one connection PER SLOT: "US"/"PH" Payroll (each gets
+ * its own connected Gmail account, matching AccountingDashboard.tsx's
+ * US/PH Payroll toggle) plus "PARTS" (the ticket page's Part Transaction
+ * "Send" drop-ship request — see migration 0171, added later than the
+ * original two so it's independently connectable rather than forced to
+ * reuse whichever Payroll mailbox happens to be connected). Status/
+ * disconnect go through Supabase RPCs (see migration 0113_hr_gmail_
+ * connections.sql), same pattern as customForms.ts's Google Drive
+ * connection wrappers. The actual connect flow and sends both go through
+ * src/lib/server/gmailBridge.ts instead (a real OAuth redirect, and a
+ * privileged send action — neither fits a plain Supabase RPC).
  */
 import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 
-export type GmailRegion = "US" | "PH";
+export type GmailRegion = "US" | "PH" | "PARTS";
 
 export interface GmailConnectionStatus {
   connected: boolean;

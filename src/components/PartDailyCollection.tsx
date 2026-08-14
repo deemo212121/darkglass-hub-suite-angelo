@@ -8,6 +8,9 @@ import { useAuth } from "@/lib/auth";
 import { sendNotificationToRole } from "@/lib/firebase/notifications";
 import { getCompanyTechnicians } from "@/lib/supabase/users";
 import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
+import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
+
+const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -23,7 +26,6 @@ function getDefaultCollectionDate() {
   else d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
-
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const { companyId } = useAuth();
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
@@ -76,7 +78,11 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const toggleCollected = (id: string) => {
     setRows((prev) => prev.map((r) => {
       if (r.id !== id) return r;
-      if (r.collected) return { ...r, collected: false, collectedDate: "" };
+      if (r.collected) {
+        removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id);
+        return { ...r, collected: false, collectedDate: "" };
+      }
+      addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id, `${r.partNo || id} (Ticket ${r.ticketNo || "—"})`, r.location);
       return {
         ...r,
         collected: true,

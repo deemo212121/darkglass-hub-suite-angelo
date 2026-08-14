@@ -23,6 +23,7 @@ export interface PartOrderRow {
   location: string;
   scheduleDate: string;
   warranty: string;
+  /** The ticket's overall Repair Status (tickets.status, e.g. "CSR-Acknowledged") — distinct from `status` above, which is the individual part row's own status (e.g. "Need PO"). */
   repairStatus: string;
 }
 
@@ -88,16 +89,5 @@ export async function getDistinctPartOrderDistributors(): Promise<string[]> {
     return [];
   }
   const set = new Set((data ?? []).map((r: any) => r.part_dist).filter((v: string) => v && v.trim()));
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
-/** Distinct real tickets.warranty values currently in use, for the Warranty Type filter dropdown. */
-export async function getDistinctPartOrderWarranties(): Promise<string[]> {
-  const { data, error } = await supabase.from("tickets").select("warranty").not("warranty", "is", null);
-  if (error) {
-    console.error("getDistinctPartOrderWarranties error:", error.message);
-    return [];
-  }
-  const set = new Set((data ?? []).map((r: any) => r.warranty).filter((v: string) => v && v.trim()));
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }

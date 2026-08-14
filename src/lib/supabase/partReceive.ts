@@ -18,6 +18,7 @@ export interface PartReceiveRow {
   poDate: string;
   orderNo: string;
   invoiceNo: string;
+  note: string;
   partNo: string;
   partDesc: string;
   eta: string;
@@ -41,7 +42,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
   const { data, error } = await supabase
     .from("parts")
     .select(
-      "id, po_no, po_date, order_no, invoice_no, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+      "id, po_no, po_date, order_no, invoice_no, note, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
     )
     .eq("status", "PO Made");
 
@@ -56,6 +57,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
     poDate: row.po_date || "",
     orderNo: row.order_no || "",
     invoiceNo: row.invoice_no || "",
+    note: row.note || "",
     partNo: row.part_no || "",
     partDesc: row.part_desc || "",
     eta: row.eta || "",
@@ -77,12 +79,13 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
 
 export async function updatePartReceiveRow(
   id: string,
-  updates: { qtyReceived?: number; receivedDate?: string; invoiceNo?: string }
+  updates: { qtyReceived?: number; receivedDate?: string; invoiceNo?: string; note?: string }
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
   if (updates.qtyReceived !== undefined) payload.qty_received = updates.qtyReceived;
   if (updates.receivedDate !== undefined) payload.received_date = updates.receivedDate || null;
   if (updates.invoiceNo !== undefined) payload.invoice_no = updates.invoiceNo;
+  if (updates.note !== undefined) payload.note = updates.note;
   if (Object.keys(payload).length === 0) return;
 
   const { error } = await supabase.from("parts").update(payload).eq("id", id);

@@ -6,7 +6,9 @@ import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeD
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { isFirebaseReady } from "@/lib/firebase/config";
+import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
+import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
+import { getRecentDropshipRecipients, recordDropshipRecipient, type DropshipRecipient } from "@/lib/supabase/dropshipRecipients";
 import { useIsPhone } from "@/lib/device";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
@@ -691,6 +693,7 @@ const PART_STATUS_TEXT_COLOR: Record<string, string> = {
 
   "Back Order": "text-slate-400",
   "Defective": "text-slate-400",
+  "Dropship": "text-slate-400",
   "Hold for Estimation": "text-slate-400",
   "In Review": "text-slate-400",
   "Not Used & Stocked": "text-slate-400",
@@ -1212,6 +1215,41 @@ function TicketDetailsPage() {
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
   const [isPartListModalOpen, setIsPartListModalOpen] = useState(false);
+  // Per-row "Send" on the Part Transaction table — a free-text drop-ship
+  // request (e.g. "please ship this backordered part to our office")
+  // composed from the row's PO#/Part# plus the ticket branch's address
+  // (defaultShipTo, already computed for the Marcone modal above), edited
+  // and previewed before it actually goes out via the company's connected
+  // Gmail account (see /api/gmail?action=send-dropship-request).
+  // Usually one row, but a checkbox beside each row's Send button lets HR
+  // select several parts on the SAME PO and bulk them into one email
+  // (distributors often want one message listing every backordered part
+  // for a PO rather than a separate email per part).
+  const [dropshipRows, setDropshipRows] = useState<PartTransactionRow[]>([]);
+  const [dropshipSelectedIds, setDropshipSelectedIds] = useState<Set<string>>(new Set());
+  // Recent recipients (company-wide, see migration 0172) — lets HR pick a
+  // distributor they've sent to before instead of retyping it every time.
+  const [dropshipRecent, setDropshipRecent] = useState<DropshipRecipient[]>([]);
+  const [dropshipRecentError, setDropshipRecentError] = useState<string | null>(null);
+  const [dropshipTo, setDropshipTo] = useState("");
+  // CC is a set of confirmed "chips" (Enter/comma/blur commits the text
+  // box's current contents as one) rather than one free-typed string —
+  // avoids ambiguity over what counts as a separator between addresses.
+  const [dropshipCc, setDropshipCc] = useState<string[]>([]);
+  const [dropshipCcInput, setDropshipCcInput] = useState("");
+  const [dropshipSubject, setDropshipSubject] = useState("");
+  const [dropshipBody, setDropshipBody] = useState("");
+  const [dropshipSending, setDropshipSending] = useState(false);
+  const [dropshipError, setDropshipError] = useState<string | null>(null);
+  const [dropshipSent, setDropshipSent] = useState(false);
+  // Gmail connection status shown right in the Part Transaction toolbar —
+  // previously only visible/manageable from the Accounting Dashboard, which
+  // meant whoever needed to use "Send" here had no way to tell (or fix)
+  // whether it would actually work without navigating away first.
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [gmailStatusLoading, setGmailStatusLoading] = useState(false);
+  const [gmailConnecting, setGmailConnecting] = useState(false);
+  const [gmailDisconnecting, setGmailDisconnecting] = useState(false);
   // Which deleted-part audit entry (by entry.id) currently has its full
   // before-deletion snapshot expanded in the Part Transaction Log modal.
   const [expandedDeletedPartLogId, setExpandedDeletedPartLogId] = useState<string | null>(null);
@@ -4978,6 +5016,215 @@ function TicketDetailsPage() {
     clearPartForm();
   };
 
+  // Its own independent connection slot (see migration 0171) — deliberately
+  // NOT resolved from the ticket's US/PH branch like Payroll payslips are,
+  // so a drop-ship request never goes out from whichever Payroll mailbox
+  // happens to be connected. An Admin can still connect the same account
+  // to both if they want; nothing forces it to differ.
+  const gmailRegion: GmailRegion = "PARTS";
+  const canConnectGmail = String(currentUserRole || "").toUpperCase() === "ADMIN" || String(currentUserRole || "").toUpperCase() === "SUPERADMIN";
+
+  const loadGmailStatus = useCallback(async () => {
+    setGmailStatusLoading(true);
+    try {
+      setGmailStatus(await getGmailConnectionStatus(gmailRegion));
+    } catch (err) {
+      console.error("Failed to load Gmail connection status:", err);
+    } finally {
+      setGmailStatusLoading(false);
+    }
+  }, [gmailRegion]);
+
+  useEffect(() => {
+    if (!authReady || !ticket) return;
+    void loadGmailStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, !!ticket, gmailRegion]);
+
+  const handleConnectGmailHere = async () => {
+    setGmailConnecting(true);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+      if (!idToken) { alert("You need to be logged in to connect Gmail."); return; }
+      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
+      window.location.href = `/api/gmail?action=connect&region=${gmailRegion}&idToken=${encodeURIComponent(idToken)}`;
+    } finally {
+      setGmailConnecting(false);
+    }
+  };
+
+  const handleDisconnectGmailHere = async () => {
+    if (!confirm(`Disconnect the Parts/Drop-Ship Gmail account? "Send" on part rows won't work until it's reconnected.`)) return;
+    setGmailDisconnecting(true);
+    try {
+      await disconnectGmail(gmailRegion);
+      await loadGmailStatus();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    } finally {
+      setGmailDisconnecting(false);
+    }
+  };
+
+  const openDropshipModal = (rows: PartTransactionRow[]) => {
+    if (rows.length === 0) return;
+    setDropshipRows(rows);
+    setDropshipTo("");
+    setDropshipCc([]);
+    setDropshipCcInput("");
+    setDropshipError(null);
+    setDropshipSent(false);
+    setDropshipRecent([]);
+    setDropshipRecentError(null);
+    // Pre-fill from the most-recently-used recipient — most POs on the
+    // same ticket go to the same distributor, so this saves retyping on
+    // every single send. Guarded with functional updates so it never
+    // clobbers anything the user already started typing while this was
+    // still in flight; the "Recent" chips below still let them switch to
+    // a different distributor if this one's wrong for this PO.
+    getRecentDropshipRecipients().then((list) => {
+      setDropshipRecent(list);
+      if (list.length > 0) {
+        setDropshipTo((prev) => prev || list[0].toEmail);
+        setDropshipCc((prev) => (prev.length > 0 ? prev : list[0].ccEmails));
+      }
+    }).catch((err) => {
+      setDropshipRecentError(err instanceof Error ? err.message : "Couldn't load recent recipients.");
+    });
+    const primary = rows[0];
+    const isBulk = rows.length > 1;
+    setDropshipSubject(`Drop-Ship Request — PO# ${primary.poNo || "N/A"}`);
+    const addressLines = [
+      defaultShipTo.street1,
+      defaultShipTo.street2,
+      [defaultShipTo.city, defaultShipTo.state, defaultShipTo.zip].filter(Boolean).join(", "),
+    ].filter(Boolean);
+    setDropshipBody(
+      [
+        "Good day,",
+        "",
+        isBulk
+          ? "The following parts for the order below are currently on backorder. Could you please have these parts drop-shipped to our office."
+          : "The part for the order below is currently on backorder. Could you please have this part drop-shipped to our office.",
+        "",
+        "Order Details:",
+        `PO #: ${primary.poNo || "N/A"}`,
+        ...(isBulk
+          ? ["Parts:", "", ...rows.map((r) => `- ${r.partNo || "?"} - ${r.partDesc || "Part"}`)]
+          : [`PART #: ${primary.partNo || "N/A"}`]),
+        "Address:",
+        ...(addressLines.length > 0 ? addressLines : [defaultShipTo.name || "—"]),
+        "",
+        "Thank you,",
+        currentUserName || "",
+      ].join("\n"),
+    );
+  };
+  const closeDropshipModal = () => {
+    setDropshipRows([]);
+  };
+  const toggleDropshipSelect = (id: string) => {
+    setDropshipSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  // Bulk-send only makes sense within one PO — mixing POs into a single
+  // email would misrepresent which parts belong to which order.
+  const openBulkDropshipModal = () => {
+    const rows = partRows.filter((r) => dropshipSelectedIds.has(r.id));
+    if (rows.length === 0) return;
+    const distinctPos = new Set(rows.map((r) => r.poNo || ""));
+    if (distinctPos.size > 1) {
+      alert("Selected parts have different PO #s. Bulk Send only works for parts on the same PO — select parts from one PO at a time.");
+      return;
+    }
+    openDropshipModal(rows);
+  };
+  const CC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  // Commits whatever's currently typed into the CC box as chip(s) — split
+  // the same lenient way the server does (comma/semicolon/whitespace), so
+  // pasting a whole list at once and pressing Enter once still works.
+  const commitDropshipCcInput = () => {
+    const parts = dropshipCcInput
+      .split(/[,;\s]+/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (parts.length === 0) return;
+    const valid = parts.filter((p) => CC_EMAIL_RE.test(p));
+    const invalid = parts.filter((p) => !CC_EMAIL_RE.test(p));
+    if (valid.length > 0) {
+      setDropshipCc((prev) => [...prev, ...valid.filter((p) => !prev.includes(p))]);
+    }
+    setDropshipCcInput(invalid.join(", "));
+    if (invalid.length === 0) setDropshipError(null);
+  };
+  const removeDropshipCc = (email: string) => {
+    setDropshipCc((prev) => prev.filter((e) => e !== email));
+  };
+  const applyDropshipRecent = (entry: DropshipRecipient) => {
+    setDropshipTo(entry.toEmail);
+    setDropshipCc(entry.ccEmails);
+    setDropshipCcInput("");
+  };
+
+  const handleSendDropshipRequest = async () => {
+    if (dropshipRows.length === 0) return;
+    const to = dropshipTo.trim();
+    if (!to) {
+      setDropshipError("Recipient email is required.");
+      return;
+    }
+    // Pick up anything still sitting in the CC box that wasn't committed
+    // with Enter/comma yet, so it isn't silently dropped on send.
+    const pendingCc = dropshipCcInput
+      .split(/[,;\s]+/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (pendingCc.some((p) => !CC_EMAIL_RE.test(p))) {
+      setDropshipError(`Invalid CC email address: ${pendingCc.find((p) => !CC_EMAIL_RE.test(p))}`);
+      return;
+    }
+    const ccList = [...dropshipCc, ...pendingCc.filter((p) => !dropshipCc.includes(p))];
+    const cc = ccList.join(", ");
+    setDropshipSending(true);
+    setDropshipError(null);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
+      const res = await fetch("/api/gmail?action=send-dropship-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, region: gmailRegion, to, cc, subject: dropshipSubject, body: dropshipBody }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to send.");
+      setDropshipCc(ccList);
+      setDropshipCcInput("");
+      setDropshipSent(true);
+      setDropshipSelectedIds(new Set());
+      recordDropshipRecipient(to, ccList).catch((err) => {
+        setDropshipRecentError(
+          `Sent, but couldn't save "${to}" for next time: ${err instanceof Error ? err.message : "unknown error"}`,
+        );
+      });
+      const partsSummary = dropshipRows.map((r) => r.partNo || "?").join(", ");
+      appendAuditEntry({
+        by: currentEditor,
+        action: "Sent drop-ship request",
+        field: "Part Transaction",
+        before: "—",
+        after: `To: ${to}${cc ? ` (cc: ${cc})` : ""} — PO# ${dropshipRows[0].poNo || "N/A"}, Part# ${partsSummary}`,
+      });
+    } catch (err) {
+      setDropshipError(err instanceof Error ? err.message : "Failed to send.");
+    } finally {
+      setDropshipSending(false);
+    }
+  };
+
   const deletePartRow = async (rowId: string) => {
     if (!canEditParts) {
       alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
@@ -6962,9 +7209,62 @@ function TicketDetailsPage() {
                       ? `Update (${dirtyRowCount})`
                       : "Update"}
                   </button>
+                  {dropshipSelectedIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={openBulkDropshipModal}
+                      disabled={partsEditDisabled || !canEditParts}
+                      className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                        partsEditDisabled || !canEditParts
+                          ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                          : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
+                      }`}
+                      title="Email one drop-ship request listing all selected parts (must be the same PO)"
+                    >
+                      Send Selected ({dropshipSelectedIds.size})
+                    </button>
+                  )}
                   {/* Auto-sync indicator removed — Marcone order status
                       is now manual-refresh only via the per-row Refresh
                       button. */}
+                  {/* Which Gmail account the per-row "Send" (drop-ship
+                      request) button will actually send from — previously
+                      only visible/manageable from the Accounting Dashboard. */}
+                  {gmailStatusLoading ? (
+                    <span className="text-[10px] text-slate-500">Gmail…</span>
+                  ) : gmailStatus?.connected ? (
+                    <span
+                      className="flex items-center gap-1 rounded border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300"
+                      title={`Send emails from: ${gmailStatus.connectedEmail}`}
+                    >
+                      ✓ Gmail: {gmailStatus.connectedEmail}
+                      {canConnectGmail && (
+                        <button
+                          type="button"
+                          onClick={handleDisconnectGmailHere}
+                          disabled={gmailDisconnecting}
+                          className="ml-1 text-emerald-400/70 hover:text-emerald-200 disabled:opacity-50"
+                          title="Disconnect the Parts/Drop-Ship Gmail account"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ) : canConnectGmail ? (
+                    <button
+                      type="button"
+                      onClick={handleConnectGmailHere}
+                      disabled={gmailConnecting}
+                      className="rounded border border-white/15 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-700 disabled:opacity-50"
+                      title={'Connect the Parts/Drop-Ship Gmail account "Send" will email from'}
+                    >
+                      {gmailConnecting ? "Connecting…" : "Connect Gmail"}
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-slate-500" title="An Admin needs to connect Gmail before Send will work">
+                      Gmail not connected — ask an Admin
+                    </span>
+                  )}
                 </div>
                 )}
               </div>
@@ -7145,6 +7445,33 @@ function TicketDetailsPage() {
                                   {marconeRefreshingId === row.id ? "…" : "Refresh"}
                                 </button>
                               ) : null}
+                              <button
+                                type="button"
+                                onClick={() => openDropshipModal([row])}
+                                disabled={partsEditDisabled || !canEditParts}
+                                className={`rounded border px-2 py-1 text-xs font-semibold transition mr-1 ${
+                                  partsEditDisabled || !canEditParts
+                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
+                                    : "border-blue-400/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
+                                }`}
+                                title={
+                                  partsEditDisabled
+                                    ? "Locked: Parts / Claims / Manager roles only"
+                                    : !canEditParts
+                                      ? "Your role can only order parts, not add or edit them."
+                                      : "Email a drop-ship request for this part"
+                                }
+                              >
+                                Send
+                              </button>
+                              <input
+                                type="checkbox"
+                                checked={dropshipSelectedIds.has(row.id)}
+                                onChange={() => toggleDropshipSelect(row.id)}
+                                disabled={partsEditDisabled || !canEditParts}
+                                className="accent-blue-500 mr-1 align-middle"
+                                title="Select for Bulk Send (parts on the same PO)"
+                              />
                               <button
                                 type="button"
                                 onClick={() => deletePartRow(row.id)}
@@ -8962,6 +9289,146 @@ function TicketDetailsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* Part Transaction row "Send" — a drop-ship request email, previewed
+          and edited here before it actually goes out via the company's
+          connected Gmail account. */}
+      {dropshipRows.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeDropshipModal}>
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-1 text-lg font-bold text-white">Send Drop-Ship Request</h3>
+            <p className="mb-4 text-xs text-slate-400">
+              PO# {dropshipRows[0].poNo || "N/A"}
+              {dropshipRows.length > 1
+                ? ` · ${dropshipRows.length} parts`
+                : ` · Part# ${dropshipRows[0].partNo || "N/A"}`}
+            </p>
+
+            {dropshipSent ? (
+              <>
+                <p className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-300">
+                  Sent to {dropshipTo}{dropshipCc.length > 0 ? ` (cc: ${dropshipCc.join(", ")})` : ""}.
+                </p>
+                {dropshipRecentError && (
+                  <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">
+                    {dropshipRecentError}
+                  </p>
+                )}
+                <div className="flex justify-end">
+                  <button type="button" onClick={closeDropshipModal} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Recipient</label>
+                    <input
+                      type="email"
+                      value={dropshipTo}
+                      onChange={(e) => setDropshipTo(e.target.value)}
+                      placeholder="distributor@example.com"
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    />
+                    {dropshipRecent.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500">Recent:</span>
+                        {dropshipRecent.map((entry) => (
+                          <button
+                            key={entry.toEmail}
+                            type="button"
+                            onClick={() => applyDropshipRecent(entry)}
+                            className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-slate-300 hover:border-blue-400/40 hover:text-white"
+                            title={entry.ccEmails.length > 0 ? `CC: ${entry.ccEmails.join(", ")}` : "No CC saved"}
+                          >
+                            {entry.toEmail}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {dropshipRecentError && (
+                      <p className="mt-1 text-[11px] text-amber-400">{dropshipRecentError}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">CC (optional)</label>
+                    <div className="mt-1 flex w-full flex-wrap items-center gap-1.5 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 focus-within:border-blue-500">
+                      {dropshipCc.map((email) => (
+                        <span key={email} className="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs text-white">
+                          {email}
+                          <button
+                            type="button"
+                            onClick={() => removeDropshipCc(email)}
+                            className="text-slate-400 hover:text-white"
+                            aria-label={`Remove ${email}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        value={dropshipCcInput}
+                        onChange={(e) => setDropshipCcInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            commitDropshipCcInput();
+                          } else if (e.key === "Backspace" && dropshipCcInput === "" && dropshipCc.length > 0) {
+                            removeDropshipCc(dropshipCc[dropshipCc.length - 1]);
+                          }
+                        }}
+                        onBlur={commitDropshipCcInput}
+                        placeholder={dropshipCc.length > 0 ? "Add another..." : "you@company.com"}
+                        className="min-w-[10rem] flex-1 bg-transparent px-1 py-0.5 text-sm text-white focus:outline-none"
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">Press Enter after each address to add it.</p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Subject</label>
+                    <input
+                      type="text"
+                      value={dropshipSubject}
+                      onChange={(e) => setDropshipSubject(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Message (preview — edit before sending)</label>
+                    <textarea
+                      value={dropshipBody}
+                      onChange={(e) => setDropshipBody(e.target.value)}
+                      rows={12}
+                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none whitespace-pre-wrap"
+                    />
+                  </div>
+                </div>
+
+                {dropshipError && (
+                  <p className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{dropshipError}</p>
+                )}
+
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={closeDropshipModal} className="rounded-md border border-white/15 px-4 py-2 text-sm text-slate-300 hover:bg-white/5">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendDropshipRequest}
+                    disabled={dropshipSending || !dropshipTo.trim()}
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {dropshipSending ? "Sending…" : "Send"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Marcone Parts Order modal — opens when Submit POs catches at least
           one Marcone part. Non-Marcone parts already went through the

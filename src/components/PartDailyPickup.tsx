@@ -5,7 +5,10 @@ import { ChevronLeft, Printer, Save, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getPartsForDailyPickup, updatePartPickupRow, type PartPickupRow } from "@/lib/supabase/partDailyPickup";
+import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+
+const PARTS_DONE_QUEUE_SOURCE = "Part Daily Pickup";
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -22,6 +25,21 @@ function repairStatusClass(status: string): string {
 
 const TODAY=new Date().toISOString().slice(0,10);
 
+// TEMPORARY fallback — the real query (getPartsForDailyPickup) matches
+// parts with status "Tech Pickup" AND an exact ticket schedule_date, so
+// it's very easy for it to legitimately return nothing (no real part
+// happens to be scheduled for the picked date yet). Rather than always
+// showing an empty table, fall back to these example rows so there's
+// always something to test the Picked Up toggle / "I'm Done" flow
+// against. Ids are prefixed "ex-" so Save knows never to persist them.
+export const EXAMPLE_PICKUP_ROWS: PartPickupRow[] = [
+  { id: "ex-pu-1", techName: "Abel Severino", ticketNo: "26000671722HS", repairStatus: "OP-Waiting for Part", partNo: "11101010016460", description: "Fixed Speed Reciprocating Comp", po: "1007567278-10-AV", quantity: 1, coreValue: 45, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: false, location: "Atlanta" },
+  { id: "ex-pu-2", techName: "Darrin Stewart", ticketNo: "1007567278-10-AV", repairStatus: "CL-Claimed", partNo: "4056017371", description: "Pipe", po: "PO-260702-001", quantity: 2, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up at office", comment: "", inTransit: false, location: "Memphis" },
+  { id: "ex-pu-3", techName: "John Godfrey", ticketNo: "SA-3349588-AV", repairStatus: "OP-Ready for Service", partNo: "WE22X37340", description: "User Interface Board FL Dryer 87 & 95", po: "12-606043-0526", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: true, location: "Nashville" },
+  { id: "ex-pu-4", techName: "Zonate Grant", ticketNo: "1234567", repairStatus: "TR-Need Triage", partNo: "WE04X24719", description: "Button Start ASM", po: "75112201", quantity: 1, coreValue: 12.5, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "Waiting on tech", inTransit: false, location: "Birmingham" },
+  { id: "ex-pu-5", techName: "Erick Guzman Juarez", ticketNo: "1007685370-10-AV", repairStatus: "OP-Waiting for Part", partNo: "140156010054", description: "Manifold, Water Filter, W/NO Con", po: "1-55553", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up", comment: "", inTransit: false, location: "San Antonio" },
+];
+
 export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
@@ -33,6 +51,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [loadError,setLoadError]=useState<string|null>(null);
   const [saveError,setSaveError]=useState<string|null>(null);
   const [saved,setSaved]=useState(false);
+  const [usingExampleData,setUsingExampleData]=useState(false);
   const locD=useP(locOpen);const techD=useP(techOpen);
   const locL=useRef<HTMLDivElement>(null);const techL=useRef<HTMLDivElement>(null);
   useEffect(()=>{const fn=(e:MouseEvent)=>{const t=e.target as Node;
@@ -62,7 +81,17 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     setLoading(true);
     setLoadError(null);
     getPartsForDailyPickup({ location: location || undefined, technician: tech || undefined, pickupDate })
-      .then(setRows)
+      .then((data) => {
+        if (data.length === 0) {
+          setRows(
+            EXAMPLE_PICKUP_ROWS.filter((r) => (!location || r.location === location) && (!tech || r.techName === tech))
+          );
+          setUsingExampleData(true);
+        } else {
+          setRows(data);
+          setUsingExampleData(false);
+        }
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [location, tech, pickupDate]);
@@ -70,7 +99,14 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   useEffect(() => { loadRows(); }, [loadRows]);
 
   const togglePickedUp = (id:string) => {
-    setRows(prev=>prev.map(r=>r.id===id?{...r,pickedUp:!r.pickedUp}:r));
+    setRows(prev=>prev.map(r=>{
+      if(r.id!==id) return r;
+      const next={...r,pickedUp:!r.pickedUp};
+      const label=`${next.partNo||next.id} (Ticket ${next.ticketNo||"—"})`;
+      if(next.pickedUp) addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE,id,label,next.location);
+      else removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE,id);
+      return next;
+    }));
   };
   const updateRow = (id:string,field:"action"|"comment",value:string) => {
     setRows(prev=>prev.map(r=>r.id===id?{...r,[field]:value}:r));
@@ -79,9 +115,13 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     setSaving(true);
     setSaveError(null);
     try {
-      await Promise.all(rows.map((r) =>
-        updatePartPickupRow(r.id, { pickedUp: r.pickedUp, action: r.action, comment: r.comment })
-      ));
+      // Example rows (id starts "ex-") aren't real part records — never
+      // send those to Supabase, just let the toggle/Save UX work locally.
+      await Promise.all(
+        rows.filter((r) => !r.id.startsWith("ex-")).map((r) =>
+          updatePartPickupRow(r.id, { pickedUp: r.pickedUp, action: r.action, comment: r.comment })
+        )
+      );
       setSaved(true);
       setTimeout(()=>setSaved(false),3000);
     } catch (err) {
@@ -125,6 +165,9 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     </div>
 
     {/* Table */}
+    {usingExampleData && !loading && (
+      <p className="text-xs text-amber-400 mb-2">No real parts scheduled for pickup on this date — showing example data instead.</p>
+    )}
     <div className="panel p-0 w-full">
       {loadError ? (
         <p className="text-sm text-red-400 px-4 py-6">Failed to load parts: {loadError}</p>

@@ -65,10 +65,15 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
   return { supabaseUrl, supabaseServiceKey, firebaseProjectId, googleClientId, googleClientSecret };
 }
 
-type Region = "US" | "PH";
+// "PARTS" isn't a real geographic region — it's the ticket page's Part
+// Transaction "Send" (drop-ship request) connection slot, added later
+// (migration 0171) so it's independently connectable instead of forced to
+// reuse whichever Payroll US/PH mailbox happens to be connected. Same
+// table/RPCs/connect-flow, just a third allowed value.
+type Region = "US" | "PH" | "PARTS";
 function parseRegion(value: string | null | undefined): Region | null {
   const upper = String(value ?? "").toUpperCase();
-  return upper === "US" || upper === "PH" ? upper : null;
+  return upper === "US" || upper === "PH" || upper === "PARTS" ? upper : null;
 }
 /** Same rule as AccountingDashboard.tsx's country derivation — assigned_branch === "Philippines" is the only PH signal. */
 function resolveEmployeeRegion(assignedBranch: string | null): Region {
@@ -87,6 +92,18 @@ const GMAIL_SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/mess
 
 const CONNECT_ROLES = new Set(["ADMIN", "SUPERADMIN"]);
 const PAYSLIP_SENDER_ROLES = new Set(["ADMIN", "SUPERADMIN", "FINANCE"]);
+// Same role set ticket.$ticketNo.tsx's own canOrderParts/canEditParts checks
+// already gate the Part Transaction table's edit/delete controls with
+// (PARTS_ORDER_ONLY_ROLES ∪ PARTS_EDIT_ONLY_ROLES) — sending a drop-ship
+// request is no more sensitive than editing that same table, so it reuses
+// the identical set rather than the payslip-only Admin/SuperAdmin/Finance
+// gate above.
+const DROPSHIP_SENDER_ROLES = new Set([
+  "PARTS", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "CLAIMS", "CLAIMS_MANAGER",
+  "MANAGER", "SENIOR_MANAGER", "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER",
+  "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "TRIAGE_USER", "TRIAGE_MANAGER",
+  "ADMIN", "SUPERADMIN",
+]);
 
 function b64urlEncode(input: string): string {
   return btoa(unescape(encodeURIComponent(input))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -208,11 +225,28 @@ function wrapBase64(b64: string): string {
   return b64.replace(/(.{76})/g, "$1\r\n");
 }
 
-async function sendGmailMessage(accessToken: string, fromEmail: string, toEmail: string, subject: string, body: string): Promise<void> {
+/**
+ * RFC 2047 "encoded word" for a non-ASCII header value (e.g. an em dash in
+ * a Subject line). Header fields are US-ASCII per RFC 2822/5322 unless
+ * wrapped this way — dropping raw UTF-8 bytes straight into `Subject:`
+ * (this file used to) isn't valid, and mail clients that tolerate it
+ * anyway don't agree on which charset to assume the bytes are in, which is
+ * exactly how "—" turned into "Â¢Â€Â"" garbage in a sent subject line.
+ * ASCII-only values pass through unchanged — nothing to fix there, and it
+ * stays more readable in transit/logs.
+ */
+function encodeHeaderValue(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  return `=?UTF-8?B?${btoa(unescape(encodeURIComponent(value)))}?=`;
+}
+
+async function sendGmailMessage(accessToken: string, fromEmail: string, toEmail: string, subject: string, body: string, ccEmail?: string): Promise<void> {
   const message = [
     `From: ${fromEmail}`,
     `To: ${toEmail}`,
-    `Subject: ${subject}`,
+    ...(ccEmail ? [`Cc: ${ccEmail}`] : []),
+    `Subject: ${encodeHeaderValue(subject)}`,
     "Content-Type: text/plain; charset=UTF-8",
     "",
     body,
@@ -244,7 +278,7 @@ async function sendGmailMessageWithAttachment(
   const message = [
     `From: ${fromEmail}`,
     `To: ${toEmail}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeHeaderValue(subject)}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
@@ -432,6 +466,78 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: target.email, region });
     } catch (err) {
       console.error("[gmail] send-payslip error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // Per-part-row "Send" action on a ticket's Part Transaction table (see
+  // ticket.$ticketNo.tsx) — a free-text drop-ship request the caller
+  // composes and edits themselves in a preview before sending, unlike
+  // send-payslip's fixed template. Subject/body/recipient/cc are all
+  // caller-supplied; only the FROM account (which connected Gmail mailbox
+  // to send through) is server-resolved, same trust boundary as payslips.
+  if (url.searchParams.get("action") === "send-dropship-request") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      // Its own independent connection slot (see migration 0171) — not
+      // resolved from the ticket's US/PH branch like Payroll is, so this
+      // never actually varies per-request, but stays parseRegion-checked
+      // for consistency with the other actions in this file.
+      const region = parseRegion(typeof payload.region === "string" ? payload.region : "") ?? "PARTS";
+      const to = typeof payload.to === "string" ? payload.to.trim() : "";
+      const cc = typeof payload.cc === "string" ? payload.cc.trim() : "";
+      const subject = typeof payload.subject === "string" ? payload.subject.trim() : "";
+      const body = typeof payload.body === "string" ? payload.body : "";
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!to) return json({ error: "Recipient email is required" }, 400);
+      if (!EMAIL_RE.test(to)) return json({ error: "Invalid recipient email address" }, 400);
+      // CC supports multiple addresses — comma/semicolon-separated (the
+      // usual convention), but also tolerate plain whitespace since browser
+      // autofill often drops addresses in without a comma between them.
+      const ccList = cc
+        .split(/[,;\s]+/)
+        .map((addr) => addr.trim())
+        .filter((addr) => addr.length > 0);
+      if (ccList.some((addr) => !EMAIL_RE.test(addr))) {
+        return json({ error: "Invalid CC email address" }, 400);
+      }
+      const ccHeader = ccList.join(", ");
+      if (!subject.trim()) return json({ error: "Subject is required" }, 400);
+      if (!body.trim()) return json({ error: "Message body is required" }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      if (!caller.role || !DROPSHIP_SENDER_ROLES.has(caller.role.toUpperCase())) {
+        return json({ error: "Not authorized to send drop-ship requests" }, 403);
+      }
+
+      const connection = await fetchGmailConnection(envBag, caller.companyId, region);
+      if (!connection) return json({ error: `Gmail is not connected for ${region} yet. An Admin can connect it from the Accounting Dashboard.` }, 409);
+
+      let accessToken: string;
+      try {
+        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) {
+          return json({
+            error: `The ${region} Gmail connection has expired or was revoked. An Admin needs to reconnect it from the Accounting Dashboard, then try again.`,
+            reauthRequired: true,
+            region,
+          }, 409);
+        }
+        throw err;
+      }
+      const fromEmail = connection.connectedEmail || "me";
+      await sendGmailMessage(accessToken, fromEmail, to, subject, body, ccHeader || undefined);
+
+      return json({ ok: true, sentTo: to });
+    } catch (err) {
+      console.error("[gmail] send-dropship-request error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }

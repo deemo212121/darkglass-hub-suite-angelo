@@ -30,6 +30,8 @@ export interface PartCollectionRow {
   collected: boolean;
   collectedDate: string;
   scheduleDate: string;
+  /** The ticket's branch/location — drives the Parts hub's per-branch "Done" digest routing. */
+  location: string;
 }
 
 // Suggests a Collect Type from the part's own status, per the rules the
@@ -90,6 +92,7 @@ export async function getPartsForDailyCollection(filters: {
     collected: row.collected === true,
     collectedDate: row.collected_date || "",
     scheduleDate: row.tickets?.schedule_date || "",
+    location: row.tickets?.location || "",
   }));
 
   return rows.filter((r) => {

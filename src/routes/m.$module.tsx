@@ -17,7 +17,12 @@ import {
   type MapProvider,
 } from "@/lib/supabase/companySettings";
 import { getLocations, upsertLocation, type LocationRow } from "@/lib/supabase/locationManagement";
-import { ArrowRight, ChevronLeft, ChevronDown, ChevronUp } from "lucide-react";
+import { getPendingDoneItems, clearPendingDoneItems, PARTS_DONE_QUEUE_EVENT, type PendingDoneItem } from "@/lib/partsDoneQueue";
+import { notifyPartsManagers } from "@/lib/partsNotify";
+import { groupBranchesByManager } from "@/lib/supabase/partsManagerBranches";
+import { getBranchProgress, formatBranchProgressLine, type BranchProgress } from "@/lib/partsBranchProgress";
+import { sendNotification } from "@/lib/firebase/notifications";
+import { ArrowRight, ChevronLeft, ChevronDown, ChevronUp, CheckCheck } from "lucide-react";
 
 // Sentinel <select> value for "force this branch unassigned regardless of
 // the company-wide default" — distinct from "" (no override, inherit the
@@ -53,10 +58,94 @@ export const Route = createFileRoute("/m/$module")({
 });
 
 function ModuleIndex() {
-  const { ready, email, role, uid } = useAuth();
+  const { ready, email, role, uid, companyId, displayName } = useAuth();
   const { module: m } = Route.useLoaderData();
   const [extraRoles, setExtraRoles] = useState<string[]>([]);
   const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
+
+  // Parts hub's single "Done" button — aggregates rows marked done across
+  // Part Receive / Part Daily Collection / Part Daily Pickup (see
+  // src/lib/partsDoneQueue.ts), grouped by BRANCH, into one progress
+  // digest per branch ("Asheville Parts: Collections done 4/10, ...").
+  // Each branch's Parts Manager (profiles.branch_access — see
+  // partsManagerBranches.ts) only gets notified about their own
+  // branch(es), not the whole company's activity.
+  const [pendingDoneItems, setPendingDoneItems] = useState<PendingDoneItem[]>([]);
+  const [imDoneModalOpen, setImDoneModalOpen] = useState(false);
+  const [imDoneSending, setImDoneSending] = useState(false);
+  const [imDoneMessage, setImDoneMessage] = useState<string | null>(null);
+  const [branchProgress, setBranchProgress] = useState<BranchProgress[]>([]);
+  const [branchProgressLoading, setBranchProgressLoading] = useState(false);
+  useEffect(() => {
+    if (m.slug !== "parts") return;
+    const refresh = () => setPendingDoneItems(getPendingDoneItems());
+    refresh();
+    window.addEventListener(PARTS_DONE_QUEUE_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(PARTS_DONE_QUEUE_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [m.slug]);
+
+  const pendingBranches = Array.from(new Set(pendingDoneItems.map((i) => i.branch).filter(Boolean))).sort();
+  // branch -> source -> labels, for the "marked this session" sub-list
+  // shown under each branch's progress line in the preview.
+  const pendingByBranch = new Map<string, Map<string, string[]>>();
+  for (const item of pendingDoneItems) {
+    const branch = item.branch || "(no branch)";
+    const bySource = pendingByBranch.get(branch) ?? new Map<string, string[]>();
+    const labels = bySource.get(item.source) ?? [];
+    labels.push(item.label);
+    bySource.set(item.source, labels);
+    pendingByBranch.set(branch, bySource);
+  }
+
+  const openImDoneModal = () => {
+    if (pendingDoneItems.length === 0) return;
+    setImDoneModalOpen(true);
+    setBranchProgressLoading(true);
+    getBranchProgress(pendingBranches)
+      .then(setBranchProgress)
+      .catch((err) => console.error("Failed to load branch progress:", err))
+      .finally(() => setBranchProgressLoading(false));
+  };
+
+  const confirmImDone = async () => {
+    if (pendingDoneItems.length === 0) return;
+    setImDoneSending(true);
+    setImDoneMessage(null);
+    try {
+      const { byManager, unassignedBranches } = await groupBranchesByManager(pendingBranches);
+      const actor = displayName || email || "A team member";
+      const lineFor = (branch: string) => {
+        const progress = branchProgress.find((p) => p.branch === branch);
+        return progress ? formatBranchProgressLine(progress) : `${branch} Parts: progress unavailable`;
+      };
+
+      const sends: Promise<void>[] = [];
+      for (const [uid, branches] of byManager) {
+        const body = `${actor} update — ${branches.map(lineFor).join(" • ")}`;
+        sends.push(sendNotification([uid], { kind: "part_status_change", title: "Parts done", body }));
+      }
+      if (unassignedBranches.length > 0) {
+        const body = `${actor} update (no assigned Parts Manager found for these branches) — ${unassignedBranches.map(lineFor).join(" • ")}`;
+        sends.push(notifyPartsManagers(companyId, { kind: "part_status_change", title: "Parts done", body }));
+      }
+      await Promise.all(sends);
+
+      clearPendingDoneItems();
+      setPendingDoneItems([]);
+      setImDoneModalOpen(false);
+      setImDoneMessage(`Notified Parts Manager${byManager.size === 1 && unassignedBranches.length === 0 ? "" : "s"} for ${pendingBranches.length} branch${pendingBranches.length === 1 ? "" : "es"}.`);
+      window.setTimeout(() => setImDoneMessage(null), 4000);
+    } catch (err) {
+      console.error("Failed to notify Parts Manager:", err);
+      setImDoneMessage("Failed to send notification — please try again.");
+    } finally {
+      setImDoneSending(false);
+    }
+  };
 
   // Company-wide map provider (see migration 0050) — every map-bearing page
   // in the system (Ticket Map, Work Planner, Work Map, Location Management
@@ -297,15 +386,32 @@ function ModuleIndex() {
     <>
       <AppHeader />
       <main className="max-w-[1400px] mx-auto px-6 py-8">
-        <div className="flex items-center gap-3 mb-5">
-          <Link to="/home" className="btn"><ChevronLeft className="h-4 w-4" />Home</Link>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-              {m.label}
-            </h1>
-            <p className="text-sm text-muted-foreground">{m.tagline}</p>
+        <div className="flex items-center justify-between gap-3 mb-5">
+          <div className="flex items-center gap-3">
+            <Link to="/home" className="btn"><ChevronLeft className="h-4 w-4" />Home</Link>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
+                {m.label}
+              </h1>
+              <p className="text-sm text-muted-foreground">{m.tagline}</p>
+            </div>
           </div>
+          {m.slug === "parts" && (
+            <div className="flex items-center gap-2">
+              {imDoneMessage && <span className="text-sm text-green-400">{imDoneMessage}</span>}
+              <button
+                type="button"
+                onClick={openImDoneModal}
+                disabled={pendingDoneItems.length === 0 || imDoneSending}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 inline-flex items-center gap-2"
+                title="Notify Parts Manager with everything marked done on Part Receive / Daily Collection / Daily Pickup"
+              >
+                <CheckCheck className="h-4 w-4" />
+                {imDoneSending ? "Sending…" : `Done${pendingDoneItems.length > 0 ? ` (${pendingDoneItems.length})` : ""}`}
+              </button>
+            </div>
+          )}
         </div>
         {m.slug === "admin" && isAdmin && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5 items-stretch">
@@ -476,6 +582,64 @@ function ModuleIndex() {
         )}
       </main>
       <Footer />
+      {imDoneModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !imDoneSending && setImDoneModalOpen(false)}>
+          <div className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-white mb-1">Notify Parts Manager?</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              {pendingDoneItems.length} item{pendingDoneItems.length === 1 ? "" : "s"} marked done, across {pendingBranches.length} branch{pendingBranches.length === 1 ? "" : "es"}.
+            </p>
+            <div className="overflow-y-auto flex-1 -mx-2 px-2 space-y-3 mb-4">
+              {pendingBranches.map((branch) => {
+                const progress = branchProgress.find((p) => p.branch === branch);
+                const bySource = pendingByBranch.get(branch);
+                return (
+                  <div key={branch} className="rounded border border-white/10 bg-white/5 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-sm font-semibold text-white">{branch} Parts:</span>
+                      <span className="text-xs text-muted-foreground" title="Who's reporting this update">{displayName || email || "Unknown"}</span>
+                    </div>
+                    {branchProgressLoading || !progress ? (
+                      <p className="text-xs text-muted-foreground">Loading progress…</p>
+                    ) : (
+                      <ul className="space-y-0.5 mb-2">
+                        <li className="text-sm text-slate-200">Collections done {progress.collectionsDone}/{progress.collectionsTotal}</li>
+                        <li className="text-sm text-slate-200">Daily Pickup done {progress.pickupDone}/{progress.pickupTotal}</li>
+                        <li className="text-sm text-slate-200">Parts Received done {progress.receivedDone}/{progress.receivedTotal}</li>
+                      </ul>
+                    )}
+                    {bySource && (
+                      <div className="text-xs text-muted-foreground space-y-0.5 border-t border-white/10 pt-1.5 mt-1.5">
+                        {Array.from(bySource.entries()).map(([source, labels]) => (
+                          <div key={source}>{source}: {labels.join(", ")}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setImDoneModalOpen(false)}
+                disabled={imDoneSending}
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmImDone}
+                disabled={imDoneSending || branchProgressLoading}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {imDoneSending ? "Sending…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
