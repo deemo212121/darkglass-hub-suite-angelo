@@ -11,9 +11,8 @@
  * for consistency.
  */
 import { getPartsToReceive } from "@/lib/supabase/partReceive";
-import { getPartsForDailyPickup } from "@/lib/supabase/partDailyPickup";
+import { getPartsForDailyPickup, EXAMPLE_PICKUP_ROWS } from "@/lib/supabase/partDailyPickup";
 import { getPartsForDailyCollection } from "@/lib/supabase/partDailyCollection";
-import { EXAMPLE_PICKUP_ROWS } from "@/components/PartDailyPickup";
 
 export interface BranchProgress {
   branch: string;
