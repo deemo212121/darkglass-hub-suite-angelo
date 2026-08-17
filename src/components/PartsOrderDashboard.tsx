@@ -140,6 +140,7 @@ const HIGH_CONTRAST_TOOLTIP_STYLE = {
 
 const currency = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+
 // Shared by every panel's own one-click "Download XLSX" button below.
 function downloadSheetXlsx(filename: string, sheetName: string, rows: (string | number)[][]) {
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
@@ -1373,6 +1374,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         </div>
         </>
         )}
+
         </>
         )}
       </main>
