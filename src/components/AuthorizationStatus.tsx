@@ -31,6 +31,23 @@ function formatSpDate(raw?: string): string {
   return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
 }
 
+/**
+ * ServicePower's own docs disagree with themselves on the error-wrapper
+ * shape: the generic "4.3 Errors" boilerplate (shared across every
+ * ServicePower integration guide) shows lowercase `messages: [{ message }]`,
+ * but the RFA-retrieve endpoint's own Response Elements table — and the
+ * real server response observed live — actually returns capitalized
+ * `Messages: [{ messageText }]`. Check both shapes rather than trust either
+ * doc section alone.
+ */
+function extractSpErrorMessages(data: any): string[] {
+  const collection = data?.messages ?? data?.Messages;
+  if (!Array.isArray(collection)) return [];
+  return collection
+    .map((m: any) => m?.message ?? m?.messageText ?? m?.Message ?? m?.MessageText)
+    .filter((m: unknown): m is string => typeof m === "string" && m.length > 0);
+}
+
 interface Row {
   key: string;
   callNumber: string;
@@ -129,12 +146,12 @@ export function AuthorizationStatus({ mod }: Props) {
       if (!res.ok || data?.success === false) {
         throw new Error(data?.error || `Request failed (${res.status})`);
       }
-      if (data?.responseCode === "ER") {
-        throw new Error(data?.messages?.map((m: { message: string }) => m.message).join(", ") || "ServicePower returned an error");
+      if (data?.responseCode === "ER" || data?.ResponseCode === "ER") {
+        throw new Error(extractSpErrorMessages(data).join(", ") || "ServicePower returned an error");
       }
-      const requests: RFARequest[] = Array.isArray(data?.requests) ? data.requests : [];
+      const requests: RFARequest[] = Array.isArray(data?.requests) ? data.requests : Array.isArray(data?.Requests) ? data.Requests : [];
       setRows(requests.map(toRow));
-      setMoreExist(data?.moreCallsExist === "Y");
+      setMoreExist(data?.moreCallsExist === "Y" || data?.MoreCallsExist === "Y");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load authorization requests");
       setRows([]);
