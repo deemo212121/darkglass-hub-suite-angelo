@@ -31,6 +31,44 @@ const isPersisted = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
 let tempIdSeq = 0;
 const newTempId = () => `new-${Date.now()}-${tempIdSeq++}`;
 
+// Pre-migration, this page stored everything in this browser's
+// localStorage only — invisible to Supabase and to any other admin. Rows
+// added here (e.g. a real NSA/Marcone/Encompass account) before the
+// Supabase cutover are still sitting under this key in whichever browser
+// they were added from; they just aren't rendered anymore since the page
+// now reads from Supabase. One-time recovery check below offers to import
+// them rather than leaving that data silently stranded.
+const LEGACY_STORAGE_KEY = "ahs:external-accounts";
+const LEGACY_DISMISSED_KEY = "ahs:external-accounts:import-dismissed";
+
+function loadLegacyRows(): AccountRow[] {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as { rows?: Array<Record<string, unknown>> };
+    if (!Array.isArray(parsed.rows)) return [];
+    return parsed.rows
+      .filter((row) => row && typeof row === "object")
+      .map((row): AccountRow => ({
+        id: newTempId(),
+        type: typeof row.type === "string" && row.type ? row.type : "American Home Shield Account",
+        accountNo: typeof row.accountNo === "string" ? row.accountNo : "",
+        displayName: typeof row.displayName === "string" ? row.displayName : "",
+        accountId: typeof row.accountId === "string" ? row.accountId : "",
+        password: typeof row.password === "string" ? row.password : "",
+        refNo1: typeof row.refNo1 === "string" ? row.refNo1 : "",
+        defaultPartDist: typeof row.defaultPartDist === "string" ? row.defaultPartDist : "",
+        sync: typeof row.sync === "string" ? row.sync : "",
+      }))
+      // Only worth recovering if it has real, filled-in data beyond the
+      // bare type/account-no the hardcoded seed already covers.
+      .filter((row) => row.accountId.trim() || row.password.trim() || row.displayName.trim());
+  } catch {
+    return [];
+  }
+}
+
 const blankRow = (): AccountRow => ({
   id: newTempId(),
   type: "American Home Shield Account",
@@ -52,6 +90,9 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showSavePrompt, setShowSavePrompt] = useState(false);
 
+  const [recoverable, setRecoverable] = useState<AccountRow[]>([]);
+  const [importing, setImporting] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     getExternalServiceAccounts()
@@ -59,6 +100,20 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
         if (cancelled) return;
         setRows(data);
         setSavedRows(data);
+
+        if (typeof window !== "undefined" && !window.localStorage.getItem(LEGACY_DISMISSED_KEY)) {
+          const legacy = loadLegacyRows();
+          // Only flag rows this browser has that aren't already an exact
+          // match in Supabase — avoids re-suggesting the two seeded
+          // defaults if this browser's copy of them is identical.
+          const alreadyKnown = new Set(
+            data.map((r) => `${r.type}|${r.accountNo}|${r.displayName}|${r.accountId}|${r.password}|${r.refNo1}|${r.defaultPartDist}`)
+          );
+          const fresh = legacy.filter(
+            (r) => !alreadyKnown.has(`${r.type}|${r.accountNo}|${r.displayName}|${r.accountId}|${r.password}|${r.refNo1}|${r.defaultPartDist}`)
+          );
+          if (fresh.length > 0) setRecoverable(fresh);
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -69,6 +124,27 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
       });
     return () => { cancelled = true; };
   }, []);
+
+  const importRecovered = async () => {
+    setImporting(true);
+    try {
+      await Promise.all(recoverable.map((row) => upsertExternalServiceAccount(row)));
+      const fresh = await getExternalServiceAccounts();
+      setRows(fresh);
+      setSavedRows(fresh);
+      setRecoverable([]);
+      window.localStorage.setItem(LEGACY_DISMISSED_KEY, "1");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to import recovered accounts");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const dismissRecovery = () => {
+    setRecoverable([]);
+    window.localStorage.setItem(LEGACY_DISMISSED_KEY, "1");
+  };
 
   const hasUnsavedChanges = useMemo(() => JSON.stringify(rows) !== JSON.stringify(savedRows), [rows, savedRows]);
 
@@ -131,6 +207,23 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
         {loadError && (
           <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
             Failed to load accounts: {loadError}
+          </div>
+        )}
+
+        {recoverable.length > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            <p className="font-medium">
+              Found {recoverable.length} account{recoverable.length === 1 ? "" : "s"} saved in this browser from before this page moved to shared storage:{" "}
+              {recoverable.map((r) => r.type).join(", ")}.
+            </p>
+            <p className="mt-1 text-amber-200/80">This only checks the browser you're using right now — if these accounts were added from a different computer, they won't show up here.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" onClick={() => void importRecovered()} disabled={importing} className="btn btn-primary flex items-center gap-2">
+                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {importing ? "Importing…" : `Import ${recoverable.length} account${recoverable.length === 1 ? "" : "s"}`}
+              </button>
+              <button type="button" onClick={dismissRecovery} disabled={importing} className="btn">Dismiss</button>
+            </div>
           </div>
         )}
 
