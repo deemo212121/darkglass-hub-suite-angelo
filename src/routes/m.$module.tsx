@@ -24,12 +24,18 @@ import { getBranchProgress, formatBranchProgressLine, type BranchProgress } from
 import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
 import { filterOptedIn } from "@/lib/supabase/notificationOptOuts";
 import { sendNotification } from "@/lib/firebase/notifications";
+import { logPartsDoneActivity } from "@/lib/supabase/partsDoneActivityLog";
 import { ArrowRight, ChevronLeft, ChevronDown, ChevronUp, CheckCheck } from "lucide-react";
 
 // Sentinel <select> value for "force this branch unassigned regardless of
 // the company-wide default" — distinct from "" (no override, inherit the
 // company default), which no real technician name will ever collide with.
 const FORCE_UNASSIGNED = "__FORCE_UNASSIGNED__";
+
+// Deep link for the "Parts done" notification — lands on Report > Part
+// Daily Report's Done Activity tab (see ReportPartsDaily.tsx's own
+// ?tab=done-activity handling), not just the module's Overview.
+const PARTS_DONE_DIGEST_LINK = "/m/report/report-parts-daily?tab=done-activity";
 
 export const Route = createFileRoute("/m/$module")({
   head: ({ params }) => ({
@@ -133,17 +139,51 @@ function ModuleIndex() {
       const managerUids = await filterOptedIn(Array.from(byManager.keys()), "parts_done_digest");
       const optedInManagers = new Set(managerUids);
 
+      // One activity-log row per BRANCH per Done click, not per manager
+      // notified — a branch can have more than one Parts Manager covering
+      // it (e.g. someone with all-branch access), and logging per-manager
+      // made the Done Activity tab show several duplicate-looking rows for
+      // the same branch. branchRecipientCounts tallies how many people
+      // actually got notified for each branch, folded into that one row.
+      const branchRecipientCounts = new Map<string, number>();
       const sends: Promise<void>[] = [];
       for (const [uid, branches] of byManager) {
         if (!optedInManagers.has(uid)) continue;
         const body = `${actor} update — ${branches.map(lineFor).join(" • ")}`;
-        sends.push(sendNotification([uid], { kind: "part_status_change", title: "Parts done", body }));
+        sends.push(sendNotification([uid], { kind: "part_status_change", title: "Parts done", body, link: PARTS_DONE_DIGEST_LINK }));
+        for (const branch of branches) {
+          branchRecipientCounts.set(branch, (branchRecipientCounts.get(branch) ?? 0) + 1);
+        }
       }
       if (unassignedBranches.length > 0) {
         const body = `${actor} update (no assigned Parts Manager found for these branches) — ${unassignedBranches.map(lineFor).join(" • ")}`;
-        sends.push(notifyPartsManagers(companyId, notifyRoles, "parts_done_digest", { kind: "part_status_change", title: "Parts done", body }));
+        sends.push((async () => {
+          const recipientCount = await notifyPartsManagers(companyId, notifyRoles, "parts_done_digest", { kind: "part_status_change", title: "Parts done", body, link: PARTS_DONE_DIGEST_LINK });
+          for (const branch of unassignedBranches) branchRecipientCounts.set(branch, recipientCount);
+        })());
       }
       await Promise.all(sends);
+      await Promise.all(
+        pendingBranches.map((branch) => {
+          const progress = branchProgress.find((p) => p.branch === branch);
+          return logPartsDoneActivity({
+            branch,
+            summary: lineFor(branch),
+            recipientCount: branchRecipientCounts.get(branch) ?? 0,
+            actorName: actor,
+            metrics: progress
+              ? {
+                  collectionsDone: progress.collectionsDone,
+                  collectionsTotal: progress.collectionsTotal,
+                  pickupDone: progress.pickupDone,
+                  pickupTotal: progress.pickupTotal,
+                  receivedDone: progress.receivedDone,
+                  receivedTotal: progress.receivedTotal,
+                }
+              : undefined,
+          });
+        })
+      );
 
       clearPendingDoneItems();
       setPendingDoneItems([]);

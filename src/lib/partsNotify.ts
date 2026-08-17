@@ -16,12 +16,13 @@ import { sendNotification, getUidsForFirestoreRole, type AppNotification } from 
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { filterOptedIn } from "@/lib/supabase/notificationOptOuts";
 
+/** Returns how many people actually got notified (post opt-out filtering) — used to log the Done-button activity, see partsDoneActivityLog.ts. */
 export async function notifyPartsManagers(
   companyId: string | null,
   roleCodes: string[],
   triggerKey: string,
   payload: Omit<AppNotification, "id" | "uid" | "isRead" | "createdAt">
-): Promise<void> {
+): Promise<number> {
   const firestoreLookups = await Promise.all(
     roleCodes.map((code) => getUidsForFirestoreRole(ROLE_LABELS[code] || code, companyId ?? ""))
   );
@@ -29,4 +30,5 @@ export async function notifyPartsManagers(
   const candidates = Array.from(new Set([...firestoreLookups.flat(), ...supabaseUids]));
   const uids = await filterOptedIn(candidates, triggerKey);
   if (uids.length > 0) await sendNotification(uids, payload);
+  return uids.length;
 }
