@@ -18,6 +18,52 @@
 interface ServicePowerRequestBody {
   action: 'test' | 'retrieveClaim' | 'submitClaim' | 'createRFA' | 'retrieveRFA' | 'getCallInfo' | 'getCallNotes' | 'addCallNote';
   params?: any;
+  /** Caller's company_id — used to look up a live-editable credential override (see resolveStoredCredentials below). Optional so existing/legacy callers (e.g. servicepower-test.tsx) keep working off the .env-only fallback. */
+  companyId?: string;
+}
+
+/**
+ * Account Management (/m/admin/account-management, "Service Power Account"
+ * row) is the live, editable source of truth for these credentials — see
+ * migration 0174 and src/lib/supabase/externalServiceAccounts.ts. Checking
+ * here first means changing the password in that UI fixes the API
+ * immediately, no redeploy required, unlike the .env-baked fallback below
+ * which needs a rebuild to pick up a new value. Same service-role REST
+ * pattern as loginLockoutBridge.ts — no Supabase client SDK on the server.
+ */
+async function resolveStoredCredentials(
+  companyId: string | undefined,
+  env?: Record<string, string | undefined>
+): Promise<{ userId: string; password: string } | null> {
+  if (!companyId) return null;
+  const getEnv = (k: string): string | undefined =>
+    env?.[k] ?? (typeof process !== 'undefined' ? process.env?.[k] : undefined);
+  const g = globalThis as any;
+  const supabaseUrl =
+    (g.__SUPABASE_URL__ && g.__SUPABASE_URL__ !== '' ? g.__SUPABASE_URL__ : undefined) ?? getEnv('VITE_SUPABASE_URL');
+  const supabaseServiceKey =
+    (g.__SUPABASE_SERVICE_KEY__ && g.__SUPABASE_SERVICE_KEY__ !== '' ? g.__SUPABASE_SERVICE_KEY__ : undefined) ??
+    getEnv('SUPABASE_SERVICE_KEY');
+  if (!supabaseUrl || !supabaseServiceKey) return null;
+
+  try {
+    const url =
+      `${supabaseUrl}/rest/v1/external_service_accounts` +
+      `?company_id=eq.${encodeURIComponent(companyId)}` +
+      `&type=eq.${encodeURIComponent('Service Power Account')}` +
+      `&select=account_id,password&limit=1`;
+    const res = await fetch(url, {
+      headers: { apikey: supabaseServiceKey, Authorization: `Bearer ${supabaseServiceKey}` },
+    });
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Array<{ account_id?: string; password?: string }>;
+    const row = rows[0];
+    if (!row?.account_id || !row?.password) return null;
+    return { userId: row.account_id, password: row.password };
+  } catch (err) {
+    console.warn('[ServicePower API] Stored-credential lookup failed, falling back to .env:', err);
+    return null;
+  }
 }
 
 const ENDPOINTS = {
@@ -189,10 +235,11 @@ export async function handleServicePowerRequest(
 
   try {
     const body = (await request.json()) as ServicePowerRequestBody;
-    const { action, params } = body;
+    const { action, params, companyId } = body;
 
-    const userId = pick((globalThis as any).__SP_USER_ID__, 'VITE_SERVICEPOWER_USER_ID');
-    const password = pick((globalThis as any).__SP_PASSWORD__, 'VITE_SERVICEPOWER_PASSWORD');
+    const stored = await resolveStoredCredentials(companyId, env);
+    const userId = stored?.userId ?? pick((globalThis as any).__SP_USER_ID__, 'VITE_SERVICEPOWER_USER_ID');
+    const password = stored?.password ?? pick((globalThis as any).__SP_PASSWORD__, 'VITE_SERVICEPOWER_PASSWORD');
     const envName = pick((globalThis as any).__SP_ENV__, 'VITE_SERVICEPOWER_ENV') || 'staging';
     const region = pick((globalThis as any).__SP_REGION__, 'VITE_SERVICEPOWER_REGION') || 'na';
     const svcrAcct =

@@ -6,6 +6,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { getRFAStatusLabel } from "@/lib/servicePowerApi";
 import type { RFARequest } from "@/types/servicePower";
+import { useAuth } from "@/lib/auth";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -108,6 +109,7 @@ function PortalDropdown({label,options,value,onChange}:{label:string;options:str
 }
 
 export function AuthorizationStatus({ mod }: Props) {
+  const { companyId } = useAuth();
   const [authStatus, setAuthStatus] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [callNumber, setCallNumber] = useState("");
@@ -140,7 +142,10 @@ export function AuthorizationStatus({ mod }: Props) {
       const res = await fetch("/api/servicepower", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "retrieveRFA", params }),
+        // companyId lets the bridge look up this company's own stored
+        // ServicePower credentials (Account Management) before falling
+        // back to the .env-baked ones — see servicePowerBridge.ts.
+        body: JSON.stringify({ action: "retrieveRFA", params, companyId }),
       });
       const data = await res.json();
       if (!res.ok || data?.success === false) {
@@ -159,7 +164,7 @@ export function AuthorizationStatus({ mod }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, callNumber]);
+  }, [startDate, endDate, callNumber, companyId]);
 
   useEffect(() => { void loadRfas(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

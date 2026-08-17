@@ -1,21 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Loader2, CheckCircle2, CircleDashed } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import {
+  getExternalServiceAccounts,
+  upsertExternalServiceAccount,
+  deleteExternalServiceAccount,
+  type ExternalServiceAccountRow as AccountRow,
+} from "@/lib/supabase/externalServiceAccounts";
 
-type AccountRow = {
-  id: string;
-  type: string;
-  accountNo: string;
-  displayName: string;
-  accountId: string;
-  password: string;
-  refNo1: string;
-  defaultPartDist: string;
-  sync: string;
-};
-
-const STORAGE_KEY = "ahs:external-accounts";
 const ACCOUNT_TYPE_OPTIONS = [
   "American Home Shield Account",
   "Encompass",
@@ -34,96 +27,77 @@ const ACCOUNT_TYPE_OPTIONS = [
   "TWillO",
 ] as const;
 
-function buildDefaultRows(): AccountRow[] {
-  return [
-    {
-      id: "account-row-1",
-      type: "American Home Shield Account",
-      accountNo: "SHAWA11215713",
-      displayName: "SHAWA11215713 - SHAW,RICO",
-      accountId: "",
-      password: "",
-      refNo1: "",
-      defaultPartDist: "",
-      sync: "",
-    },
-    {
-      id: "account-row-2",
-      type: "Service Power Account",
-      accountNo: "1290884",
-      displayName: "",
-      accountId: "",
-      password: "",
-      refNo1: "GE_Memphis",
-      defaultPartDist: "",
-      sync: "",
-    },
-  ];
-}
+const isPersisted = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
+let tempIdSeq = 0;
+const newTempId = () => `new-${Date.now()}-${tempIdSeq++}`;
 
-function loadRows() {
-  if (typeof window === "undefined") return buildDefaultRows();
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return buildDefaultRows();
-
-  try {
-    const parsed = JSON.parse(raw) as { rows?: AccountRow[] };
-    if (!Array.isArray(parsed.rows)) return buildDefaultRows();
-    return parsed.rows
-      .filter((row): row is AccountRow => Boolean(row && row.id))
-      .map((row, index) => ({
-        id: row.id || `account-row-${index + 1}`,
-        type: typeof row.type === "string" && row.type ? row.type : "American Home Shield Account",
-        accountNo: row.accountNo || "",
-        displayName: row.displayName || "",
-        accountId: row.accountId || "",
-        password: row.password || "",
-        refNo1: row.refNo1 || "",
-        defaultPartDist: row.defaultPartDist || "",
-        sync: row.sync || "",
-      }));
-  } catch {
-    return buildDefaultRows();
-  }
-}
-
-function saveRows(rows: AccountRow[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
-}
+const blankRow = (): AccountRow => ({
+  id: newTempId(),
+  type: "American Home Shield Account",
+  accountNo: "",
+  displayName: "",
+  accountId: "",
+  password: "",
+  refNo1: "",
+  defaultPartDist: "",
+  sync: "",
+});
 
 export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
-  const [rows, setRows] = useState<AccountRow[]>(() => loadRows());
-  const [savedRows, setSavedRows] = useState<AccountRow[]>(() => loadRows());
+  const [rows, setRows] = useState<AccountRow[]>([]);
+  const [savedRows, setSavedRows] = useState<AccountRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [showSavePrompt, setShowSavePrompt] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getExternalServiceAccounts()
+      .then((data) => {
+        if (cancelled) return;
+        setRows(data);
+        setSavedRows(data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : "Failed to load accounts");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const hasUnsavedChanges = useMemo(() => JSON.stringify(rows) !== JSON.stringify(savedRows), [rows, savedRows]);
 
   const addRow = () => {
-    setRows((current) => [
-      ...current,
-      {
-        id: `account-row-${Date.now()}`,
-        type: "American Home Shield Account",
-        accountNo: "",
-        displayName: "",
-        accountId: "",
-        password: "",
-        refNo1: "",
-        defaultPartDist: "",
-        sync: "",
-      },
-    ]);
+    setRows((current) => [...current, blankRow()]);
   };
 
   const deleteRow = (rowId: string) => {
     setRows((current) => current.filter((row) => row.id !== rowId));
   };
 
-  const saveChanges = () => {
-    saveRows(rows);
-    setSavedRows(rows);
-    setShowSavePrompt(false);
+  const saveChanges = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const removedIds = savedRows
+        .filter((saved) => isPersisted(saved.id) && !rows.some((r) => r.id === saved.id))
+        .map((r) => r.id);
+      await Promise.all(removedIds.map((id) => deleteExternalServiceAccount(id)));
+      await Promise.all(rows.map((row) => upsertExternalServiceAccount(row)));
+      const fresh = await getExternalServiceAccounts();
+      setRows(fresh);
+      setSavedRows(fresh);
+      setShowSavePrompt(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save accounts");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const requestSave = () => {
@@ -145,10 +119,20 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" onClick={addRow} className="btn">Add</button>
-          <button type="button" onClick={requestSave} disabled={!hasUnsavedChanges} className="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50">Save Accounts</button>
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={addRow} className="btn" disabled={loading}>Add</button>
+          <button type="button" onClick={requestSave} disabled={!hasUnsavedChanges || saving} className="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Save Accounts
+          </button>
+          {saveError && <span className="text-xs text-red-400">Save failed: {saveError}</span>}
         </div>
+
+        {loadError && (
+          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            Failed to load accounts: {loadError}
+          </div>
+        )}
 
         <div className="mt-5 overflow-x-auto rounded-xl border border-white/15 bg-slate-950/60">
             <table className="min-w-[950px] w-full text-xs">
@@ -166,12 +150,16 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-slate-200">
-                {rows.map((row, index) => (
+                {loading ? (
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Loading accounts…</td></tr>
+                ) : rows.length === 0 ? (
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No accounts yet — click Add to create one.</td></tr>
+                ) : rows.map((row, index) => (
                   <tr key={row.id} className={index % 2 === 0 ? "bg-white/[0.02]" : "bg-white/[0.04]"}>
                     <td className="px-2 py-1.5 align-middle">
                       <select
                         value={row.type}
-                        onChange={(event) => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, type: event.target.value as AccountRow["type"] } : entry))}
+                        onChange={(event) => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, type: event.target.value } : entry))}
                         title="Type"
                         aria-label="Type"
                         className="glass-input w-full min-w-[130px] text-xs"
@@ -205,15 +193,18 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
                         onChange={(event) => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, accountId: event.target.value } : entry))}
                         title="ID"
                         placeholder="ID"
+                        autoComplete="off"
                         className="glass-input w-full min-w-[80px] text-xs"
                       />
                     </td>
                     <td className="px-2 py-1.5 align-middle">
                       <input
+                        type="password"
                         value={row.password}
                         onChange={(event) => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, password: event.target.value } : entry))}
                         title="Password"
                         placeholder="Password"
+                        autoComplete="new-password"
                         className="glass-input w-full min-w-[80px] text-xs"
                       />
                     </td>
@@ -236,13 +227,15 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
                       />
                     </td>
                     <td className="px-2 py-1.5 align-middle">
-                      <input
-                        value={row.sync}
-                        onChange={(event) => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, sync: event.target.value } : entry))}
-                        title="Sync"
-                        placeholder="Sync"
-                        className="glass-input w-full min-w-[80px] text-xs"
-                      />
+                      {row.accountId.trim() && row.password.trim() ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-300" title="ID and Password are both filled in">
+                          <CheckCircle2 className="h-3 w-3" /> Configured
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-slate-400" title="Missing ID and/or Password">
+                          <CircleDashed className="h-3 w-3" /> Not configured
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1.5 align-middle">
                       <button type="button" onClick={() => deleteRow(row.id)} className="btn">Delete</button>
@@ -262,8 +255,11 @@ export function AccountManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubMo
               The external account rows were modified. Save now to keep the updated account mappings.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
-              <button type="button" onClick={saveChanges} className="btn btn-primary">Save now</button>
-              <button type="button" onClick={() => setShowSavePrompt(false)} className="btn">Keep editing</button>
+              <button type="button" onClick={() => void saveChanges()} disabled={saving} className="btn btn-primary flex items-center gap-2">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {saving ? "Saving…" : "Save now"}
+              </button>
+              <button type="button" onClick={() => setShowSavePrompt(false)} disabled={saving} className="btn">Keep editing</button>
             </div>
           </div>
         </div>
