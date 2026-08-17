@@ -12,16 +12,20 @@ export const ROLE_LABELS: Record<string, string> = {
   ADMIN: "Admin",
   MANAGER: "Manager",
   SENIOR_MANAGER: "Senior Manager",
-  CSR: "CSR",
+  // CSR (legacy, pre-dates the CSR_AGENT/TEAM_LEADER/MANAGER tier split) and
+  // CSR_AGENT are the same job in practice — same display label so any
+  // existing CSR-role holder reads identically to a CSR_AGENT everywhere a
+  // label is shown, even though the two codes stay distinct in the DB.
+  CSR: "CSR Associate",
   TECHNICIAN: "Technician",
   TECHNICIAN_MANAGER: "Tech Manager",
   DISPATCHER: "Dispatcher",
   HR: "HR",
   IT: "IT",
   PARTS: "Parts",
-  FINANCE: "Finance",
-  CLAIMS: "Claims",
-  CSR_AGENT: "CSR Agent",
+  FINANCE: "Accounting",
+  CLAIMS: "Claims Associate",
+  CSR_AGENT: "CSR Associate",
   CSR_TEAM_LEADER: "CSR Team Leader",
   CSR_MANAGER: "CSR Manager",
   BRANCH_MANAGER: "Branch Manager",
@@ -45,13 +49,18 @@ export const ROLE_LABELS: Record<string, string> = {
  * Every role code assignable via the "User Type" multi-select (individual
  * user edit page), the Role Management bulk grid, and the roles list on the
  * left of Accessibility Management's access matrix — every ROLE_LABELS
- * code except the two platform/company super-admin tiers, which are
+ * code except: the two platform/company super-admin tiers, which are
  * deliberately excluded (they bypass every access gate unconditionally, so
- * restricting them here would be meaningless). Single source of truth so
- * none of these UIs can drift out of sync with each other.
+ * restricting them here would be meaningless); and CSR/DISPATCHER, retired
+ * from new assignment (CSR merges into CSR_AGENT/"CSR Associate" — see the
+ * ROLE_LABELS comment above; DISPATCHER never grew any dedicated
+ * module/dashboard of its own). Both codes stay in ROLE_LABELS so any
+ * existing holder still displays a real label, just no longer offered here.
+ * Single source of truth so none of these UIs can drift out of sync with
+ * each other.
  */
 export const ROLE_OPTIONS: { value: string; label: string }[] = Object.entries(ROLE_LABELS)
-  .filter(([code]) => code !== "SUPERADMIN" && code !== "SUPERSUPERADMIN")
+  .filter(([code]) => !["SUPERADMIN", "SUPERSUPERADMIN", "CSR", "DISPATCHER"].includes(code))
   .map(([value, label]) => ({ value, label }))
   .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -68,7 +77,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   ADMIN: { department: "Admin", roleLabel: "Admin" },
   MANAGER: { department: "Management", roleLabel: "Manager" },
   SENIOR_MANAGER: { department: "Management", roleLabel: "Senior Manager" },
-  CSR: { department: "CSR", roleLabel: "CSR" },
+  CSR: { department: "CSR", roleLabel: "Associate" },
   TECHNICIAN: { department: "Technician", roleLabel: "Technician" },
   TECHNICIAN_MANAGER: { department: "Technician", roleLabel: "Manager" },
   TECHNICAL_DIRECTOR: { department: "Technician", roleLabel: "Director" },
@@ -77,9 +86,9 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   HR: { department: "HR", roleLabel: "HR" },
   IT: { department: "IT", roleLabel: "IT" },
   PARTS: { department: "Parts", roleLabel: "Parts" },
-  FINANCE: { department: "Finance", roleLabel: "Finance" },
-  CLAIMS: { department: "Claims", roleLabel: "Claims" },
-  CSR_AGENT: { department: "CSR", roleLabel: "Agent" },
+  FINANCE: { department: "Accounting", roleLabel: "Accounting" },
+  CLAIMS: { department: "Claims", roleLabel: "Associate" },
+  CSR_AGENT: { department: "CSR", roleLabel: "Associate" },
   CSR_TEAM_LEADER: { department: "CSR", roleLabel: "Team Leader" },
   CSR_MANAGER: { department: "CSR", roleLabel: "Manager" },
   BRANCH_MANAGER: { department: "Branch Manager", roleLabel: "Manager" },
@@ -316,6 +325,7 @@ const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "PARTS_MANAGER",
   "PARTS_TEAM_LEADER",
   "CLAIMS_MANAGER",
+  "CLAIMS_TEAM_LEADER",
   "TRIAGE_MANAGER",
   "BIZOPS_MANAGER",
   "BIZOPS_SENIOR_MANAGER",

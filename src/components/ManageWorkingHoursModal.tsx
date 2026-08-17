@@ -49,7 +49,10 @@ export function ManageWorkingHoursModal({ branches, onClose, onApplied, changedB
     try {
       const [scheduleRows, profileRows] = await Promise.all([getBranchRoleSchedules(), getCompanyUsers()]);
       setSchedules(scheduleRows);
-      setUsers(profileRows);
+      // Deactivated accounts have nothing to apply a working-hours schedule
+      // to — same "hide inactive by default" rule as Role Management/
+      // Accessibility Management/Attendance Monitoring.
+      setUsers(profileRows.filter((u) => u.is_active !== false));
     } finally {
       setLoading(false);
     }

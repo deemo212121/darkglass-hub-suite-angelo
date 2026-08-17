@@ -46,6 +46,12 @@ import {
   type CorrectionStage,
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
+import {
+  getCompanyEmployeeRequests,
+  updateEmployeeRequestStatus,
+  type EmployeeRequestRow,
+  type EmployeeRequestStatus,
+} from "@/lib/supabase/employeeRequests";
 
 interface DailyRecord {
   profileId: string;
@@ -196,6 +202,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
   const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
+  // Attendance Disputes/Payroll Inquiries have no manager stage at all —
+  // unlike PTO/Corrections above, these go straight to HR/Finance/Admin,
+  // so manager-tier roles never see this tab (moved here from Employee
+  // Self-Service's old "Manage Requests" tab, which had the same rule).
+  const isFullRequestsAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
   // Warnings tab reuses the same conduct-note workflow as CsrAgentDetailPage
   // (employee_conduct_notes, reviewed on the HR Warnings & Mistakes tab) —
   // any manager-flavored role can submit one here for a tardy employee, but
@@ -211,8 +222,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
+  const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
+  const [employeeRequestNote, setEmployeeRequestNote] = useState<Record<string, string>>({});
 
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "warnings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "disputes-inquiries", "warnings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -259,6 +272,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // searchEmployee/filterDepartment above, which are Daily Attendance's.
   const [correctionSearch, setCorrectionSearch] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<"all" | CorrectionStatus>("all");
+  const [correctionDepartmentFilter, setCorrectionDepartmentFilter] = useState<string>("all");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean }>>({});
   const [newNote, setNewNote] = useState("");
@@ -306,7 +320,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     }
     setLoading(true);
     try {
-      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows] = await Promise.all([
+      const [profileId, profileRows, csrCompositionResult, entryRows, noteRows, ptoRows, correctionRows, historyRows, conductNoteRows, employeeRequestRows] = await Promise.all([
         getProfileIdByFirebaseUid(uid),
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
@@ -316,6 +330,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         getCompanyTimecardCorrections(),
         getCompanyTimecardCorrectionHistory(),
         getAllAgentNotes().catch(() => []),
+        getCompanyEmployeeRequests().catch(() => []),
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
@@ -330,6 +345,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setCorrections(correctionRows);
       setCorrectionHistory(historyRows);
       setConductNotes(conductNoteRows);
+      setEmployeeRequests(employeeRequestRows);
     } catch (error) {
       console.error("Failed to load attendance data:", error);
     } finally {
@@ -483,6 +499,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return result;
   }, [profiles, allowedLocations, teamScopedIds]);
 
+  // PTO Management tab (KPI tile + both request lists) — same team scoping
+  // as visibleProfiles/Daily Attendance above, so a manager-tier viewer only
+  // ever sees their own team's PTO requests, never the whole company's.
+  const visiblePtoRequests = useMemo(() => {
+    if (teamScopedIds === null) return ptoRequests;
+    return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
+  }, [ptoRequests, teamScopedIds]);
+
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     entries.forEach((e) => map.set(`${e.profileId}|${e.workDate}`, e));
@@ -573,7 +597,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
   const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay).length;
   const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
-  const ptoPendingApproval = ptoRequests.filter((r) => r.status === "pending").length;
+  const ptoPendingApproval = visiblePtoRequests.filter((r) => r.status === "pending").length;
 
   const getAlertColor = (alert: string) => {
     if (alert.includes("Over Time")) return "bg-blue-500/20 text-blue-300 border-blue-500/30";
@@ -1030,6 +1054,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
+  const pendingEmployeeRequests = isFullRequestsAdmin ? employeeRequests.filter((r) => r.status === "pending") : [];
+
+  const handleEmployeeRequestAction = async (id: string, status: EmployeeRequestStatus) => {
+    try {
+      await updateEmployeeRequestStatus(id, status, myProfileId, employeeRequestNote[id]);
+      setEmployeeRequests(await getCompanyEmployeeRequests());
+      setEmployeeRequestNote((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (error) {
+      alert(`Failed to update request: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
     setCorrectionStageBusy(true);
@@ -1071,15 +1111,32 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Attendance Corrections table's search + status filter. Status here is
   // the request's overall status (pending/approved/rejected) — distinct
   // from the per-stage manager/HR/Accounting badges shown alongside it,
-  // which stay visible regardless of this filter.
+  // which stay visible regardless of this filter. Also team-scoped, same
+  // as visibleProfiles/visiblePtoRequests above — a manager-tier viewer
+  // only ever sees corrections for their own team, never the whole company.
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
+      if (teamScopedIds !== null && !teamScopedIds.has(c.profileId)) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
+      if (correctionDepartmentFilter !== "all") {
+        const p = allProfileById.get(c.profileId);
+        if (!p || profileDepartment(p) !== correctionDepartmentFilter) return false;
+      }
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, profileName]);
+  }, [corrections, correctionSearch, correctionStatusFilter, correctionDepartmentFilter, profileName, teamScopedIds, allProfileById]);
+
+  // Correction History panel — same team scoping as filteredCorrections
+  // above, via each history entry's related correction's profileId.
+  const visibleCorrectionHistory = useMemo(() => {
+    if (teamScopedIds === null) return correctionHistory;
+    return correctionHistory.filter((h) => {
+      const related = corrections.find((c) => c.id === h.correctionId);
+      return related ? teamScopedIds.has(related.profileId) : false;
+    });
+  }, [correctionHistory, corrections, teamScopedIds]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1178,6 +1235,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
               { id: "pto-management", label: "PTO Management", Icon: Calendar },
               { id: "corrections", label: "Corrections", Icon: FileText },
+              ...(isFullRequestsAdmin ? [{ id: "disputes-inquiries", label: "Disputes & Inquiries", Icon: MessageSquare }] : []),
               { id: "warnings", label: "Warnings", Icon: AlertTriangle },
             ].map(tab => {
               const Icon = tab.Icon;
@@ -1755,9 +1813,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <tbody>
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : ptoRequests.filter(r => r.status === "pending").length === 0 ? (
+                    ) : visiblePtoRequests.filter(r => r.status === "pending").length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : ptoRequests.filter(r => r.status === "pending").map((request) => (
+                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => (
                       <tr key={request.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
                         <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
@@ -1843,11 +1901,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">PTO History</h2>
                 <div className="space-y-3">
-                  {ptoRequests.filter(r => r.status !== "pending").length === 0 ? (
+                  {visiblePtoRequests.filter(r => r.status !== "pending").length === 0 ? (
                     <div className="text-center py-8">
                       <p className="text-slate-400 text-sm">No PTO history yet</p>
                     </div>
-                  ) : ptoRequests.filter(r => r.status !== "pending").map((request) => (
+                  ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => (
                     <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1912,6 +1970,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <option value="rejected">Rejected</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Department</label>
+                    <select
+                      value={correctionDepartmentFilter}
+                      onChange={(e) => setCorrectionDepartmentFilter(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
@@ -1928,7 +1999,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{corrections.length === 0 ? "No correction requests yet." : "No correction requests match your search/filter."}</td></tr>
+                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : filteredCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -1983,8 +2054,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">Correction History</h2>
                 <div className="space-y-3">
-                  {correctionHistory.length > 0 ? (
-                    correctionHistory.map((history) => {
+                  {visibleCorrectionHistory.length > 0 ? (
+                    visibleCorrectionHistory.map((history) => {
                       const relatedCorrection = corrections.find(c => c.id === history.correctionId);
                       return (
                         <div key={history.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
@@ -2017,6 +2088,68 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "disputes-inquiries" && isFullRequestsAdmin && (
+            <div className="space-y-6">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Pending Disputes / Inquiries</p>
+                <p className="text-2xl font-bold text-yellow-300">{pendingEmployeeRequests.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <h3 className="text-sm font-bold text-white mb-4">Attendance Disputes &amp; Payroll Inquiries — Pending</h3>
+                {pendingEmployeeRequests.length === 0 ? (
+                  <p className="text-sm text-slate-400">No pending disputes or inquiries.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {pendingEmployeeRequests.map((r) => (
+                      <div key={r.id} className="border border-white/10 rounded-lg p-3">
+                        <p className="text-sm font-semibold text-white">
+                          {profileName(r.profileId)} — {r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry"}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                        <p className="text-sm text-slate-300 mt-2">{r.details}</p>
+                        <textarea
+                          placeholder="Optional response note (visible to the employee)..."
+                          value={employeeRequestNote[r.id] || ""}
+                          onChange={(e) => setEmployeeRequestNote({ ...employeeRequestNote, [r.id]: e.target.value })}
+                          rows={2}
+                          className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                        />
+                        <div className="flex gap-2 mt-2">
+                          {r.requestType === "attendance_dispute" ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleEmployeeRequestAction(r.id, "approved")}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEmployeeRequestAction(r.id, "rejected")}
+                                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleEmployeeRequestAction(r.id, "closed")}
+                              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs font-semibold transition"
+                            >
+                              Respond &amp; Close
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2354,7 +2487,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               {/* Timecard Details */}
               <div className="bg-slate-800/50 border border-white/10 rounded-lg p-4 mb-6">
                 <h3 className="text-sm font-bold text-white mb-4">Clock Times</h3>
-                <p className="text-xs text-slate-400 mb-3">Original: {selectedCorrection.originalCheckIn || "—"} → {selectedCorrection.originalCheckOut || "—"}</p>
+                <p className="text-sm text-slate-400 mb-3">Original: <span className="text-base text-slate-200 font-semibold">{selectedCorrection.originalCheckIn || "—"} → {selectedCorrection.originalCheckOut || "—"}</span></p>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Check In</label>

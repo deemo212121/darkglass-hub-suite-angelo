@@ -11,9 +11,8 @@
  * for consistency.
  */
 import { getPartsToReceive } from "@/lib/supabase/partReceive";
-import { getPartsForDailyPickup } from "@/lib/supabase/partDailyPickup";
+import { getPartsForDailyPickup, EXAMPLE_PICKUP_ROWS } from "@/lib/supabase/partDailyPickup";
 import { getPartsForDailyCollection } from "@/lib/supabase/partDailyCollection";
-import { EXAMPLE_PICKUP_ROWS } from "@/components/PartDailyPickup";
 
 export interface BranchProgress {
   branch: string;
@@ -27,20 +26,24 @@ export interface BranchProgress {
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
-const COLLECTION_PROGRESS_FILTERS = { dateType: "Collect Date", startDate: "", endDate: "", notCollected: true, collected: true } as const;
-
 export async function getBranchProgress(branches: string[]): Promise<BranchProgress[]> {
-  const [allReceive, pickupResults, collectionResults] = await Promise.all([
+  const [allReceive, allCollection, ...pickupResults] = await Promise.all([
     getPartsToReceive().catch(() => []),
-    Promise.all(branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: TODAY }).catch(() => []))),
-    Promise.all(branches.map((b) => getPartsForDailyCollection({ ...COLLECTION_PROGRESS_FILTERS, location: b }).catch(() => []))),
+    getPartsForDailyCollection({
+      dateType: "Collect Date",
+      startDate: "",
+      endDate: "",
+      notCollected: true,
+      collected: true,
+    }).catch(() => []),
+    ...branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: TODAY }).catch(() => [])),
   ]);
 
   return branches.map((branch, i) => {
     const receiveRows = allReceive.filter((r) => r.location === branch);
     const realPickup = pickupResults[i] ?? [];
     const pickupRows = realPickup.length > 0 ? realPickup : EXAMPLE_PICKUP_ROWS.filter((r) => r.location === branch);
-    const collectionRows = collectionResults[i] ?? [];
+    const collectionRows = allCollection.filter((r) => r.location === branch);
 
     return {
       branch,

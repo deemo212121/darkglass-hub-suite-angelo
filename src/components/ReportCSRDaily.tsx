@@ -324,7 +324,7 @@ export function ReportCSRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </div>
         ) : agents.length === 0 ? (
           <p className="panel p-8 mb-6 text-center text-sm text-muted-foreground">
-            No CSR Agents or CSR Team Leaders found. Add them in User Management with role "CSR Agent" or "CSR Team Leader" first.
+            No CSR Associates or CSR Team Leaders found. Add them in User Management with role "CSR Associate" or "CSR Team Leader" first.
           </p>
         ) : (
         <>

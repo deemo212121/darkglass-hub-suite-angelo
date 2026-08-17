@@ -25,6 +25,29 @@ export interface PartPickupRow {
   location: string;
 }
 
+// TEMPORARY fallback — the real query below matches parts with status
+// "Tech Pickup" AND an exact ticket schedule_date, so it's very easy for
+// it to legitimately return nothing (no real part happens to be scheduled
+// for the picked date yet). Rather than always showing an empty table,
+// PartDailyPickup.tsx falls back to these example rows so there's always
+// something to test the Picked Up toggle / "I'm Done" flow against — and
+// partsBranchProgress.ts uses the same fallback for its per-branch digest.
+// Ids are prefixed "ex-" so Save knows never to persist them.
+//
+// Lives here (not in the component) so lib code (partsBranchProgress.ts)
+// never has to import from src/components/ — that direction creates a
+// vendor <-> app-components circular chunk at build time (Rollup can't
+// linearize the load order, which previously surfaced as `Uncaught
+// ReferenceError: Cannot access 'X' before initialization` at runtime —
+// see vite.config.ts's manualChunks comment for the same class of bug).
+export const EXAMPLE_PICKUP_ROWS: PartPickupRow[] = [
+  { id: "ex-pu-1", techName: "Abel Severino", ticketNo: "26000671722HS", repairStatus: "OP-Waiting for Part", partNo: "11101010016460", description: "Fixed Speed Reciprocating Comp", po: "1007567278-10-AV", quantity: 1, coreValue: 45, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: false, location: "Atlanta" },
+  { id: "ex-pu-2", techName: "Darrin Stewart", ticketNo: "1007567278-10-AV", repairStatus: "CL-Claimed", partNo: "4056017371", description: "Pipe", po: "PO-260702-001", quantity: 2, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up at office", comment: "", inTransit: false, location: "Memphis" },
+  { id: "ex-pu-3", techName: "John Godfrey", ticketNo: "SA-3349588-AV", repairStatus: "OP-Ready for Service", partNo: "WE22X37340", description: "User Interface Board FL Dryer 87 & 95", po: "12-606043-0526", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: true, location: "Nashville" },
+  { id: "ex-pu-4", techName: "Zonate Grant", ticketNo: "1234567", repairStatus: "TR-Need Triage", partNo: "WE04X24719", description: "Button Start ASM", po: "75112201", quantity: 1, coreValue: 12.5, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "Waiting on tech", inTransit: false, location: "Birmingham" },
+  { id: "ex-pu-5", techName: "Erick Guzman Juarez", ticketNo: "1007685370-10-AV", repairStatus: "OP-Waiting for Part", partNo: "140156010054", description: "Manifold, Water Filter, W/NO Con", po: "1-55553", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up", comment: "", inTransit: false, location: "San Antonio" },
+];
+
 export async function getPartsForDailyPickup(filters: {
   location?: string;
   technician?: string;

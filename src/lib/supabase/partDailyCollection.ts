@@ -14,6 +14,7 @@ export interface PartCollectionRow {
   techName: string;
   ticketNo: string;
   repairStatus: string;
+  /** The ticket's branch/location — drives the Parts hub's per-branch "Done" digest routing. */
   location: string;
   partNo: string;
   description: string;

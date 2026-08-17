@@ -27,7 +27,6 @@ function getDefaultCollectionDate() {
   else d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
-
 const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
 
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){

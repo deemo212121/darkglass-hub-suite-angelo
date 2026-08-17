@@ -653,13 +653,11 @@ function CompanyDetailPage() {
                   <option value="SUPERADMIN">SuperAdmin (this company only)</option>
                   <option value="ADMIN">Admin</option>
                   <option value="MANAGER">Manager</option>
-                  <option value="CSR">CSR (Customer Service)</option>
                   <option value="TECHNICIAN">Technician</option>
-                  <option value="DISPATCHER">Dispatcher</option>
                   <option value="HR">HR (Human Resources)</option>
                   <option value="IT">IT Support</option>
                   <option value="PARTS">Parts Management</option>
-                  <option value="FINANCE">Finance</option>
+                  <option value="FINANCE">Accounting</option>
                 </select>
               </div>
               <div>

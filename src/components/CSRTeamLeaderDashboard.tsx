@@ -288,7 +288,7 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
           </div>
         ) : !isCsr ? (
           <p className="panel p-8 text-center text-sm text-muted-foreground">
-            This dashboard is for CSR Agents and CSR Team Leaders. Your account isn't set up with either role — ask your manager to update it in User Management if that's not right.
+            This dashboard is for CSR Associates and CSR Team Leaders. Your account isn't set up with either role — ask your manager to update it in User Management if that's not right.
           </p>
         ) : (
         <div className={`grid grid-cols-1 gap-4 ${myIsLeader ? "lg:grid-cols-2" : ""}`}>
@@ -297,7 +297,7 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
             <div className="flex items-center gap-2 mb-4">
               <Clock className="h-4 w-4 text-muted-foreground" />
               <h3 className="font-semibold">Personal Tracker</h3>
-              <span className="text-xs text-muted-foreground">{myIsLeader ? "Team Leader" : "CSR Agent"}</span>
+              <span className="text-xs text-muted-foreground">{myIsLeader ? "Team Leader" : "CSR Associate"}</span>
             </div>
 
             {myLocations.length > 0 && (
@@ -489,7 +489,7 @@ export function CSRTeamLeaderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubM
                             </a>
                             {m.id === myId && <span className="text-muted-foreground"> (you)</span>}
                           </td>
-                          <td className="px-2 py-1.5 text-muted-foreground">{m.isLeader ? "Team Leader" : "CSR Agent"}</td>
+                          <td className="px-2 py-1.5 text-muted-foreground">{m.isLeader ? "Team Leader" : "CSR Associate"}</td>
                           <td className="px-2 py-1.5 text-right text-green-400">{m.schedule}</td>
                           <td className="px-2 py-1.5 text-right">{m.update}</td>
                         </tr>
