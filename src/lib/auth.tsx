@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { initDatabase } from "./db-api";
 import { getFirebaseAnalytics } from "./firebase";
-import { initializeUserData } from "./userDataSync";
 import { onAuthStateChanged, signInWithCustomToken, type User as FirebaseUser } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
@@ -449,7 +448,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   } catch {
                     setAllowedLocations(null);
                   }
-                  if (sbProfile.email) initializeUserData(sbProfile.email);
                   // Background: import any legacy Firebase-only users for this
                   // company into Supabase so they can use username login too.
                   // Idempotent (skips existing) and runs once per session.
@@ -493,7 +491,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setExtraRoles([]); // Firestore-fallback profiles have no extra_roles concept
                   setDisplayName(userProfile.displayName);
                   setIsActive(userProfile.isActive);
-                  if (userProfile.email) initializeUserData(userProfile.email);
                 } else {
                   console.error("❌ User profile not found in Supabase or Firestore for UID:", firebaseUser.uid);
                   await firebaseSignOut();
