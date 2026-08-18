@@ -33,6 +33,10 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   part_receive_date_changed: "Changed receive date",
   part_receive_invoice_changed: "Changed invoice #",
   part_receive_note_changed: "Changed parts note",
+  part_daily_pickup_marked_picked_up: "Marked picked up",
+  part_daily_pickup_unmarked_picked_up: "Unmarked picked up",
+  part_daily_collection_marked_collected: "Marked collected",
+  part_daily_collection_unmarked_collected: "Unmarked collected",
 };
 
 export function activityActionLabel(action: string): string {

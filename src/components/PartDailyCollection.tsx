@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine } from "lucide-react";
+import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -10,8 +10,13 @@ import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
 import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGates";
 import { notifyPartsManagers } from "@/lib/partsNotify";
+import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
+const PART_DAILY_COLLECTION_ACTIVITY_TARGET_TYPE = "part_daily_collection";
+function partDailyCollectionActivityLabel(item: Pick<PartCollectionRow, "partNo" | "ticketNo" | "id">): string {
+  return `${item.partNo || item.id} (Ticket ${item.ticketNo || "—"})`;
+}
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -45,6 +50,24 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [saved,setSaved]=useState(false);
   const [scanUniqueId,setScanUniqueId]=useState("");
   const scanRef=useRef<HTMLInputElement>(null);
+  // Snapshot of what was last loaded/saved, keyed by id — diffed against
+  // current `rows` on Save so only real collected flips get logged, same
+  // "log the meaningful state change" spirit as Part Receive's activity
+  // log (see hrActivityLog.ts).
+  const originalRowsRef = useRef<Map<string, PartCollectionRow>>(new Map());
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [activityLogEntries, setActivityLogEntries] = useState<HrActivityLogEntry[]>([]);
+  const [activityLogLoading, setActivityLogLoading] = useState(false);
+  const [activityLogError, setActivityLogError] = useState<string | null>(null);
+  const openActivityLog = () => {
+    setActivityLogOpen(true);
+    setActivityLogLoading(true);
+    setActivityLogError(null);
+    getActivityLog({ targetType: PART_DAILY_COLLECTION_ACTIVITY_TARGET_TYPE, limit: 200 })
+      .then(setActivityLogEntries)
+      .catch((err) => setActivityLogError(err instanceof Error ? err.message : "Failed to load activity log"))
+      .finally(() => setActivityLogLoading(false));
+  };
   useEffect(() => {
     getCompanyTechnicians()
       .then((techs) => setTechnicianRoster(techs.map((t) => t.name)))
@@ -65,7 +88,10 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       collected,
       collectType: collectType || undefined,
     })
-      .then(setRows)
+      .then((data) => {
+        setRows(data);
+        originalRowsRef.current = new Map(data.map((r) => [r.id, r]));
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [location, tech, dateType, startDate, endDate, ticketNo, notCollected, collected, collectType]);
@@ -148,6 +174,18 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       ));
       const restocked = rows.filter((r) => r.collected && r.collectType === "Restock");
       for (const r of restocked) await notifyRestock(r);
+      for (const r of rows) {
+        const before = originalRowsRef.current.get(r.id);
+        if (before && before.collected !== r.collected) {
+          logActivity({
+            action: r.collected ? "part_daily_collection_marked_collected" : "part_daily_collection_unmarked_collected",
+            targetType: PART_DAILY_COLLECTION_ACTIVITY_TARGET_TYPE,
+            targetId: r.id,
+            targetLabel: partDailyCollectionActivityLabel(r),
+          });
+        }
+      }
+      originalRowsRef.current = new Map(rows.map((r) => [r.id, r]));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -169,7 +207,12 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
-    <div className="flex items-center gap-3 mb-6"><Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
+    <div className="flex items-center justify-between gap-3 mb-6">
+      <div className="flex items-center gap-3"><Link to="/m/$module" params={{ module: "parts" }} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link><h1 className="text-2xl font-bold">{sub.title}</h1></div>
+      <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
+        <History className="h-3.5 w-3.5" /> View Activity
+      </button>
+    </div>
     <div className="panel mb-4">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1 min-w-[160px] flex-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Location*</label>
@@ -284,4 +327,38 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       <button onClick={handleSave} disabled={saving||loading||rows.length===0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50">{saving?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:<Save className="h-3.5 w-3.5"/>}{saving?"Saving…":"Save All Changes"}</button>
     </div>
     {restockToast&&<div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/15 px-4 py-3 text-sm text-green-300 shadow-2xl backdrop-blur-md"><CheckCircle className="h-4 w-4"/>{restockToast}</div>}
-  </main></div>);}
+  </main>
+
+  {activityLogOpen && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setActivityLogOpen(false)}>
+      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">Part Daily Collection Activity</h3>
+          <button type="button" onClick={() => setActivityLogOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+        {activityLogLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : activityLogError ? (
+          <p className="text-sm text-red-400">{activityLogError}</p>
+        ) : activityLogEntries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No activity logged yet.</p>
+        ) : (
+          <div className="overflow-y-auto flex-1 -mx-2 px-2">
+            <ul className="space-y-2">
+              {activityLogEntries.map((entry) => (
+                <li key={entry.id} className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-200">{activityActionLabel(entry.action)}</span>
+                    <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</span>
+                  </div>
+                  {entry.targetLabel && <div className="text-xs text-blue-300 mt-0.5">{entry.targetLabel}</div>}
+                  <div className="text-xs text-slate-500 mt-0.5">{entry.actorName || "Unknown"}</div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+  </div>);}
