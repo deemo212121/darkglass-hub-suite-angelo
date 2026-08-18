@@ -26,7 +26,8 @@ import {
   updateTicketPart,
   type UIPartRow,
 } from "@/lib/supabase/tickets";
-import { getMyProfileId } from "@/lib/supabase/users";
+import { getMyProfileId, getMyFullProfile } from "@/lib/supabase/users";
+import { getTechPayrollBreakdown, type TechPayrollBreakdown } from "@/lib/supabase/techPayroll";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, haversineMiles, routeGeoapify, metersToMiles, formatDuration, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
 import type * as Leaflet from "leaflet";
@@ -557,7 +558,7 @@ export function MobileTechApp() {
         )}
 
         {view === "payroll" && (
-          <MobilePayrollView userName={headerName} profileId={profileId} />
+          <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} />
         )}
 
         {view === "timecard" && (
@@ -3155,9 +3156,29 @@ interface MobilePayRowInline {
   payslip: MyPayslipRow;
 }
 
-function MobilePayrollView({ userName, profileId }: { userName: string; profileId: string | null }) {
+function MobilePayrollView({
+  userName,
+  profileId,
+  uid,
+  role,
+}: {
+  userName: string;
+  profileId: string | null;
+  uid: string | null;
+  role: string | null;
+}) {
   const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Technicians are paid per completed repair ticket (Tech Payroll on the
+  // Accounting Dashboard) instead of hourly — same piece-rate categories
+  // shown there, not the generic Hours/OT/Regular Pay breakdown below,
+  // which doesn't mean anything for piece-rate pay.
+  const isTech = normalizeRole(role || "") === "TECHNICIAN";
+  const [assignedBranch, setAssignedBranch] = useState("");
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [breakdownByRun, setBreakdownByRun] = useState<
+    Record<string, TechPayrollBreakdown | "loading" | "error">
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -3180,6 +3201,36 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
     })();
     return () => { cancelled = true; };
   }, [profileId]);
+
+  useEffect(() => {
+    if (!isTech || !uid) return;
+    let cancelled = false;
+    getMyFullProfile(uid).then((p) => { if (!cancelled) setAssignedBranch(p?.assignedBranch || ""); });
+    return () => { cancelled = true; };
+  }, [isTech, uid]);
+
+  const toggleBreakdown = async (row: MobilePayRowInline) => {
+    if (expandedRunId === row.id) {
+      setExpandedRunId(null);
+      return;
+    }
+    setExpandedRunId(row.id);
+    if (breakdownByRun[row.id] || !profileId) return;
+    setBreakdownByRun((prev) => ({ ...prev, [row.id]: "loading" }));
+    try {
+      const breakdown = await getTechPayrollBreakdown(
+        profileId,
+        userName,
+        assignedBranch,
+        row.payslip.periodStart,
+        row.payslip.periodEnd,
+      );
+      setBreakdownByRun((prev) => ({ ...prev, [row.id]: breakdown }));
+    } catch (e) {
+      console.error("payroll: tech breakdown failed", e);
+      setBreakdownByRun((prev) => ({ ...prev, [row.id]: "error" }));
+    }
+  };
 
   const fmtDate = (iso: string) => {
     const d = new Date(iso);
@@ -3243,6 +3294,7 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                   type="button"
                   className="mtech-payroll-action"
                   onClick={() => {
+                    if (isTech) { void toggleBreakdown(row); return; }
                     const p = row.payslip;
                     alert(
                       `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
@@ -3252,7 +3304,7 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                     );
                   }}
                 >
-                  View
+                  {isTech && expandedRunId === row.id ? "Hide" : "View"}
                 </button>
                 <button
                   type="button"
@@ -3268,6 +3320,9 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
                 </button>
               </div>
             </div>
+            {isTech && expandedRunId === row.id && (
+              <TechPayrollBreakdownPanel entry={breakdownByRun[row.id]} netPay={row.amount} />
+            )}
           </div>
         ))}
       </div>
@@ -3275,6 +3330,58 @@ function MobilePayrollView({ userName, profileId }: { userName: string; profileI
       <p className="mtech-payroll-note">
         Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
       </p>
+    </div>
+  );
+}
+
+/** Inline expand panel for a technician's Tech Payroll piece-rate breakdown
+ * — same categories as the Accounting Dashboard's Tech Payroll tab. Net Pay
+ * shown here is always the row's own real payslip amount (what was actually
+ * paid), never the live-recomputed total, since Finance may have adjusted
+ * things after the run was generated. */
+function TechPayrollBreakdownPanel({
+  entry,
+  netPay,
+}: {
+  entry: TechPayrollBreakdown | "loading" | "error" | undefined;
+  netPay: number;
+}) {
+  if (!entry || entry === "loading") {
+    return <div className="mtech-payroll-breakdown mtech-muted">Loading breakdown…</div>;
+  }
+  if (entry === "error") {
+    return <div className="mtech-payroll-breakdown mtech-muted">Couldn't load the breakdown for this period.</div>;
+  }
+  const ratioPct = entry.ticketsAssigned > 0 ? (entry.ticketsCompleted / entry.ticketsAssigned) * 100 : null;
+  // Same Math.max(1, ...) denominator floor AccountingDashboard.tsx uses,
+  // so a zero-working-days edge case reads identically on both surfaces.
+  const avgComp = entry.ticketsCompleted / Math.max(1, entry.workingDays);
+  const line = (label: string, value: string) => (
+    <div className="mtech-payroll-breakdown-row">
+      <span className="mtech-payroll-breakdown-label">{label}</span>
+      <span className="mtech-payroll-breakdown-value">{value}</span>
+    </div>
+  );
+  return (
+    <div className="mtech-payroll-breakdown">
+      {line("Tickets Completed", String(entry.ticketsCompleted))}
+      {line("Tickets Assigned", String(entry.ticketsAssigned))}
+      {line("Ratio", ratioPct === null ? "—" : `${ratioPct.toFixed(0)}%`)}
+      {line("Avg. Comp.", avgComp.toFixed(2))}
+      {line("2 Man Job", `$${entry.techCategoryPay.twoManJob.toFixed(2)}`)}
+      {line("Back Tub", `$${entry.techCategoryPay.backTub.toFixed(2)}`)}
+      {line("Sealed System", `$${entry.techCategoryPay.sealedSystem.toFixed(2)}`)}
+      {line("Sealed System (R600)", `$${entry.techCategoryPay.sealedSystemR600.toFixed(2)}`)}
+      {line("Two Tech", `${entry.twoTechCount} · $${entry.twoTechPay.toFixed(2)}`)}
+      {line("LDT", `${entry.ldtCount} · $${entry.ldtPay.toFixed(2)}`)}
+      {line("Mileage", `${entry.mileage} mi · $${entry.mileagePay.toFixed(2)}`)}
+      {line("Training Paid", `$${entry.trainingPay.toFixed(2)}`)}
+      {entry.mcaBonus > 0 && line("MCA Bonus", `$${entry.mcaBonus.toFixed(2)}`)}
+      {entry.completedTicketsPay > 0 && line("Completed Tickets Rate", `$${entry.completedTicketsPay.toFixed(2)}`)}
+      <div className="mtech-payroll-breakdown-row mtech-payroll-breakdown-total">
+        <span className="mtech-payroll-breakdown-label">Net Pay</span>
+        <span className="mtech-payroll-breakdown-value">${netPay.toFixed(2)}</span>
+      </div>
     </div>
   );
 }

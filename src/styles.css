@@ -5160,6 +5160,33 @@ a.mtech-phone-link:active { opacity: 0.7; }
   padding: 0 0.5rem;
 }
 
+/* Technician Tech Payroll breakdown — inline expand under a pay period row */
+.mtech-payroll-breakdown {
+  padding: 0.6rem 0.85rem 0.75rem;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+.mtech-payroll-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.22rem 0;
+  font-size: 0.8rem;
+}
+.mtech-payroll-breakdown-label { color: #64748b; font-weight: 600; }
+.mtech-payroll-breakdown-value { color: #1f2937; font-weight: 700; text-align: right; }
+.mtech-payroll-breakdown-total {
+  margin-top: 0.3rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid #e2e8f0;
+}
+.mtech-payroll-breakdown-total .mtech-payroll-breakdown-label,
+.mtech-payroll-breakdown-total .mtech-payroll-breakdown-value {
+  color: var(--mt-blue-dark);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 /* ── Timecard view (real punch clock, today only) ─────────────────────── */
 .mtech-timecard {
   padding: 1rem;
@@ -10820,6 +10847,33 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: rgba(255, 255, 255, 0.65);
   text-align: center;
   padding: 0 0.5rem;
+}
+
+/* Technician Tech Payroll breakdown — inline expand under a pay period row */
+.mtech-payroll-breakdown {
+  padding: 0.6rem 0.85rem 0.75rem;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+.mtech-payroll-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.22rem 0;
+  font-size: 0.8rem;
+}
+.mtech-payroll-breakdown-label { color: #64748b; font-weight: 600; }
+.mtech-payroll-breakdown-value { color: #1f2937; font-weight: 700; text-align: right; }
+.mtech-payroll-breakdown-total {
+  margin-top: 0.3rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid #e2e8f0;
+}
+.mtech-payroll-breakdown-total .mtech-payroll-breakdown-label,
+.mtech-payroll-breakdown-total .mtech-payroll-breakdown-value {
+  color: var(--mt-blue-dark);
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 /* ── Timecard view (real punch clock, today only) ─────────────────────── */
