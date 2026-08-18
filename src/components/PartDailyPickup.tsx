@@ -1,14 +1,19 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, Printer, Save, Check } from "lucide-react";
+import { ChevronLeft, Printer, Save, Check, History } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { getPartsForDailyPickup, updatePartPickupRow, type PartPickupRow } from "@/lib/supabase/partDailyPickup";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
+import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Pickup";
+const PART_DAILY_PICKUP_ACTIVITY_TARGET_TYPE = "part_daily_pickup";
+function partDailyPickupActivityLabel(item: Pick<PartPickupRow, "partNo" | "ticketNo" | "id">): string {
+  return `${item.partNo || item.id} (Ticket ${item.ticketNo || "—"})`;
+}
 
 const DS:React.CSSProperties={background:"var(--color-card)",color:"var(--color-foreground)",border:"1px solid var(--color-panel-border)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -52,6 +57,24 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [saveError,setSaveError]=useState<string|null>(null);
   const [saved,setSaved]=useState(false);
   const [usingExampleData,setUsingExampleData]=useState(false);
+  // Snapshot of what was last loaded/saved, keyed by id — diffed against
+  // current `rows` on Save so only real pickedUp flips get logged, same
+  // "log the meaningful state change" spirit as Part Receive's activity
+  // log (see hrActivityLog.ts).
+  const originalRowsRef = useRef<Map<string, PartPickupRow>>(new Map());
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [activityLogEntries, setActivityLogEntries] = useState<HrActivityLogEntry[]>([]);
+  const [activityLogLoading, setActivityLogLoading] = useState(false);
+  const [activityLogError, setActivityLogError] = useState<string | null>(null);
+  const openActivityLog = () => {
+    setActivityLogOpen(true);
+    setActivityLogLoading(true);
+    setActivityLogError(null);
+    getActivityLog({ targetType: PART_DAILY_PICKUP_ACTIVITY_TARGET_TYPE, limit: 200 })
+      .then(setActivityLogEntries)
+      .catch((err) => setActivityLogError(err instanceof Error ? err.message : "Failed to load activity log"))
+      .finally(() => setActivityLogLoading(false));
+  };
   const locD=useP(locOpen);const techD=useP(techOpen);
   const locL=useRef<HTMLDivElement>(null);const techL=useRef<HTMLDivElement>(null);
   useEffect(()=>{const fn=(e:MouseEvent)=>{const t=e.target as Node;
@@ -82,15 +105,13 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     setLoadError(null);
     getPartsForDailyPickup({ location: location || undefined, technician: tech || undefined, pickupDate })
       .then((data) => {
-        if (data.length === 0) {
-          setRows(
-            EXAMPLE_PICKUP_ROWS.filter((r) => (!location || r.location === location) && (!tech || r.techName === tech))
-          );
-          setUsingExampleData(true);
-        } else {
-          setRows(data);
-          setUsingExampleData(false);
-        }
+        const finalRows =
+          data.length === 0
+            ? EXAMPLE_PICKUP_ROWS.filter((r) => (!location || r.location === location) && (!tech || r.techName === tech))
+            : data;
+        setRows(finalRows);
+        setUsingExampleData(data.length === 0);
+        originalRowsRef.current = new Map(finalRows.map((r) => [r.id, r]));
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
@@ -117,11 +138,24 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     try {
       // Example rows (id starts "ex-") aren't real part records — never
       // send those to Supabase, just let the toggle/Save UX work locally.
+      const realRows = rows.filter((r) => !r.id.startsWith("ex-"));
       await Promise.all(
-        rows.filter((r) => !r.id.startsWith("ex-")).map((r) =>
+        realRows.map((r) =>
           updatePartPickupRow(r.id, { pickedUp: r.pickedUp, action: r.action, comment: r.comment })
         )
       );
+      for (const r of realRows) {
+        const before = originalRowsRef.current.get(r.id);
+        if (before && before.pickedUp !== r.pickedUp) {
+          logActivity({
+            action: r.pickedUp ? "part_daily_pickup_marked_picked_up" : "part_daily_pickup_unmarked_picked_up",
+            targetType: PART_DAILY_PICKUP_ACTIVITY_TARGET_TYPE,
+            targetId: r.id,
+            targetLabel: partDailyPickupActivityLabel(r),
+          });
+        }
+      }
+      originalRowsRef.current = new Map(rows.map((r) => [r.id, r]));
       setSaved(true);
       setTimeout(()=>setSaved(false),3000);
     } catch (err) {
@@ -134,9 +168,14 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const COLS=["Tech Name","Ticket #","Repair Status","Part No","Description","PO","Unique ID","Qty","Core Value","Part Status","Picked Up","Action","Comment","In Transit"];
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-4 py-8">
-    <div className="flex items-center gap-3 mb-6">
-      <Link to="/m/$module" params={{module:"parts"}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link>
-      <h1 className="text-2xl font-bold">{sub.title}</h1>
+    <div className="flex items-center justify-between gap-3 mb-6">
+      <div className="flex items-center gap-3">
+        <Link to="/m/$module" params={{module:"parts"}} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></Link>
+        <h1 className="text-2xl font-bold">{sub.title}</h1>
+      </div>
+      <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
+        <History className="h-3.5 w-3.5" /> View Activity
+      </button>
     </div>
 
     {/* Filters */}
@@ -230,5 +269,39 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       {saved&&<span className="text-green-400 text-sm flex items-center gap-1"><Check className="h-4 w-4"/>Saved successfully</span>}
       <button onClick={handleSave} disabled={saving||loading||rows.length===0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50"><Save className="h-3.5 w-3.5"/>{saving?"Saving…":"Save All Changes"}</button>
     </div>
-  </main></div>);
+  </main>
+
+  {activityLogOpen && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setActivityLogOpen(false)}>
+      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-white">Part Daily Pickup Activity</h3>
+          <button type="button" onClick={() => setActivityLogOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+        {activityLogLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : activityLogError ? (
+          <p className="text-sm text-red-400">{activityLogError}</p>
+        ) : activityLogEntries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No activity logged yet.</p>
+        ) : (
+          <div className="overflow-y-auto flex-1 -mx-2 px-2">
+            <ul className="space-y-2">
+              {activityLogEntries.map((entry) => (
+                <li key={entry.id} className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-200">{activityActionLabel(entry.action)}</span>
+                    <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</span>
+                  </div>
+                  {entry.targetLabel && <div className="text-xs text-blue-300 mt-0.5">{entry.targetLabel}</div>}
+                  <div className="text-xs text-slate-500 mt-0.5">{entry.actorName || "Unknown"}</div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+  </div>);
 }
