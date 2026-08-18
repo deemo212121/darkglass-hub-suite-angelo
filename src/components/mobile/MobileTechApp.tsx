@@ -1859,10 +1859,15 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                   then what the tech found, then what the tech did about it
                   (Service Performed's composed text carries Parts Needed
                   right after Notes) — before the lower-priority scheduling
-                  fields below. */}
-              {v.symptomCx && <InfoRow label="Symptom (Cx)" value={v.symptomCx} />}
+                  fields below. Long free-text fields all use the same
+                  stacked ServiceSection layout (label above, full-width
+                  value below) instead of InfoRow's label-left/value-right
+                  row, which squeezes long paragraphs against the right edge
+                  and reads as inconsistent next to short categorical
+                  fields like Action Type. */}
+              {v.symptomCx && <ServiceSection label="Symptom (Cx)" value={v.symptomCx} />}
               {!isEditing && v.diagnosis && (
-                <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
+                <ServiceSection label="Cause of Failure (Tech)" value={v.diagnosis} />
               )}
               {!isEditing && v.resolution && (
                 <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
@@ -1872,10 +1877,10 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
               {v.actionType && <InfoRow label="Action Type (CSR)" value={v.actionType} />}
               {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
               {!isEditing && v.nonCompletionReason && (
-                <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
+                <ServiceSection label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
-              {v.schedNotes && <InfoRow label="Sched Notes" value={v.schedNotes} />}
-              {v.note && <InfoRow label="Internal Note" value={v.note} />}
+              {v.schedNotes && <ServiceSection label="Sched Notes" value={v.schedNotes} />}
+              {v.note && <ServiceSection label="Internal Note" value={v.note} />}
 
               {isEditing ? (
                 <div className="mtech-visit-edit">
