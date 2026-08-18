@@ -1869,7 +1869,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
               )}
               {isLatestVisit && <PartsUsedList parts={usedParts} />}
               {v.activity && <InfoRow label="Activity" value={v.activity} />}
-              {v.actionType && <InfoRow label="Action" value={v.actionType} />}
+              {v.actionType && <InfoRow label="Action Type (CSR)" value={v.actionType} />}
               {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
