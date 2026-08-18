@@ -1855,9 +1855,11 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 <span>📅 {fmtDate(v.scheduleDate)}{v.timeSlot ? ` · ${v.timeSlot}` : ""}</span>
                 <span>👤 {v.technician || "—"}</span>
               </div>
-              {v.activity && <InfoRow label="Activity" value={v.activity} />}
-              {v.actionType && <InfoRow label="Action" value={v.actionType} />}
-              {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
+              {/* Tech-facing read order: what the customer complained about,
+                  then what the tech found, then what the tech did about it
+                  (Service Performed's composed text carries Parts Needed
+                  right after Notes) — before the lower-priority scheduling
+                  fields below. */}
               {v.symptomCx && <InfoRow label="Symptom (Cx)" value={v.symptomCx} />}
               {!isEditing && v.diagnosis && (
                 <InfoRow label="Cause of Failure (Tech)" value={v.diagnosis} />
@@ -1866,6 +1868,9 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                 <ServiceSection label="Service Performed (Tech)" value={v.resolution} />
               )}
               {isLatestVisit && <PartsUsedList parts={usedParts} />}
+              {v.activity && <InfoRow label="Activity" value={v.activity} />}
+              {v.actionType && <InfoRow label="Action" value={v.actionType} />}
+              {v.repairType && <InfoRow label="Repair Type" value={v.repairType} />}
               {!isEditing && v.nonCompletionReason && (
                 <InfoRow label="Non-Completion Reason" value={v.nonCompletionReason} />
               )}
