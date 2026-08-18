@@ -1315,7 +1315,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <option value="Deactivated">Deactivated only</option>
                 </select>
               </div>
-              <div className="w-full max-w-md">
+              <div className="min-w-[220px] max-w-md flex-1">
                 <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
                 <input
                   value={search}
