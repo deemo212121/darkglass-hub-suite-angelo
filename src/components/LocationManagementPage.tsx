@@ -1025,6 +1025,7 @@ export function LocationManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         if (cancelled) return;
         const techs = profiles
           .filter((p) => {
+            if (!p.is_active) return false;
             const primary = String(p.role || "").toUpperCase();
             if (primary === "TECHNICIAN") return true;
             const extras = (p as any).extra_roles as string[] | null | undefined;

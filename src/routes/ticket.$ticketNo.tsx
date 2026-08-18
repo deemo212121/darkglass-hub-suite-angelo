@@ -5403,7 +5403,7 @@ function TicketDetailsPage() {
       try {
         const { getCompanyUsers } = await import("@/lib/supabase/users");
         const rows = await getCompanyUsers();
-        if (!cancelled) setShareContacts(rows as any);
+        if (!cancelled) setShareContacts(rows.filter((r) => r.is_active) as any);
       } catch (err) {
         if (!cancelled) setShareError(err instanceof Error ? err.message : String(err));
       }

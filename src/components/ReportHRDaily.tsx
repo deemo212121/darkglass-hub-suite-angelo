@@ -1496,8 +1496,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const ptoByProfile = new Map<string, PtoType>();
     for (const r of approvedPtoToday) if (!ptoByProfile.has(r.profileId)) ptoByProfile.set(r.profileId, r.ptoType);
 
-    const us = buildAttendanceSummary(employees.filter((e) => e.country === "US"), entryByProfile, ptoByProfile, dow);
-    const ph = buildAttendanceSummary(employees.filter((e) => e.country === "PH"), entryByProfile, ptoByProfile, dow);
+    const us = buildAttendanceSummary(employees.filter((e) => e.status === "active" && e.country === "US"), entryByProfile, ptoByProfile, dow);
+    const ph = buildAttendanceSummary(employees.filter((e) => e.status === "active" && e.country === "PH"), entryByProfile, ptoByProfile, dow);
     const combined = {
       present: [...us.present, ...ph.present],
       buckets: (["Absent without notice", "Sick Leave", "Personal Leave", "Time Off", "Paid Time Off"] as const).reduce((acc, k) => {
@@ -2196,7 +2196,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w8DocPreview, setW8DocPreview] = useState<SignableDocument | null>(null);
   const [w8PreviewLoading, setW8PreviewLoading] = useState(false);
   const filteredW8Recipients = useMemo(
-    () => employees.filter((e) => e.name.toLowerCase().includes(w8RecipientSearch.toLowerCase())),
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w8RecipientSearch.toLowerCase())),
     [employees, w8RecipientSearch]
   );
 
@@ -2362,7 +2362,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w4PreviewLoading, setW4PreviewLoading] = useState(false);
   const [w4DocPreview, setW4DocPreview] = useState<SignableDocument | null>(null);
   const filteredW4Recipients = useMemo(
-    () => employees.filter((e) => e.name.toLowerCase().includes(w4RecipientSearch.toLowerCase())),
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w4RecipientSearch.toLowerCase())),
     [employees, w4RecipientSearch]
   );
 
@@ -2551,7 +2551,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [w9PreviewLoading, setW9PreviewLoading] = useState(false);
   const [w9DocPreview, setW9DocPreview] = useState<SignableDocument | null>(null);
   const filteredW9Recipients = useMemo(
-    () => employees.filter((e) => e.name.toLowerCase().includes(w9RecipientSearch.toLowerCase())),
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(w9RecipientSearch.toLowerCase())),
     [employees, w9RecipientSearch]
   );
 
@@ -4756,7 +4756,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // substring convention already used elsewhere in this file/app rather
   // than a hardcoded list, so it stays correct as new manager roles appear.
   const managerRecipients = useMemo(
-    () => employees.filter((e) => normalizeRole(e.position).includes("MANAGER")).sort((a, b) => a.name.localeCompare(b.name)),
+    () => employees.filter((e) => e.status === "active" && normalizeRole(e.position).includes("MANAGER")).sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
   const [forwardCvDialog, setForwardCvDialog] = useState<Candidate | null>(null);

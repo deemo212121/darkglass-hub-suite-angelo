@@ -151,7 +151,7 @@ export function TeamMessenger({ mod, sub }: Props) {
         if (cancelled) return;
         setChannels(chans);
         // Hide myself from the contact list.
-        const others = users.filter((u) => u.id !== profileId);
+        const others = users.filter((u) => u.id !== profileId && u.is_active);
         setContacts(others);
 
         // If the URL hash points to a specific thread (#channel=… or #dm=…)

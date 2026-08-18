@@ -75,7 +75,7 @@ export function ReportClaimsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
         ]);
         if (cancelled) return;
         setTickets(allTickets.filter(isClaimTicket));
-        setStaff(profiles.filter((p) => CLAIMS_ROLES.has(normalizeRole(p.role))));
+        setStaff(profiles.filter((p) => p.is_active && CLAIMS_ROLES.has(normalizeRole(p.role))));
         setNotes(allNotes);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Claims Daily Report.");

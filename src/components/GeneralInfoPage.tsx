@@ -158,7 +158,7 @@ export function GeneralInfoPage({ mod, sub }: Props) {
   // real account) — an <input list="..."> still accepts free typing, this
   // just offers these as quick picks.
   const knownNames = Array.from(new Set([
-    ...companyUsers.map((u) => u.display_name || u.email),
+    ...companyUsers.filter((u) => u.is_active).map((u) => u.display_name || u.email),
     ...branchRoles.flatMap((r) => BRANCH_ROLE_COLUMNS.map((col) => r[col.key] as string | null)),
     ...regions.map((r) => r.regionLead),
     ...leadership.map((r) => r.name),

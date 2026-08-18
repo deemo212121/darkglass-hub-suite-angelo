@@ -229,7 +229,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         if (cancelled) return;
         setRows(partsRows);
         setTruckStock(truck);
-        setStaff(users.filter(isPartsOrderProfileFilter));
+        setStaff(users.filter((p) => p.is_active && isPartsOrderProfileFilter(p)));
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Parts Order Dashboard.");
       } finally {

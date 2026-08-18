@@ -493,7 +493,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   );
 
   const visibleProfiles = useMemo(() => {
-    let result = profiles;
+    let result = profiles.filter((p) => p.is_active);
     if (allowedLocations !== null) result = result.filter((p) => allowedLocations.includes(p.assigned_branch || ""));
     if (teamScopedIds !== null) result = result.filter((p) => teamScopedIds.has(p.id));
     return result;

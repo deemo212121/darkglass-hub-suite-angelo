@@ -30,7 +30,7 @@ export function NotifyRecipientsPicker({ value, onChange }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        setUsers(await getCompanyUsers());
+        setUsers((await getCompanyUsers()).filter((u) => u.is_active));
       } catch (err) {
         console.error("Failed to load company users:", err);
       } finally {

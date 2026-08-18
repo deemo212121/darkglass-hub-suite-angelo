@@ -61,7 +61,7 @@ export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           getAllAgentNotes().catch((err) => { console.error("Failed to load agent notes:", err); return []; }),
         ]);
         if (cancelled) return;
-        setProfiles(companyUsers);
+        setProfiles(companyUsers.filter((p) => p.is_active));
         setCandidates(cands);
         setNotes(allNotes);
       } catch (err) {

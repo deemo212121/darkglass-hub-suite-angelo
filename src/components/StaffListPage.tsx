@@ -108,7 +108,7 @@ export function StaffListPage({ mod: _mod, sub: _sub }: { mod: ModuleDef; sub: S
       }
       setSeniorManagerByBranchManager(reportsToMap);
       const mapped: BranchEmployee[] = profiles
-        .filter((p) => (p.assigned_branch || "").trim() && isStaffListRole(p.role, p.extra_roles ?? []))
+        .filter((p) => p.is_active && (p.assigned_branch || "").trim() && isStaffListRole(p.role, p.extra_roles ?? []))
         .map((p) => {
           const info = infoByProfileId.get(p.id) || {};
           return {

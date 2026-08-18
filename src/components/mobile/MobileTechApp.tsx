@@ -2375,6 +2375,7 @@ function ChatView({ firebaseUid, authorName }: { firebaseUid: string; authorName
         if (cancelled) return;
         const list: ChatContact[] = [];
         for (const u of rows) {
+          if (!(u as any).is_active) continue;
           const primary = String((u as any).role || "").toUpperCase();
           const extras = ((u as any).extra_roles as string[] | null | undefined) || [];
           const allRoles = [primary, ...extras.map((r) => String(r).toUpperCase())];
@@ -3494,7 +3495,7 @@ function MobileClockInTeamView({ profileId }: { profileId: string | null }) {
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
       const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTechnicians = allProfiles.filter(
-        (p) => (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
+        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && normalizeRole(p.role) === "TECHNICIAN"
       );
       setRows(
         myTechnicians

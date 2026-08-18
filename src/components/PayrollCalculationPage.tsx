@@ -72,7 +72,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         getCompanyTimecardEntries(startDate, endDate),
         getCompanySalaryEntries(),
       ]);
-      setProfiles(profileRows);
+      setProfiles(profileRows.filter((p) => p.is_active));
       setEntries(entryRows);
       setSalaryEntries(salaryRows);
     } catch (err) {
