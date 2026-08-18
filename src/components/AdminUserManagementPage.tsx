@@ -113,6 +113,7 @@ const UM_FILTERABLE_FIELDS = [
   "manager",
   "technicianId",
   "office",
+  "status",
 ] as const;
 
 type UMFilterableField = (typeof UM_FILTERABLE_FIELDS)[number];
@@ -122,7 +123,7 @@ type UMFilterableField = (typeof UM_FILTERABLE_FIELDS)[number];
  * cell renders, so the funnel dropdown shows the same values the user
  * sees in the table.
  */
-function colValue(record: { id: string; loginName: string; userName: string; type: string; email?: string; manager?: string; technicianId?: string; office?: string }, field: string): string {
+function colValue(record: { id: string; loginName: string; userName: string; type: string; email?: string; manager?: string; technicianId?: string; office?: string; isActive?: boolean }, field: string): string {
   switch (field as UMFilterableField) {
     case "id":            return String(record.id ?? "");
     case "loginName":     return String(record.loginName ?? "");
@@ -136,6 +137,7 @@ function colValue(record: { id: string; loginName: string; userName: string; typ
     case "manager":       return String(record.manager ?? "");
     case "technicianId":  return String(record.technicianId ?? "");
     case "office":        return String(record.office ?? "");
+    case "status":        return record.isActive === false ? "Deactivated" : "Active";
     default:              return String((record as any)[field] ?? "");
   }
 }
@@ -1357,19 +1359,25 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     </span>
                   </th>
                   <th className="px-2 py-1.5 text-left">Branch Access</th>
+                  <th className="px-2 py-1.5 text-left">
+                    <span className="inline-flex items-center">Status
+                      <ColumnFilter field="status" label="Status" options={columnOptions["status"] || []}
+                        selected={colFilters["status"] || new Set()} onChange={(n) => setColFilter("status", n)} />
+                    </span>
+                  </th>
                   <th className="px-2 py-1.5 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 bg-slate-950/60 text-slate-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
                       Loading users...
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-slate-400">
+                    <td colSpan={11} className="px-4 py-10 text-center text-slate-400">
                       {users.length === 0 ? "No users found. Create your first user above." : "No records match that search."}
                     </td>
                   </tr>
@@ -1385,6 +1393,17 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.technicianId || "—"}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-slate-300">{record.office}</td>
                       <td className="px-2 py-1.5 text-slate-300">{record.locations}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        <span
+                          className={
+                            record.isActive === false
+                              ? "rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300"
+                              : "rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300"
+                          }
+                        >
+                          {record.isActive === false ? "Deactivated" : "Active"}
+                        </span>
+                      </td>
                       <td className="px-2 py-1.5 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <button
