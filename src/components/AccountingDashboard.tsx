@@ -3177,7 +3177,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <select
                     value={mileageBranchFilter}
                     onChange={(e) => setMileageBranchFilter(e.target.value)}
-                    className="glass-input text-sm px-2 py-1.5 w-56"
+                    className="glass-input h-9 text-sm px-2 py-1.5 w-56"
                   >
                     <option value="">All Branches</option>
                     {mileageBranchOptions.map((b) => (
@@ -3193,14 +3193,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     value={mileageNameFilter}
                     onChange={(e) => setMileageNameFilter(e.target.value)}
                     placeholder="Search technician name…"
-                    className="glass-input text-sm px-2 py-1.5 w-56"
+                    className="glass-input h-9 text-sm px-2 py-1.5 w-56"
                   />
-                  <datalist id="mileage-name-suggestions">
-                    {mileageNameOptions.map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
                 </label>
+                <datalist id="mileage-name-suggestions">
+                  {mileageNameOptions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
                 <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Ticket #</span>
                   <input
@@ -3208,19 +3208,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     value={mileageTicketFilter}
                     onChange={(e) => setMileageTicketFilter(e.target.value)}
                     placeholder="Search ticket #…"
-                    className="glass-input text-sm px-2 py-1.5 w-40"
+                    className="glass-input h-9 text-sm px-2 py-1.5 w-40"
                   />
                 </label>
                 <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Status</span>
-                  <span className="glass-input inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
+                  <span className="glass-input h-9 inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
                     {mileageStatusFilter.size === 0 ? "All Statuses" : `${mileageStatusFilter.size} selected`}
                     <TicketColumnFilter options={mileageStatusOptions} selected={mileageStatusFilter} onChange={setMileageStatusFilter} label="Filter by Status" />
                   </span>
                 </label>
                 <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Payroll</span>
-                  <span className="glass-input inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
+                  <span className="glass-input h-9 inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
                     {mileagePayrollFilter.size === 0 ? "All" : Array.from(mileagePayrollFilter).join(", ")}
                     <TicketColumnFilter options={MILEAGE_PAYROLL_OPTIONS} selected={mileagePayrollFilter} onChange={setMileagePayrollFilter} label="Filter by Payroll" />
                   </span>
