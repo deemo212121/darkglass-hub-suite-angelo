@@ -106,6 +106,25 @@ export async function uploadTicketPhoto(
 }
 
 /**
+ * Cheap existence check for a ticket's photos — just lists the folder and
+ * checks item count, skipping the per-file getDownloadURL/getMetadata
+ * calls listTicketPhotos does for every photo. Meant for checking MANY
+ * tickets at once (e.g. Accounting Dashboard's Mileage tab auto-hold
+ * rule below), where fetching full photo details for tickets nobody's
+ * actually viewing yet would be wasteful.
+ */
+export async function hasTicketPhotos(companyId: string, ticketNo: string): Promise<boolean> {
+  if (!isFirebaseReady() || !storage) return false;
+  const folder = `companies/${companyId}/tickets/${ticketNo}`;
+  try {
+    const res = await listAll(ref(storage, folder));
+    return res.items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * List all photos stored for a ticket (company-scoped by path).
  */
 export async function listTicketPhotos(

@@ -23,6 +23,7 @@ import {
   Activity,
   X,
   Ban,
+  Columns3,
 } from "lucide-react";
 import {
   BarChart,
@@ -43,7 +44,7 @@ import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, getAttendanceForRange } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
-import { getEmployeeInfoByProfileIds, getCompanyUsers, type EmployeeInfo } from "@/lib/supabase/users";
+import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
@@ -58,6 +59,7 @@ import {
   deleteTechManualPayItem,
   getTechCategoryOverrides,
   upsertTechCategoryOverride,
+  getTechAutoMileageTotals,
   techRateFor as techRateForRates,
   type TechRepairRate,
   type TechRepairCount,
@@ -65,12 +67,12 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
-import { listTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
+import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
 import { renderPayslipBodyHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -85,6 +87,36 @@ const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
 // (timecard_entries.hours_worked/overtime_hours are never populated by the
 // clock-in/out save flow) — same convention as PayrollCalculationPage.tsx.
 const REGULAR_HOURS_PER_DAY = 8;
+
+// Mileage tab's column visibility picker — same pattern as Part Receive's
+// own Columns3 button (PartReceive.tsx): a checklist of every column,
+// persisted to localStorage so it stays put between visits.
+const MILEAGE_COLUMNS = [
+  { key: "date", label: "Date" },
+  { key: "technician", label: "Technician" },
+  { key: "ticketNo", label: "Ticket #" },
+  { key: "status", label: "Status" },
+  { key: "photos", label: "Photos" },
+  { key: "address", label: "Address" },
+  { key: "contactNumber", label: "Contact Number" },
+  { key: "email", label: "Email" },
+  { key: "totalMileage", label: "Total Mileage" },
+  { key: "googleMapLink", label: "Google Map Link" },
+  { key: "payroll", label: "Payroll" },
+  { key: "actions", label: "Actions" },
+] as const;
+type MileageColumnKey = (typeof MILEAGE_COLUMNS)[number]["key"];
+const MILEAGE_COLUMN_VISIBILITY_KEY = "ahs:mileage:visible-columns";
+function loadMileageVisibleColumns(): Record<string, boolean> {
+  const allVisible = Object.fromEntries(MILEAGE_COLUMNS.map((c) => [c.key, true]));
+  try {
+    const raw = localStorage.getItem(MILEAGE_COLUMN_VISIBILITY_KEY);
+    if (!raw) return allVisible;
+    return { ...allVisible, ...(JSON.parse(raw) as Record<string, boolean>) };
+  } catch {
+    return allVisible;
+  }
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface SupabaseEmployee {
@@ -570,6 +602,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [payrollExcludingId, setPayrollExcludingId] = useState<string | null>(null);
   const [mileageBranchFilter, setMileageBranchFilter] = useState("");
   const [mileageNameFilter, setMileageNameFilter] = useState("");
+  const [mileageTicketFilter, setMileageTicketFilter] = useState("");
+  const [mileageStatusFilter, setMileageStatusFilter] = useState<Set<string>>(new Set());
+  const [mileagePayrollFilter, setMileagePayrollFilter] = useState<Set<string>>(new Set());
+  const [mileageVisibleColumns, setMileageVisibleColumns] = useState<Record<string, boolean>>(() =>
+    typeof window !== "undefined" ? loadMileageVisibleColumns() : Object.fromEntries(MILEAGE_COLUMNS.map((c) => [c.key, true]))
+  );
+  const [mileageColumnsMenuOpen, setMileageColumnsMenuOpen] = useState(false);
+  const isMileageColVisible = (key: MileageColumnKey) => mileageVisibleColumns[key] !== false;
+  const toggleMileageColumn = (key: MileageColumnKey) => {
+    setMileageVisibleColumns((prev) => {
+      const next = { ...prev, [key]: prev[key] === false };
+      try { localStorage.setItem(MILEAGE_COLUMN_VISIBILITY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const showAllMileageColumns = () => {
+    const all = Object.fromEntries(MILEAGE_COLUMNS.map((c) => [c.key, true]));
+    setMileageVisibleColumns(all);
+    try { localStorage.setItem(MILEAGE_COLUMN_VISIBILITY_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+  };
 
   // Admin > Repair Statuses config — fetched once so the Mileage tab's
   // Status column can color-code by the same admin-configured colors
@@ -596,14 +648,62 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // convention as Overall Status's Tech Completion Rate table.
   const [mileageTechDetailId, setMileageTechDetailId] = useState<string | null>(null);
 
-  // Photos column — deliberately NOT pre-fetched for every row (the table
-  // has no pagination and can hold hundreds of entries, so eagerly listing
-  // every ticket's Storage folder on tab load doesn't scale). The cell is
-  // just a plain "Photos" link; clicking it opens the modal below, which
-  // fetches that ONE ticket's photos on demand.
+  // Photos column — the cell itself is just a plain "Photos" link; clicking
+  // it opens the modal below, which fetches that ONE ticket's full photo
+  // details (URLs, metadata) on demand.
   const [mileagePhotoModalEntry, setMileagePhotoModalEntry] = useState<MileageEntry | null>(null);
   const [mileagePhotoModalPhotos, setMileagePhotoModalPhotos] = useState<TicketPhoto[]>([]);
   const [mileagePhotoModalLoading, setMileagePhotoModalLoading] = useState(false);
+
+  // Auto Payroll hold when a ticket has no photos yet — separate from the
+  // manual On Hold toggle below (Ban icon), which keeps its own "who/when"
+  // attribution. This one is purely a live existence check (hasTicketPhotos
+  // — a cheap listAll, not the modal's full listTicketPhotos with per-file
+  // metadata), cached by ticket # so switching branch/filter doesn't
+  // re-check tickets already known. Clears itself the moment a photo
+  // actually exists — no button, no persisted flag to get stale.
+  const [mileageTicketHasPhotos, setMileageTicketHasPhotos] = useState<Map<string, boolean>>(new Map());
+  useEffect(() => {
+    const ticketNos = Array.from(
+      new Set(mileageEntries.filter((e) => e.source === "auto" && e.ticketNo && !mileageTicketHasPhotos.has(e.ticketNo)).map((e) => e.ticketNo as string))
+    );
+    if (ticketNos.length === 0 || !companyId) return;
+    const cid = companyId;
+    let cancelled = false;
+    (async () => {
+      const CONCURRENCY = 8;
+      const results = new Map<string, boolean>();
+      let idx = 0;
+      async function worker() {
+        while (idx < ticketNos.length) {
+          const ticketNo = ticketNos[idx++];
+          try {
+            results.set(ticketNo, await hasTicketPhotos(cid, `${ticketNo}/service`));
+          } catch {
+            results.set(ticketNo, false);
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+      if (cancelled) return;
+      setMileageTicketHasPhotos((prev) => new Map([...prev, ...results]));
+
+      // Persist the same rule into payroll_excluded — this is what actually
+      // makes Tech Payroll (getTechCompletedRepairCounts, and this file's
+      // own mileage total default) skip these tickets, not just the badge.
+      const affectedEntries = mileageEntries
+        .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
+        .map((e) => ({ id: e.id, payrollExcluded: e.payrollExcluded, payrollHoldReason: e.payrollHoldReason }));
+      const hasPhotosByEntryId = new Map(
+        mileageEntries
+          .filter((e) => e.source === "auto" && e.ticketNo && results.has(e.ticketNo))
+          .map((e) => [e.id, results.get(e.ticketNo as string) as boolean])
+      );
+      const changed = await reconcileMileageNoPhotoHolds(affectedEntries, hasPhotosByEntryId);
+      if (!cancelled && changed > 0) setMileageEntries(await getMileageEntries());
+    })();
+    return () => { cancelled = true; };
+  }, [mileageEntries, companyId]);
 
   // Payroll generation period — Finance picks this via the date inputs on
   // the Payroll tab. Seeded once (see fetchData) from the auto "day after
@@ -817,6 +917,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return () => { cancelled = true; };
   }, [genStart, genEnd]);
 
+  // Real logged mileage (Mileage tab) per technician for this period —
+  // the DEFAULT for the Mileage line's Value before Finance has ever
+  // manually entered/edited it for this specific period (see
+  // techManualByProfile below). See getTechAutoMileageTotals.
+  const [techAutoMileageByProfile, setTechAutoMileageByProfile] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setTechAutoMileageByProfile(new Map());
+      return;
+    }
+    let cancelled = false;
+    getTechAutoMileageTotals(genStart, genEnd)
+      .then((totals) => { if (!cancelled) setTechAutoMileageByProfile(totals); })
+      .catch((err) => {
+        console.error("Failed to load tech auto mileage totals:", err);
+        if (!cancelled) setTechAutoMileageByProfile(new Map());
+      });
+    return () => { cancelled = true; };
+  }, [genStart, genEnd, mileageEntries]);
+
   // "Two Tech" auto-count (visits.second_technician) — folds into Total Net
   // the same deterministic, rate-table-driven way LDT/Mileage/Training do.
   useEffect(() => {
@@ -1008,7 +1128,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
     const tech = isTechRole(emp) ? techGrossByProfile.get(emp.id) : undefined;
     const manual = isTechRole(emp) ? techManualByProfile.get(emp.id) : undefined;
-    const manualTotal = manual ? manual.ldtPay + manual.mileagePay + manual.trainingPay : 0;
     // "Two Tech" (auto-counted from visits.second_technician) and MCA Bonus
     // (flat bonus for meeting a minimum completed-ticket threshold) are both
     // rate-table-driven and deterministic, same as LDT/Mileage/Training, so
@@ -1016,6 +1135,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Incentive are ad-hoc/manual-per-open — those live on the Tech Activity
     // Report modal only and are NOT included here (see TechActivityReportModal.tsx).
     const techBranch = emp.assigned_branch || "";
+    // Mileage defaults to the technician's real logged total (Mileage tab,
+    // excluding held tickets — see getTechAutoMileageTotals) until Finance
+    // has manually entered/edited a value for this specific period, at
+    // which point their saved number takes over for good — see
+    // handleManualPayBlur, which always re-saves whatever's currently
+    // showing for every field, not just the one just edited.
+    const effectiveMileage = manual ? manual.mileage : isTechRole(emp) ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
+    const effectiveMileagePay = manual ? manual.mileagePay : effectiveMileage * techRateFor("Mileage", techBranch);
+    const manualTotal = (manual?.ldtPay ?? 0) + effectiveMileagePay + (manual?.trainingPay ?? 0);
     const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
     const twoTechPay = isTechRole(emp) ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
     const mcaThreshold = isTechRole(emp) ? techRateFor("MCA Threshold", techBranch) : 0;
@@ -1052,8 +1180,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techManual: {
         ldtCount: manual?.ldtCount ?? 0,
         ldtPay: manual?.ldtPay ?? 0,
-        mileage: manual?.mileage ?? 0,
-        mileagePay: manual?.mileagePay ?? 0,
+        mileage: effectiveMileage,
+        mileagePay: effectiveMileagePay,
         trainingValue: manual?.trainingValue ?? 0,
         trainingPay: manual?.trainingPay ?? 0,
         owIncentivePct: manual?.owIncentivePct ?? 0,
@@ -1832,11 +1960,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     a.localeCompare(b)
   );
   const mileageBranchOptions = Array.from(new Set(mileageEntries.map((e) => e.branch))).sort((a, b) => a.localeCompare(b));
+  const mileageStatusOptions = Array.from(new Set(mileageEntries.map((e) => e.ticketStatus || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const MILEAGE_PAYROLL_OPTIONS = ["Included", "On Hold"];
+  // Same rule the Payroll badge itself renders — persisted payroll_excluded
+  // (manual OR the automatic no-photos hold once reconciled) OR'd with the
+  // live photo-check result for entries not yet reconciled, so the filter
+  // and the badge can never disagree about what a row currently shows.
+  const mileageEntryIsOnHold = (entry: MileageEntry) =>
+    entry.payrollExcluded || (entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false);
   const mileageEntriesByBranch = (() => {
     const nameFilter = mileageNameFilter.trim().toLowerCase();
+    const ticketFilter = mileageTicketFilter.trim().toLowerCase();
     const filtered = mileageEntries.filter((entry) => {
       if (mileageBranchFilter && entry.branch !== mileageBranchFilter) return false;
       if (nameFilter && !mileageRowName(entry).toLowerCase().includes(nameFilter)) return false;
+      if (ticketFilter && !(entry.ticketNo || "").toLowerCase().includes(ticketFilter)) return false;
+      if (mileageStatusFilter.size > 0 && !mileageStatusFilter.has(entry.ticketStatus || "")) return false;
+      if (mileagePayrollFilter.size > 0) {
+        const status = mileageEntryIsOnHold(entry) ? "On Hold" : "Included";
+        if (!mileagePayrollFilter.has(status)) return false;
+      }
       return true;
     });
     const byBranch = new Map<string, MileageEntry[]>();
@@ -1901,12 +2044,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     setMileageSyncMessage(null);
     setMileageUnmatched([]);
     try {
+      const contactInfo = await getTechnicianContactInfoByIds(targets.map((t) => t.id));
       const result = await syncMileageFromTickets({
-        technicians: targets.map((t) => ({
-          profileId: t.id,
-          fullName: t.full_name,
-          branch: t.assigned_branch || "Unassigned",
-        })),
+        technicians: targets.map((t) => {
+          const contact = contactInfo.get(t.id);
+          return {
+            profileId: t.id,
+            fullName: t.full_name,
+            branch: t.assigned_branch || "Unassigned",
+            phone: contact?.phone,
+            email: contact?.email,
+            homeAddress: contact?.address,
+          };
+        }),
       });
       const parts = [`${result.created} new ${result.created === 1 ? "entry" : "entries"} created`];
       if (result.skipped > 0) parts.push(`${result.skipped} already synced`);
@@ -3020,44 +3170,109 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
 
             {/* Filters */}
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-1.5 text-sm text-slate-200">
-                <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch</span>
-                <select
-                  value={mileageBranchFilter}
-                  onChange={(e) => setMileageBranchFilter(e.target.value)}
-                  className="glass-input text-sm px-2 py-1.5 w-56"
-                >
-                  <option value="">All Branches</option>
-                  {mileageBranchOptions.map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1.5 text-sm text-slate-200">
-                <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Name</span>
-                <input
-                  type="text"
-                  list="mileage-name-suggestions"
-                  value={mileageNameFilter}
-                  onChange={(e) => setMileageNameFilter(e.target.value)}
-                  placeholder="Search technician name…"
-                  className="glass-input text-sm px-2 py-1.5 w-56"
-                />
-                <datalist id="mileage-name-suggestions">
-                  {mileageNameOptions.map((name) => (
-                    <option key={name} value={name} />
-                  ))}
-                </datalist>
-              </label>
-              {(mileageBranchFilter || mileageNameFilter) && (
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Branch</span>
+                  <select
+                    value={mileageBranchFilter}
+                    onChange={(e) => setMileageBranchFilter(e.target.value)}
+                    className="glass-input text-sm px-2 py-1.5 w-56"
+                  >
+                    <option value="">All Branches</option>
+                    {mileageBranchOptions.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Name</span>
+                  <input
+                    type="text"
+                    list="mileage-name-suggestions"
+                    value={mileageNameFilter}
+                    onChange={(e) => setMileageNameFilter(e.target.value)}
+                    placeholder="Search technician name…"
+                    className="glass-input text-sm px-2 py-1.5 w-56"
+                  />
+                  <datalist id="mileage-name-suggestions">
+                    {mileageNameOptions.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Ticket #</span>
+                  <input
+                    type="text"
+                    value={mileageTicketFilter}
+                    onChange={(e) => setMileageTicketFilter(e.target.value)}
+                    placeholder="Search ticket #…"
+                    className="glass-input text-sm px-2 py-1.5 w-40"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Status</span>
+                  <span className="glass-input inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
+                    {mileageStatusFilter.size === 0 ? "All Statuses" : `${mileageStatusFilter.size} selected`}
+                    <TicketColumnFilter options={mileageStatusOptions} selected={mileageStatusFilter} onChange={setMileageStatusFilter} label="Filter by Status" />
+                  </span>
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Payroll</span>
+                  <span className="glass-input inline-flex items-center gap-1 text-sm px-2 py-1.5 w-40">
+                    {mileagePayrollFilter.size === 0 ? "All" : Array.from(mileagePayrollFilter).join(", ")}
+                    <TicketColumnFilter options={MILEAGE_PAYROLL_OPTIONS} selected={mileagePayrollFilter} onChange={setMileagePayrollFilter} label="Filter by Payroll" />
+                  </span>
+                </label>
+                {(mileageBranchFilter || mileageNameFilter || mileageTicketFilter || mileageStatusFilter.size > 0 || mileagePayrollFilter.size > 0) && (
+                  <button
+                    onClick={() => {
+                      setMileageBranchFilter("");
+                      setMileageNameFilter("");
+                      setMileageTicketFilter("");
+                      setMileageStatusFilter(new Set());
+                      setMileagePayrollFilter(new Set());
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+              <div className="relative">
                 <button
-                  onClick={() => { setMileageBranchFilter(""); setMileageNameFilter(""); }}
-                  className="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+                  type="button"
+                  onClick={() => setMileageColumnsMenuOpen((o) => !o)}
+                  className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs"
+                  aria-haspopup="true"
+                  aria-expanded={mileageColumnsMenuOpen}
                 >
-                  Clear filters
+                  <Columns3 className="h-3.5 w-3.5" /> Columns
+                  <span className="text-xs text-muted-foreground">
+                    ({MILEAGE_COLUMNS.filter((c) => isMileageColVisible(c.key)).length}/{MILEAGE_COLUMNS.length})
+                  </span>
                 </button>
-              )}
+                {mileageColumnsMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMileageColumnsMenuOpen(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-white/15 bg-slate-900 p-2 shadow-2xl">
+                      <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/10 mb-1">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show columns</span>
+                        <button type="button" onClick={showAllMileageColumns} className="text-xs text-blue-400 hover:text-blue-300">Show all</button>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {MILEAGE_COLUMNS.map((col) => (
+                          <label key={col.key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm">
+                            <input type="checkbox" checked={isMileageColVisible(col.key)} onChange={() => toggleMileageColumn(col.key)} />
+                            <span className="text-slate-200">{col.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Per-branch tables */}
@@ -3077,23 +3292,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-slate-700/80">
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Date</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Technician</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Ticket #</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Status</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Photos</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Address</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Google Map Link</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>
-                          <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>
+                          {isMileageColVisible("date") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Date</th>}
+                          {isMileageColVisible("technician") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Technician</th>}
+                          {isMileageColVisible("ticketNo") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Ticket #</th>}
+                          {isMileageColVisible("status") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Status</th>}
+                          {isMileageColVisible("photos") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Photos</th>}
+                          {isMileageColVisible("address") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Address</th>}
+                          {isMileageColVisible("contactNumber") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Contact Number</th>}
+                          {isMileageColVisible("email") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Email</th>}
+                          {isMileageColVisible("totalMileage") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Total Mileage</th>}
+                          {isMileageColVisible("googleMapLink") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Google Map Link</th>}
+                          {isMileageColVisible("payroll") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Payroll</th>}
+                          {isMileageColVisible("actions") && <th className="px-3 py-3 text-xs font-semibold text-slate-200 text-left">Actions</th>}
                         </tr>
                       </thead>
                       <tbody>
                         {entries.map((entry) => (
                           <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5">
+                            {isMileageColVisible("date") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               <div className="flex items-center gap-2">
                                 {entry.workDate}
@@ -3107,6 +3323,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 </span>
                               </div>
                             </td>
+                            )}
+                            {isMileageColVisible("technician") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               <button
                                 type="button"
@@ -3122,6 +3340,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 )}
                               </button>
                             </td>
+                            )}
+                            {isMileageColVisible("ticketNo") && (
                             <td className="px-3 py-2.5 text-slate-300">
                               {entry.ticketNo ? (
                                 <Link to="/ticket/$ticketNo" params={{ ticketNo: entry.ticketNo }} className="font-mono text-blue-400 hover:text-blue-300 hover:underline">
@@ -3131,7 +3351,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
+                            )}
+                            {isMileageColVisible("status") && (
                             <td className="px-3 py-2.5" style={entry.ticketStatus ? mileageStatusStyle(entry.ticketStatus, repairStatusRows) : { color: "#64748b" }}>{entry.ticketStatus || "—"}</td>
+                            )}
+                            {isMileageColVisible("photos") && (
                             <td className="px-3 py-2.5">
                               {!entry.ticketNo ? (
                                 <span className="text-slate-500">—</span>
@@ -3146,10 +3370,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 </button>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>
-                            <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>
-                            <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>
-                            <td className="px-3 py-2.5 text-slate-300">{entry.totalMileage}</td>
+                            )}
+                            {isMileageColVisible("address") && <td className="px-3 py-2.5 text-slate-300">{entry.address}</td>}
+                            {isMileageColVisible("contactNumber") && <td className="px-3 py-2.5 text-slate-300">{entry.contactNumber || "—"}</td>}
+                            {isMileageColVisible("email") && <td className="px-3 py-2.5 text-slate-300">{entry.email || "—"}</td>}
+                            {isMileageColVisible("totalMileage") && <td className="px-3 py-2.5 text-slate-300">{entry.totalMileage}</td>}
+                            {isMileageColVisible("googleMapLink") && (
                             <td className="px-3 py-2.5">
                               {entry.googleMapLink ? (
                                 <a href={entry.googleMapLink} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
@@ -3159,20 +3385,40 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
+                            )}
+                            {isMileageColVisible("payroll") && (
                             <td className="px-3 py-2.5">
-                              {entry.payrollExcluded ? (
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-red-500/20 text-red-300"
-                                  title={`Put on hold by ${entry.payrollExcludedByName || "someone"}${entry.payrollExcludedAt ? ` on ${new Date(entry.payrollExcludedAt).toLocaleDateString()}` : ""}`}
-                                >
-                                  On Hold
-                                </span>
-                              ) : (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300">
-                                  Included
-                                </span>
-                              )}
+                              {(() => {
+                                const noPhotosHold = entry.source === "auto" && !!entry.ticketNo && mileageTicketHasPhotos.get(entry.ticketNo) === false;
+                                if (entry.payrollExcluded) {
+                                  return (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-red-500/20 text-red-300"
+                                      title={`Put on hold by ${entry.payrollExcludedByName || "someone"}${entry.payrollExcludedAt ? ` on ${new Date(entry.payrollExcludedAt).toLocaleDateString()}` : ""}`}
+                                    >
+                                      On Hold
+                                    </span>
+                                  );
+                                }
+                                if (noPhotosHold) {
+                                  return (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-red-500/20 text-red-300"
+                                      title="No photos uploaded for this ticket yet — switches to Included automatically once photos are added."
+                                    >
+                                      On Hold
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300">
+                                    Included
+                                  </span>
+                                );
+                              })()}
                             </td>
+                            )}
+                            {isMileageColVisible("actions") && (
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-2">
                                 <button
@@ -3193,6 +3439,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 </button>
                               </div>
                             </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>

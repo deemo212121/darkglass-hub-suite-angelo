@@ -410,6 +410,40 @@ export async function getTechAssignedCounts(startDate: string, endDate: string):
   return counts;
 }
 
+/**
+ * Each technician's real logged mileage (mileage_entries.total_mileage,
+ * Accounting Dashboard's Mileage tab) within a payroll period — the
+ * DEFAULT for the Mileage line's Value, before Finance has ever manually
+ * entered/edited it for that period (see AccountingDashboard.tsx's
+ * techManualByProfile: manual?.mileage falls back to this map instead of
+ * a flat 0). Excludes entries on hold for payroll (payroll_excluded —
+ * manual holds AND the automatic "no photos yet" rule alike), same "no
+ * proof of the drive, no pay for it" rule already applied to Completed
+ * Tickets. Once Finance saves any manual value for a technician's
+ * period, that saved row takes over and this total is no longer
+ * consulted for them — see getTechManualPayItems.
+ */
+export async function getTechAutoMileageTotals(periodStart: string, periodEnd: string): Promise<Map<string, number>> {
+  const totals = new Map<string, number>();
+  if (!periodStart || !periodEnd) return totals;
+  const { data, error } = await supabase
+    .from("mileage_entries")
+    .select("profile_id, total_mileage, payroll_excluded")
+    .not("profile_id", "is", null)
+    .gte("work_date", periodStart)
+    .lte("work_date", periodEnd);
+  if (error) {
+    console.error("getTechAutoMileageTotals error:", error.message);
+    return totals;
+  }
+  for (const row of (data ?? []) as any[]) {
+    if (row.payroll_excluded) continue;
+    const profileId = row.profile_id as string;
+    totals.set(profileId, (totals.get(profileId) ?? 0) + (Number(row.total_mileage) || 0));
+  }
+  return totals;
+}
+
 /** One technician's manually-entered LDT/Mileage/Training/OW Incentive values for one payroll period. */
 export interface TechManualPayItem {
   id: string;
