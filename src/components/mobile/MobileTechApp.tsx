@@ -1879,17 +1879,6 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
 
               {isEditing ? (
                 <div className="mtech-visit-edit">
-                  <label className="mtech-visit-edit-label">Repair Status</label>
-                  <select
-                    className="mtech-visit-edit-input"
-                    value={editDraft.repairStatus}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
-                  >
-                    <option value="">— select —</option>
-                    {MOBILE_REPAIR_STATUSES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
                   <label className="mtech-visit-edit-label">Cause of Failure (Tech)</label>
                   <textarea
                     className="mtech-visit-edit-input"
@@ -1911,6 +1900,17 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     }
                     rows={10}
                   />
+                  <label className="mtech-visit-edit-label">Repair Status</label>
+                  <select
+                    className="mtech-visit-edit-input"
+                    value={editDraft.repairStatus}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, repairStatus: e.target.value }))}
+                  >
+                    <option value="">— select —</option>
+                    {MOBILE_REPAIR_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea
                     className="mtech-visit-edit-input"
