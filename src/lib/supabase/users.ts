@@ -633,6 +633,48 @@ export async function getCompanyTechnicianHomes(): Promise<TechnicianHome[]> {
   });
 }
 
+export interface TechnicianContactInfo {
+  phone: string;
+  email: string;
+  /** Full home address (employee_info's address1/address2/city/state/zip joined) — not the job-site address. */
+  address: string;
+}
+
+/**
+ * Each given technician's OWN phone/email/home-address, keyed by profile
+ * id — used by Mileage's Address/Contact Number/Email columns, which
+ * should show who actually drove (the technician), not the customer they
+ * drove to (see syncMileageFromTickets, which used to pull the ticket's
+ * own customer contact info there by mistake). Scoped to a specific id
+ * list (the technicians a given sync run actually covers) rather than
+ * reusing getCompanyTechnicianHomes' TECHNICIAN-only role filter, since
+ * mileage sync also covers TECHNICIAN_MANAGER.
+ */
+export async function getTechnicianContactInfoByIds(profileIds: string[]): Promise<Map<string, TechnicianContactInfo>> {
+  const map = new Map<string, TechnicianContactInfo>();
+  if (profileIds.length === 0) return map;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, phone_number, email, employee_info")
+    .in("id", profileIds);
+  if (error) {
+    console.error("getTechnicianContactInfoByIds error:", error.message);
+    return map;
+  }
+  for (const row of data ?? []) {
+    const info = (row.employee_info && typeof row.employee_info === "object" ? row.employee_info : {}) as EmployeeInfo;
+    const address = [info.address1, info.address2, [info.city, info.state].filter(Boolean).join(", "), info.zipCode]
+      .filter((part) => part && String(part).trim())
+      .join(", ");
+    map.set(row.id, {
+      phone: row.phone_number || "",
+      email: row.email || "",
+      address,
+    });
+  }
+  return map;
+}
+
 /**
  * Create a new user: Firebase Auth credential (via secondary app so the admin
  * stays logged in) + Supabase profile row.

@@ -166,7 +166,7 @@ export async function notifyTicketStatusChange(
     recipientId: ticket.createdBy,
     senderId: null,
     senderName: updatedByName || "IT",
-    body: `🎫 Your IT ticket "${ticket.subject}" was ${STATUS_UPDATE_MESSAGES[newStatus] ?? newStatus}.`,
+    body: `🎫 Your IT ticket "${ticket.subject}" was ${STATUS_UPDATE_MESSAGES[newStatus] ?? newStatus}. View your ticket for the IT team's response.`,
     linkTo: "/it-tickets",
   });
 }

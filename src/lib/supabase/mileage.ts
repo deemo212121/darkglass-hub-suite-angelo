@@ -46,6 +46,11 @@ export interface MileageEntry {
   payrollExcluded: boolean;
   payrollExcludedAt: string | null;
   payrollExcludedByName: string | null;
+  /** "manual" (Mileage tab's On Hold button) or "no_photos" (automatic — see
+   *  reconcileMileageNoPhotoHolds). Null when not excluded. Lets the
+   *  automatic rule know never to touch a human's manual hold, and lets a
+   *  human's "take it off hold" always win even with no photo. Migration 0177. */
+  payrollHoldReason: "manual" | "no_photos" | null;
 }
 
 function mapRow(r: any): MileageEntry {
@@ -69,11 +74,12 @@ function mapRow(r: any): MileageEntry {
     payrollExcluded: !!r.payroll_excluded,
     payrollExcludedAt: r.payroll_excluded_at ?? null,
     payrollExcludedByName: r.payroll_excluded_by_name ?? null,
+    payrollHoldReason: r.payroll_hold_reason === "manual" || r.payroll_hold_reason === "no_photos" ? r.payroll_hold_reason : null,
   };
 }
 
 const ENTRY_COLUMNS =
-  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name";
+  "id, profile_id, technician_name, branch, work_date, address, contact_number, email, total_mileage, google_map_link, created_by_name, created_at, ticket_id, ticket_no, ticket_status, source, payroll_excluded, payroll_excluded_at, payroll_excluded_by_name, payroll_hold_reason";
 
 /** All mileage entries for the caller's company (RLS-scoped), newest first. */
 export async function getMileageEntries(): Promise<MileageEntry[]> {
@@ -108,9 +114,50 @@ export async function setMileageEntryPayrollExcluded(
       payroll_excluded_at: excluded ? new Date().toISOString() : null,
       payroll_excluded_by: excluded ? excludedByProfileId : null,
       payroll_excluded_by_name: excluded ? excludedByName : null,
+      // Manual always wins — a human explicitly deciding "off" should never
+      // get silently re-held by the automatic no-photos rule afterward.
+      payroll_hold_reason: excluded ? "manual" : null,
     })
     .eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Applies the "no photos uploaded yet → hold this ticket's pay" rule —
+ * called from Accounting Dashboard's Mileage tab once its batch photo
+ * check (hasTicketPhotos, storage.ts) resolves for a set of entries.
+ * Never touches a row whose payroll_hold_reason is "manual" — that's a
+ * human's call, not this rule's to make or unmake. Silent (no
+ * notifications) since this can fire many times as photos trickle in;
+ * the manual toggle's own notification flow stays exactly as it was.
+ * Returns how many rows actually changed, for a status message.
+ */
+export async function reconcileMileageNoPhotoHolds(
+  entries: { id: string; payrollExcluded: boolean; payrollHoldReason: "manual" | "no_photos" | null }[],
+  hasPhotosByEntryId: Map<string, boolean>
+): Promise<number> {
+  let changed = 0;
+  for (const entry of entries) {
+    if (entry.payrollHoldReason === "manual") continue;
+    const hasPhotos = hasPhotosByEntryId.get(entry.id);
+    if (hasPhotos === undefined) continue;
+    const shouldHold = !hasPhotos;
+    const isCurrentlyAutoHeld = entry.payrollExcluded && entry.payrollHoldReason === "no_photos";
+    if (shouldHold === isCurrentlyAutoHeld) continue;
+    const { error } = await supabase
+      .from("mileage_entries")
+      .update({
+        payroll_excluded: shouldHold,
+        payroll_excluded_at: shouldHold ? new Date().toISOString() : null,
+        payroll_excluded_by: null,
+        payroll_excluded_by_name: shouldHold ? "Auto (no photos)" : null,
+        payroll_hold_reason: shouldHold ? "no_photos" : null,
+      })
+      .eq("id", entry.id);
+    if (error) console.error(`reconcileMileageNoPhotoHolds (${entry.id}):`, error.message);
+    else changed++;
+  }
+  return changed;
 }
 
 export async function addMileageEntry(input: {
@@ -185,7 +232,7 @@ export interface MileageSyncResult {
  * and avoids N separate round-trips for N technicians.
  */
 export async function syncMileageFromTickets(input: {
-  technicians: { profileId: string; fullName: string; branch: string }[];
+  technicians: { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }[];
 }): Promise<MileageSyncResult> {
   const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [] };
   const techByNormalizedName = new Map(
@@ -273,9 +320,14 @@ export async function syncMileageFromTickets(input: {
       technician_name: technician ? null : rawName,
       branch: ticket.location || technician?.branch || "Unassigned",
       work_date: ticket.schedule_date,
-      address: fullAddress || "(no address on file)",
-      contact_number: customer.phone || null,
-      email: customer.email || null,
+      // The technician's OWN contact info, not the customer's — Address/
+      // Contact Number/Email here answer "who drove and how do we reach
+      // them," which the customer's job-site details never were. Google
+      // Map Link below still points at the customer's site (for driving
+      // directions there), unaffected by this.
+      address: technician?.homeAddress || "(no address on file)",
+      contact_number: technician?.phone || null,
+      email: technician?.email || null,
       total_mileage: Math.round(miles * 10) / 10,
       google_map_link: googleMapLink || null,
       created_by_name: "Auto-sync",
