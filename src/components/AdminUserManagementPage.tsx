@@ -1292,15 +1292,39 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 {activeFilterCount} column filter{activeFilterCount === 1 ? "" : "s"} active — Clear all
               </button>
             )}
-            <div className="ml-auto w-full max-w-md">
-              <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by login name, user name, manager, email, office..."
-                className="glass-input mt-2 w-full"
-                disabled={loading}
-              />
+            <div className="ml-auto flex flex-wrap items-end gap-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Status</label>
+                <select
+                  value={
+                    colFilters["status"]?.has("Active")
+                      ? "Active"
+                      : colFilters["status"]?.has("Deactivated")
+                        ? "Deactivated"
+                        : "all"
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setColFilter("status", v === "all" ? new Set() : new Set([v]));
+                  }}
+                  className="glass-input mt-2"
+                  disabled={loading}
+                >
+                  <option value="all">All</option>
+                  <option value="Active">Active only</option>
+                  <option value="Deactivated">Deactivated only</option>
+                </select>
+              </div>
+              <div className="w-full max-w-md">
+                <label className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">Search</label>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by login name, user name, manager, email, office..."
+                  className="glass-input mt-2 w-full"
+                  disabled={loading}
+                />
+              </div>
             </div>
           </div>
         </div>
