@@ -3787,7 +3787,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
           onClick={() => setMileagePhotoLightbox(null)}
         >
-          <div className="max-h-[90vh] max-w-4xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex h-[90vh] w-full max-w-4xl flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-300">
               <span>
                 {mileagePhotoLightbox.uploadedAt &&
@@ -3801,10 +3801,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <X className="h-4 w-4" />
               </button>
             </div>
+            {/* w-full + flex-1 (not w-auto) so a small source image scales UP
+                to fill the available space too, not just shrinks large ones
+                down — object-contain still preserves its aspect ratio either
+                way. */}
             <img
               src={mileagePhotoLightbox.url}
               alt=""
-              className="max-h-[80vh] w-auto max-w-full rounded-lg border border-white/10 object-contain"
+              className="w-full flex-1 min-h-0 rounded-lg border border-white/10 object-contain"
             />
           </div>
         </div>
