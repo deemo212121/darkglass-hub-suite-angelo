@@ -67,7 +67,7 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { TechActivityReportModal } from "@/components/TechActivityReportModal";
-import { getMileageEntries, addMileageEntry, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, deleteMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, type MileageEntry } from "@/lib/supabase/mileage";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -587,17 +587,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // JSON blob the Employee Information tab edits), not duplicated anywhere.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
-  // ── Mileage tab: manual log form state ──────────────────────────────────
-  const [mileageForm, setMileageForm] = useState({
-    workDate: new Date().toISOString().slice(0, 10),
-    profileId: "",
-    address: "",
-    contactNumber: "",
-    email: "",
-    totalMileage: "",
-    googleMapLink: "",
-  });
-  const [savingMileageEntry, setSavingMileageEntry] = useState(false);
   const [deletingMileageEntryId, setDeletingMileageEntryId] = useState<string | null>(null);
   const [payrollExcludingId, setPayrollExcludingId] = useState<string | null>(null);
   const [mileageBranchFilter, setMileageBranchFilter] = useState("");
@@ -629,10 +618,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [repairStatusRows, setRepairStatusRows] = useState<RepairStatus[]>([]);
 
   // ── Mileage tab: auto-sync-from-completed-tickets state ─────────────────
-  // No date range — always all-time, matching Overall Status's Tech
-  // Completion Rate table with its date pickers left empty. Every completed
-  // ticket this company has ever logged gets pulled, full stop.
+  // Date range is optional — left blank means all-time (every ticket this
+  // company has ever logged), matching Overall Status's Tech Completion
+  // Rate table default. Setting either bound scopes the sync to that
+  // schedule_date window; the sync effect below re-runs automatically
+  // whenever these change, so there's no separate "apply" step.
   const [mileageSyncProfileId, setMileageSyncProfileId] = useState("");
+  const [mileageSyncFromDate, setMileageSyncFromDate] = useState("");
+  const [mileageSyncToDate, setMileageSyncToDate] = useState("");
   const [syncingMileage, setSyncingMileage] = useState(false);
   const [mileageSyncMessage, setMileageSyncMessage] = useState<string | null>(null);
   // Tickets whose technician text didn't match ANY technician — even after
@@ -1996,45 +1989,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }));
   })();
 
-  const handleAddMileageEntry = async () => {
-    const technician = employees.find((e) => e.id === mileageForm.profileId);
-    if (!technician || !mileageForm.workDate || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()) return;
-    setSavingMileageEntry(true);
-    try {
-      await addMileageEntry({
-        profileId: technician.id,
-        branch: technician.assigned_branch || "Unassigned",
-        workDate: mileageForm.workDate,
-        address: mileageForm.address.trim(),
-        contactNumber: mileageForm.contactNumber.trim(),
-        email: mileageForm.email.trim(),
-        totalMileage: Number(mileageForm.totalMileage) || 0,
-        googleMapLink: mileageForm.googleMapLink.trim(),
-        createdByName: displayName || email || "Unknown",
-      });
-      setMileageForm({
-        workDate: new Date().toISOString().slice(0, 10),
-        profileId: "",
-        address: "",
-        contactNumber: "",
-        email: "",
-        totalMileage: "",
-        googleMapLink: "",
-      });
-      setMileageEntries(await getMileageEntries());
-    } catch (err) {
-      alert(`Failed to save mileage entry: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setSavingMileageEntry(false);
-    }
-  };
-
-  // Empty mileageSyncProfileId means "All Technicians". Always all-time —
-  // no date range is ever passed to syncMileageFromTickets. One call
-  // covering every target technician at once (that function fetches all
-  // company tickets a single time and matches them by normalized name,
-  // rather than a separate ticket query per technician) — already-synced
-  // tickets are skipped via mileage_entries.ticket_id either way.
+  // Empty mileageSyncProfileId means "All Technicians". Empty
+  // mileageSyncFromDate/mileageSyncToDate means all-time (no bound passed
+  // to syncMileageFromTickets). One call covering every target technician
+  // at once (that function fetches all matching tickets a single time and
+  // matches them by normalized name, rather than a separate ticket query
+  // per technician) — already-synced tickets are skipped via
+  // mileage_entries.ticket_id either way.
   const handleSyncMileage = async () => {
     const targets = mileageSyncProfileId
       ? mileageTechnicians.filter((t) => t.id === mileageSyncProfileId)
@@ -2057,6 +2018,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             homeAddress: contact?.address,
           };
         }),
+        fromDate: mileageSyncFromDate || undefined,
+        toDate: mileageSyncToDate || undefined,
       });
       const parts = [`${result.created} new ${result.created === 1 ? "entry" : "entries"} created`];
       if (result.skipped > 0) parts.push(`${result.skipped} already synced`);
@@ -2072,19 +2035,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
-  // Auto-runs the sync (all technicians, all-time — no date bound by
-  // default) the first time the Mileage tab is actually opened — so every
-  // assigned ticket's mileage just shows up without anyone having to press
-  // Sync. Only fires once per page load (via the ref) and waits for
-  // mileageTechnicians to actually be populated, rather than running on
-  // every tab switch or racing the initial fetch.
-  const autoSyncedMileageRef = useRef(false);
+  // Auto-runs the sync (all technicians, all-time by default) whenever the
+  // Mileage tab is opened AND whenever the date range changes — so tickets
+  // from a newly-picked date window just show up without anyone having to
+  // press Sync/Sync All by hand. Waits for mileageTechnicians to actually
+  // be populated first, rather than racing the initial fetch.
   useEffect(() => {
-    if (activeTab !== "mileage" || autoSyncedMileageRef.current || mileageTechnicians.length === 0) return;
-    autoSyncedMileageRef.current = true;
+    if (activeTab !== "mileage" || mileageTechnicians.length === 0) return;
     void handleSyncMileage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, mileageTechnicians.length]);
+  }, [activeTab, mileageTechnicians.length, mileageSyncFromDate, mileageSyncToDate]);
 
   // Photos modal — fetches on demand, only for the one ticket just clicked,
   // not for every row up front (the Mileage table has no pagination and can
@@ -3014,103 +2974,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           <div className="space-y-6">
             <h2 className="text-lg font-bold text-white">Total Mileage</h2>
 
-            {/* Entry form */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Date</span>
-                  <input
-                    type="date"
-                    value={mileageForm.workDate}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, workDate: e.target.value }))}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
-                  <select
-                    value={mileageForm.profileId}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, profileId: e.target.value }))}
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  >
-                    <option value="">Select technician…</option>
-                    {mileageTechnicians.map((t) => (
-                      <option key={t.id} value={t.id}>{t.full_name} — {t.assigned_branch || "Unassigned"}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Address</span>
-                  <input
-                    type="text"
-                    value={mileageForm.address}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, address: e.target.value }))}
-                    placeholder="Customer/site address"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Contact Number</span>
-                  <input
-                    type="text"
-                    value={mileageForm.contactNumber}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, contactNumber: e.target.value }))}
-                    placeholder="Contact number"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Email</span>
-                  <input
-                    type="email"
-                    value={mileageForm.email}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="Contact email"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Total Mileage</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={mileageForm.totalMileage}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, totalMileage: e.target.value }))}
-                    placeholder="0.0"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-                <label className="space-y-1.5 text-sm text-slate-200 sm:col-span-2">
-                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Google Map Link</span>
-                  <input
-                    type="text"
-                    value={mileageForm.googleMapLink}
-                    onChange={(e) => setMileageForm((f) => ({ ...f, googleMapLink: e.target.value }))}
-                    placeholder="https://maps.app.goo.gl/…"
-                    className="glass-input w-full text-sm px-2 py-1.5"
-                  />
-                </label>
-              </div>
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={handleAddMileageEntry}
-                  disabled={savingMileageEntry || !mileageForm.profileId || !mileageForm.address.trim() || !mileageForm.totalMileage.trim()}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-sm font-semibold transition flex items-center gap-2"
-                >
-                  {savingMileageEntry && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Add Entry
-                </button>
-              </div>
-            </div>
-
             {/* Auto-sync from tickets */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <p className="text-sm font-semibold text-white mb-1">Sync from Tickets</p>
               <p className="text-xs text-slate-400 mb-3">
-                Runs automatically for all technicians (including anyone with Technician as a 2nd or 3rd role), pulling every ticket ever assigned to them for this company — any status, not just completed, no date range, always all-time — as soon as you open this tab. One mileage entry per ticket, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are always skipped, so it's safe to re-run.
+                Runs automatically for all technicians (including anyone with Technician as a 2nd or 3rd role), pulling every ticket assigned to them for this company — any status, not just completed. Auto-refreshes whenever this tab opens or the date range below changes. One mileage entry per ticket, using the same office-to-customer distance calculator as the ticket map. Already-synced tickets are always skipped, so it's safe to re-run.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">From Date</span>
+                  <input
+                    type="date"
+                    value={mileageSyncFromDate}
+                    onChange={(e) => setMileageSyncFromDate(e.target.value)}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
+                <label className="space-y-1.5 text-sm text-slate-200">
+                  <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">To Date</span>
+                  <input
+                    type="date"
+                    value={mileageSyncToDate}
+                    onChange={(e) => setMileageSyncToDate(e.target.value)}
+                    className="glass-input w-full text-sm px-2 py-1.5"
+                  />
+                </label>
                 <label className="space-y-1.5 text-sm text-slate-200">
                   <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Technician</span>
                   <select

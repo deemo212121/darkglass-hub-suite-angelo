@@ -160,31 +160,6 @@ export async function reconcileMileageNoPhotoHolds(
   return changed;
 }
 
-export async function addMileageEntry(input: {
-  profileId: string;
-  branch: string;
-  workDate: string;
-  address: string;
-  contactNumber: string;
-  email: string;
-  totalMileage: number;
-  googleMapLink: string;
-  createdByName: string;
-}): Promise<void> {
-  const { error } = await supabase.from("mileage_entries").insert({
-    profile_id: input.profileId,
-    branch: input.branch,
-    work_date: input.workDate,
-    address: input.address,
-    contact_number: input.contactNumber || null,
-    email: input.email || null,
-    total_mileage: input.totalMileage,
-    google_map_link: input.googleMapLink || null,
-    created_by_name: input.createdByName,
-  });
-  if (error) throw new Error(error.message);
-}
-
 export async function deleteMileageEntry(id: string): Promise<void> {
   const { error } = await supabase.from("mileage_entries").delete().eq("id", id);
   if (error) throw new Error(error.message);
@@ -210,8 +185,8 @@ export interface MileageSyncResult {
  * of whether the job finished, is still open, or got cancelled after the
  * tech arrived — one row per ticket (not a combined daily total), each
  * priced with the same office-to-customer distance calculator already used
- * on the ticket detail page. Always all-time, no date range — every ticket
- * this company has ever logged. Safe to re-run: tickets that already
+ * on the ticket detail page. All-time by default (omit fromDate/toDate) or
+ * scoped to a schedule_date window when the caller passes one. Safe to re-run: tickets that already
  * produced a row (tracked via mileage_entries.ticket_id, enforced unique
  * by migration 0141) are skipped rather than duplicated. Tickets with no
  * schedule_date are skipped too (mileage_entries.work_date is required —
@@ -233,6 +208,9 @@ export interface MileageSyncResult {
  */
 export async function syncMileageFromTickets(input: {
   technicians: { profileId: string; fullName: string; branch: string; phone?: string; email?: string; homeAddress?: string }[];
+  /** Optional schedule_date bounds (inclusive, "YYYY-MM-DD"). Omit either (or both) for the original all-time behavior. */
+  fromDate?: string;
+  toDate?: string;
 }): Promise<MileageSyncResult> {
   const result: MileageSyncResult = { created: 0, skipped: 0, errors: [], unmatchedTechnicians: [] };
   const techByNormalizedName = new Map(
@@ -240,11 +218,15 @@ export async function syncMileageFromTickets(input: {
   );
   if (techByNormalizedName.size === 0) return result;
 
+  let ticketsQuery = supabase
+    .from("tickets")
+    .select("id, ticket_no, technician, status, schedule_date, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
+    .not("technician", "is", null);
+  if (input.fromDate) ticketsQuery = ticketsQuery.gte("schedule_date", input.fromDate);
+  if (input.toDate) ticketsQuery = ticketsQuery.lte("schedule_date", input.toDate);
+
   const [{ data: ticketRows, error: ticketsErr }, { data: syncedRows, error: syncedErr }, mapProvider] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select("id, ticket_no, technician, status, schedule_date, location, account, customer:customers ( address, address2, city, state, zip, phone, email )")
-      .not("technician", "is", null),
+    ticketsQuery,
     supabase.from("mileage_entries").select("ticket_id").not("ticket_id", "is", null),
     getCompanyMapProvider(),
   ]);
